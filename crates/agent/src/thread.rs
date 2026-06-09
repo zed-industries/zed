@@ -2607,14 +2607,11 @@ impl Thread {
                         }
                     }
                 })?;
-            } else if end_turn {
-                return Ok(());
-            } else {
                 let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
                 if has_queued {
-                    log::debug!("Queued message found, ending turn at message boundary");
-                    return Ok(());
+                    log::debug!("Queued message found, continuing with tool results");
                 }
+
                 intent = CompletionIntent::ToolResults;
                 attempt = 0;
             }
