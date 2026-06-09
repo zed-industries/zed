@@ -24,7 +24,6 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_api_types::Plan;
 use command_palette_hooks::CommandPaletteFilter;
 
 use gpui::{
@@ -1208,32 +1207,24 @@ impl TitleBar {
 
         let user_store = self.user_store.clone();
         let workspace = self.workspace.clone();
-        let user_store_read = user_store.read(cx);
-        let user = user_store_read.current_user();
+        let user = user_store.read(cx).current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
         let user_login = user.as_ref().map(|u| u.github_login.clone());
 
         let is_signed_in = user.is_some();
 
-        let has_subscription_period = user_store_read.subscription_period().is_some();
-        let plan = user_store_read.plan().filter(|_| {
-            // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
-            has_subscription_period
-        });
-
-        let has_organization = user_store_read.current_organization().is_some();
-
-        let current_organization = user_store_read.current_organization();
+        let current_organization = user_store.read(cx).current_organization();
         let business_organization = current_organization
             .as_ref()
             .filter(|organization| !organization.is_personal);
-        let organizations: Vec<_> = user_store_read
+        let organizations: Vec<_> = user_store
+            .read(cx)
             .organizations()
             .iter()
-            .map(|org| {
-                let plan = user_store_read.plan_for_organization(&org.id);
-                (org.clone(), plan)
+            .map(|organization| {
+                let plan = user_store.read(cx).plan_for_organization(&organization.id);
+                (organization.clone(), plan)
             })
             .collect();
 
@@ -1293,9 +1284,6 @@ impl TitleBar {
                                     .w_full()
                                     .justify_between()
                                     .child(Label::new(user_login))
-                                    .when(!has_organization, |parent| {
-                                        parent.child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
-                                    })
                                     .into_any_element()
                             },
                             move |_, cx| {
@@ -1325,7 +1313,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .when(has_organization, |this| {
+                    .map(|this| {
                         let mut this = this.header("Organization");
 
                         for (organization, plan) in &organizations {
