@@ -2033,6 +2033,22 @@ impl Workspace {
                         (None, None)
                     };
 
+                    // When reopening a serialized workspace (and not overriding bounds via the
+                    // environment), load the native restorable-state blob so the new window can be
+                    // returned to the macOS Space it was on. `None` on other platforms / when no
+                    // blob was saved.
+                    let restorable_state = if window_bounds_override.is_some() {
+                        None
+                    } else {
+                        serialized_workspace.as_ref().and_then(|workspace| {
+                            workspace
+                                .window_bounds
+                                .is_some()
+                                .then(|| db.restorable_window_state(workspace.id))
+                                .flatten()
+                        })
+                    };
+
                     // Use the serialized workspace to construct the new window
                     let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx));
                     options.window_bounds = window_bounds;
@@ -2068,6 +2084,13 @@ impl Workspace {
                         window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
                             multi_workspace.workspace().clone()
                         })?;
+                    if let Some(restorable_state) = restorable_state {
+                        window
+                            .update(cx, |_, window, _| {
+                                window.restore_native_state(&restorable_state);
+                            })
+                            .log_err();
+                    }
                     (window, workspace)
                 };
 
@@ -6904,6 +6927,10 @@ impl Workspace {
         let has_paths = !self.root_paths(cx).is_empty();
         let db = WorkspaceDb::global(cx);
         let kvp = db::kvp::KeyValueStore::global(cx);
+        // On macOS this captures the window frame plus the Space (virtual desktop) it lives on,
+        // so the window can be restored to the same Space on the next launch. Returns `None` on
+        // other platforms.
+        let restorable_state = window.encode_restorable_state();
 
         cx.background_executor().spawn(async move {
             if !has_paths {
@@ -6919,6 +6946,11 @@ impl Workspace {
                 )
                 .await
                 .log_err();
+                if let Some(restorable_state) = restorable_state {
+                    db.save_restorable_window_state(database_id, restorable_state)
+                        .await
+                        .log_err();
+                }
             } else {
                 persistence::write_default_window_bounds(&kvp, window_bounds, display_uuid)
                     .await
@@ -9983,6 +10015,17 @@ pub fn open_workspace_by_id(
             let workspace = window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
                 multi_workspace.workspace().clone()
             })?;
+
+            if window_bounds_override.is_none()
+                && serialized_workspace.window_bounds.is_some()
+                && let Some(restorable_state) = db.restorable_window_state(workspace_id)
+            {
+                window
+                    .update(cx, |_, window, _| {
+                        window.restore_native_state(&restorable_state);
+                    })
+                    .log_err();
+            }
 
             (window, workspace)
         };

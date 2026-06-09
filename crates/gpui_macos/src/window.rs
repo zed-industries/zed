@@ -18,7 +18,7 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
+        NSArray, NSAutoreleasePool, NSData, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
         NSUserDefaults,
     },
@@ -75,6 +75,8 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static mut SPACES_ARCHIVER_DELEGATE_CLASS: *const Class = ptr::null();
+static mut SPACES_UNARCHIVER_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -302,6 +304,70 @@ unsafe fn build_classes() {
             );
             decl.register()
         };
+        // Helper classes used to encode/restore native window state (frame plus macOS Space).
+        // See `MacWindow::encode_restorable_state` / `restore_native_state`.
+        SPACES_ARCHIVER_DELEGATE_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUISpacesArchiverDelegate", class!(NSObject)).unwrap();
+            decl.add_method(
+                sel!(archiver:willEncodeObject:),
+                spaces_archiver_will_encode_object as extern "C" fn(&Object, Sel, id, id) -> id,
+            );
+            decl.register()
+        };
+        SPACES_UNARCHIVER_CLASS = {
+            let mut decl =
+                ClassDecl::new("GPUISpacesKeyedUnarchiver", class!(NSKeyedUnarchiver)).unwrap();
+            decl.add_method(
+                sel!(_windowRestorationOptions),
+                spaces_window_restoration_options as extern "C" fn(&Object, Sel) -> id,
+            );
+            decl.register()
+        };
+    }
+}
+
+// NSKeyedArchiverDelegate callback that skips objects which don't adopt `NSSecureCoding`
+// (the window itself and its NSView hierarchy), so encoding the window's restorable state
+// succeeds. The frame and Space information we care about is encoded separately by AppKit.
+extern "C" fn spaces_archiver_will_encode_object(
+    _this: &Object,
+    _sel: Sel,
+    _archiver: id,
+    object: id,
+) -> id {
+    // SAFETY: `object` is whatever AppKit hands the delegate during archiving; we only send it
+    // `isKindOfClass:` with valid class arguments, which is safe for any Objective-C object.
+    unsafe {
+        if object.is_null() {
+            return object;
+        }
+        let is_view: BOOL = msg_send![object, isKindOfClass: class!(NSView)];
+        let is_window: BOOL = msg_send![object, isKindOfClass: class!(NSWindow)];
+        if is_view == YES || is_window == YES {
+            nil
+        } else {
+            object
+        }
+    }
+}
+
+// Override of the private `_windowRestorationOptions` on our NSKeyedUnarchiver subclass.
+// Returning a default-initialized `NSWindowRestorationOptions` tells AppKit to restore the
+// window to its original Space. This is the macOS 15+ path (FB15644170: the
+// `NSWindowRestoresWorkspaceAtLaunch` user default no longer works there).
+extern "C" fn spaces_window_restoration_options(_this: &Object, _sel: Sel) -> id {
+    // SAFETY: we look the class up by name and only send it `alloc`/`init`/`autorelease`, all of
+    // which have the standard `-> id` signature. Returning `nil` when the class is absent is valid.
+    unsafe {
+        match Class::get("NSWindowRestorationOptions") {
+            Some(class) => {
+                let options: id = msg_send![class, alloc];
+                let options: id = msg_send![options, init];
+                msg_send![options, autorelease]
+            }
+            None => nil,
+        }
     }
 }
 
@@ -1183,6 +1249,85 @@ impl PlatformWindow for MacWindow {
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
             }
+        }
+    }
+
+    fn encode_restorable_state(&self) -> Option<Vec<u8>> {
+        let native_window = self.0.lock().native_window;
+        // SAFETY: `native_window` is a live `NSWindow` retained by this window's state, and the
+        // selectors below are AppKit/Foundation methods sent with their documented signatures. The
+        // archived bytes are copied into an owned `Vec` before the objects we allocated are
+        // released, so no pointer into Objective-C memory escapes this block.
+        unsafe {
+            let archiver: id = msg_send![class!(NSKeyedArchiver), alloc];
+            let archiver: id = msg_send![archiver, initRequiringSecureCoding: YES];
+            if archiver.is_null() {
+                return None;
+            }
+            let delegate: id = msg_send![SPACES_ARCHIVER_DELEGATE_CLASS, new];
+            let _: () = msg_send![archiver, setDelegate: delegate];
+            let _: () = msg_send![native_window, encodeRestorableStateWithCoder: archiver];
+            let _: () = msg_send![archiver, finishEncoding];
+            // The archiver holds a weak reference to its delegate; clear it before the delegate
+            // is released below.
+            let _: () = msg_send![archiver, setDelegate: nil];
+
+            let data: id = msg_send![archiver, encodedData];
+            let result = if data.is_null() || data.bytes().is_null() {
+                None
+            } else {
+                let bytes =
+                    std::slice::from_raw_parts(data.bytes() as *const u8, data.length() as usize);
+                Some(bytes.to_vec())
+            };
+
+            let _: () = msg_send![delegate, release];
+            let _: () = msg_send![archiver, release];
+            result
+        }
+    }
+
+    fn restore_native_state(&self, state: &[u8]) {
+        if state.is_empty() {
+            return;
+        }
+        let native_window = self.0.lock().native_window;
+        // SAFETY: `native_window` is a live `NSWindow` retained by this window's state. The NSData,
+        // NSKeyedUnarchiver and `restoreStateWithCoder:` selectors are sent with their documented
+        // signatures, and the `NSData` only borrows `state` for the duration of this synchronous
+        // call (it is consumed before `state` could be freed).
+        unsafe {
+            let data = NSData::dataWithBytes_length_(
+                nil,
+                state.as_ptr() as *const c_void,
+                state.len() as u64,
+            );
+            if data.is_null() {
+                return;
+            }
+
+            // On macOS < 15 the `NSWindowRestoresWorkspaceAtLaunch` user default controls whether
+            // the window is restored to its original Space. On macOS 15+ that default is broken
+            // (FB15644170), and the `_windowRestorationOptions` override on our unarchiver subclass
+            // handles it instead.
+            if !is_macos_version_at_least(NSOperatingSystemVersion::new(15, 0, 0)) {
+                let defaults: id = NSUserDefaults::standardUserDefaults();
+                let key = ns_string("NSWindowRestoresWorkspaceAtLaunch");
+                let yes_value: id = msg_send![class!(NSNumber), numberWithBool: YES];
+                let dict: id =
+                    msg_send![class!(NSDictionary), dictionaryWithObject: yes_value forKey: key];
+                let _: () = msg_send![defaults, registerDefaults: dict];
+            }
+
+            let unarchiver: id = msg_send![SPACES_UNARCHIVER_CLASS, alloc];
+            let mut error: id = nil;
+            let unarchiver: id =
+                msg_send![unarchiver, initForReadingFromData: data error: &mut error];
+            if unarchiver.is_null() {
+                return;
+            }
+            let _: () = msg_send![native_window, restoreStateWithCoder: unarchiver];
+            let _: () = msg_send![unarchiver, release];
         }
     }
 

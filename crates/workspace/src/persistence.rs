@@ -1044,6 +1044,15 @@ impl Domain for WorkspaceDb {
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
         ),
+        sql!(
+            CREATE TABLE restorable_window_states (
+                workspace_id INTEGER PRIMARY KEY,
+                state BLOB NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            ) STRICT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -2457,6 +2466,25 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub(crate) async fn save_restorable_window_state(workspace_id: WorkspaceId, state: Vec<u8>) -> Result<()> {
+            INSERT OR REPLACE INTO restorable_window_states (workspace_id, state)
+            VALUES (?1, ?2)
+        }
+    }
+
+    /// Returns the opaque native restorable-state blob saved for the given workspace, if any.
+    /// On macOS this encodes the window frame and the Space (virtual desktop) it was on.
+    pub(crate) fn restorable_window_state(&self, workspace_id: WorkspaceId) -> Option<Vec<u8>> {
+        self.select_row_bound::<WorkspaceId, Vec<u8>>(sql! {
+            SELECT state FROM restorable_window_states WHERE workspace_id = ?
+        })
+        .and_then(|mut statement| statement(workspace_id))
+        .context("Getting restorable window state")
+        .log_err()
+        .flatten()
+    }
+
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
@@ -3179,6 +3207,48 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(test_text_1, "test-text-1");
+    }
+
+    #[gpui::test]
+    async fn test_restorable_window_state_round_trip() {
+        zlog::init_test();
+
+        let db =
+            WorkspaceDb::open_test_db("test_restorable_window_state_round_trip").await;
+
+        // A workspace row must exist to satisfy the foreign key.
+        let id = db.next_id().await.unwrap();
+
+        assert_eq!(db.restorable_window_state(id), None);
+
+        let state = vec![0u8, 1, 2, 3, 250, 251, 252];
+        db.save_restorable_window_state(id, state.clone())
+            .await
+            .unwrap();
+        assert_eq!(db.restorable_window_state(id), Some(state));
+
+        // Saving again overwrites the previous blob instead of accumulating rows.
+        let new_state = vec![9u8, 8, 7];
+        db.save_restorable_window_state(id, new_state.clone())
+            .await
+            .unwrap();
+        assert_eq!(db.restorable_window_state(id), Some(new_state));
+        let count = db
+            .select_row::<usize>(sql!(SELECT COUNT(*) FROM restorable_window_states))
+            .unwrap()()
+        .unwrap();
+        assert_eq!(count, Some(1));
+
+        assert_eq!(db.restorable_window_state(WorkspaceId(999)), None);
+
+        // The blob is removed when its workspace row is deleted (ON DELETE CASCADE).
+        db.write(move |conn| {
+            conn.exec_bound(sql!(DELETE FROM workspaces WHERE workspace_id = ?))
+                .unwrap()(id)
+            .unwrap()
+        })
+        .await;
+        assert_eq!(db.restorable_window_state(id), None);
     }
 
     #[gpui::test]
