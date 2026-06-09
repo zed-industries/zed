@@ -6274,6 +6274,7 @@ fn panels_page() -> SettingsPage {
                     title: "Terminal Agent Command",
                     description: "Program the agent panel auto-launches as a terminal-based agent (e.g. `claude`).",
                     field: Box::new(SettingField {
+                        organization_override: None,
                         json_path: Some("agent.terminal_command$"),
                         pick: |settings_content| {
                             Some(
@@ -6349,6 +6350,7 @@ fn panels_page() -> SettingsPage {
                             title: "Program",
                             description: "The program to run as the terminal-based agent.",
                             field: Box::new(SettingField {
+                                organization_override: None,
                                 json_path: Some("agent.terminal_command"),
                                 pick: |settings_content| match settings_content
                                     .agent
@@ -6381,6 +6383,7 @@ fn panels_page() -> SettingsPage {
                                 title: "Program",
                                 description: "The program to run as the terminal-based agent.",
                                 field: Box::new(SettingField {
+                                    organization_override: None,
                                     json_path: Some("agent.terminal_command.program"),
                                     pick: |settings_content| {
                                         match settings_content
@@ -6415,6 +6418,7 @@ fn panels_page() -> SettingsPage {
                                 description: "Arguments to pass to the agent program.",
                                 field: Box::new(
                                     SettingField {
+                                        organization_override: None,
                                         json_path: Some("agent.terminal_command.args"),
                                         pick: |settings_content| {
                                             match settings_content
@@ -6451,6 +6455,7 @@ fn panels_page() -> SettingsPage {
                                 title: "Title Override",
                                 description: "Optional string to override the title of the terminal tab.",
                                 field: Box::new(SettingField {
+                                    organization_override: None,
                                     json_path: Some("agent.terminal_command.title_override"),
                                     pick: |settings_content| {
                                         match settings_content
