@@ -1,6 +1,8 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
-use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
+use client::{
+    Client, RefreshLlmTokenListener, TelemetrySettings, UserStore, global_llm_token, zed_urls,
+};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
@@ -68,6 +70,14 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
             client
                 .refresh_llm_token(&llm_api_token, organization_id)
                 .await
+        })
+    }
+
+    fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool {
+        cx.read_global(|settings_store: &SettingsStore, _| {
+            settings_store
+                .get::<TelemetrySettings>(None)
+                .anthropic_retention
         })
     }
 }
