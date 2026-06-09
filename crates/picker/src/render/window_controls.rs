@@ -1,14 +1,74 @@
-use std::ops::Range;
+//! This holds the resize logic for picker windows.
+//!
+//! # Resizing basics:
+//! We have between three and four dedicated resize renders active:
+//!  - render_width_resize
+//!  - render_corner_resize (allows resizing in both directions)
+//!  - render height_resize
+//!
+//! If there is a preview to the right or below there is an additional resize
+//!  - render_horizontal_divider_resize
+//!  - render_vertical_divider_resize
+//!
+//! The resize's are div's aka rectangles that are "placed" by specifying the
+//! position of their sides. When hovering over these the cursor is changed
+//! so it is clear you can resize.
+//!
+//! We set up two callbacks in each
+//!  - on_drag: fires when the user starts dragging
+//!  - on_drag_move: runs every frame while the user is dragging
+//!
+//! The actual shape of the resize is updated in `on_drag_move`. When a preview
+//! is active dragging the outside edge modifies the
+//!
+//! # Resizing persistence
+//! Each picker has a 'fixed' size and tracks it's last resize. When manually
+//! resized the window size is stored as a percentage of the viewport
+//! width/height. The size is serialized as soon as the use lets go of the drag.
+//!
+//! # Diagrams & Details
+//! ================ CHANGING WIDTH ======================================
+//! The picker position stays constant during the drag but it is centered
+//! directly after. (when the user lets go)
+//! ================ DRAGGING RIGHT ======================================
+//!
+//! ------------
+//! |    |     |  <- dragging this edge right
+//! |    |     |
+//! ------------
+//! leads to:
+//! --------------------
+//! |    |             |  <- dragged on this edge
+//! |    |  preview    |
+//! --------------------
+//!
+//! ```rust
+//! self.w_preview = w_preview + drag
+//! ```
+//! ================ DRAGGING LEFT =======================================
+//!
+//!                       ------------
+//! dragging this left -> |   |      |
+//!                       |   |      |
+//!                       ------------
+//! leads to:
+//! -------------------
+//! | list     |      |
+//! |          |      |
+//! -------------------
+
+use std::{any::type_name, marker::PhantomData, ops::Range};
 
 use gpui::{
-    Action, Context, DragMoveEvent, Entity, FocusHandle, Focusable, Length, MouseButton, Styled,
-    Window,
+    Action, Context, DragMoveEvent, Entity, FocusHandle, Focusable, Length, MouseButton, Point,
+    Styled, Window,
 };
 use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use workspace::pane;
 
 use crate::{
-    Picker, PickerDelegate, Preview, ToggleLayout, ToggleSplitMenu,
+    AbsolutePositionAndShape, Picker, PickerDelegate, Preview, Shape, ToggleLayout,
+    ToggleSplitMenu,
     preview::{
         render::do_nothing,
         state::{LayoutMode, TelescopeLayout},
@@ -43,16 +103,6 @@ struct VerticalResizeDrag {
     preview_height_start: Pixels,
     top_extend: Pixels,
     bottom_extend: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct HorizontalResizeDrag {
-    side: ResizeSide,
-    mouse_start: Pixels,
-    width_start: Pixels,
-    preview_width_start: Pixels,
-    left_extend: Pixels,
-    right_extend: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -94,12 +144,76 @@ pub(crate) enum ReHeightSide {
     Bottom,
 }
 
+struct ShapePreDrag {
+    left: Pixels,
+    right: Pixels,
+    divider: Option<Pixels>,
+}
+
+#[derive(Clone, Copy)]
+struct HorizontalResizeDrag<S> {
+    shape_before: AbsolutePositionAndShape,
+    phantom_data: PhantomData<S>,
+    mouse_pos_before: Point<Pixels>,
+}
+
+trait Side {
+    fn id() -> &'static str {
+        type_name::<Self>()
+    }
+    fn position(div: gpui::Stateful<Div>) -> gpui::Stateful<Div>;
+    fn current_position_and_shape(
+        shape_before: AbsolutePositionAndShape,
+        mouse_movement: Pixels,
+    ) -> AbsolutePositionAndShape;
+}
+
+pub(crate) struct Left;
+impl Side for Left {
+    fn position(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
+        let handle_width = px(RESIZE_HANDLE_WIDTH);
+        let handle_offset = handle_width / 2.0;
+        div.left(-handle_offset)
+    }
+    fn current_position_and_shape(
+        mut shape_before: AbsolutePositionAndShape,
+        mouse_movement: Pixels,
+    ) -> AbsolutePositionAndShape {
+        shape_before.left += mouse_movement;
+        shape_before
+    }
+}
+pub(crate) struct Right;
+impl Side for Right {
+    fn position(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
+        let handle_width = px(RESIZE_HANDLE_WIDTH);
+        let handle_offset = handle_width / 2.0;
+        div.right(-handle_offset)
+    }
+    fn current_position_and_shape(
+        mut shape_before: AbsolutePositionAndShape,
+        mouse_movement: Pixels,
+    ) -> AbsolutePositionAndShape {
+        shape_before.left += mouse_movement;
+        shape_before
+    }
+}
+
+impl<S: Side> HorizontalResizeDrag<S> {
+    fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
+        Self {
+            mouse_pos_before: window.mouse_position(),
+            shape_before: shape.absolute_position_and_size(preview, window),
+            phantom_data: PhantomData,
+        }
+    }
+}
+
 // TODO!(yara) make this all work for with and without preview
 impl<D: PickerDelegate> Picker<D> {
     /// Resizes the picker model by extending it on the left or right
-    pub(crate) fn render_width_resize(
+    pub(crate) fn render_width_resize<S: Side + 'static>(
         &self,
-        side: ResizeSide,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -108,160 +222,114 @@ impl<D: PickerDelegate> Picker<D> {
         let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
 
         div()
-            .id(match side {
-                ResizeSide::Left => "left-resize-handle",
-                ResizeSide::Right => "right-resize-handle",
-            })
+            .id(S::id())
             .absolute()
             .top(corner_clearance)
             .bottom(corner_clearance)
             .w(handle_width)
             .cursor_col_resize()
-            .map(|this| match side {
-                ResizeSide::Left => this.left(-handle_offset),
-                ResizeSide::Right => this.right(-handle_offset),
-            })
+            .map(|this| S::position(this))
             .block_mouse_except_scroll()
             .on_mouse_down(MouseButton::Left, do_nothing)
             .on_drag(
-                HorizontalResizeDrag {
-                    side,
-                    mouse_start: window.mouse_position().x,
-                    width_start: self.current_width(window),
-                    preview_width_start: self
-                        .preview
-                        .as_ref()
-                        .map(Preview::width)
-                        .unwrap_or(Pixels::ZERO),
-                    left_extend: self.shape.left_extend(window),
-                    right_extend: self.shape.right_extend(window),
-                },
+                HorizontalResizeDrag::<S>::start_new(self.shape, self.preview.as_ref(), window),
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
-            .on_drag_move::<HorizontalResizeDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<HorizontalResizeDrag>, window, cx| {
+            .on_drag_move::<HorizontalResizeDrag<S>>(cx.listener(
+                move |this, event: &DragMoveEvent<HorizontalResizeDrag<S>>, window, cx| {
                     let drag = event.drag(cx);
-                    let delta = event.event.position.x - drag.mouse_start;
-                    let width_delta = match drag.side {
-                        ResizeSide::Left => -delta,
-                        ResizeSide::Right => delta,
-                    };
-                    let new_width = (drag.width_start + width_delta)
-                        .max(this.shape.min_width(window))
-                        .min(this.shape.max_width(window));
-
-                    this.shape.base_width = Some(Rems::from_pixels(new_width, window));
-                    let width_change = new_width - drag.width_start;
-
-                    if let Some(Preview {
-                        layout: LayoutMode::Telescope(layout),
-                        ..
-                    }) = this.preview.as_mut()
-                        && drag.width_start > px(0.0)
-                    {
-                        let ratio = drag.preview_width_start / drag.width_start;
-                        let new_preview_width = (new_width * ratio)
-                            .max(px(TelescopeLayout::MIN_PREVIEW_WIDTH))
-                            .min(px(TelescopeLayout::MAX_PREVIEW_WIDTH));
-                        layout.preview_width = new_preview_width;
-                    }
-
-                    let offset_delta = width_change / 2.0;
-                    match drag.side {
-                        ResizeSide::Left => {
-                            this.shape.left_extend += Rems::from_pixels(offset_delta, window);
-                        }
-                        ResizeSide::Right => {
-                            this.shape.right_extend += Rems::from_pixels(offset_delta, window);
-                        }
-                    }
+                    let delta = event.event.position.x - drag.mouse_pos_before.x;
+                    let shape_before = drag.shape_before;
+                    this.shape =
+                        Shape::Resizing(S::current_position_and_shape(shape_before, delta));
+                    /// TODO actual size if mouse button lifted
                     cx.notify();
                 },
             ))
     }
 
-    // TODO!(yara) enable and fix
-    pub(crate) fn render_height_resize(
-        &self,
-        side: ReHeightSide,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let handle_height = px(RESIZE_HANDLE_HEIGHT);
-        let handle_offset = handle_height / 2.0;
-        let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
+    // // TODO!(yara) enable and fix
+    // pub(crate) fn render_height_resize(
+    //     &self,
+    //     side: ReHeightSide,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) -> impl IntoElement {
+    //     let handle_height = px(RESIZE_HANDLE_HEIGHT);
+    //     let handle_offset = handle_height / 2.0;
+    //     let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
 
-        div()
-            .id(match side {
-                // TODO!(yara) move all this in one Side struct
-                ReHeightSide::Top => "top-resize-handle",
-                ReHeightSide::Bottom => "bottom-resize-handle",
-            })
-            .h(handle_height)
-            .w_full()
-            .cursor_row_resize()
-            .map(|this| match side {
-                ReHeightSide::Top => this
-                    .absolute()
-                    .top(-handle_offset)
-                    .left(corner_clearance)
-                    .right(corner_clearance),
-                ReHeightSide::Bottom => this.ml(corner_clearance).mr(corner_clearance),
-            })
-            .block_mouse_except_scroll()
-            .on_mouse_down(MouseButton::Left, do_nothing) // TODO!(yara) can we get rid of these?
-            .on_drag(
-                VerticalResizeDrag {
-                    side,
-                    mouse_start: window.mouse_position().y,
-                    height_start: self.current_height(window),
-                    preview_height_start: self
-                        .preview
-                        .as_ref()
-                        .map(Preview::height)
-                        .unwrap_or(Pixels::ZERO),
-                    top_extend: self.shape.top_extend(window),
-                    bottom_extend: self.shape.bottom_extend(window),
-                },
-                |_, _, _, cx| cx.new(|_| DragPreview),
-            )
-            .on_drag_move::<VerticalResizeDrag>(cx.listener(
-                move |this, event: &DragMoveEvent<VerticalResizeDrag>, window, cx| {
-                    let drag = event.drag(cx);
-                    let delta = event.event.position.y - drag.mouse_start;
-                    let total_growth = match drag.side {
-                        ReHeightSide::Top => -delta,
-                        ReHeightSide::Bottom => delta,
-                    };
-                    let total_start = drag.height_start + drag.preview_height_start;
-                    let new_total = (total_start + total_growth)
-                        .max(this.shape.min_height(window))
-                        .min(this.shape.max_height(window));
-                    let scale = new_total / total_start;
-                    this.shape.base_height = Some(Rems::from_pixels(new_total, window));
+    //     div()
+    //         .id(match side {
+    //             // TODO!(yara) move all this in one Side struct
+    //             ReHeightSide::Top => "top-resize-handle",
+    //             ReHeightSide::Bottom => "bottom-resize-handle",
+    //         })
+    //         .h(handle_height)
+    //         .w_full()
+    //         .cursor_row_resize()
+    //         .map(|this| match side {
+    //             ReHeightSide::Top => this
+    //                 .absolute()
+    //                 .top(-handle_offset)
+    //                 .left(corner_clearance)
+    //                 .right(corner_clearance),
+    //             ReHeightSide::Bottom => this.ml(corner_clearance).mr(corner_clearance),
+    //         })
+    //         .block_mouse_except_scroll()
+    //         .on_mouse_down(MouseButton::Left, do_nothing) // TODO!(yara) can we get rid of these?
+    //         .on_drag(
+    //             VerticalResizeDrag {
+    //                 side,
+    //                 mouse_start: window.mouse_position().y,
+    //                 height_start: self.current_height(window),
+    //                 preview_height_start: self
+    //                     .preview
+    //                     .as_ref()
+    //                     .map(Preview::height)
+    //                     .unwrap_or(Pixels::ZERO),
+    //                 top_extend: self.shape.top_extend(window),
+    //                 bottom_extend: self.shape.bottom_extend(window),
+    //             },
+    //             |_, _, _, cx| cx.new(|_| DragPreview),
+    //         )
+    //         .on_drag_move::<VerticalResizeDrag>(cx.listener(
+    //             move |this, event: &DragMoveEvent<VerticalResizeDrag>, window, cx| {
+    //                 let drag = event.drag(cx);
+    //                 let delta = event.event.position.y - drag.mouse_start;
+    //                 let total_growth = match drag.side {
+    //                     ReHeightSide::Top => -delta,
+    //                     ReHeightSide::Bottom => delta,
+    //                 };
+    //                 let total_start = drag.height_start + drag.preview_height_start;
+    //                 let new_total = (total_start + total_growth)
+    //                     .max(this.shape.min_height(window))
+    //                     .min(this.shape.max_height(window));
+    //                 let scale = new_total / total_start;
+    //                 this.shape.base_height = Some(Rems::from_pixels(new_total, window));
 
-                    if let Some(Preview {
-                        layout: LayoutMode::Stacked(layout),
-                        ..
-                    }) = this.preview.as_mut()
-                    {
-                        layout.results_height = drag.height_start * scale;
-                        layout.preview_height = drag.preview_height_start * scale;
-                    }
+    //                 if let Some(Preview {
+    //                     layout: LayoutMode::Stacked(layout),
+    //                     ..
+    //                 }) = this.preview.as_mut()
+    //                 {
+    //                     layout.results_height = drag.height_start * scale;
+    //                     layout.preview_height = drag.preview_height_start * scale;
+    //                 }
 
-                    let actual_growth = new_total - total_start;
-                    match drag.side {
-                        ReHeightSide::Top => {
-                            this.shape.top_extend += Rems::from_pixels(actual_growth, window);
-                        }
-                        ReHeightSide::Bottom => {
-                            this.shape.bottom_extend += Rems::from_pixels(actual_growth, window);
-                        }
-                    }
-                    cx.notify();
-                },
-            ))
-    }
+    //                 let actual_growth = new_total - total_start;
+    //                 match drag.side {
+    //                     ReHeightSide::Top => {
+    //                         this.shape.top_extend += Rems::from_pixels(actual_growth, window);
+    //                     }
+    //                     ReHeightSide::Bottom => {
+    //                         this.shape.bottom_extend += Rems::from_pixels(actual_growth, window);
+    //                     }
+    //                 }
+    //                 cx.notify();
+    //             },
+    //         ))
+    // }
 
     // TODO!(yara) enable and fix
     // pub(crate) fn render_corner_resize(

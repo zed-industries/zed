@@ -21,6 +21,8 @@ use head::Head;
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::ops;
+use std::ops::Sub;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
@@ -73,72 +75,155 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
-// TODO!(yara) make this persistent.
-// TODO!(yara) enforce a maximum on the shape
-/// The picker starts centered however the left and right can be extended by
-/// dragging. The sizes are in Rems so the picker scales up and down with the font size.
-pub struct Shape {
-    /// The picker's width. When `None`, the picker fills the width given by its
-    /// parent. Once the user drags a resize handle this becomes `Some`, and the
-    /// picker controls its own width from then on.
-    base_width: Option<Rems>,
-    min_width: Rems,
-    left_extend: Rems,
-    right_extend: Rems,
-    // TODO!(yara) something screen size based?
-    // TODO!(yara) vertical resize done later
-    base_height: Option<Rems>,
-    min_height: Rems,
-    /// Height will be limited to min(this, window_size * 0.8)
-    max_height: Option<Rems>,
-    top_extend: Rems,
-    bottom_extend: Rems,
+/// Size relative to viewport, between 0.0 and 1.0
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ViewPortHeight(f32);
+impl Eq for ViewPortHeight {}
+
+/// Size relative to viewport, between 0.0 and 1.0
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ViewPortWidth(f32);
+impl Eq for ViewPortWidth {}
+
+impl ViewPortHeight {
+    fn as_pixels(&self, window: &Window) -> Pixels {
+        window.viewport_size().height * self.0
+    }
+}
+
+impl ViewPortWidth {
+    const FULL: Self = Self(1.0);
+    fn as_pixels(&self, window: &Window) -> Pixels {
+        window.viewport_size().width * self.0
+    }
+}
+
+impl ops::Sub for ViewPortWidth {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl ops::Div<f32> for ViewPortWidth {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self(self.0 / rhs)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AbsolutePositionAndShape {
+    /// Absolute position of left most side of the picker
+    left: Pixels,
+    /// Absolute position of right most side of the picker
+    right: Pixels,
+    /// Absolute position of top most side of the picker
+    top: Pixels,
+    /// Absolute position of bottom most side of the picker
+    bottom: Pixels,
+    /// Absolute position of divide between results and preview,
+    /// either a height or a width depends on previews layoutmode
+    preview_size: Option<Pixels>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Shape {
+    /// Non centered while user is extending a side
+    Resizing(AbsolutePositionAndShape),
+    /// This is also what is serialized
+    HorizontallyCentered {
+        width: ViewPortWidth,
+        top: ViewPortHeight,
+        bottom: ViewPortHeight,
+    },
 }
 
 impl Shape {
-    fn min_width(&self, window: &Window) -> Pixels {
-        self.min_width.to_pixels(window.rem_size())
+    fn absolute_position_and_size(
+        &self,
+        preview: Option<&Preview>,
+        window: &Window,
+    ) -> AbsolutePositionAndShape {
+        let (width, top, bottom) = match self {
+            Shape::Resizing(res) => return *res,
+            Shape::HorizontallyCentered { width, top, bottom } => (width, top, bottom),
+        };
+
+        let mut res = AbsolutePositionAndShape {
+            left: ((ViewPortWidth::FULL - *width) / 2.0).as_pixels(window),
+            right: ((ViewPortWidth::FULL - *width) / 2.0).as_pixels(window),
+            top: top.as_pixels(window),
+            bottom: bottom.as_pixels(window),
+            preview_size: None,
+        };
+
+        match preview.as_ref().map(|p| p.layout) {
+            Some(LayoutMode::Stacked(s)) => {
+                res.preview_size = Some(res.bottom + s.preview_size.as_pixels(window))
+            }
+            Some(LayoutMode::Telescope(s)) => {
+                res.preview_size = Some(res.right - s.preview_size.as_pixels(window))
+            }
+            Some(LayoutMode::Hidden) | None => (),
+        }
+        res
     }
-    fn max_width(&self, window: &Window) -> Pixels {
-        window.viewport_size().width * 0.9
-    }
-    fn left_extend(&self, window: &Window) -> Pixels {
-        self.left_extend.to_pixels(window.rem_size())
-    }
-    fn right_extend(&self, window: &Window) -> Pixels {
-        self.right_extend.to_pixels(window.rem_size())
-    }
-    fn top_extend(&self, window: &Window) -> Pixels {
-        self.top_extend.to_pixels(window.rem_size())
-    }
-    fn bottom_extend(&self, window: &Window) -> Pixels {
-        self.bottom_extend.to_pixels(window.rem_size())
-    }
-    fn min_height(&self, window: &mut Window) -> Pixels {
-        self.min_height.to_pixels(window.rem_size())
-    }
-    fn max_height(&self, window: &mut Window) -> Pixels {
-        let max_based_on_viewport = window.viewport_size().height * 0.8;
-        self.max_height
-            .map(|h| h.to_pixels(window.rem_size()))
-            .unwrap_or(max_based_on_viewport)
-            .min(max_based_on_viewport)
+
+    fn apply_size(&self, div: Div, window: &Window) -> Div {
+        match self {
+            Shape::Resizing(pos) => div
+                .left(pos.left)
+                .right(pos.right)
+                .top(pos.top)
+                .bottom(pos.bottom),
+            Shape::HorizontallyCentered { width, top, bottom } => div
+                .w(width.as_pixels(window))
+                .top(top.as_pixels(window))
+                .bottom(bottom.as_pixels(window)),
+        }
     }
 }
 
+// impl Shape {
+//     fn min_width(&self, window: &Window) -> Pixels {
+//         self.min_width.to_pixels(window.rem_size())
+//     }
+//     fn max_width(&self, window: &Window) -> Pixels {
+//         window.viewport_size().width * 0.9
+//     }
+//     fn left_extend(&self, window: &Window) -> Pixels {
+//         self.left_extend.to_pixels(window.rem_size())
+//     }
+//     fn right_extend(&self, window: &Window) -> Pixels {
+//         self.right_extend.to_pixels(window.rem_size())
+//     }
+//     fn top_extend(&self, window: &Window) -> Pixels {
+//         self.top_extend.to_pixels(window.rem_size())
+//     }
+//     fn bottom_extend(&self, window: &Window) -> Pixels {
+//         self.bottom_extend.to_pixels(window.rem_size())
+//     }
+//     fn min_height(&self, window: &mut Window) -> Pixels {
+//         self.min_height.to_pixels(window.rem_size())
+//     }
+//     fn max_height(&self, window: &mut Window) -> Pixels {
+//         let max_based_on_viewport = window.viewport_size().height * 0.8;
+//         self.max_height
+//             .map(|h| h.to_pixels(window.rem_size()))
+//             .unwrap_or(max_based_on_viewport)
+//             .min(max_based_on_viewport)
+//     }
+// }
+
 impl Default for Shape {
     fn default() -> Self {
-        Self {
-            base_width: None,
-            min_width: Rems(10.0),
-            left_extend: Rems::ZERO,
-            right_extend: Rems::ZERO,
-
-            base_height: None,
-            min_height: Rems(10.0),
-            max_height: Some(rems(24.)),
-            top_extend: Rems::ZERO,
-            bottom_extend: Rems::ZERO,
+        Self::HorizontallyCentered {
+            width: ViewPortWidth(0.3),
+            top: ViewPortHeight(0.2),
+            bottom: ViewPortHeight(0.8),
         }
     }
 }
@@ -487,31 +572,10 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn width(mut self, width: impl Into<gpui::Rems>) -> Self {
-        self.shape.base_width = Some(width.into());
+    pub fn width(self, _width: impl Into<gpui::Rems>) -> Self {
+        // TODO!(yara) remove
         self
-    }
-
-    fn current_width(&self, window: &Window) -> Pixels {
-        // TODO!(yara) this probably makes no sense. Get some context on
-        // what picker_bounds are for
-        self.picker_bounds
-            .get()
-            .map(|bounds| bounds.size.width)
-            .or_else(|| {
-                self.shape
-                    .base_width
-                    .map(|w| w.to_pixels(window.rem_size()))
-            })
-            // TODO!(yara) get widest item width here
-            .unwrap_or_else(|| self.shape.min_width(window))
-    }
-
-    fn current_height(&self, window: &Window) -> Pixels {
-        self.shape
-            .base_height
-            .map(|h| h.to_pixels(window.rem_size()))
-            .unwrap_or(px(300.0)) // TODO!(yara) placeholder gotta get the actual height...
+        // self.shape.base_width = Some(width.into());
     }
 
     pub fn widest_item(mut self, ix: Option<usize>) -> Self {
@@ -519,8 +583,9 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn max_height(mut self, max_height: Option<Rems>) -> Self {
-        self.shape.max_height = max_height;
+    pub fn max_height(self, _max_height: Option<Rems>) -> Self {
+        // TODO!(yara) do we want this?
+        // self.shape.max_height = max_height;
         self
     }
 
@@ -778,12 +843,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn to_multibuffer(
-        &mut self,
-        _: &ToMultiBuffer,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
+    fn to_multibuffer(&mut self, _: &ToMultiBuffer, _window: &mut Window, _cx: &mut Context<Self>) {
         // TODO!(yara) open the previewed buffer in a multibuffer.
     }
 
@@ -1015,11 +1075,12 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sizing_behavior = if self.shape.max_height.is_some() {
-            ListSizingBehavior::Infer
-        } else {
-            ListSizingBehavior::Auto
-        };
+        let sizing_behavior = ListSizingBehavior::Auto;
+        // let sizing_behavior = if self.shape.max_height.is_some() {
+        //     ListSizingBehavior::Infer
+        // } else {
+        //     ListSizingBehavior::Auto
+        // };
 
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(

@@ -1,6 +1,8 @@
 use gpui::{Global, px};
 use ui::prelude::*;
 
+use crate::{ViewPortHeight, ViewPortWidth};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {
     Hidden,
@@ -16,6 +18,7 @@ impl Default for LayoutMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StackedLayout {
+    pub(crate) preview_size: ViewPortHeight,
     pub(crate) results_height: Pixels,
     pub(crate) preview_height: Pixels,
 }
@@ -32,6 +35,7 @@ impl StackedLayout {
         Self {
             results_height: px(Self::DEFAULT_RESULTS_HEIGHT),
             preview_height: px(Self::DEFAULT_PREVIEW_HEIGHT),
+            preview_size: todo!(),
         }
     }
 }
@@ -44,6 +48,7 @@ impl Default for StackedLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TelescopeLayout {
+    pub(crate) preview_size: ViewPortWidth,
     pub(crate) content_height: Pixels,
     pub(crate) preview_width: Pixels,
 }
@@ -63,6 +68,7 @@ impl TelescopeLayout {
         Self {
             content_height: px(Self::DEFAULT_CONTENT_HEIGHT),
             preview_width: px(Self::DEFAULT_PREVIEW_WIDTH),
+            preview_size: todo!(),
         }
     }
 }
