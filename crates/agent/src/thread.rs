@@ -1140,6 +1140,12 @@ pub struct Thread {
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
     /// the start of each request.
     current_request_token_usage: TokenUsage,
+    /// Telemetry captured when a context compaction starts but not yet emitted.
+    /// On success we defer emission until the next completion request reports
+    /// usage, so we can record an accurate post-compaction context size; on
+    /// failure or cancellation it is emitted immediately. See
+    /// [`CompactionTelemetry`].
+    pending_compaction_telemetry: Option<CompactionTelemetry>,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
@@ -1273,6 +1279,7 @@ impl Thread {
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             current_request_token_usage: TokenUsage::default(),
+            pending_compaction_telemetry: None,
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
                 cx.foreground_executor()
@@ -1632,6 +1639,7 @@ impl Thread {
             request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
             current_request_token_usage: TokenUsage::default(),
+            pending_compaction_telemetry: None,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
@@ -2225,6 +2233,10 @@ impl Thread {
             (model, request)
         });
 
+        if compaction.is_some() {
+            self.pending_compaction_telemetry = self.build_compaction_telemetry("manual", cx);
+        }
+
         self.clear_summary();
         cx.notify();
 
@@ -2252,13 +2264,27 @@ impl Thread {
                 // If we were cancelled, `cancel()` already took `running_turn`
                 // (possibly for a new turn), so leave it alone.
                 if *cancellation_rx.borrow() {
+                    this.update(cx, |this, _| {
+                        this.emit_compaction_telemetry_outcome("canceled", None)
+                    })
+                    .log_err();
                     return;
                 }
 
                 match result {
+                    // On success, the telemetry event is deferred until the next
+                    // completion reports usage (see `handle_completion_event`),
+                    // so we leave `pending_compaction_telemetry` in place here.
                     Ok(_) => event_stream.send_stop(acp::StopReason::EndTurn),
                     Err(error) => {
                         log::error!("Manual compaction failed: {:?}", error);
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome(
+                                "failed",
+                                Some(error.to_string()),
+                            )
+                        })
+                        .log_err();
                         event_stream.send_error(error);
                     }
                 }
@@ -2395,10 +2421,20 @@ impl Thread {
                 )
                 .await
                 {
+                    // On success the telemetry event is deferred until the
+                    // completion below reports usage, so we can record an
+                    // accurate post-compaction context size (see
+                    // `handle_completion_event`).
                     Ok(ControlFlow::Continue(())) => {}
-                    Ok(ControlFlow::Break(())) => return Ok(()),
+                    Ok(ControlFlow::Break(())) => {
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome("canceled", None)
+                        })?;
+                        return Ok(());
+                    }
                     Err(error) => {
                         log::error!("Compaction failed: {}", error);
+                        let error_message = error.to_string();
                         match error.downcast::<LanguageModelCompletionError>() {
                             Ok(error) => {
                                 match Self::retry_completion_error(
@@ -2409,13 +2445,44 @@ impl Thread {
                                     attempt,
                                     cx,
                                 )
-                                .await?
+                                .await
                                 {
-                                    ControlFlow::Break(()) => return Ok(()),
-                                    ControlFlow::Continue(()) => continue,
+                                    Ok(ControlFlow::Break(())) => {
+                                        this.update(cx, |this, _| {
+                                            this.emit_compaction_telemetry_outcome("canceled", None)
+                                        })?;
+                                        return Ok(());
+                                    }
+                                    Ok(ControlFlow::Continue(())) => {
+                                        this.update(cx, |this, _| {
+                                            if let Some(telemetry) =
+                                                this.pending_compaction_telemetry.as_mut()
+                                            {
+                                                telemetry.retries += 1;
+                                            }
+                                        })?;
+                                        continue;
+                                    }
+                                    Err(retry_error) => {
+                                        this.update(cx, |this, _| {
+                                            this.emit_compaction_telemetry_outcome(
+                                                "failed",
+                                                Some(error_message),
+                                            )
+                                        })?;
+                                        return Err(retry_error);
+                                    }
                                 }
                             }
-                            Err(error) => return Err(error),
+                            Err(error) => {
+                                this.update(cx, |this, _| {
+                                    this.emit_compaction_telemetry_outcome(
+                                        "failed",
+                                        Some(error_message),
+                                    )
+                                })?;
+                                return Err(error);
+                            }
                         }
                     }
                 }
@@ -2662,6 +2729,11 @@ impl Thread {
             let model = this.model.clone()?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
+            // Preserve telemetry across retries so the retry count keeps
+            // accumulating rather than resetting on each attempt.
+            if this.pending_compaction_telemetry.is_none() {
+                this.pending_compaction_telemetry = this.build_compaction_telemetry("auto", cx);
+            }
             Some((model, request, insertion_ix))
         })?
         else {
@@ -2932,6 +3004,12 @@ impl Thread {
                     cache_creation_input_tokens = usage.cache_creation_input_tokens,
                     cache_read_input_tokens = usage.cache_read_input_tokens,
                 );
+                // A successful compaction defers its telemetry until the first
+                // completion that follows it, so `tokens_after` reflects the
+                // real post-compaction context size.
+                if let Some(telemetry) = self.pending_compaction_telemetry.take() {
+                    telemetry.emit("succeeded", None, Some(total_input_tokens(usage)));
+                }
                 self.update_token_usage(usage, cx);
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
@@ -3772,6 +3850,48 @@ impl Thread {
             .rposition(|message| matches!(&**message, Message::Compaction(_)))
     }
 
+    /// Captures the data for an `"Agent Compaction Completed"` telemetry event
+    /// at the moment a compaction starts. Returns `None` if there's no model.
+    fn build_compaction_telemetry(
+        &self,
+        trigger: &'static str,
+        cx: &App,
+    ) -> Option<CompactionTelemetry> {
+        let model = self.model.as_ref()?;
+        let auto_compact = AgentSettings::get_global(cx).auto_compact;
+        let max_tokens = model.max_token_count();
+        let tokens_before = self
+            .latest_request_token_usage()
+            .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
+        Some(CompactionTelemetry {
+            trigger,
+            thread_id: self.id.to_string(),
+            parent_thread_id: self.parent_thread_id().map(|id| id.to_string()),
+            prompt_id: self.prompt_id.to_string(),
+            model: model.telemetry_id(),
+            model_provider: model.provider_id().to_string(),
+            thinking_effort: self.thinking_effort.clone(),
+            max_tokens,
+            tokens_before,
+            auto_compact_enabled: auto_compact.enabled,
+            auto_compact_threshold: auto_compact_threshold_display(auto_compact.threshold),
+            auto_compact_threshold_tokens: auto_compact_threshold_token_count(
+                auto_compact.threshold,
+                max_tokens,
+            ),
+            retries: 0,
+        })
+    }
+
+    /// Emits a pending compaction telemetry event for a non-success outcome
+    /// (`"failed"` or `"canceled"`), with no post-compaction token count. A
+    /// no-op if no compaction telemetry is pending.
+    fn emit_compaction_telemetry_outcome(&mut self, status: &'static str, error: Option<String>) {
+        if let Some(telemetry) = self.pending_compaction_telemetry.take() {
+            telemetry.emit(status, error, None);
+        }
+    }
+
     fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         if !auto_compact.enabled {
@@ -4040,6 +4160,70 @@ fn auto_compact_threshold_token_count(
         AutoCompactThreshold::TokensRemaining(tokens) => {
             max_token_count.saturating_sub(tokens).saturating_add(1)
         }
+    }
+}
+
+/// Renders the configured auto-compaction threshold back into the same string
+/// form a user would enter in settings (e.g. `"90%"`, `"120000"`, `"-20000"`),
+/// for use in telemetry.
+fn auto_compact_threshold_display(threshold: AutoCompactThreshold) -> String {
+    match threshold {
+        AutoCompactThreshold::Percentage(percent) => format!("{}%", percent * 100.0),
+        AutoCompactThreshold::TokensUsed(tokens) => tokens.to_string(),
+        AutoCompactThreshold::TokensRemaining(tokens) => format!("-{tokens}"),
+    }
+}
+
+/// Snapshot of the data needed to report an `"Agent Compaction Completed"`
+/// telemetry event, captured when a compaction starts.
+///
+/// The event is emitted once per logical compaction (retries are counted in
+/// `retries` rather than producing separate events). On success the event is
+/// deferred until the next completion request reports usage so that
+/// `tokens_after` reflects the real post-compaction context size; on failure or
+/// cancellation the event is emitted immediately with no `tokens_after`.
+struct CompactionTelemetry {
+    /// `"auto"` for threshold-triggered compaction, `"manual"` for `/compact`.
+    trigger: &'static str,
+    thread_id: String,
+    parent_thread_id: Option<String>,
+    prompt_id: String,
+    model: String,
+    model_provider: String,
+    thinking_effort: Option<String>,
+    /// The model's context window size.
+    max_tokens: u64,
+    /// Tokens in the context window immediately before compaction.
+    tokens_before: Option<u64>,
+    auto_compact_enabled: bool,
+    auto_compact_threshold: String,
+    auto_compact_threshold_tokens: u64,
+    /// Number of times the compaction request was retried before the final
+    /// outcome.
+    retries: u32,
+}
+
+impl CompactionTelemetry {
+    fn emit(self, status: &'static str, error: Option<String>, tokens_after: Option<u64>) {
+        telemetry::event!(
+            "Agent Compaction Completed",
+            trigger = self.trigger,
+            status = status,
+            error = error,
+            thread_id = self.thread_id,
+            parent_thread_id = self.parent_thread_id,
+            prompt_id = self.prompt_id,
+            model = self.model,
+            model_provider = self.model_provider,
+            thinking_effort = self.thinking_effort,
+            max_tokens = self.max_tokens,
+            tokens_before = self.tokens_before,
+            tokens_after = tokens_after,
+            auto_compact_enabled = self.auto_compact_enabled,
+            auto_compact_threshold = self.auto_compact_threshold,
+            auto_compact_threshold_tokens = self.auto_compact_threshold_tokens,
+            retries = self.retries,
+        );
     }
 }
 
