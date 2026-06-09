@@ -8,17 +8,18 @@ use gpui_platform::application;
 
 /// A small AI chat client demonstrating [`Styled::glass`].
 ///
-/// The window uses a system glass background, so the wallpaper shows through
-/// the translucent sidebar. Following Apple's Liquid Glass guidance, only the
-/// navigation layer (the sidebar) is translucent; the chat surface is opaque
-/// so the content stays crisp. The system titlebar is hidden
-/// (`appears_transparent`), so the glass sidebar extends to the top of the
-/// window behind the traffic-light buttons.
+/// The window uses a system glass background, so the wallpaper shows through.
+/// The root element is the glass surface (`.glass(true)`): it has a translucent
+/// fill and glass mode is inherited by its children, so the sidebar's rounded
+/// selected/hover rows only blend RGB and preserve the surface alpha — their
+/// anti-aliased corners stay clean instead of punching through the glass. The
+/// system titlebar is hidden (`appears_transparent`), so the glass surface
+/// extends to the top of the window behind the traffic-light buttons.
 ///
-/// The sidebar is marked `.glass()`: its rounded selected/hover rows only blend
-/// RGB and preserve the sidebar's alpha, so their anti-aliased corners stay
-/// clean instead of punching through the glass. Remove `.glass()` to see those
-/// rounded edges turn jagged against the wallpaper behind the window.
+/// Following Apple's Liquid Glass guidance the chat panel stays opaque so its
+/// content reads crisply. It opts out of the inherited glass mode with
+/// `.glass(false)`, so its white fill and border blend normally; without it the
+/// border's alpha would be replaced by the glass backdrop's and wash out.
 struct ChatApp {
     selected_item: usize,
 }
