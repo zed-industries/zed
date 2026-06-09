@@ -7,12 +7,16 @@ use crate::{
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
-use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
+use acp_thread::{
+    ContentBlock, Elicitation, ElicitationEntryId, ElicitationStatus, PlanEntry,
+    SandboxAuthorizationDetails,
+};
 use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -34,6 +38,9 @@ use ui::{
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
+use super::elicitation::{
+    ElicitationCard, ElicitationCardHandlers, ElicitationCardStyle, ElicitationFormState,
+};
 use super::*;
 
 #[derive(Default)]
@@ -563,6 +570,7 @@ pub struct ThreadView {
     pub model_selector: Option<Entity<ModelSelectorPopover>>,
     pub profile_selector: Option<Entity<ProfileSelector>>,
     pub permission_dropdown_handle: PopoverMenuHandle<ContextMenu>,
+    pub elicitation_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     pub thread_retry_status: Option<RetryStatus>,
     pub(super) thread_error: Option<ThreadError>,
     pub thread_error_markdown: Option<Entity<Markdown>>,
@@ -599,6 +607,7 @@ pub struct ThreadView {
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
     pub(crate) permission_selections: HashMap<acp::ToolCallId, PermissionSelection>,
+    elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
@@ -952,6 +961,7 @@ impl ThreadView {
             resumed_without_history,
             _subscriptions: subscriptions,
             permission_dropdown_handle: PopoverMenuHandle::default(),
+            elicitation_dropdown_handle: PopoverMenuHandle::default(),
             thread_retry_status: None,
             thread_error: None,
             thread_error_markdown: None,
@@ -981,6 +991,7 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
+            elicitation_form_states: HashMap::default(),
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
@@ -1005,6 +1016,7 @@ impl ThreadView {
 
         this.sync_generating_indicator(cx);
         this.sync_editor_mode_for_empty_state(cx);
+        this.sync_existing_elicitation_states(window, cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
 
@@ -2239,15 +2251,178 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(entry: &AgentThreadEntry) -> bool {
-        if let AgentThreadEntry::ToolCall(tool_call) = entry {
-            matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation { .. }
-            )
-        } else {
-            false
+    fn is_waiting_for_confirmation(entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
+        match entry {
+            AgentThreadEntry::ToolCall(tool_call) => {
+                matches!(
+                    tool_call.status,
+                    ToolCallStatus::WaitingForConfirmation { .. }
+                )
+            }
+            AgentThreadEntry::Elicitation(elicitation) => {
+                cx.has_flag::<AcpBetaFeatureFlag>()
+                    && matches!(elicitation.status, ElicitationStatus::Pending { .. })
+            }
+            _ => false,
         }
+    }
+
+    pub fn sync_elicitation_state_for_entry(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            let elicitation_id = self.thread.read(cx).entries().get(index).and_then(|entry| {
+                if let AgentThreadEntry::Elicitation(elicitation) = entry {
+                    Some(elicitation.id.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(elicitation_id) = elicitation_id {
+                self.elicitation_form_states.remove(&elicitation_id);
+            }
+            return;
+        }
+
+        let entry = self.thread.read(cx).entries().get(index).and_then(|entry| {
+            let AgentThreadEntry::Elicitation(elicitation) = entry else {
+                return None;
+            };
+            Some((
+                elicitation.id.clone(),
+                matches!(elicitation.status, ElicitationStatus::Pending { .. }),
+                match &elicitation.request.mode {
+                    acp::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    _ => None,
+                },
+            ))
+        });
+
+        let Some((id, is_pending, schema)) = entry else {
+            return;
+        };
+
+        if is_pending
+            && let Some(schema) = schema
+            && !self.elicitation_form_states.contains_key(&id)
+        {
+            self.elicitation_form_states
+                .insert(id, ElicitationFormState::new(&schema, window, cx));
+        } else if !is_pending {
+            self.elicitation_form_states.remove(&id);
+        }
+    }
+
+    fn sync_existing_elicitation_states(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.thread.read(cx).entries().len();
+        for index in 0..entry_count {
+            self.sync_elicitation_state_for_entry(index, window, cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_elicitation_form_state(&self, id: &ElicitationEntryId) -> bool {
+        self.elicitation_form_states.contains_key(id)
+    }
+
+    fn submit_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        let mode = self
+            .thread
+            .read(cx)
+            .elicitation(&elicitation_id)
+            .map(|(_, elicitation)| elicitation.request.mode.clone());
+
+        let Some(mode) = mode else {
+            return;
+        };
+
+        let response = match mode {
+            acp::ElicitationMode::Form(mode) => {
+                let Some(state) = self.elicitation_form_states.get(&elicitation_id) else {
+                    return;
+                };
+                match state.collect(&mode.requested_schema, cx) {
+                    Ok(content) => {
+                        acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                            acp::ElicitationAcceptAction::new().content(content),
+                        ))
+                    }
+                    Err(error) => {
+                        if let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) {
+                            state.set_error(error);
+                        }
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+            acp::ElicitationMode::Url(_) => acp::CreateElicitationResponse::new(
+                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+            ),
+            _ => return,
+        };
+
+        self.respond_to_elicitation(elicitation_id, response, cx);
+    }
+
+    fn decline_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        self.respond_to_elicitation(
+            elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+            cx,
+        );
+    }
+
+    fn cancel_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        self.respond_to_elicitation(
+            elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+            cx,
+        );
+    }
+
+    fn respond_to_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let session_id = self.session_id.clone();
+        self.elicitation_form_states.remove(&elicitation_id);
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.respond_to_elicitation(session_id, elicitation_id, response, cx);
+        });
+        cx.notify();
     }
 
     fn handle_authorize_tool_call(
@@ -5280,7 +5455,7 @@ impl ThreadView {
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
                         .last()
-                        .is_some_and(|entry| Self::is_waiting_for_confirmation(entry));
+                        .is_some_and(|entry| Self::is_waiting_for_confirmation(entry, cx));
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -5579,6 +5754,24 @@ impl ThreadView {
                     tool_call.into_any()
                 }
             }
+            AgentThreadEntry::Elicitation(elicitation) => {
+                if cx.has_flag::<AcpBetaFeatureFlag>() {
+                    let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
+
+                    if let Some(handle) = self
+                        .entry_view_state
+                        .read(cx)
+                        .entry(entry_ix)
+                        .and_then(|entry| entry.focus_handle(cx))
+                    {
+                        elicitation.track_focus(&handle).into_any()
+                    } else {
+                        elicitation.into_any()
+                    }
+                } else {
+                    Empty.into_any()
+                }
+            }
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
@@ -5652,7 +5845,7 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = Self::is_waiting_for_confirmation(entry);
+        let needs_confirmation = Self::is_waiting_for_confirmation(entry, cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
@@ -5694,6 +5887,106 @@ impl ThreadView {
         } else {
             primary
         }
+    }
+
+    fn render_elicitation(
+        &self,
+        entry_ix: usize,
+        elicitation: &Elicitation,
+        _window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        ElicitationCard::new(
+            entry_ix,
+            elicitation,
+            self.elicitation_form_states.get(&elicitation.id),
+            self.elicitation_dropdown_handle.clone(),
+            ElicitationCardStyle::new(
+                self.tool_card_border_color(cx),
+                self.tool_card_header_bg(cx),
+                cx.theme().colors().editor_background,
+                self.tool_name_font_size(),
+            ),
+            self.elicitation_card_handlers(cx),
+        )
+        .render()
+    }
+
+    fn elicitation_card_handlers(&self, cx: &Context<Self>) -> ElicitationCardHandlers {
+        let view = cx.entity().downgrade();
+
+        ElicitationCardHandlers::new(
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.submit_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.decline_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.cancel_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, url, window, cx| {
+                    cx.open_url(&url);
+                    view.update(cx, |this, cx| {
+                        this.submit_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, field_name, value, cx| {
+                    view.update(cx, |this, cx| {
+                        if let Some(form) = this.elicitation_form_states.get_mut(&elicitation_id) {
+                            form.set_boolean(&field_name, value);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, field_name, value, cx| {
+                    view.update(cx, |this, cx| {
+                        if let Some(form) = this.elicitation_form_states.get_mut(&elicitation_id) {
+                            form.set_single_select(&field_name, value);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            },
+            move |elicitation_id, field_name, value, selected, cx| {
+                view.update(cx, |this, cx| {
+                    if let Some(form) = this.elicitation_form_states.get_mut(&elicitation_id) {
+                        form.set_multi_select(&field_name, value, selected);
+                        cx.notify();
+                    }
+                })
+                .log_err();
+            },
+        )
     }
 
     fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
@@ -6653,6 +6946,7 @@ impl ThreadView {
                     }
                 }
                 AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}

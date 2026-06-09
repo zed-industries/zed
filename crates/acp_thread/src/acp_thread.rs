@@ -248,8 +248,252 @@ pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
+    Elicitation(Elicitation),
     CompletedPlan(Vec<PlanEntry>),
     ContextCompaction(ContextCompaction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ElicitationEntryId(pub Arc<str>);
+
+#[derive(Debug)]
+pub struct Elicitation {
+    pub id: ElicitationEntryId,
+    pub request: acp::CreateElicitationRequest,
+    pub status: ElicitationStatus,
+}
+
+#[derive(Debug)]
+pub enum ElicitationStatus {
+    Pending {
+        respond_tx: oneshot::Sender<acp::CreateElicitationResponse>,
+    },
+    Accepted,
+    Declined,
+    Canceled,
+    Completed,
+}
+
+#[derive(Clone, Debug)]
+pub enum ElicitationStoreEvent {
+    ElicitationRequested(ElicitationEntryId),
+    ElicitationResponded(ElicitationEntryId),
+    ElicitationUpdated(ElicitationEntryId),
+}
+
+#[derive(Default)]
+pub struct ElicitationStore {
+    elicitations: Vec<Elicitation>,
+}
+
+impl EventEmitter<ElicitationStoreEvent> for ElicitationStore {}
+
+impl ElicitationStore {
+    pub fn elicitations(&self) -> &[Elicitation] {
+        &self.elicitations
+    }
+
+    pub fn request_elicitation(
+        &mut self,
+        request: acp::CreateElicitationRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return Err(
+                acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
+            );
+        }
+
+        match request.scope() {
+            acp::ElicitationScope::Request(_) => {}
+            acp::ElicitationScope::Session(_) => {
+                return Err(acp::Error::invalid_params()
+                    .data("session-scoped elicitations must be routed through a session thread"));
+            }
+            _ => {
+                return Err(acp::Error::invalid_params().data("unknown elicitation scope"));
+            }
+        }
+
+        validate_elicitation_request(&request)?;
+
+        let (respond_tx, rx) = oneshot::channel();
+        let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
+        self.elicitations.push(Elicitation {
+            id: id.clone(),
+            request,
+            status: ElicitationStatus::Pending { respond_tx },
+        });
+        cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
+        cx.notify();
+
+        Ok(cx.spawn(async move |this, cx| {
+            let response = rx.await.unwrap_or_else(|oneshot::Canceled| {
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
+            });
+            this.update(cx, |_this, cx| {
+                cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
+                cx.notify();
+            })
+            .ok();
+            response
+        }))
+    }
+
+    pub fn respond_to_elicitation(
+        &mut self,
+        id: &ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, elicitation)) = self.elicitation_mut(id) else {
+            return;
+        };
+
+        if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
+            return;
+        }
+        let ElicitationStatus::Pending { respond_tx } = mem::replace(
+            &mut elicitation.status,
+            elicitation_status_for_response(&response),
+        ) else {
+            return;
+        };
+        respond_tx.send(response).ok();
+
+        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+        cx.notify();
+    }
+
+    pub fn complete_url_elicitation(
+        &mut self,
+        elicitation_id: &acp::ElicitationId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, elicitation)) = self.elicitation_mut_for_url_id(elicitation_id) else {
+            return;
+        };
+        let entry_id = elicitation.id.clone();
+
+        let previous_status = mem::replace(&mut elicitation.status, ElicitationStatus::Completed);
+        match previous_status {
+            ElicitationStatus::Pending { respond_tx } => {
+                respond_tx
+                    .send(acp::CreateElicitationResponse::new(
+                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+                    ))
+                    .ok();
+            }
+            ElicitationStatus::Accepted => {}
+            ElicitationStatus::Completed => return,
+            previous_status @ (ElicitationStatus::Declined | ElicitationStatus::Canceled) => {
+                elicitation.status = previous_status;
+                return;
+            }
+        }
+
+        cx.emit(ElicitationStoreEvent::ElicitationUpdated(entry_id));
+        cx.notify();
+    }
+
+    pub fn cancel_all(&mut self, cx: &mut Context<Self>) {
+        let canceled_ids = self.cancel_pending(|_| true);
+        for id in canceled_ids {
+            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        }
+        cx.notify();
+    }
+
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        let canceled_ids = self.cancel_pending(|_| true);
+        self.elicitations.clear();
+        for id in canceled_ids {
+            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        }
+        cx.notify();
+    }
+
+    pub fn cancel_request(&mut self, request_id: &acp::RequestId, cx: &mut Context<Self>) {
+        let canceled_ids = self.cancel_pending(|elicitation| {
+            matches!(
+                elicitation.request.scope(),
+                acp::ElicitationScope::Request(scope) if &scope.request_id == request_id
+            )
+        });
+        for id in canceled_ids {
+            cx.emit(ElicitationStoreEvent::ElicitationUpdated(id));
+        }
+        cx.notify();
+    }
+
+    pub fn elicitation(&self, id: &ElicitationEntryId) -> Option<(usize, &Elicitation)> {
+        self.elicitations
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, elicitation)| {
+                (&elicitation.id == id).then_some((index, elicitation))
+            })
+    }
+
+    fn elicitation_mut(&mut self, id: &ElicitationEntryId) -> Option<(usize, &mut Elicitation)> {
+        self.elicitations
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, elicitation)| {
+                (&elicitation.id == id).then_some((index, elicitation))
+            })
+    }
+
+    fn elicitation_mut_for_url_id(
+        &mut self,
+        elicitation_id: &acp::ElicitationId,
+    ) -> Option<(usize, &mut Elicitation)> {
+        self.elicitations
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, elicitation)| {
+                if let acp::ElicitationMode::Url(mode) = &elicitation.request.mode
+                    && &mode.elicitation_id == elicitation_id
+                {
+                    Some((index, elicitation))
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn cancel_pending(
+        &mut self,
+        mut should_cancel: impl FnMut(&Elicitation) -> bool,
+    ) -> Vec<ElicitationEntryId> {
+        let mut canceled_ids = Vec::new();
+        for elicitation in &mut self.elicitations {
+            if should_cancel(elicitation) {
+                match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
+                    ElicitationStatus::Pending { respond_tx } => {
+                        respond_tx
+                            .send(acp::CreateElicitationResponse::new(
+                                acp::ElicitationAction::Cancel,
+                            ))
+                            .ok();
+                        canceled_ids.push(elicitation.id.clone());
+                    }
+                    ElicitationStatus::Accepted
+                        if matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
+                    {
+                        canceled_ids.push(elicitation.id.clone());
+                    }
+                    previous_status => {
+                        elicitation.status = previous_status;
+                    }
+                }
+            }
+        }
+        canceled_ids
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +522,7 @@ impl AgentThreadEntry {
             Self::UserMessage(message) => message.indented,
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
+            Self::Elicitation(_) => false,
             Self::CompletedPlan(_) => false,
             Self::ContextCompaction(_) => false,
         }
@@ -288,6 +533,9 @@ impl AgentThreadEntry {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
+            Self::Elicitation(elicitation) => {
+                format!("## Input Requested\n\n{}\n\n", elicitation.request.message)
+            }
             Self::CompletedPlan(entries) => {
                 let mut md = String::from("## Plan\n\n");
                 for entry in entries {
@@ -750,6 +998,24 @@ impl Display for ToolCallStatus {
             }
         )
     }
+}
+
+fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) -> ElicitationStatus {
+    match &response.action {
+        acp::ElicitationAction::Accept(_) => ElicitationStatus::Accepted,
+        acp::ElicitationAction::Decline => ElicitationStatus::Declined,
+        acp::ElicitationAction::Cancel => ElicitationStatus::Canceled,
+        _ => ElicitationStatus::Canceled,
+    }
+}
+
+fn validate_elicitation_request(request: &acp::CreateElicitationRequest) -> Result<(), acp::Error> {
+    if let acp::ElicitationMode::Url(mode) = &request.mode {
+        url::Url::parse(&mode.url)
+            .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1284,6 +1550,8 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequested(acp::ToolCallId),
     ToolAuthorizationReceived(acp::ToolCallId),
+    ElicitationRequested(ElicitationEntryId),
+    ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
     Stopped(acp::StopReason),
@@ -1570,7 +1838,12 @@ impl AcpThread {
                     status: ToolCallStatus::WaitingForConfirmation { .. },
                     ..
                 }) => return true,
+                AgentThreadEntry::Elicitation(Elicitation {
+                    status: ElicitationStatus::Pending { .. },
+                    ..
+                }) => return true,
                 AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
@@ -1600,6 +1873,7 @@ impl AcpThread {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
@@ -1620,6 +1894,7 @@ impl AcpThread {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
@@ -1635,7 +1910,8 @@ impl AcpThread {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
                 | AgentThreadEntry::CompletedPlan(..)
-                | AgentThreadEntry::ContextCompaction(_) => continue,
+                | AgentThreadEntry::ContextCompaction(_)
+                | AgentThreadEntry::Elicitation(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
             }
         }
@@ -2421,6 +2697,166 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
+    pub fn request_elicitation(
+        &mut self,
+        request: acp::CreateElicitationRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return Err(
+                acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
+            );
+        }
+
+        match request.scope() {
+            acp::ElicitationScope::Session(scope) => {
+                if scope.session_id != self.session_id {
+                    return Err(acp::Error::invalid_params().data(format!(
+                        "elicitation targets session {}, but this thread is {}",
+                        scope.session_id, self.session_id
+                    )));
+                }
+            }
+            acp::ElicitationScope::Request(_) => {
+                return Err(acp::Error::invalid_params()
+                    .data("request-scoped elicitations must be routed through the connection"));
+            }
+            _ => {
+                return Err(acp::Error::invalid_params().data("unknown elicitation scope"));
+            }
+        }
+
+        validate_elicitation_request(&request)?;
+
+        let (respond_tx, rx) = oneshot::channel();
+        let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
+        self.push_entry(
+            AgentThreadEntry::Elicitation(Elicitation {
+                id: id.clone(),
+                request,
+                status: ElicitationStatus::Pending { respond_tx },
+            }),
+            cx,
+        );
+        cx.emit(AcpThreadEvent::ElicitationRequested(id.clone()));
+
+        Ok(cx.spawn(async move |this, cx| {
+            let response = rx.await.unwrap_or_else(|oneshot::Canceled| {
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
+            });
+            this.update(cx, |_this, cx| {
+                cx.emit(AcpThreadEvent::ElicitationResponded(id))
+            })
+            .ok();
+            response
+        }))
+    }
+
+    pub fn respond_to_elicitation(
+        &mut self,
+        id: &ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((ix, elicitation)) = self.elicitation_mut(id) else {
+            return;
+        };
+
+        if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
+            return;
+        }
+        let ElicitationStatus::Pending { respond_tx } = mem::replace(
+            &mut elicitation.status,
+            elicitation_status_for_response(&response),
+        ) else {
+            return;
+        };
+        respond_tx.send(response).ok();
+
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+    }
+
+    pub fn complete_url_elicitation(
+        &mut self,
+        elicitation_id: &acp::ElicitationId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((ix, elicitation)) = self.elicitation_mut_for_url_id(elicitation_id) else {
+            return;
+        };
+
+        let previous_status = mem::replace(&mut elicitation.status, ElicitationStatus::Completed);
+        match previous_status {
+            ElicitationStatus::Pending { respond_tx } => {
+                respond_tx
+                    .send(acp::CreateElicitationResponse::new(
+                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+                    ))
+                    .ok();
+            }
+            ElicitationStatus::Accepted => {}
+            ElicitationStatus::Completed => return,
+            previous_status @ (ElicitationStatus::Declined | ElicitationStatus::Canceled) => {
+                elicitation.status = previous_status;
+                return;
+            }
+        }
+
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+    }
+
+    fn elicitation_mut(&mut self, id: &ElicitationEntryId) -> Option<(usize, &mut Elicitation)> {
+        self.entries
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, entry)| {
+                if let AgentThreadEntry::Elicitation(elicitation) = entry
+                    && &elicitation.id == id
+                {
+                    Some((index, elicitation))
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn elicitation_mut_for_url_id(
+        &mut self,
+        elicitation_id: &acp::ElicitationId,
+    ) -> Option<(usize, &mut Elicitation)> {
+        self.entries
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find_map(|(index, entry)| {
+                if let AgentThreadEntry::Elicitation(elicitation) = entry
+                    && let acp::ElicitationMode::Url(mode) = &elicitation.request.mode
+                    && &mode.elicitation_id == elicitation_id
+                {
+                    Some((index, elicitation))
+                } else {
+                    None
+                }
+            })
+    }
+
+    pub fn elicitation(&self, id: &ElicitationEntryId) -> Option<(usize, &Elicitation)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, entry)| {
+                if let AgentThreadEntry::Elicitation(elicitation) = entry
+                    && &elicitation.id == id
+                {
+                    Some((index, elicitation))
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
@@ -2627,6 +3063,7 @@ impl AcpThread {
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled {
                             this.mark_pending_tools_as_canceled();
+                            this.cancel_pending_elicitations(true, cx);
                         }
 
                         if !canceled {
@@ -2696,13 +3133,15 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+        self.mark_pending_tools_as_canceled();
+        let has_running_turn = self.running_turn.is_some();
+        self.cancel_pending_elicitations(has_running_turn, cx);
+
         let Some(turn) = self.running_turn.take() else {
             return Task::ready(());
         };
         self.connection.cancel(&self.session_id, cx);
-
-        Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
-        self.mark_pending_tools_as_canceled();
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
@@ -2720,6 +3159,38 @@ impl AcpThread {
 
                 if cancel {
                     call.status = ToolCallStatus::Canceled;
+                }
+            }
+        }
+    }
+
+    fn cancel_pending_elicitations(
+        &mut self,
+        cancel_accepted_url_elicitations: bool,
+        cx: &mut Context<Self>,
+    ) {
+        for (ix, entry) in self.entries.iter_mut().enumerate() {
+            let AgentThreadEntry::Elicitation(elicitation) = entry else {
+                continue;
+            };
+
+            match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
+                ElicitationStatus::Pending { respond_tx } => {
+                    respond_tx
+                        .send(acp::CreateElicitationResponse::new(
+                            acp::ElicitationAction::Cancel,
+                        ))
+                        .ok();
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                }
+                ElicitationStatus::Accepted
+                    if cancel_accepted_url_elicitations
+                        && matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
+                {
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                }
+                previous_status => {
+                    elicitation.status = previous_status;
                 }
             }
         }
@@ -3422,8 +3893,10 @@ fn markdown_for_raw_output(
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use feature_flags::FeatureFlag as _;
     use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
+    use gpui::UpdateGlobal as _;
     use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{AgentId, FakeFs, Fs};
@@ -3443,8 +3916,28 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
+            let mut settings_store = SettingsStore::test(cx);
+            settings_store.register_setting::<feature_flags::FeatureFlagsSettings>();
             cx.set_global(settings_store);
+        });
+    }
+
+    fn enable_acp_beta(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+    }
+
+    fn set_acp_beta_override(value: &str, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert(AcpBetaFeatureFlag::NAME.to_string(), value.to_string());
+                });
+            });
         });
     }
 
@@ -4915,6 +5408,796 @@ mod tests {
                 "}
             );
         });
+    }
+
+    async fn new_test_thread(cx: &mut TestAppContext) -> Entity<AcpThread> {
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        cx.update(|cx| {
+            connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+        })
+        .await
+        .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_elicitation_requires_acp_beta_flag(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(false, vec![]);
+        });
+        set_acp_beta_override("off", cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let result = thread.update(cx, |thread, cx| {
+            thread.request_elicitation(
+                acp::CreateElicitationRequest::new(
+                    acp::ElicitationFormMode::new(
+                        acp::ElicitationSessionScope::new(session_id),
+                        acp::ElicitationSchema::new().string("name", true),
+                    ),
+                    "Provide a name",
+                ),
+                cx,
+            )
+        });
+
+        assert!(result.is_err());
+        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_form_elicitation_accepts_response(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let tool_call_id = acp::ToolCallId::new("tool-1");
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id.clone())
+                                .tool_call_id(tool_call_id.clone()),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            let acp::ElicitationScope::Session(scope) = elicitation.request.scope() else {
+                panic!("expected session-scoped elicitation");
+            };
+            assert_eq!(scope.tool_call_id.as_ref(), Some(&tool_call_id));
+            elicitation.id.clone()
+        });
+
+        let expected_content = std::collections::BTreeMap::from([(
+            "name".to_string(),
+            acp::ElicitationContentValue::from("Ada"),
+        )]);
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new().content(expected_content.clone()),
+                )),
+                cx,
+            );
+        });
+
+        let response = response_task.await;
+        assert_eq!(
+            response.action,
+            acp::ElicitationAction::Accept(
+                acp::ElicitationAcceptAction::new().content(expected_content)
+            )
+        );
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_url_elicitation_can_be_completed(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            url_elicitation_id.clone(),
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let entry_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.complete_url_elicitation(&url_elicitation_id, cx);
+        });
+        assert!(matches!(
+            response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Completed));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_idle_cancel_preserves_accepted_url_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            url_elicitation_id.clone(),
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let entry_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel(cx).detach();
+        });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.complete_url_elicitation(&url_elicitation_id, cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Completed));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_accepted_url_elicitation_marks_canceled(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            url_elicitation_id.clone(),
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let entry_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.running_turn = Some(RunningTurn {
+                id: thread.turn_id + 1,
+                send_task: Task::ready(()),
+            });
+            thread.cancel(cx).detach();
+        });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.complete_url_elicitation(&url_elicitation_id, cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_request_scoped_elicitation_store_accepts_response(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+
+        let response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let elicitation_id = store.read_with(cx, |store, _| {
+            let [elicitation] = store.elicitations() else {
+                panic!(
+                    "expected one elicitation entry, got {:?}",
+                    store.elicitations()
+                );
+            };
+            let acp::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+                panic!("expected request-scoped elicitation");
+            };
+            assert_eq!(scope.request_id, acp::RequestId::Number(1));
+            elicitation.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Declined));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_ignores_duplicate_response(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+
+        let response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let elicitation_id = store.read_with(cx, |store, _| {
+            let [elicitation] = store.elicitations() else {
+                panic!(
+                    "expected one elicitation entry, got {:?}",
+                    store.elicitations()
+                );
+            };
+            elicitation.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+            store.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Declined));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_pending_session_elicitation_resolves_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel(cx).detach();
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_cancel_all_resolves_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+
+        let response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        store.update(cx, |store, cx| {
+            store.cancel_all(cx);
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_clear_removes_answered_and_cancels_pending(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+
+        let first_response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+        let second_response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(2)),
+                            acp::ElicitationSchema::new().string("account", true),
+                        ),
+                        "Provide an account",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let first_elicitation_id = store.read_with(cx, |store, _| {
+            let [first, _second] = store.elicitations() else {
+                panic!("expected two elicitations, got {:?}", store.elicitations());
+            };
+            first.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &first_elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+            store.clear(cx);
+        });
+
+        assert_eq!(
+            first_response_task.await.action,
+            acp::ElicitationAction::Decline
+        );
+        assert_eq!(
+            second_response_task.await.action,
+            acp::ElicitationAction::Cancel
+        );
+        store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_request_url_elicitation_store_can_be_completed(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+
+        let response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            url_elicitation_id.clone(),
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let entry_id = store.read_with(cx, |store, _| {
+            let [elicitation] = store.elicitations() else {
+                panic!(
+                    "expected one request-scoped elicitation, got {:?}",
+                    store.elicitations()
+                );
+            };
+            elicitation.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.complete_url_elicitation(&url_elicitation_id, cx);
+        });
+
+        assert!(matches!(
+            response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+        });
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Completed));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_request_url_elicitation_store_cancel_all_cancels_accepted_url(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+
+        let response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            url_elicitation_id.clone(),
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let entry_id = store.read_with(cx, |store, _| {
+            let [elicitation] = store.elicitations() else {
+                panic!(
+                    "expected one elicitation entry, got {:?}",
+                    store.elicitations()
+                );
+            };
+            elicitation.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+        store.update(cx, |store, cx| {
+            store.cancel_all(cx);
+        });
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+
+        store.update(cx, |store, cx| {
+            store.complete_url_elicitation(&url_elicitation_id, cx);
+        });
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_pending_elicitations_preserves_responded_statuses(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+            thread.cancel(cx).detach();
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Declined));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_session_elicitation_ignores_duplicate_response(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let elicitation_id = thread.read_with(cx, |thread, _| {
+            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
+                panic!("expected one elicitation entry, got {:?}", thread.entries());
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+                cx,
+            );
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Decline);
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Declined));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_url_elicitation_rejects_invalid_url(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let result = thread.update(cx, |thread, cx| {
+            thread.request_elicitation(
+                acp::CreateElicitationRequest::new(
+                    acp::ElicitationUrlMode::new(
+                        acp::ElicitationSessionScope::new(session_id),
+                        "url-1",
+                        "not a url",
+                    ),
+                    "Complete this in the browser",
+                ),
+                cx,
+            )
+        });
+
+        assert!(result.is_err());
+        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
     }
 
     async fn run_until_first_tool_call(

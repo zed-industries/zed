@@ -1,8 +1,9 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    AuthRequired, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
-    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AuthRequired, ElicitationEntryId, ElicitationStatus, ElicitationStore, LoadError,
+    MaxOutputTokensError, MentionUri, PermissionOptionChoice, PermissionOptions, PermissionPattern,
+    RetryStatus, SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent,
+    ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -24,7 +25,9 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
+use feature_flags::{
+    AcpBetaFeatureFlag, AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag,
+};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -43,6 +46,9 @@ use markdown::{
 use parking_lot::{Mutex, RwLock};
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
 
+use crate::conversation_view::elicitation::{
+    ElicitationCard, ElicitationCardHandlers, ElicitationCardStyle, ElicitationFormState,
+};
 use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
 use lru::LruCache;
@@ -106,6 +112,7 @@ const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
+pub(crate) mod elicitation;
 mod thread_view;
 pub use thread_view::*;
 
@@ -252,6 +259,7 @@ impl ProfileProvider for Entity<agent::Thread> {
 pub(crate) struct Conversation {
     threads: HashMap<acp::SessionId, Entity<AcpThread>>,
     permission_requests: IndexMap<acp::SessionId, Vec<acp::ToolCallId>>,
+    elicitation_requests: IndexMap<acp::SessionId, Vec<ElicitationEntryId>>,
     subscriptions: Vec<Subscription>,
     updated_at: Option<Instant>,
 }
@@ -261,7 +269,7 @@ impl Conversation {
         let session_id = thread.read(cx).session_id().clone();
         let subscription = cx.subscribe(&thread, {
             let session_id = session_id.clone();
-            move |this, _thread, event, _cx| {
+            move |this, _thread, event, cx| {
                 this.updated_at = Some(Instant::now());
                 match event {
                     AcpThreadEvent::ToolAuthorizationRequested(id) => {
@@ -275,6 +283,23 @@ impl Conversation {
                             tool_calls.retain(|tool_call_id| tool_call_id != id);
                             if tool_calls.is_empty() {
                                 this.permission_requests.shift_remove(&session_id);
+                            }
+                        }
+                    }
+                    AcpThreadEvent::ElicitationRequested(id)
+                        if cx.has_flag::<AcpBetaFeatureFlag>() =>
+                    {
+                        this.elicitation_requests
+                            .entry(session_id.clone())
+                            .or_default()
+                            .push(id.clone());
+                    }
+                    AcpThreadEvent::ElicitationRequested(_) => {}
+                    AcpThreadEvent::ElicitationResponded(id) => {
+                        if let Some(elicitations) = this.elicitation_requests.get_mut(&session_id) {
+                            elicitations.retain(|elicitation_id| elicitation_id != id);
+                            if elicitations.is_empty() {
+                                this.elicitation_requests.shift_remove(&session_id);
                             }
                         }
                     }
@@ -379,6 +404,24 @@ impl Conversation {
             .get(session_id)
             .map(|tool_call_ids| tool_call_ids.len())
             .unwrap_or(0)
+    }
+
+    pub fn respond_to_elicitation(
+        &mut self,
+        session_id: acp::SessionId,
+        elicitation_id: ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return None;
+        }
+
+        let thread = self.threads.get(&session_id)?.clone();
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(&elicitation_id, response, cx);
+        });
+        Some(())
     }
 
     pub fn authorize_pending_tool_call(
@@ -516,6 +559,8 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::TitleUpdated
         | AcpThreadEvent::ToolAuthorizationRequested(_)
         | AcpThreadEvent::ToolAuthorizationReceived(_)
+        | AcpThreadEvent::ElicitationRequested(_)
+        | AcpThreadEvent::ElicitationResponded(_)
         | AcpThreadEvent::Stopped(_)
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
@@ -564,6 +609,8 @@ pub struct ConversationView {
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
     /// Shared with the child [`ThreadView`] when one is constructed.
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
+    request_elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
+    request_elicitation_dropdown_handle: PopoverMenuHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -675,8 +722,14 @@ impl ConversationView {
 }
 
 enum ServerState {
-    Loading { _loading: Entity<LoadingView> },
-    LoadError { error: LoadError },
+    Loading {
+        _loading: Entity<LoadingView>,
+        connection: Option<Rc<dyn AgentConnection>>,
+        _request_elicitation_subscription: Option<Subscription>,
+    },
+    LoadError {
+        error: LoadError,
+    },
     Connected(ConnectedServerState),
 }
 
@@ -689,6 +742,7 @@ pub struct ConnectedServerState {
     connection: Rc<dyn AgentConnection>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
+    _request_elicitation_subscription: Option<Subscription>,
 }
 
 enum AuthState {
@@ -789,6 +843,9 @@ impl ConversationView {
         }));
 
         cx.on_release(|this, cx| {
+            if let Some(connection) = this.request_elicitation_connection() {
+                this.clear_request_elicitations_for_connection(&connection, cx);
+            }
             if let Some(connected) = this.as_connected() {
                 connected.close_all_sessions(cx).detach();
             }
@@ -834,14 +891,28 @@ impl ConversationView {
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
             code_span_resolver,
+            request_elicitation_form_states: HashMap::default(),
+            request_elicitation_dropdown_handle: PopoverMenuHandle::default(),
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
     }
 
     fn set_server_state(&mut self, state: ServerState, cx: &mut Context<Self>) {
+        let previous_request_elicitation_connection = self.request_elicitation_connection();
+        let next_request_elicitation_connection =
+            Self::request_elicitation_connection_for_state(&state);
+
         if let Some(connected) = self.as_connected() {
             connected.close_all_sessions(cx).detach();
+        }
+
+        if let Some(connection) = previous_request_elicitation_connection
+            && !next_request_elicitation_connection
+                .as_ref()
+                .is_some_and(|next_connection| Rc::ptr_eq(&connection, next_connection))
+        {
+            self.clear_request_elicitations_for_connection(&connection, cx);
         }
 
         self.server_state = state;
@@ -851,6 +922,52 @@ impl ConversationView {
             cx.emit(RootThreadUpdated);
         }
         cx.notify();
+    }
+
+    fn request_elicitation_subscription(
+        connection: &Rc<dyn AgentConnection>,
+        cx: &mut Context<Self>,
+    ) -> Option<Subscription> {
+        let store = connection.request_elicitations()?;
+        Some(cx.observe(&store, |_this, _store, cx| {
+            cx.notify();
+        }))
+    }
+
+    fn request_elicitation_connection(&self) -> Option<Rc<dyn AgentConnection>> {
+        Self::request_elicitation_connection_for_state(&self.server_state)
+    }
+
+    fn request_elicitation_connection_for_state(
+        state: &ServerState,
+    ) -> Option<Rc<dyn AgentConnection>> {
+        match state {
+            ServerState::Loading {
+                connection: Some(connection),
+                ..
+            } => Some(connection.clone()),
+            ServerState::Connected(connected) => Some(connected.connection.clone()),
+            ServerState::Loading {
+                connection: None, ..
+            }
+            | ServerState::LoadError { .. } => None,
+        }
+    }
+
+    fn request_elicitation_store(&self) -> Option<Entity<ElicitationStore>> {
+        self.request_elicitation_connection()?
+            .request_elicitations()
+    }
+
+    fn clear_request_elicitations_for_connection(
+        &mut self,
+        connection: &Rc<dyn AgentConnection>,
+        cx: &mut App,
+    ) {
+        self.request_elicitation_form_states.clear();
+        if let Some(store) = connection.request_elicitations() {
+            store.update(cx, |store, cx| store.clear(cx));
+        }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -967,6 +1084,22 @@ impl ConversationView {
                 }
             };
 
+            this.update_in(cx, |this, _window, cx| {
+                let request_elicitation_subscription =
+                    Self::request_elicitation_subscription(&connection, cx);
+                if let ServerState::Loading {
+                    connection: loading_connection,
+                    _request_elicitation_subscription,
+                    ..
+                } = &mut this.server_state
+                {
+                    *loading_connection = Some(connection.clone());
+                    *_request_elicitation_subscription = request_elicitation_subscription;
+                    cx.notify();
+                }
+            })
+            .log_err();
+
             telemetry::event!(
                 "Agent Thread Started",
                 agent = connection.telemetry_id(),
@@ -1065,6 +1198,8 @@ impl ConversationView {
                         }
 
                         this.root_session_id = Some(root_session_id.clone());
+                        let request_elicitation_subscription =
+                            Self::request_elicitation_subscription(&connection, cx);
                         this.set_server_state(
                             ServerState::Connected(ConnectedServerState {
                                 connection,
@@ -1073,6 +1208,7 @@ impl ConversationView {
                                 threads: HashMap::from_iter([(root_session_id, current)]),
                                 conversation,
                                 _connection_entry_subscription: connection_entry_subscription,
+                                _request_elicitation_subscription: request_elicitation_subscription,
                             }),
                             cx,
                         );
@@ -1095,6 +1231,8 @@ impl ConversationView {
 
         ServerState::Loading {
             _loading: loading_view,
+            connection: None,
+            _request_elicitation_subscription: None,
         }
     }
 
@@ -1366,6 +1504,8 @@ impl ConversationView {
                     this.focus_handle.focus(window, cx)
                 }
             } else {
+                let request_elicitation_subscription =
+                    Self::request_elicitation_subscription(&connection, cx);
                 this.set_server_state(
                     ServerState::Connected(ConnectedServerState {
                         auth_state,
@@ -1374,6 +1514,7 @@ impl ConversationView {
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
                         _connection_entry_subscription: Subscription::new(|| {}),
+                        _request_elicitation_subscription: request_elicitation_subscription,
                     }),
                     cx,
                 );
@@ -1539,6 +1680,7 @@ impl ConversationView {
                         );
                     });
                     active.update(cx, |active, cx| {
+                        active.sync_elicitation_state_for_entry(index, window, cx);
                         active.sync_editor_mode_for_empty_state(cx);
                     });
                 }
@@ -1552,6 +1694,7 @@ impl ConversationView {
                     });
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
+                        active.sync_elicitation_state_for_entry(*index, window, cx);
                         active.auto_expand_streaming_thought(cx);
                     });
                 }
@@ -1574,6 +1717,11 @@ impl ConversationView {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             AcpThreadEvent::ToolAuthorizationReceived(_) => {}
+            AcpThreadEvent::ElicitationRequested(_) if cx.has_flag::<AcpBetaFeatureFlag>() => {
+                self.notify_with_sound("Waiting for input", IconName::Info, window, cx);
+            }
+            AcpThreadEvent::ElicitationRequested(_) => {}
+            AcpThreadEvent::ElicitationResponded(_) => {}
             AcpThreadEvent::Retry(retry) => {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
@@ -1889,6 +2037,7 @@ impl ConversationView {
 
                     this.update_in(cx, |this, window, cx| {
                         if let Err(err) = result {
+                            this.cancel_request_elicitations(cx);
                             if let Some(ConnectedServerState {
                                 auth_state:
                                     AuthState::Unauthenticated {
@@ -1939,6 +2088,7 @@ impl ConversationView {
 
                 this.update_in(cx, |this, window, cx| {
                     if let Err(err) = result {
+                        this.cancel_request_elicitations(cx);
                         if let Some(ConnectedServerState {
                             auth_state:
                                 AuthState::Unauthenticated {
@@ -2275,6 +2425,292 @@ impl ConversationView {
                     }),
             )
             .into_any_element()
+    }
+
+    fn sync_request_elicitation_states(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            self.request_elicitation_form_states.clear();
+            return;
+        }
+
+        let Some(store) = self.request_elicitation_store() else {
+            self.request_elicitation_form_states.clear();
+            return;
+        };
+
+        let elicitations = store
+            .read(cx)
+            .elicitations()
+            .iter()
+            .map(|elicitation| {
+                let is_pending = matches!(elicitation.status, ElicitationStatus::Pending { .. });
+                let schema = match &elicitation.request.mode {
+                    acp::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    _ => None,
+                };
+                (elicitation.id.clone(), is_pending, schema)
+            })
+            .collect::<Vec<_>>();
+
+        let known_ids = elicitations
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .collect::<HashSet<_>>();
+        self.request_elicitation_form_states
+            .retain(|id, _| known_ids.contains(id));
+
+        for (id, is_pending, schema) in elicitations {
+            if is_pending
+                && let Some(schema) = schema
+                && !self.request_elicitation_form_states.contains_key(&id)
+            {
+                self.request_elicitation_form_states
+                    .insert(id, ElicitationFormState::new(&schema, window, cx));
+            } else if !is_pending {
+                self.request_elicitation_form_states.remove(&id);
+            }
+        }
+    }
+
+    fn render_request_elicitations(
+        &self,
+        connection: &Rc<dyn AgentConnection>,
+        cx: &Context<Self>,
+    ) -> Vec<AnyElement> {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return Vec::new();
+        }
+
+        let Some(store) = connection.request_elicitations() else {
+            return Vec::new();
+        };
+
+        let style = ElicitationCardStyle::new(
+            cx.theme().colors().border.opacity(0.8),
+            cx.theme()
+                .colors()
+                .element_background
+                .blend(cx.theme().colors().editor_foreground.opacity(0.025)),
+            cx.theme().colors().editor_background,
+            rems_from_px(13.),
+        );
+        let handlers = self.request_elicitation_card_handlers(cx);
+        let dropdown_handle = self.request_elicitation_dropdown_handle.clone();
+
+        store
+            .read(cx)
+            .elicitations()
+            .iter()
+            .enumerate()
+            .map(|(ix, elicitation)| {
+                ElicitationCard::new(
+                    ix,
+                    elicitation,
+                    self.request_elicitation_form_states.get(&elicitation.id),
+                    dropdown_handle.clone(),
+                    style,
+                    handlers.clone(),
+                )
+                .render()
+                .into_any_element()
+            })
+            .collect()
+    }
+
+    fn request_elicitation_card_handlers(&self, cx: &Context<Self>) -> ElicitationCardHandlers {
+        let view = cx.entity().downgrade();
+
+        ElicitationCardHandlers::new(
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.submit_request_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.decline_request_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.cancel_request_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, url, window, cx| {
+                    cx.open_url(&url);
+                    view.update(cx, |this, cx| {
+                        this.submit_request_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, field_name, value, cx| {
+                    view.update(cx, |this, cx| {
+                        if let Some(form) = this
+                            .request_elicitation_form_states
+                            .get_mut(&elicitation_id)
+                        {
+                            form.set_boolean(&field_name, value);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, field_name, value, cx| {
+                    view.update(cx, |this, cx| {
+                        if let Some(form) = this
+                            .request_elicitation_form_states
+                            .get_mut(&elicitation_id)
+                        {
+                            form.set_single_select(&field_name, value);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            },
+            move |elicitation_id, field_name, value, selected, cx| {
+                view.update(cx, |this, cx| {
+                    if let Some(form) = this
+                        .request_elicitation_form_states
+                        .get_mut(&elicitation_id)
+                    {
+                        form.set_multi_select(&field_name, value, selected);
+                        cx.notify();
+                    }
+                })
+                .log_err();
+            },
+        )
+    }
+
+    fn submit_request_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        let Some(store) = self.request_elicitation_store() else {
+            return;
+        };
+
+        let mode = store
+            .read(cx)
+            .elicitation(&elicitation_id)
+            .map(|(_, elicitation)| elicitation.request.mode.clone());
+        let Some(mode) = mode else {
+            return;
+        };
+
+        let response = match mode {
+            acp::ElicitationMode::Form(mode) => {
+                let Some(state) = self.request_elicitation_form_states.get(&elicitation_id) else {
+                    return;
+                };
+                match state.collect(&mode.requested_schema, cx) {
+                    Ok(content) => {
+                        acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                            acp::ElicitationAcceptAction::new().content(content),
+                        ))
+                    }
+                    Err(error) => {
+                        if let Some(state) = self
+                            .request_elicitation_form_states
+                            .get_mut(&elicitation_id)
+                        {
+                            state.set_error(error);
+                        }
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+            acp::ElicitationMode::Url(_) => acp::CreateElicitationResponse::new(
+                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+            ),
+            _ => return,
+        };
+
+        self.respond_to_request_elicitation(elicitation_id, response, cx);
+    }
+
+    fn decline_request_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        self.respond_to_request_elicitation(
+            elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+            cx,
+        );
+    }
+
+    fn cancel_request_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        self.respond_to_request_elicitation(
+            elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+            cx,
+        );
+    }
+
+    fn respond_to_request_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_elicitation_form_states.remove(&elicitation_id);
+        if let Some(store) = self.request_elicitation_store() {
+            store.update(cx, |store, cx| {
+                store.respond_to_elicitation(&elicitation_id, response, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn cancel_request_elicitations(&mut self, cx: &mut App) {
+        self.request_elicitation_form_states.clear();
+        if let Some(store) = self.request_elicitation_store() {
+            store.update(cx, |store, cx| store.clear(cx));
+        }
     }
 
     fn emit_load_error_telemetry(&self, error: &LoadError) {
@@ -2990,6 +3426,7 @@ impl ConversationView {
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let agent_id = self.agent.agent_id();
+        self.cancel_request_elicitations(cx);
         if let Some(active) = self.root_thread_view() {
             active.update(cx, |active, cx| active.clear_thread_error(cx));
         }
@@ -3026,24 +3463,27 @@ impl ConversationView {
                         if let Some(active) = this.root_thread_view() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         }
-                    } else if let Some(connected) = this.as_connected_mut() {
-                        connected.auth_state = AuthState::Unauthenticated {
-                            description: None,
-                            configuration_view: None,
-                            pending_auth_method: None,
-                            _subscription: None,
-                        };
-                        cx.emit(StateChange);
-                        if let Some(view) = connected.active_view()
-                            && view
-                                .read(cx)
-                                .message_editor
-                                .focus_handle(cx)
-                                .is_focused(window)
-                        {
-                            this.focus_handle.focus(window, cx)
+                    } else {
+                        this.cancel_request_elicitations(cx);
+                        if let Some(connected) = this.as_connected_mut() {
+                            connected.auth_state = AuthState::Unauthenticated {
+                                description: None,
+                                configuration_view: None,
+                                pending_auth_method: None,
+                                _subscription: None,
+                            };
+                            cx.emit(StateChange);
+                            if let Some(view) = connected.active_view()
+                                && view
+                                    .read(cx)
+                                    .message_editor
+                                    .focus_handle(cx)
+                                    .is_focused(window)
+                            {
+                                this.focus_handle.focus(window, cx)
+                            }
+                            cx.notify();
                         }
-                        cx.notify();
                     }
                     drop(this.auth_task.take());
                 })
@@ -3132,72 +3572,82 @@ impl ConversationView {
 impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
+        self.sync_request_elicitation_states(window, cx);
+        let request_elicitation_connection = self.request_elicitation_connection();
+        let content = match &self.server_state {
+            ServerState::Loading { .. } => {
+                let label_text = self
+                    .loading_status
+                    .clone()
+                    .unwrap_or_else(|| "Loading…".into());
+                v_flex()
+                    .flex_1()
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Label::new(label_text).color(Color::Muted).with_animation(
+                            "loading-agent-label",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.3, 0.7)),
+                            |label, delta| label.alpha(delta),
+                        ),
+                    )
+                    .into_any()
+            }
+            ServerState::LoadError { error: e, .. } => v_flex()
+                .flex_1()
+                .size_full()
+                .items_center()
+                .justify_end()
+                .child(self.render_load_error(e, window, cx))
+                .into_any(),
+            ServerState::Connected(ConnectedServerState {
+                connection,
+                auth_state:
+                    AuthState::Unauthenticated {
+                        description,
+                        configuration_view,
+                        pending_auth_method,
+                        _subscription,
+                    },
+                ..
+            }) => v_flex()
+                .flex_1()
+                .size_full()
+                .justify_end()
+                .child(self.render_auth_required_state(
+                    connection,
+                    description.as_ref(),
+                    configuration_view.as_ref(),
+                    pending_auth_method.as_ref(),
+                    window,
+                    cx,
+                ))
+                .into_any_element(),
+            ServerState::Connected(connected) => {
+                if let Some(view) = connected.active_view() {
+                    view.clone().into_any_element()
+                } else {
+                    debug_panic!("This state should never be reached");
+                    div().into_any_element()
+                }
+            }
+        };
 
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
-            .child(match &self.server_state {
-                ServerState::Loading { .. } => {
-                    let label_text = self
-                        .loading_status
-                        .clone()
-                        .unwrap_or_else(|| "Loading…".into());
-                    v_flex()
-                        .flex_1()
-                        .size_full()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            Label::new(label_text).color(Color::Muted).with_animation(
-                                "loading-agent-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.3, 0.7)),
-                                |label, delta| label.alpha(delta),
-                            ),
-                        )
-                        .into_any()
-                }
-                ServerState::LoadError { error: e, .. } => v_flex()
-                    .flex_1()
-                    .size_full()
-                    .items_center()
-                    .justify_end()
-                    .child(self.render_load_error(e, window, cx))
-                    .into_any(),
-                ServerState::Connected(ConnectedServerState {
-                    connection,
-                    auth_state:
-                        AuthState::Unauthenticated {
-                            description,
-                            configuration_view,
-                            pending_auth_method,
-                            _subscription,
-                        },
-                    ..
-                }) => v_flex()
-                    .flex_1()
-                    .size_full()
-                    .justify_end()
-                    .child(self.render_auth_required_state(
-                        connection,
-                        description.as_ref(),
-                        configuration_view.as_ref(),
-                        pending_auth_method.as_ref(),
-                        window,
-                        cx,
-                    ))
-                    .into_any_element(),
-                ServerState::Connected(connected) => {
-                    if let Some(view) = connected.active_view() {
-                        view.clone().into_any_element()
-                    } else {
-                        debug_panic!("This state should never be reached");
-                        div().into_any_element()
-                    }
-                }
-            })
+            .child(v_flex().flex_1().min_h_0().child(content))
+            .children(
+                request_elicitation_connection
+                    .as_ref()
+                    .map_or_else(Vec::new, |connection| {
+                        self.render_request_elicitations(connection, cx)
+                    }),
+            )
     }
 }
 
@@ -3424,6 +3874,7 @@ pub(crate) mod tests {
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
+    use feature_flags::FeatureFlag as _;
     use fs::FakeFs;
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, size};
     use parking_lot::Mutex;
@@ -3452,6 +3903,51 @@ pub(crate) mod tests {
         let weak_view = conversation_view.downgrade();
         drop(conversation_view);
         assert!(!weak_view.is_upgradable());
+    }
+
+    #[gpui::test]
+    async fn test_drop_clears_pending_request_elicitations(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+
+        let response = Arc::new(Mutex::new(None));
+        let server = ReleaseRequestElicitationServer {
+            response: response.clone(),
+        };
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+        let _connection = conversation_view
+            .read_with(cx, |view, _cx| view.request_elicitation_connection())
+            .expect("conversation should have an active connection");
+        let store = _connection
+            .request_elicitations()
+            .expect("connection should expose request elicitations");
+        store.read_with(cx, |store, _cx| {
+            assert_eq!(
+                store.elicitations().len(),
+                1,
+                "test should start with one pending request elicitation"
+            );
+        });
+
+        assert_eq!(*response.lock(), None);
+        let weak_view = conversation_view.downgrade();
+        drop(conversation_view);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        assert!(!weak_view.is_upgradable());
+        store.read_with(cx, |store, _cx| {
+            assert!(
+                store.elicitations().is_empty(),
+                "request elicitations should be cleared on release"
+            );
+        });
+        assert!(matches!(
+            response.lock().as_ref(),
+            Some(acp::ElicitationAction::Cancel)
+        ));
     }
 
     #[gpui::test]
@@ -3724,6 +4220,31 @@ pub(crate) mod tests {
             1,
             "ConversationView should close the ACP session after a thread exit"
         );
+    }
+
+    #[gpui::test]
+    async fn test_thread_view_seeds_existing_elicitation_form_state(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+
+        let connection = PreloadedElicitationConnection::default();
+        let elicitation_id = connection.elicitation_id.clone();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+
+        let elicitation_id = elicitation_id
+            .lock()
+            .clone()
+            .expect("connection should preload an elicitation");
+        let active_thread = active_thread(&conversation_view, cx);
+        active_thread.read_with(cx, |thread, _cx| {
+            assert!(
+                thread.has_elicitation_form_state(&elicitation_id),
+                "pending form elicitations that predate ThreadView construction should be usable"
+            );
+        });
     }
 
     #[gpui::test]
@@ -5234,6 +5755,203 @@ pub(crate) mod tests {
                 cx,
             )
         })
+    }
+
+    #[derive(Clone, Default)]
+    struct PreloadedElicitationConnection {
+        elicitation_id: Arc<Mutex<Option<ElicitationEntryId>>>,
+    }
+
+    impl AgentConnection for PreloadedElicitationConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("preloaded-elicitation")
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "preloaded-elicitation".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _work_dirs: PathList,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let session_id = acp::SessionId::new("new-session");
+            let thread = build_test_thread(
+                self.clone(),
+                project,
+                "PreloadedElicitationConnection",
+                session_id.clone(),
+                cx,
+            );
+            thread.update(cx, |thread, cx| {
+                thread
+                    .request_elicitation(
+                        acp::CreateElicitationRequest::new(
+                            acp::ElicitationFormMode::new(
+                                acp::ElicitationSessionScope::new(session_id),
+                                acp::ElicitationSchema::new().string("name", true),
+                            ),
+                            "Provide a name",
+                        ),
+                        cx,
+                    )
+                    .expect("preloaded elicitation should be accepted")
+                    .detach();
+            });
+            let elicitation_id = thread.read_with(cx, |thread, _cx| {
+                thread.entries().iter().find_map(|entry| {
+                    if let AgentThreadEntry::Elicitation(elicitation) = entry {
+                        Some(elicitation.id.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+            *self.elicitation_id.lock() = elicitation_id;
+            Task::ready(Ok(thread))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: acp_thread::UserMessageId,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct ReleaseRequestElicitationServer {
+        response: Arc<Mutex<Option<acp::ElicitationAction>>>,
+    }
+
+    impl AgentServer for ReleaseRequestElicitationServer {
+        fn logo(&self) -> ui::IconName {
+            ui::IconName::ZedAgent
+        }
+
+        fn agent_id(&self) -> AgentId {
+            "ReleaseRequestElicitation".into()
+        }
+
+        fn connect(
+            &self,
+            _delegate: AgentServerDelegate,
+            _project: Entity<Project>,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            let connection = ReleaseRequestElicitationConnection {
+                store: cx.new(|_| ElicitationStore::default()),
+                response: self.response.clone(),
+            };
+            Task::ready(Ok(Rc::new(connection)))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct ReleaseRequestElicitationConnection {
+        store: Entity<ElicitationStore>,
+        response: Arc<Mutex<Option<acp::ElicitationAction>>>,
+    }
+
+    impl AgentConnection for ReleaseRequestElicitationConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("release-request-elicitation")
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "release-request-elicitation".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _work_dirs: PathList,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self.clone(),
+                project,
+                "ReleaseRequestElicitationConnection",
+                acp::SessionId::new("release-request-elicitation-session"),
+                cx,
+            );
+            let response_task = self.store.update(cx, |store, cx| {
+                store
+                    .request_elicitation(
+                        acp::CreateElicitationRequest::new(
+                            acp::ElicitationFormMode::new(
+                                acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                                acp::ElicitationSchema::new().string("name", true),
+                            ),
+                            "Provide a name",
+                        ),
+                        cx,
+                    )
+                    .expect("request-scoped elicitation should be accepted")
+            });
+            let response = self.response.clone();
+            cx.spawn(async move |_cx| {
+                let elicitation_response = response_task.await;
+                *response.lock() = Some(elicitation_response.action);
+            })
+            .detach();
+            Task::ready(Ok(thread))
+        }
+
+        fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
+            Some(self.store.clone())
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: acp_thread::UserMessageId,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
     }
 
     #[derive(Clone)]
