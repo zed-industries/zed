@@ -178,6 +178,10 @@ impl Render for MailApp {
             .flex()
             .flex_col()
             .flex_1()
+            // Let the list shrink to its flex width instead of being widened by
+            // its content (flexbox `min-width: auto`), otherwise a long row
+            // pushes the list past the viewport and clips the right edge.
+            .min_w_0()
             .h_full()
             .bg(list_bg)
             .child(
@@ -240,7 +244,12 @@ impl Render for MailApp {
                             div()
                                 .text_xs()
                                 .text_color(secondary)
-                                .overflow_hidden()
+                                // Clamp the preview to one line. Unlike
+                                // `truncate` (which is nowrap and stretches the
+                                // row to the full text width, clipping the time
+                                // and right edge), `line_clamp` wraps by width
+                                // so the row never grows wider than the list.
+                                .line_clamp(1)
                                 .child(message.preview),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -308,7 +317,7 @@ impl Render for MailApp {
 
 fn run_example() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(760.), px(540.)), cx);
+        let bounds = Bounds::centered(None, size(px(760.), px(680.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
