@@ -1,5 +1,5 @@
 use ai_onboarding::YoungAccountBanner;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
@@ -52,6 +52,8 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
+            let organization_id =
+                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
             client
                 .cached_llm_token(&llm_api_token, organization_id)
                 .await
@@ -65,6 +67,8 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
+            let organization_id =
+                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
             client
                 .refresh_llm_token(&llm_api_token, organization_id)
                 .await
@@ -332,7 +336,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                         | client::Status::Reauthenticated
                         | client::Status::Connected { .. }
                 ) {
-                    return Err(AuthenticateError::Other(anyhow::anyhow!(
+                    return Err(AuthenticateError::Other(anyhow!(
                         "sign-in did not complete: {current_status:?}"
                     )));
                 }

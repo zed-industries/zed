@@ -12,7 +12,9 @@ use anyhow::Result;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
-use gpui::{App, BackgroundExecutor, Entity, Focusable, SharedString, Task, WeakEntity, Window};
+use gpui::{
+    App, BackgroundExecutor, Entity, Focusable, Hsla, SharedString, Task, WeakEntity, Window,
+};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
@@ -303,22 +305,27 @@ pub struct AvailableSkill {
 }
 
 fn skill_completion_icon_path(
-    _skill: &AvailableSkill,
+    skill: &AvailableSkill,
     uri: &MentionUri,
     cx: &mut App,
 ) -> SharedString {
-    uri.icon_path(cx)
+    if skill.warning.is_some() {
+        IconName::Warning.path().into()
+    } else {
+        uri.icon_path(cx)
+    }
+}
+
+fn skill_completion_icon_color(skill: &AvailableSkill, cx: &App) -> Option<Hsla> {
+    skill.warning.is_some().then(|| cx.theme().status().warning)
 }
 
 fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumentation {
-    if let Some(warning) = &skill.warning {
-        CompletionDocumentation::WarningAndMultiLinePlainText {
-            warning: "".into(),
-            plain_text: Some(warning.clone()),
-        }
-    } else {
-        CompletionDocumentation::MultiLinePlainText(skill.description.to_string().into())
-    }
+    let text = match &skill.warning {
+        Some(warning) => warning.clone(),
+        None => skill.description.to_string().into(),
+    };
+    CompletionDocumentation::MultiLinePlainText(text)
 }
 
 #[derive(Debug, Clone)]
@@ -327,6 +334,32 @@ pub struct AvailableCommand {
     pub description: Arc<str>,
     pub requires_argument: bool,
     pub source: Option<SharedString>,
+    /// Source category used to group the command in the slash popup. `None`
+    /// means the command came from an external ACP agent.
+    pub category: Option<acp_thread::CommandCategory>,
+}
+
+impl AvailableCommand {
+    fn category_order(&self) -> u8 {
+        match self.category {
+            Some(acp_thread::CommandCategory::Native) => 0,
+            Some(acp_thread::CommandCategory::Mcp) => 1,
+            None => 2,
+        }
+    }
+
+    /// Completion group key and header label for this command's category.
+    fn group(&self) -> CompletionGroup {
+        let (key, label) = match self.category {
+            Some(acp_thread::CommandCategory::Native) => ("commands", "Commands"),
+            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", "MCP Server Commands"),
+            None => ("acp-commands", "Commands"),
+        };
+        CompletionGroup {
+            key: key.into(),
+            label: Some(label.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -342,6 +375,29 @@ impl SlashCompletionCandidate {
             Self::Command(command) => &command.name,
         }
     }
+}
+
+/// Stable group identity for a slash completion: skills are one group, commands
+/// are grouped by category. This identifies which section header an entry sits
+/// under; the order the groups appear in is decided by relevance (see
+/// [`group_by_relevance`]).
+fn slash_completion_group_key(candidate: &SlashCompletionCandidate) -> u32 {
+    match candidate {
+        SlashCompletionCandidate::Skill(_) => 0,
+        SlashCompletionCandidate::Command(command) => 1 + command.category_order() as u32,
+    }
+}
+
+/// Reorders `items` (which must already be in relevance/score order, best
+/// first) so that each group's entries stay contiguous while the groups
+/// themselves are ordered by their best-ranked member. The sort is stable, so
+/// within a group the original order is preserved.
+fn group_by_relevance<T>(items: &mut [T], group_key: impl Fn(&T) -> u32) {
+    let mut group_best_rank: collections::HashMap<u32, usize> = collections::HashMap::default();
+    for (rank, item) in items.iter().enumerate() {
+        group_best_rank.entry(group_key(item)).or_insert(rank);
+    }
+    items.sort_by_key(|item| group_best_rank[&group_key(item)]);
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -400,6 +456,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 new_text: format!("@{} ", mode.keyword()),
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
+                icon_color: None,
                 documentation: None,
                 source: project::CompletionSource::Custom,
                 match_start: None,
@@ -457,6 +514,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
+            icon_color: None,
             confirm: Some(confirm_completion_callback(
                 title,
                 source_range.start,
@@ -505,6 +563,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_path),
+            icon_color: skill_completion_icon_color(&skill, cx),
             confirm: Some(confirm_completion_callback(
                 crease_text,
                 source_range.start,
@@ -569,6 +628,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -635,6 +695,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -676,6 +737,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -726,6 +788,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text,
             label: CodeLabel::plain(action.label().to_string(), None),
             icon_path: Some(action.icon().path().into()),
+            icon_color: None,
             documentation: None,
             source: project::CompletionSource::Custom,
             match_start: None,
@@ -820,6 +883,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -862,6 +926,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_path),
+            icon_color: None,
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -1311,11 +1376,13 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
             PromptCompletion::SlashCommand(SlashCommandCompletion {
                 command, argument, ..
             }) => {
-                let show_section_headers = command.is_none() && argument.is_none();
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
-                // Resolve the muted-text highlight up front: the
-                // completion build happens on a background thread where
-                // `cx.theme()` isn't available.
+                // Keep the category section headers visible while the user is
+                // still narrowing the command name (`/c`); only drop them once
+                // they've moved on to typing the command's argument, where
+                // grouping no longer applies.
+                let show_section_headers = argument.is_none();
+
                 let source_highlight_id = cx
                     .theme()
                     .syntax()
@@ -1325,6 +1392,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 type SkillInfo = (
                     String,
                     SharedString,
+                    Option<Hsla>,
                     Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
                 );
                 let slash_candidates: Task<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>> = {
@@ -1344,6 +1412,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         let new_text = format!("{} ", uri.as_link());
                                         let new_text_len = new_text.len();
                                         let icon_path = skill_completion_icon_path(skill, &uri, cx);
+                                        let icon_color = skill_completion_icon_color(skill, cx);
                                         let crease_text: SharedString = uri.name().into();
                                         let confirm = confirm_completion_callback(
                                             crease_text,
@@ -1355,7 +1424,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             mention_set.clone(),
                                             workspace.clone(),
                                         );
-                                        (candidate, Some((new_text, icon_path, confirm)))
+                                        (
+                                            candidate,
+                                            Some((new_text, icon_path, icon_color, confirm)),
+                                        )
                                     }
                                     SlashCompletionCandidate::Command(_) => (candidate, None),
                                 })
@@ -1366,9 +1438,16 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                 cx.background_spawn(async move {
                     let mut slash_candidates = slash_candidates.await;
-                    slash_candidates.sort_by_key(|(candidate, _)| match candidate {
-                        SlashCompletionCandidate::Skill(_) => 0,
-                        SlashCompletionCandidate::Command(_) => 1,
+                    // `slash_candidates` arrives in fuzzy-match order (best
+                    // first). Keep each group's items contiguous so section
+                    // headers render once, but order the groups by their
+                    // best-scoring member. That way an exact/prefix match (e.g.
+                    // `/compa` -> `compact`) floats its whole section to the top
+                    // and becomes the default selection, instead of being
+                    // buried under a less relevant skill. Within a group, the
+                    // fuzzy-match order is preserved (the sort is stable).
+                    group_by_relevance(&mut slash_candidates, |(candidate, _)| {
+                        slash_completion_group_key(candidate)
                     });
                     let completions = slash_candidates
                         .into_iter()
@@ -1379,7 +1458,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Some(&skill.source),
                                     source_highlight_id,
                                 );
-                                let Some((new_text, icon_path, confirm)) = skill_info else {
+                                let Some((new_text, icon_path, icon_color, confirm)) = skill_info
+                                else {
                                     unreachable!("skill candidates always have confirm callbacks")
                                 };
                                 Completion {
@@ -1389,6 +1469,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     documentation: Some(skill_completion_documentation(&skill)),
                                     source: project::CompletionSource::Custom,
                                     icon_path: Some(icon_path),
+                                    icon_color,
                                     match_start: None,
                                     snippet_deduplication_key: None,
                                     insert_text_mode: None,
@@ -1417,6 +1498,12 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 
                                 let is_missing_argument =
                                     command.requires_argument && argument.is_none();
+                                let group = show_section_headers.then(|| command.group());
+
+                                let icon_path = (command.category
+                                    == Some(acp_thread::CommandCategory::Native)
+                                    && command.name.as_ref() == agent::COMPACT_COMMAND_NAME)
+                                    .then(|| IconName::Compact.path().into());
 
                                 Completion {
                                     replace_range: source_range.clone(),
@@ -1428,7 +1515,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         ),
                                     ),
                                     source: project::CompletionSource::Custom,
-                                    icon_path: None,
+                                    icon_path,
+                                    icon_color: None,
                                     match_start: None,
                                     snippet_deduplication_key: None,
                                     insert_text_mode: None,
@@ -1451,10 +1539,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             false
                                         }
                                     })),
-                                    group: show_section_headers.then(|| CompletionGroup {
-                                        key: "agent-commands".into(),
-                                        label: Some("Agent Commands".into()),
-                                    }),
+                                    group,
                                 }
                             }
                         })
@@ -2378,9 +2463,7 @@ fn build_slash_item_label(
     };
     let mut builder = CodeLabelBuilder::default();
     builder.push_str(name, None);
-    // Two spaces gives a touch of breathing room between the name and
-    // the muted source label.
-    builder.push_str("  ", None);
+    builder.push_str(" ", None);
     builder.push_str(source, source_highlight_id);
     // The filter range defaults to the entire label after `build()`,
     // which would let the source text participate in fuzzy filtering.
@@ -2774,6 +2857,51 @@ mod tests {
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
+    }
+
+    #[test]
+    fn test_section_headers_visible_until_argument() {
+        // Section headers stay visible while the user narrows the command name
+        // (`/`, `/comp`, `/compact `) and only disappear once they start typing
+        // the command's argument, where category grouping no longer applies.
+        let show_section_headers = |input: &str| {
+            SlashCommandCompletion::try_parse(input, 0)
+                .unwrap()
+                .argument
+                .is_none()
+        };
+
+        assert!(show_section_headers("/"));
+        assert!(show_section_headers("/comp"));
+        assert!(show_section_headers("/compact"));
+        assert!(show_section_headers("/compact "));
+        assert!(!show_section_headers("/compact now"));
+    }
+
+    #[test]
+    fn test_group_by_relevance_floats_best_group_and_keeps_groups_contiguous() {
+        // Items arrive in fuzzy-score order (best first). The group containing
+        // the best match floats to the top, groups stay contiguous, and the
+        // within-group order is preserved.
+        let mut items = [
+            ("compact", 1u32),  // best match, group 1
+            ("skill-a", 0u32),  // group 0
+            ("deploy", 2u32),   // group 2
+            ("skill-b", 0u32),  // group 0 (after skill-a in score order)
+            ("native-b", 1u32), // group 1 (after compact)
+        ];
+        group_by_relevance(&mut items, |(_, key)| *key);
+        let order: Vec<&str> = items.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            order,
+            vec!["compact", "native-b", "skill-a", "skill-b", "deploy"]
+        );
+
+        // When the best match is a skill, the skill group leads instead.
+        let mut items = [("skill-a", 0u32), ("compact", 1u32)];
+        group_by_relevance(&mut items, |(_, key)| *key);
+        let order: Vec<&str> = items.iter().map(|(name, _)| *name).collect();
+        assert_eq!(order, vec!["skill-a", "compact"]);
     }
 
     #[test]

@@ -591,6 +591,7 @@ impl Editor {
                 match_start: None,
                 snippet_deduplication_key: None,
                 icon_path: None,
+                icon_color: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
                     word_range,
@@ -1344,6 +1345,7 @@ fn snippet_completions(
                         filter_range: 0..matching_prefix.len(),
                     },
                     icon_path: None,
+                    icon_color: None,
                     documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                         single_line: snippet.name.clone().into(),
                         plain_text: snippet

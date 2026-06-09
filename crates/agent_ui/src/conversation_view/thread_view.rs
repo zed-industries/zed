@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
 use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
 use agent_settings::UserAgentsMd;
-use agent_skills::global_skills_dir;
+use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 
@@ -27,7 +27,10 @@ use language_model::{
     LanguageModelRegistry, Speed,
 };
 use settings::update_settings_file;
-use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
+use ui::{
+    ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
+    Tab,
+};
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
@@ -682,70 +685,6 @@ fn skill_issue_file_label(path: &std::path::Path) -> String {
         (_, Some(file_name)) => file_name.to_string(),
         _ => path.display().to_string(),
     }
-}
-
-#[derive(Clone)]
-struct SkillSettingsTarget {
-    label: String,
-    target: Option<zed_actions::OpenSettingsAtTarget>,
-}
-
-fn skill_warning_settings_targets(
-    warnings: &[SkillLoadingIssue],
-    project: &WeakEntity<Project>,
-    cx: &App,
-) -> Vec<SkillSettingsTarget> {
-    let global_skills_dir = global_skills_dir();
-    let worktrees = project
-        .upgrade()
-        .map(|project| project.read(cx).visible_worktrees(cx).collect::<Vec<_>>())
-        .unwrap_or_default();
-
-    let mut has_global_warnings = false;
-    let mut project_targets: Vec<(usize, String)> = Vec::new();
-
-    for warning in warnings {
-        if warning.path.starts_with(&global_skills_dir) {
-            has_global_warnings = true;
-            continue;
-        }
-
-        for worktree in &worktrees {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id().to_usize();
-            if warning.path.starts_with(worktree.abs_path().as_ref())
-                && !project_targets
-                    .iter()
-                    .any(|(target_worktree_id, _)| *target_worktree_id == worktree_id)
-            {
-                project_targets.push((worktree_id, worktree.root_name_str().to_string()));
-                break;
-            }
-        }
-    }
-
-    let mut targets = Vec::new();
-    if has_global_warnings {
-        targets.push(SkillSettingsTarget {
-            label: "Manage Global Skills".to_string(),
-            target: Some(zed_actions::OpenSettingsAtTarget::User),
-        });
-    }
-
-    let multiple_project_targets = project_targets.len() > 1;
-    for (worktree_id, worktree_root_name) in project_targets {
-        let label = if multiple_project_targets {
-            format!("Manage {worktree_root_name} Skills")
-        } else {
-            "Manage Project Skills".to_string()
-        };
-        targets.push(SkillSettingsTarget {
-            label,
-            target: Some(zed_actions::OpenSettingsAtTarget::Project { worktree_id }),
-        });
-    }
-
-    targets
 }
 
 pub fn open_markdown_in_workspace(
@@ -1513,8 +1452,78 @@ impl ThreadView {
             }
         }
 
+        // A built-in command (e.g. `/compact`) with trailing text: send the bare
+        // command and queue the rest, so the extra text isn't silently dropped.
+        let native_command =
+            leading_native_command(text, self.session_capabilities.read().available_commands());
+        if let Some(command_name) = native_command {
+            cx.emit(AcpThreadViewEvent::Interacted);
+            self.send_command_queueing_remainder(message_editor, command_name, window, cx);
+            return;
+        }
+
         cx.emit(AcpThreadViewEvent::Interacted);
         self.send_impl(message_editor, window, cx)
+    }
+
+    /// Sends a bare `/command` turn and queues everything the user typed after
+    /// it as a follow-up message. The queued remainder auto-processes when the
+    /// command turn stops, so e.g. `/compact do X` compacts and then runs `do X`
+    /// rather than discarding it.
+    fn send_command_queueing_remainder(
+        &mut self,
+        message_editor: Entity<MessageEditor>,
+        command_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Resolve the editor contents before clearing it: the resolve task
+        // reads the editor lazily, so clearing first would wipe the contents.
+        let contents = self.resolve_message_contents(&message_editor, cx);
+        self.thread_error.take();
+        self.thread_feedback.clear();
+        self.editing_message.take();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (mut content, tracked_buffers) = contents.await?;
+
+            cx.update(|window, cx| {
+                message_editor.update(cx, |message_editor, cx| {
+                    message_editor.clear(window, cx);
+                });
+            })?;
+
+            // Strip the leading `/command` from the first text block; whatever
+            // remains (including any later mention blocks) becomes the queued
+            // follow-up message.
+            if let Some(acp::ContentBlock::Text(text_content)) = content.first_mut() {
+                text_content.text = strip_leading_command(&text_content.text, &command_name);
+            }
+            if matches!(
+                content.first(),
+                Some(acp::ContentBlock::Text(text)) if text.text.trim().is_empty()
+            ) {
+                content.remove(0);
+            }
+
+            let command_block =
+                acp::ContentBlock::Text(acp::TextContent::new(format!("/{command_name}")));
+
+            this.update_in(cx, |this, window, cx| {
+                // Queue the remainder first, then start the command turn; the
+                // queue auto-processes when the command turn stops.
+                if !content.is_empty() {
+                    this.add_to_queue(content, tracked_buffers, cx);
+                }
+                this.send_content(
+                    Task::ready(Ok(Some((vec![command_block], Vec::new())))),
+                    window,
+                    cx,
+                );
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn send_impl(
@@ -2674,7 +2683,13 @@ impl ThreadView {
         telemetry::event!("Follow Agent Selected", following = !following);
     }
 
-    // other
+    fn callout_border_position(&self) -> CalloutBorderPosition {
+        if self.list_state.item_count() > 0 {
+            CalloutBorderPosition::Top
+        } else {
+            CalloutBorderPosition::Bottom
+        }
+    }
 
     pub fn render_thread_retry_status_callout(&self) -> Option<Callout> {
         let state = self.thread_retry_status.as_ref()?;
@@ -2708,6 +2723,7 @@ impl ThreadView {
 
         Some(
             Callout::new()
+                .border_position(self.callout_border_position())
                 .icon(IconName::Warning)
                 .severity(Severity::Warning)
                 .title(state.last_error.clone())
@@ -3578,101 +3594,103 @@ impl ThreadView {
     fn render_context_compaction(
         &self,
         entry_ix: usize,
-        total_entries: usize,
         compaction: &acp_thread::ContextCompaction,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let is_compacting = entry_ix + 1 == total_entries
-            && self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+        let is_compacting = compaction.is_in_progress();
         let summary = compaction.summary.clone();
-        let summary_available = summary.is_some();
-        let is_expanded = summary_available && self.expanded_compactions.contains(&entry_ix);
+        let is_expanded = self.expanded_compactions.contains(&entry_ix);
 
+        let id = format!("context-compaction-{entry_ix}");
+        let header_label = match compaction.status {
+            acp_thread::ContextCompactionStatus::InProgress => "Compacting Context…",
+            acp_thread::ContextCompactionStatus::Completed => "Context Compacted",
+            acp_thread::ContextCompactionStatus::Canceled => "Compaction Canceled",
+        };
+        let chevron_end = if is_expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
         let header = h_flex()
-            .id(("context-compaction", entry_ix))
-            .px_5()
-            .py_1()
-            .gap_2()
+            .gap_1()
             .w_full()
+            .child(Divider::horizontal())
             .child(
-                h_flex()
-                    .flex_none()
-                    .gap_1p5()
-                    .child(
-                        Icon::new(IconName::Scissors)
+                Button::new(id, header_label)
+                    .label_size(LabelSize::Small)
+                    .loading(is_compacting)
+                    .disabled(is_compacting)
+                    .start_icon(
+                        Icon::new(IconName::Compact)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .child(
-                        Label::new(if is_compacting {
-                            "Compacting context…"
-                        } else {
-                            "Context compacted"
-                        })
-                        .size(LabelSize::Custom(self.tool_name_font_size()))
-                        .color(Color::Muted),
-                    ),
+                    .when(!is_compacting, |this| {
+                        this.end_icon(
+                            Icon::new(chevron_end)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener(
+                            move |this, _event: &ClickEvent, _window, cx| {
+                                this.toggle_compaction_expansion(entry_ix, cx);
+                            },
+                        ))
+                    }),
             )
-            .child(if is_compacting {
-                div().flex_1().into_any_element()
-            } else {
-                Divider::horizontal().into_any_element()
-            })
-            .child(
-                Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
-                    .opened_icon(IconName::ChevronUp)
-                    .closed_icon(IconName::ChevronDown),
-            )
-            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                this.toggle_compaction_expansion(entry_ix, cx);
-            }));
+            .child(Divider::horizontal());
 
-        if let Some(summary) = summary.filter(|_| is_expanded) {
-            v_flex()
-                .w_full()
-                .child(header)
-                .child(
-                    div()
-                        .id(("compaction-summary", entry_ix))
-                        .mx_5()
-                        .pl_3p5()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .child(self.render_markdown(
-                            summary,
-                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                            cx,
-                        )),
-                )
-                .child(
-                    div()
-                        .mx_5()
-                        .mb_1()
-                        .pl_3p5()
-                        .pt_2()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .child(
-                            IconButton::new(
-                                ("compaction-summary-collapse", entry_ix),
-                                IconName::ChevronUp,
+        div()
+            .px_5()
+            .w_full()
+            .child(
+                v_flex()
+                    .pt_1p5()
+                    .mb_1p5()
+                    .gap_1p5()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .rounded_sm()
+                    .child(header)
+                    .when_some(summary.filter(|_| is_expanded), |this, summary| {
+                        this.border_color(self.tool_card_border_color(cx))
+                            .bg(cx.theme().colors().editor_background.opacity(0.2))
+                            .child(
+                                div()
+                                    .id(("compaction-summary", entry_ix))
+                                    .p_2()
+                                    .text_ui(cx)
+                                    .child(self.render_markdown(
+                                        summary,
+                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                        cx,
+                                    )),
                             )
-                            .full_width()
-                            .style(ButtonStyle::Outlined)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(
-                                move |this, _event: &ClickEvent, _window, cx| {
-                                    this.expanded_compactions.remove(&entry_ix);
-                                    cx.notify();
-                                },
-                            )),
-                        ),
-                )
-                .into_any()
-        } else {
-            header.into_any()
-        }
+                            .child(
+                                h_flex()
+                                    .border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(
+                                        IconButton::new(
+                                            ("compaction-summary-collapse", entry_ix),
+                                            IconName::ChevronUp,
+                                        )
+                                        .full_width()
+                                        .on_click(
+                                            cx.listener(
+                                                move |this, _event: &ClickEvent, _window, cx| {
+                                                    this.expanded_compactions.remove(&entry_ix);
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        ),
+                                    ),
+                            )
+                    }),
+            )
+            .into_any()
     }
 
     fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
@@ -5637,7 +5655,7 @@ impl ThreadView {
                 self.render_completed_plan(entries, window, cx)
             }
             AgentThreadEntry::ContextCompaction(compaction) => {
-                self.render_context_compaction(entry_ix, total_entries, compaction, window, cx)
+                self.render_context_compaction(entry_ix, compaction, window, cx)
             }
         };
 
@@ -6176,7 +6194,10 @@ impl ThreadView {
 
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
-        let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
+        let thread = self.thread.read(cx);
+
+        let is_generating =
+            matches!(thread.status(), ThreadStatus::Generating) && !thread.is_compacting();
 
         if is_generating && !self.generating_indicator_in_list {
             let entries_count = self.thread.read(cx).entries().len();
@@ -9356,7 +9377,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let content = match self.thread_error.as_ref()? {
+        let callout = match self.thread_error.as_ref()? {
             ThreadError::Other { message, .. } => {
                 self.render_any_thread_error(message.clone(), window, cx)
             }
@@ -9470,7 +9491,7 @@ impl ThreadView {
             ),
         };
 
-        Some(div().child(content))
+        Some(div().child(callout.border_position(self.callout_border_position())))
     }
 
     fn render_refusal_error(&self, cx: &mut Context<'_, Self>) -> Callout {
@@ -9734,7 +9755,7 @@ impl ThreadView {
         let description = "This agent does not support viewing previous messages. However, your session will still continue from where you last left off.";
 
         Callout::new()
-            .border_position(ui::BorderPosition::Bottom)
+            .border_position(CalloutBorderPosition::Bottom)
             .severity(Severity::Info)
             .icon(IconName::Info)
             .title("Resumed Session")
@@ -9744,6 +9765,7 @@ impl ThreadView {
 
     fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
         Callout::new()
+            .border_position(self.callout_border_position())
             .icon(IconName::Warning)
             .severity(Severity::Warning)
             .title("Codex on Windows")
@@ -9775,7 +9797,8 @@ impl ThreadView {
     }
 
     fn render_skill_loading_issues(&self, cx: &mut Context<Self>) -> Vec<Callout> {
-        let mut callouts = Vec::new();
+        let border_position = self.callout_border_position();
+
         let description_warnings = self
             .skill_loading_issues
             .iter()
@@ -9783,61 +9806,37 @@ impl ThreadView {
             .cloned()
             .collect::<Vec<_>>();
 
-        if !description_warnings.is_empty() {
-            let warning_count = description_warnings.len();
-            let title = if warning_count == 1 {
-                "1 skill loaded with warning".to_string()
-            } else {
-                format!("{warning_count} skills loaded with warnings")
-            };
+        let long_description_warning =
+            self.render_skill_description_warnings(description_warnings, cx);
 
-            let mut callout = Callout::new()
-                .icon(IconName::Warning)
-                .severity(Severity::Warning)
-                .title(title);
+        let other_warnings = self
+            .skill_loading_issues
+            .iter()
+            .filter(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong)
+            .enumerate()
+            .map(|(index, issue)| {
+                let abs_path = issue.path.clone();
+                let workspace = self.workspace.clone();
+                let path_label = issue.path.display().to_string();
+                let target = issue.clone();
 
-            if warning_count == 1 {
-                let rows = description_warnings
-                    .iter()
-                    .enumerate()
-                    .map(|(index, issue)| {
-                        let abs_path = issue.path.clone();
-                        let workspace = self.workspace.clone();
-                        let full_path = issue.path.display().to_string();
-                        let file_label = skill_issue_file_label(&issue.path);
-                        let file_icon = FileIcons::get_icon(issue.path.as_path(), cx)
-                            .map(Icon::from_path)
-                            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-                            .unwrap_or_else(|| {
-                                Icon::new(IconName::File)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small)
-                            });
+                let title = match issue.kind {
+                    SkillLoadingIssueKind::LoadFailed => "Skill Failed to Load",
+                    SkillLoadingIssueKind::DescriptionTooLong => unreachable!(),
+                    SkillLoadingIssueKind::CatalogBudgetExceeded => {
+                        "Skill Omitted from Model Catalog"
+                    }
+                };
 
-                        v_flex()
-                            .id(("skill-description-warning-file", index))
-                            .w_full()
-                            .min_w_0()
-                            .gap_0p5()
-                            .p_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                            .child(
-                                h_flex().min_w_0().gap_1().child(file_icon).child(
-                                    Label::new(file_label)
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx),
-                                ),
-                            )
-                            .child(
-                                Label::new(issue.message.clone())
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .tooltip(move |_, cx| {
-                                Tooltip::with_meta("Open File", None, full_path.clone(), cx)
-                            })
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title(title)
+                    .description(format!("{}\n{path_label}", issue.message))
+                    .actions_slot(
+                        Button::new(("open-skill-file", index), "Open Skill")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 let abs_path = abs_path.clone();
                                 workspace
@@ -9852,135 +9851,134 @@ impl ThreadView {
                                             .detach_and_log_err(cx);
                                     })
                                     .ok();
-                            }))
-                            .into_any_element()
-                    })
-                    .collect::<Vec<_>>();
-                callout = callout.description_slot(v_flex().gap_1().children(rows));
-            } else {
-                let settings_targets =
-                    skill_warning_settings_targets(&description_warnings, &self.project, cx);
-                if settings_targets.is_empty() {
-                    callout = callout.description(
-                        "Some skill descriptions exceed the recommended limit and may consume more model-context tokens.",
-                    );
-                } else {
-                    let manage_buttons =
-                        h_flex()
-                            .gap_0p5()
-                            .children(settings_targets.into_iter().enumerate().map(
-                                |(index, settings_target)| {
-                                    let target = settings_target.target.clone();
-                                    Button::new(
-                                        ("open-skills-settings", index),
-                                        settings_target.label,
-                                    )
-                                    .label_size(LabelSize::Small)
-                                    .on_click(move |_, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(zed_actions::OpenSettingsAt {
-                                                path: "agent.skills".to_string(),
-                                                target: target.clone(),
-                                            }),
-                                            cx,
-                                        );
-                                    })
-                                    .into_any_element()
-                                },
-                            ));
-                    callout = callout
-                        .description("Open Skills settings to review these warnings and manage skill descriptions in one place.")
-                        .actions_slot(manage_buttons);
-                }
-            }
-
-            let targets = description_warnings;
-            callouts.push(
-                callout.dismiss_action(
-                    IconButton::new("dismiss-skill-description-warnings", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Dismiss"))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.skill_loading_issues
-                                .retain(|issue| !targets.contains(issue));
-                            for target in &targets {
+                            })),
+                    )
+                    .dismiss_action(
+                        IconButton::new(("dismiss-skill-issue", index), IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.skill_loading_issues.retain(|issue| *issue != target);
                                 this.dismissed_skill_loading_issues.insert(target.clone());
-                            }
-                            cx.notify();
-                        })),
-                ),
-            );
+                                cx.notify();
+                            })),
+                    )
+            })
+            .collect::<Vec<_>>();
+
+        long_description_warning
+            .into_iter()
+            .chain(other_warnings)
+            .map(|callout| callout.border_position(border_position))
+            .collect()
+    }
+
+    fn render_skill_description_warnings(
+        &self,
+        description_warnings: Vec<SkillLoadingIssue>,
+        cx: &mut Context<Self>,
+    ) -> Option<Callout> {
+        if description_warnings.is_empty() {
+            return None;
         }
 
-        callouts.extend(
-            self.skill_loading_issues
-                .iter()
-                .filter(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong)
-                .enumerate()
-                .map(|(index, issue)| {
-                    let abs_path = issue.path.clone();
-                    let workspace = self.workspace.clone();
-                    let path_label = issue.path.display().to_string();
-                    let target = issue.clone();
-                    let title = match issue.kind {
-                        SkillLoadingIssueKind::LoadFailed => "Skill failed to load",
-                        SkillLoadingIssueKind::DescriptionTooLong => unreachable!(),
-                        SkillLoadingIssueKind::CatalogBudgetExceeded => {
-                            "Skill omitted from model catalog"
-                        }
-                    };
-                    Callout::new()
-                        .icon(IconName::Warning)
-                        .severity(Severity::Warning)
-                        .title(title)
-                        .description(format!("{}\n{path_label}", issue.message))
-                        .actions_slot(
-                            Button::new(("open-skill-file", index), "Open File").on_click(
-                                cx.listener(move |_, _, window, cx| {
-                                    let abs_path = abs_path.clone();
-                                    workspace
-                                        .update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    abs_path,
-                                                    workspace::OpenOptions::default(),
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                        })
-                                        .ok();
-                                }),
-                            ),
-                        )
-                        .dismiss_action(
-                            IconButton::new(("dismiss-skill-issue", index), IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.skill_loading_issues.retain(|issue| *issue != target);
-                                    this.dismissed_skill_loading_issues.insert(target.clone());
-                                    cx.notify();
-                                })),
-                        )
-                }),
-        );
+        let warning_count = description_warnings.len();
+        let title = if warning_count == 1 {
+            "1 Skill Loaded with a Long Description".to_string()
+        } else {
+            format!("{warning_count} Skills Loaded with Long Descriptions")
+        };
 
-        callouts
+        let rows = description_warnings
+            .iter()
+            .enumerate()
+            .map(|(index, issue)| {
+                let abs_path = issue.path.clone();
+                let workspace = self.workspace.clone();
+                let full_path = issue.path.display().to_string();
+                let file_label = skill_issue_file_label(&issue.path);
+
+                ButtonLike::new(("skill-description-warning-file", index))
+                    .full_width()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Dash)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new(file_label).size(LabelSize::Small)),
+                    )
+                    .tooltip(move |_, cx| {
+                        Tooltip::with_meta("Open Skill", None, full_path.clone(), cx)
+                    })
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        let abs_path = abs_path.clone();
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace
+                                    .open_abs_path(
+                                        abs_path,
+                                        workspace::OpenOptions::default(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_log_err(cx);
+                            })
+                            .ok();
+                    }))
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let callout = Callout::new()
+            .icon(IconName::Warning)
+            .severity(Severity::Warning)
+            .title(title)
+            .description_slot(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new(format!(
+                            "Ensure skill descriptions are at most {MAX_SKILL_DESCRIPTION_LEN} bytes; longer ones may consume more model-context tokens."
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    )
+                    .children(rows),
+            );
+
+        let targets = description_warnings;
+
+        Some(
+            callout.dismiss_action(
+                IconButton::new("dismiss-skill-description-warnings", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Dismiss"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.skill_loading_issues
+                            .retain(|issue| !targets.contains(issue));
+                        for target in &targets {
+                            this.dismissed_skill_loading_issues.insert(target.clone());
+                        }
+                        cx.notify();
+                    })),
+            ),
+        )
     }
 
     fn render_external_source_prompt_warning(&self, cx: &mut Context<Self>) -> Callout {
         Callout::new()
+            .border_position(self.callout_border_position())
             .icon(IconName::Warning)
             .severity(Severity::Warning)
-            .title("Review before sending")
-            .description("This prompt was pre-filled by an external link. Read it carefully before you send it.")
+            .title("Review Before Sending")
+            .description("This prompt was pre-filled by an external link. Read it carefully before you submit it to the model.")
             .dismiss_action(
                 IconButton::new("dismiss-external-source-prompt-warning", IconName::Close)
                     .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
                     .tooltip(Tooltip::text("Dismiss Warning"))
                     .on_click(cx.listener({
                         move |this, _, _, cx| {
@@ -10032,7 +10030,7 @@ impl ThreadView {
                     "It currently only operates by default on \"{}\".",
                     active_dir
                 ))
-                .border_position(ui::BorderPosition::Bottom)
+                .border_position(self.callout_border_position())
                 .dismiss_action(
                     IconButton::new("dismiss-multi-root-callout", IconName::Close)
                         .icon_size(IconSize::Small)
@@ -10049,9 +10047,9 @@ impl ThreadView {
         let server_view = self.server_view.clone();
         let has_version = !version.is_empty();
         let title = if has_version {
-            "New version available"
+            "New Version Available"
         } else {
-            "Agent update available"
+            "Agent Update Available"
         };
         let button_label = if has_version {
             format!("Update to v{}", version)
@@ -10065,7 +10063,7 @@ impl ThreadView {
                 .pr_3()
                 .w_full()
                 .gap_1p5()
-                .border_t_1()
+                .border_b_1()
                 .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().element_background)
                 .child(
@@ -10130,6 +10128,7 @@ impl ThreadView {
 
         Some(
             Callout::new()
+                .border_position(self.callout_border_position())
                 .severity(severity)
                 .icon(icon)
                 .title(title)
@@ -10633,6 +10632,41 @@ pub(crate) fn open_link(
     }
 }
 
+/// If `text` is a built-in (native-category) slash command followed by extra
+/// text — e.g. `/compact summarize the API work` — returns the command name.
+/// Built-in commands ignore trailing arguments, so the caller sends the bare
+/// command and queues the remainder rather than discarding it. Commands from
+/// MCP servers and ACP agents are excluded: their trailing text is a real
+/// argument the agent consumes.
+fn leading_native_command(
+    text: &str,
+    available_commands: &[acp::AvailableCommand],
+) -> Option<String> {
+    let rest = text.trim_start().strip_prefix('/')?;
+    let name_end = rest.find(char::is_whitespace)?;
+    let name = &rest[..name_end];
+    if rest[name_end..].trim().is_empty() {
+        return None;
+    }
+    let is_native = available_commands.iter().any(|command| {
+        command.name == name
+            && acp_thread::command_category_from_meta(&command.meta)
+                == Some(acp_thread::CommandCategory::Native)
+    });
+    is_native.then(|| name.to_string())
+}
+
+/// Removes a leading `/command_name` token from `text`, returning the trimmed
+/// remainder. Falls back to the trimmed input if the prefix isn't present.
+fn strip_leading_command(text: &str, command_name: &str) -> String {
+    let trimmed = text.trim_start();
+    trimmed
+        .strip_prefix('/')
+        .and_then(|rest| rest.strip_prefix(command_name))
+        .map(|rest| rest.trim_start().to_string())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10640,6 +10674,56 @@ mod tests {
     use serde_json::json;
     use util::path;
     use workspace::MultiWorkspace;
+
+    fn native_command(name: &str) -> acp::AvailableCommand {
+        acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ))
+    }
+
+    fn mcp_command(name: &str) -> acp::AvailableCommand {
+        acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Mcp,
+        ))
+    }
+
+    #[test]
+    fn test_leading_native_command_only_splits_native_with_remainder() {
+        let commands = [native_command("compact"), mcp_command("deploy")];
+
+        // Native command with trailing text -> split.
+        assert_eq!(
+            leading_native_command("/compact summarize the API work", &commands),
+            Some("compact".to_string())
+        );
+        // Leading/trailing whitespace is tolerated.
+        assert_eq!(
+            leading_native_command("  /compact   do x  ", &commands),
+            Some("compact".to_string())
+        );
+
+        // Bare native command (no remainder) -> no split; it sends normally.
+        assert_eq!(leading_native_command("/compact", &commands), None);
+        assert_eq!(leading_native_command("/compact   ", &commands), None);
+
+        // MCP/ACP commands consume their trailing text as an argument.
+        assert_eq!(leading_native_command("/deploy prod", &commands), None);
+
+        // Unknown command, or not a slash command at all.
+        assert_eq!(leading_native_command("/unknown foo", &commands), None);
+        assert_eq!(leading_native_command("just a message", &commands), None);
+    }
+
+    #[test]
+    fn test_strip_leading_command() {
+        assert_eq!(strip_leading_command("/compact do x", "compact"), "do x");
+        assert_eq!(
+            strip_leading_command("  /compact  do x ", "compact"),
+            "do x "
+        );
+        // No matching prefix: returns the trimmed input unchanged.
+        assert_eq!(strip_leading_command("hello", "compact"), "hello");
+    }
 
     #[gpui::test]
     async fn test_open_link_bare_path(cx: &mut gpui::TestAppContext) {

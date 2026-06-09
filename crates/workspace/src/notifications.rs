@@ -1665,7 +1665,7 @@ where
                         display.push('.');
                     }
                     let detail = f(err, window, cx).unwrap_or(display);
-                    window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
+                    window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["OK"], cx)
                 }) {
                     prompt.await.ok();
                 }

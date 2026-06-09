@@ -25,15 +25,12 @@ mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
 mod tool_permissions;
-mod update_plan_tool;
-mod update_title_tool;
 mod web_search_tool;
 mod write_file_tool;
 
 use crate::AgentTool;
 use feature_flags::{
     CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
-    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
 use gpui::App;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
@@ -89,8 +86,6 @@ pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
-pub use update_plan_tool::*;
-pub use update_title_tool::*;
 pub use web_search_tool::*;
 pub use write_file_tool::*;
 
@@ -199,8 +194,6 @@ tools! {
     SkillTool,
     SpawnAgentTool,
     TerminalTool,
-    UpdatePlanTool,
-    UpdateTitleTool,
     WebSearchTool,
     WriteFileTool,
 }
@@ -222,8 +215,6 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
         CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
             cx.has_flag::<CreateThreadToolFeatureFlag>()
         }
-        UpdatePlanTool::NAME => cx.has_flag::<UpdatePlanToolFeatureFlag>(),
-        UpdateTitleTool::NAME => cx.has_flag::<UpdateTitleToolFeatureFlag>(),
         _ => true,
     }
 }

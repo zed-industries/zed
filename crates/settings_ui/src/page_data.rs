@@ -7819,13 +7819,15 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
-                json_path: Some("agent.skills"),
+                json_path: Some(zed_actions::AGENT_SKILLS_SETTINGS_PATH),
                 description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
                 in_json: false,
                 files: USER | PROJECT,
@@ -8104,6 +8106,68 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
         ]);
+
+        if cx.has_flag::<feature_flags::HandoffFeatureFlag>() {
+            items.extend([
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Compact",
+                    description: "Automatically compact the agent's context when it grows too large, summarizing earlier messages to free up room in the model's context window.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("agent.auto_compact.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .agent
+                                .as_ref()?
+                                .auto_compact
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .auto_compact
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Compact Threshold",
+                    description: "When auto compaction runs. A percentage string like \"90%\" is measured against the context window. A positive integer is the number of used tokens to compact after. A negative integer is the number of tokens remaining in the context window before compacting.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("agent.auto_compact.threshold"),
+                        pick: |settings_content| {
+                            settings_content
+                                .agent
+                                .as_ref()?
+                                .auto_compact
+                                .as_ref()?
+                                .threshold
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .auto_compact
+                                .get_or_insert_default()
+                                .threshold = value;
+                        },
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("90%"),
+                        ..Default::default()
+                    })),
+                    files: USER,
+                }),
+            ]);
+        }
 
         items.into_boxed_slice()
     }
