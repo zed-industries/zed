@@ -135,6 +135,15 @@ impl WindowLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoCompactSettings {
+    pub enabled: bool,
+    /// See `AutoCompactSettingsContent::threshold` for how this value is
+    /// interpreted (fraction of the window, absolute token count, or remaining
+    /// token headroom).
+    pub threshold: f64,
+}
+
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
@@ -161,6 +170,7 @@ pub struct AgentSettings {
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
+    pub auto_compact: AutoCompactSettings,
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
@@ -682,6 +692,13 @@ impl Settings for AgentSettings {
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
+            auto_compact: {
+                let auto_compact = agent.auto_compact.unwrap();
+                AutoCompactSettings {
+                    enabled: auto_compact.enabled.unwrap(),
+                    threshold: auto_compact.threshold.unwrap(),
+                }
+            },
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),

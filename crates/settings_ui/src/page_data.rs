@@ -7819,7 +7819,9 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -8104,6 +8106,65 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
         ]);
+
+        if cx.has_flag::<feature_flags::HandoffFeatureFlag>() {
+            items.extend([
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Compact",
+                    description: "Automatically compact the agent's context when it grows too large, summarizing earlier messages to free up room in the model's context window.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("agent.auto_compact.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .agent
+                                .as_ref()?
+                                .auto_compact
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .auto_compact
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Compact Threshold",
+                    description: "When auto compaction runs. A decimal from 0 to 1 is a percentage of the context window (e.g. 0.8 = 80% full). An integer above 1 is the number of used tokens to compact after. A negative integer is the number of tokens remaining in the context window before compacting.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("agent.auto_compact.threshold"),
+                        pick: |settings_content| {
+                            settings_content
+                                .agent
+                                .as_ref()?
+                                .auto_compact
+                                .as_ref()?
+                                .threshold
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .auto_compact
+                                .get_or_insert_default()
+                                .threshold = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ]);
+        }
 
         items.into_boxed_slice()
     }
