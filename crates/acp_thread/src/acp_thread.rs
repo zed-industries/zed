@@ -317,6 +317,12 @@ pub struct ContextCompaction {
     pub summary: Option<Entity<Markdown>>,
 }
 
+impl ContextCompaction {
+    pub fn is_in_progress(&self) -> bool {
+        self.status == ContextCompactionStatus::InProgress
+    }
+}
+
 #[derive(Debug)]
 pub struct ContextCompactionUpdate {
     pub id: ContextCompactionId,
@@ -1563,6 +1569,15 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    pub fn is_compacting(&self) -> bool {
+        self.entries.last().is_some_and(|entry| {
+            matches!(
+                entry,
+                AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
+            )
+        })
     }
 
     pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
