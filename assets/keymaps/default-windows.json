@@ -36,9 +36,6 @@
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
-      "f10": "debugger::StepOver",
-      "shift-f11": "debugger::StepOut",
-      "f11": "zed::ToggleFullScreen",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
       "shift-alt-l": "lsp_tool::ToggleMenu",
       "ctrl-shift-alt-c": "editor::DisplayCursorNames",
@@ -602,6 +599,7 @@
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
+      "f11": "zed::ToggleFullScreen",
       "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
@@ -700,6 +698,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "f5": "debugger::Continue",
+      "f10": "debugger::StepOver",
+      "f11": "debugger::StepInto",
+      "ctrl-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
     },
   },
   {
