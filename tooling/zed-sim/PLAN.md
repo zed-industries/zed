@@ -154,16 +154,33 @@ a small change in Zed itself, gated behind a staff-only build flag.
   like an updater — no manual build management for staff.
 - Security posture: purely local/cosmetic, no production access, no master key.
 
-## Optional (only if a preview backend is confirmed)
+## Impersonation (Phase 1.5 — BUILT)
 
-Real Pro/Trial/Business via impersonation of pre-made **preview** accounts:
-- Levers: `ZED_IMPERSONATE` + `ZED_ADMIN_API_TOKEN` =>
-  `authenticate_as_admin` => `POST /internal/users/impersonate`
-  (`crates/client/src/client.rs`). Not debug-gated; works on stock binary.
-- Point `server_url` at preview; the impersonation key MUST be preview-scoped.
-- Launcher exposes accounts as a dropdown of GitHub usernames; the key is stored
-  once and never shown to the user.
-- Do NOT use a production-capable key in this tool.
+Real accounts via impersonation of pre-made **preview** accounts, by username
+only (no GitHub OAuth). Implemented in `config.rs` + `server.rs`.
+
+- Levers: `ZED_IMPERSONATE` + `ZED_ADMIN_API_TOKEN` + `ZED_SERVER_URL`, set as
+  env on the launched process => `authenticate_as_admin` =>
+  `POST /internal/users/impersonate` (`crates/client/src/client.rs`). Not
+  debug-gated; works on the stock binary.
+- The cloud API host is derived from `server_url` by
+  `HttpClientWithUrl::build_zed_cloud_url` (`localhost:3000`->`localhost:8787`,
+  otherwise same host), so pointing at preview = setting `ZED_SERVER_URL`.
+- The endpoint resolves the username via GitHub's public API and find-or-creates
+  the user, so any real public GitHub username works and need not be owned.
+- Config: a gitignored `zed-sim.config.json` (server_url + accounts allow-list)
+  plus `ZED_SIM_IMPERSONATE_TOKEN` / `ZED_SIM_SERVER_URL` env overrides. No
+  secret is committed. Usernames are validated against the allow-list.
+- The key MUST be preview-scoped. Do NOT use a production-capable key here.
+
+### Known constraints (stock-binary limitations)
+
+- **TTY requirement:** stock Zed only auto-triggers impersonation when stdout is
+  a TTY (`authenticate()` in `crates/zed/src/main.rs`). The launched Zed
+  inherits this tool's stdout, so the tool must be run from a terminal
+  (`cargo run`). A future Phase 2 build flag could drop this requirement.
+- **Token in terminal:** stock Zed `eprintln!`s the token during admin sign-in.
+  It lands in the local terminal only; keep the preview token low-privilege.
 
 ## Open items (track, not blocking the MVP)
 

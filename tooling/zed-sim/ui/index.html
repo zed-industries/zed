@@ -101,6 +101,11 @@
         <button onclick="launch('signed_in', this)">Launch</button>
       </div>
 
+      <div class="group-label">Impersonate (real accounts)</div>
+      <div id="impersonate">
+        <div class="soon">Loading…</div>
+      </div>
+
       <div class="group-label">Coming soon (Phase 2)</div>
 
       <div class="card disabled">
@@ -165,6 +170,59 @@
           btn.disabled = false;
         }
       }
+
+      async function impersonate(username, btn) {
+        btn.disabled = true;
+        setStatus("Launching as " + username + "…");
+        try {
+          const data = await post("/launch", { impersonate: username });
+          setStatus("Launched as " + username + ". Profile: " + data.profile, "ok");
+        } catch (err) {
+          setStatus("Failed: " + err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      function escapeHtml(value) {
+        return value.replace(/[&<>"']/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+      }
+
+      async function loadAccounts() {
+        const container = document.getElementById("impersonate");
+        try {
+          const res = await fetch("/accounts");
+          const data = await res.json();
+          if (!data.enabled || !data.accounts.length) {
+            container.innerHTML =
+              '<div class="soon">Not configured. Add a token, server URL, and accounts ' +
+              "(see README) to enable impersonation.</div>";
+            return;
+          }
+          container.innerHTML = data.accounts
+            .map(function (a) {
+              const user = escapeHtml(a.username);
+              const label = escapeHtml(a.label || a.username);
+              return (
+                '<div class="card"><div><div class="name">' +
+                label +
+                '</div><div class="desc">@' +
+                user +
+                '</div></div><button onclick="impersonate(\'' +
+                user +
+                "', this)\">Launch</button></div>"
+              );
+            })
+            .join("");
+        } catch (err) {
+          container.innerHTML =
+            '<div class="soon">Could not load accounts: ' + escapeHtml(err.message) + "</div>";
+        }
+      }
+
+      loadAccounts();
 
       async function wipe(btn) {
         btn.disabled = true;

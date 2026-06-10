@@ -4,10 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
+use serde_json::{Map, Value};
 use smol::process::Command;
 use uuid::Uuid;
-
-use crate::states::SimState;
 
 /// Root directory under which all scratch profiles live, so they can be wiped
 /// as a group without affecting the user's real Zed data.
@@ -18,11 +17,12 @@ pub fn profiles_root() -> PathBuf {
 /// A single disposable profile on disk.
 pub struct Profile {
     pub dir: PathBuf,
+    pub id: String,
 }
 
 impl Profile {
-    /// Creates a fresh profile directory and writes any state-specific settings.
-    pub fn create(state: SimState) -> Result<Self> {
+    /// Creates a fresh, empty profile directory (plus its `config` subdir).
+    pub fn create() -> Result<Self> {
         let id = Uuid::new_v4().to_string();
         let dir = profiles_root().join(&id);
 
@@ -32,36 +32,33 @@ impl Profile {
         fs::create_dir_all(&config_dir)
             .with_context(|| format!("creating profile config dir at {}", config_dir.display()))?;
 
-        let config = state.launch_config();
-        let mut settings = serde_json::Map::new();
-        if config.isolate_credentials {
-            settings.insert(
-                "credentials_url".to_string(),
-                serde_json::Value::String(format!("zed-sim://{id}")),
-            );
-        }
-        if let Some(server_url) = &config.server_url {
-            settings.insert(
-                "server_url".to_string(),
-                serde_json::Value::String(server_url.clone()),
-            );
-        }
-        if !settings.is_empty() {
-            let settings_path = config_dir.join("settings.json");
-            let body = serde_json::to_string_pretty(&serde_json::Value::Object(settings))?;
-            fs::write(&settings_path, body)
-                .with_context(|| format!("writing {}", settings_path.display()))?;
-        }
-
-        Ok(Self { dir })
+        Ok(Self { dir, id })
     }
 
-    /// Spawns Zed pointed at this profile. Returns immediately; the spawned
-    /// process is detached and keeps running after this tool drops the handle.
-    pub fn launch(&self, zed_binary: &Path) -> Result<()> {
-        Command::new(zed_binary)
-            .arg("--user-data-dir")
-            .arg(&self.dir)
+    /// Writes `settings.json` into the profile. A no-op when `settings` is empty.
+    pub fn write_settings(&self, settings: Map<String, Value>) -> Result<()> {
+        if settings.is_empty() {
+            return Ok(());
+        }
+        let settings_path = self.dir.join("config").join("settings.json");
+        let body = serde_json::to_string_pretty(&Value::Object(settings))?;
+        fs::write(&settings_path, body)
+            .with_context(|| format!("writing {}", settings_path.display()))?;
+        Ok(())
+    }
+
+    /// Spawns Zed pointed at this profile, with the given extra environment.
+    ///
+    /// Stdio is inherited so a terminal-launched session keeps a TTY stdout —
+    /// which stock Zed requires before it will honor `ZED_IMPERSONATE`. Returns
+    /// immediately; the spawned process is detached and outlives this tool.
+    pub fn launch(&self, zed_binary: &Path, env: &[(&str, String)]) -> Result<()> {
+        let mut command = Command::new(zed_binary);
+        command.arg("--user-data-dir").arg(&self.dir);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        command
             .spawn()
             .with_context(|| format!("launching {}", zed_binary.display()))?;
         Ok(())

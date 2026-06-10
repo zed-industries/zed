@@ -1,15 +1,14 @@
-//! The catalog of states Zed Sim can launch.
+//! The static (no-backend) state catalog.
 //!
-//! Phase 1 (MVP) ships two states that need no changes to Zed itself. The
-//! fabricated plan states (Pro, Trial, etc.) are listed in the UI as
-//! "coming soon" and land in Phase 2 via an injection build.
+//! These two states need no changes to Zed and no configuration. The dynamic
+//! impersonation states are sourced from `config::AppConfig` instead.
 
-/// A launchable simulation state.
+/// A launchable state that requires only a fresh local profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SimState {
     /// Signed out, pristine first-run onboarding.
     NewUser,
-    /// Fresh profile that goes through the real sign-in flow.
+    /// A fresh profile that goes through the real sign-in flow.
     SignedIn,
 }
 
@@ -22,30 +21,4 @@ impl SimState {
             _ => None,
         }
     }
-
-    pub fn launch_config(self) -> LaunchConfig {
-        match self {
-            // Both MVP states isolate credentials: a unique keychain key means a
-            // disposable session can never read or overwrite the user's real
-            // saved login, even if they choose to sign in while exploring.
-            SimState::NewUser => LaunchConfig {
-                isolate_credentials: true,
-                server_url: None,
-            },
-            SimState::SignedIn => LaunchConfig {
-                isolate_credentials: true,
-                server_url: None,
-            },
-        }
-    }
-}
-
-/// How a given state shapes the launched Zed process and its profile.
-pub struct LaunchConfig {
-    /// Write a unique `credentials_url` into the profile so the disposable
-    /// session never touches the user's real saved login in the OS keychain.
-    pub isolate_credentials: bool,
-    /// Override the backend via the `server_url` setting. `None` uses Zed's
-    /// default (production). Reserved for the optional preview path.
-    pub server_url: Option<String>,
 }
