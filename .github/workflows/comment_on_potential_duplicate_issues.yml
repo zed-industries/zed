@@ -10,6 +10,8 @@ on:
         required: true
         type: number
 
+permissions: {}
+
 concurrency:
   group: potential-duplicate-check-${{ github.event.issue.number || inputs.issue_number }}
   cancel-in-progress: true

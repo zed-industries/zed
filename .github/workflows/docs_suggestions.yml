@@ -42,6 +42,9 @@ on:
           - immediate
         default: batch
 
+permissions:
+  contents: read
+
 env:
   DROID_MODEL: claude-sonnet-4-5-20250929
   SUGGESTIONS_BRANCH: docs/suggestions-pending

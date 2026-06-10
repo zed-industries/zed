@@ -4,6 +4,8 @@ on:
   label:
     types: [created]
 
+permissions: {}
+
 jobs:
   notify-slack:
     if: >-
