@@ -1,11 +1,11 @@
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
-use super::NodeTracker;
+use super::{AccentStackEntry, NodeTracker};
 
 pub(super) struct MindmapAccents {
     section_classes: Vec<String>,
-    section_g_stack: Vec<Option<usize>>,
+    section_g_stack: Vec<AccentStackEntry>,
     nodes: NodeTracker,
     current_text_section: Option<usize>,
 }
@@ -23,21 +23,30 @@ impl MindmapAccents {
     pub(super) fn process_event<'a>(&mut self, event: Event<'a>) -> Result<Event<'a>> {
         match &event {
             Event::Start(e) if e.name().as_ref() == b"g" => {
+                if super::is_foreign_object_fallback_group(e)? {
+                    self.section_g_stack.push(AccentStackEntry::none());
+                    return Ok(event);
+                }
+
                 let section_idx = self.parse_section_class(e)?;
                 if let Some(idx) = section_idx {
-                    if let Some((tx, ty)) = super::parse_translate(e) {
+                    let tracks_node = if let Some((tx, ty)) = super::parse_translate(e) {
                         self.nodes.start_node(tx, ty, 0.0, idx);
-                    }
-                    self.section_g_stack.push(Some(idx));
+                        true
+                    } else {
+                        false
+                    };
+                    self.section_g_stack
+                        .push(AccentStackEntry::accent(idx, tracks_node));
                 } else {
-                    self.section_g_stack.push(None);
+                    self.section_g_stack.push(AccentStackEntry::none());
                 }
                 Ok(event)
             }
 
             Event::End(e) if e.name().as_ref() == b"g" => {
-                if let Some(maybe_section) = self.section_g_stack.pop() {
-                    if maybe_section.is_some() {
+                if let Some(entry) = self.section_g_stack.pop() {
+                    if entry.tracks_node() {
                         self.nodes.maybe_finish_node();
                     }
                 }
@@ -97,10 +106,9 @@ impl MindmapAccents {
             None => return Ok(None),
         };
         let class = class_attr.unescape_value()?;
-        let tokens: Vec<&str> = class.split_whitespace().collect();
-        let is_root = tokens.contains(&"section-root");
+        let is_root = class.split_whitespace().any(|t| t == "section-root");
 
-        for token in &tokens {
+        for token in class.split_whitespace() {
             if let Some(rest) = token.strip_prefix("section-") {
                 if rest == "-1" || rest.parse::<u32>().is_ok() {
                     let class_name = if is_root {

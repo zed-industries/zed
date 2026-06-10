@@ -288,6 +288,15 @@ unsafe fn build_classes() {
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
             );
+
+            // Undocumented SPI, also implemented by Chromium's content view. This
+            // lets full size content windows mark our Metal view as app owned title
+            // bar content, avoiding AppKit's title bar click-delay behavior.
+            decl.add_method(
+                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
+                opaque_rect_for_window_move_when_in_titlebar
+                    as extern "C" fn(&Object, Sel) -> NSRect,
+            );
             decl.register()
         };
         BLURRED_VIEW_CLASS = {
@@ -321,17 +330,15 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
 /// thread because it reads the active AppKit window and updates GPUI window state associated
 /// with Objective-C objects.
 pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
-    // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
+    // SAFETY: The caller guarantees AppKit main-thread access. `is_gpui_window` ensures the
     // window has our WINDOW_STATE_IVAR before reading it.
     unsafe {
         let app = NSApplication::sharedApplication(nil);
         let key_window: id = msg_send![app, keyWindow];
         let main_window: id = msg_send![app, mainWindow];
-        let active_window = if !key_window.is_null()
-            && msg_send![key_window, isKindOfClass: WINDOW_CLASS]
-        {
+        let active_window = if !key_window.is_null() && is_gpui_window(key_window) {
             Some(key_window)
-        } else if !main_window.is_null() && msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+        } else if !main_window.is_null() && is_gpui_window(main_window) {
             Some(main_window)
         } else {
             None
@@ -1828,6 +1835,14 @@ fn get_scale_factor(native_window: id) -> f32 {
     if factor == 0.0 { 2. } else { factor }
 }
 
+/// Returns whether `window` is one of GPUI's managed windows.
+unsafe fn is_gpui_window(window: id) -> bool {
+    unsafe {
+        msg_send![window, isKindOfClass: WINDOW_CLASS]
+            || msg_send![window, isKindOfClass: PANEL_CLASS]
+    }
+}
+
 unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
     unsafe {
         let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
@@ -2745,6 +2760,25 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
+}
+
+extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel) -> NSRect {
+    unsafe {
+        let window: id = msg_send![this, window];
+        if window == nil {
+            return NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+        }
+
+        let style_mask: NSWindowStyleMask = msg_send![window, styleMask];
+        if style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            // Declare the entire view as opaque content for window move purposes
+            // when using a custom titlebar, so AppKit doesn't wait for double click
+            // disambiguation before delivering clicks to titlebar controls.
+            msg_send![this, bounds]
+        } else {
+            NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
+        }
+    }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {

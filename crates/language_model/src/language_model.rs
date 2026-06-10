@@ -1,5 +1,4 @@
 mod api_key;
-mod model;
 mod registry;
 mod request;
 
@@ -17,7 +16,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
-pub use crate::model::*;
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
@@ -58,6 +56,18 @@ pub trait LanguageModel: Send + Sync {
     /// Returns whether this model is the "latest", so we can highlight it in the UI.
     fn is_latest(&self) -> bool {
         false
+    }
+
+    /// Whether requests to this model require the user to consent to the
+    /// upstream provider retaining inference logs (i.e. the model cannot be
+    /// offered with Zero Data Retention).
+    fn requires_data_retention(&self) -> bool {
+        false
+    }
+
+    /// When this model refuses a request, the model ID to fall back to (same provider).
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        None
     }
 
     fn telemetry_id(&self) -> String;

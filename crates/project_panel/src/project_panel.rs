@@ -527,6 +527,50 @@ pub fn init(cx: &mut App) {
                 panel.update(cx, |panel, cx| panel.delete(action, window, cx));
             }
         });
+
+        // Forwards `git::FileHistory` to `git_ui::git_graph` when the project
+        // panel is the focused source of selection. Lives here (and not in
+        // `git_ui`) so that `git_ui` does not need to depend on
+        // `project_panel`, which would create a dependency cycle.
+        workspace.register_action_renderer(|div, workspace, window, cx| {
+            let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                return div;
+            };
+            if !panel.read(cx).focus_handle(cx).contains_focused(window, cx) {
+                return div;
+            }
+            if panel.read(cx).selected_entry_project_path(cx).is_none() {
+                return div;
+            }
+            let workspace = workspace.weak_handle();
+            div.capture_action(move |_: &git::FileHistory, window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                            return;
+                        };
+                        let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
+                        else {
+                            return;
+                        };
+                        let Some((repo_id, log_source)) =
+                            git_ui::git_graph::resolve_file_history_target_from_project_path(
+                                workspace,
+                                &project_path,
+                                cx,
+                            )
+                        else {
+                            return;
+                        };
+                        let git_store = workspace.project().read(cx).git_store().clone();
+                        git_ui::git_graph::open_or_reuse_graph(
+                            workspace, repo_id, git_store, log_source, None, window, cx,
+                        );
+                    })
+                    .log_err();
+                cx.stop_propagation();
+            })
+        });
     })
     .detach();
 }
@@ -1111,7 +1155,6 @@ impl ProjectPanel {
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
-                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
                             .action_disabled_when(!has_pasteable_content, "Paste", Box::new(Paste))
                             .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |menu| {
                                 menu.action_disabled_when(
@@ -1144,6 +1187,10 @@ impl ProjectPanel {
                                         )
                                     })
                                     .action("Add to .gitignore", Box::new(git::AddToGitignore))
+                                    .action(
+                                        "Add to .git/info/exclude",
+                                        Box::new(git::AddToGitInfoExclude),
+                                    )
                                     .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
                                     })
@@ -2294,6 +2341,53 @@ impl ProjectPanel {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
                             let message = format!("Failed to add to .gitignore: {}", e);
+                            let toast = StatusToast::new(message, cx, |this, _| {
+                                this.icon(Icon::new(IconName::XCircle).color(Color::Error))
+                                    .dismiss_button(true)
+                            });
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            });
+                        });
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
+    fn add_to_git_info_exclude(
+        &mut self,
+        _: &git::AddToGitInfoExclude,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let selection = self.selection?;
+            let (_, entry) = self.selected_sub_entry(cx)?;
+            let is_dir = entry.is_dir();
+            let project = self.project.read(cx);
+
+            let project_path = project.path_for_entry(selection.entry_id, cx)?;
+
+            let git_store = project.git_store();
+            let (repository, repo_path) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)?;
+
+            let workspace = self.workspace.clone();
+            let receiver = repository.update(cx, |repo, _| {
+                repo.add_path_to_git_info_exclude(&repo_path, is_dir)
+            });
+
+            cx.spawn(async move |_, cx| {
+                if let Err(e) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            let message = format!("Failed to add to .git/info/exclude: {}", e);
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(Icon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)
@@ -5635,7 +5729,7 @@ impl ProjectPanel {
             )
             .on_click(
                 cx.listener(move |project_panel, event: &gpui::ClickEvent, window, cx| {
-                    if event.is_right_click() || event.first_focus() || show_editor {
+                    if event.is_right_click() || show_editor {
                         return;
                     }
                     if event.standard_click() {
@@ -6691,6 +6785,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
                         .on_action(cx.listener(Self::add_to_gitignore))
+                        .on_action(cx.listener(Self::add_to_git_info_exclude))
                         .when(!project.is_remote(), |el| {
                             el.on_action(cx.listener(Self::trash))
                         })

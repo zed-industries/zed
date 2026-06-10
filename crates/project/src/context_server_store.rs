@@ -20,7 +20,7 @@ use http_client::HttpClient;
 use itertools::Itertools;
 use rand::Rng as _;
 use registry::ContextServerDescriptorRegistry;
-use remote::RemoteClient;
+use remote::{Interactive, RemoteClient};
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use settings::{Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
@@ -801,6 +801,7 @@ impl ContextServerStore {
                     &response.env.into_iter().collect(),
                     root_dir,
                     None,
+                    Interactive::Yes,
                 )
             })?;
 

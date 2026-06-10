@@ -122,7 +122,13 @@ pub struct PredictEditsBody {
 pub enum PredictEditsRequestTrigger {
     Testing,
     Diagnostics,
+    DiagnosticNavigation,
     Cli,
+    Explicit,
+    BufferEdit,
+    LSPCompletionAccepted,
+    PredictionAccepted,
+    PredictionPartiallyAccepted,
     #[default]
     Other,
 }
