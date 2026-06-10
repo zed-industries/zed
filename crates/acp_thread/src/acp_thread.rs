@@ -2750,7 +2750,7 @@ impl AcpThread {
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
-                        if canceled {
+                        if canceled && is_same_turn {
                             this.mark_pending_entries_as_canceled(cx);
                         }
 
@@ -5788,6 +5788,102 @@ mod tests {
             !running_turn_after_second,
             "second turn completing should clear running_turn"
         );
+    }
+
+    #[gpui::test]
+    async fn test_stale_cancelled_response_does_not_cancel_current_compaction(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let first_complete_rx = RefCell::new(Some(first_complete_rx));
+        let compaction_id = ContextCompactionId("test-compaction".into());
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let compaction_id = compaction_id.clone();
+            move |params, thread, mut cx| {
+                let first_complete_rx = first_complete_rx.borrow_mut().take();
+                let is_first = params.prompt.iter().any(|content| {
+                    matches!(content, acp::ContentBlock::Text(text) if text.text.contains("first"))
+                });
+                let compaction_id = compaction_id.clone();
+
+                async move {
+                    if is_first {
+                        if let Some(rx) = first_complete_rx {
+                            rx.await
+                                .expect("first completion sender should still be alive");
+                        }
+
+                        thread.update(&mut cx, |thread, cx| {
+                            thread.push_context_compaction(
+                                ContextCompaction {
+                                    id: compaction_id,
+                                    status: ContextCompactionStatus::InProgress,
+                                    summary: None,
+                                },
+                                cx,
+                            );
+                        })?;
+
+                        Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    } else {
+                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    }
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 1);
+
+        let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 2);
+
+        first_complete_tx
+            .send(())
+            .expect("first completion receiver should still be alive");
+
+        let response = first_request
+            .await
+            .expect("first request should complete")
+            .expect("first request should have response");
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+
+        thread.read_with(cx, |thread, _| {
+            let compaction = thread
+                .entries
+                .iter()
+                .find_map(|entry| {
+                    let AgentThreadEntry::ContextCompaction(compaction) = entry else {
+                        return None;
+                    };
+                    (compaction.id == compaction_id).then_some(compaction)
+                })
+                .expect("compaction entry should exist");
+
+            assert_eq!(
+                compaction.status,
+                ContextCompactionStatus::InProgress,
+                "a stale cancelled response from an older turn should not cancel current compaction"
+            );
+        });
+
+        second_request
+            .await
+            .expect("second request should complete");
     }
 
     #[gpui::test]
