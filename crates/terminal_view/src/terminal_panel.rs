@@ -1184,7 +1184,7 @@ pub fn prepare_task_for_spawn(
 ) -> SpawnInTerminal {
     let builder = ShellBuilder::new(shell, is_windows);
     let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-    let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
+    let (command, args) = builder.build_for_task(task.command.clone(), &task.args);
 
     SpawnInTerminal {
         command_label,
@@ -1831,6 +1831,106 @@ mod tests {
                 interactive = if cfg!(windows) { "" } else { "-i " }
             ),
             "We want to show to the user the entire command spawned"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_prepare_task_preserves_args_with_spaces() {
+        let input = SpawnInTerminal {
+            command: Some("python".to_string()),
+            args: vec![
+                "main.py".to_string(),
+                "test1".to_string(),
+                "test2 test3".to_string(),
+            ],
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::Program("sh".to_string());
+
+        let result = prepare_task_for_spawn(&input, &shell, false);
+
+        assert_eq!(result.command, Some("sh".to_string()));
+        assert_eq!(
+            result.args,
+            vec![
+                "-i".to_string(),
+                "-c".to_string(),
+                "python main.py test1 'test2 test3'".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_prepare_task_keeps_command_as_shell_snippet() {
+        let input = SpawnInTerminal {
+            command: Some("echo first && echo second".to_string()),
+            args: vec!["test2 test3".to_string()],
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::Program("sh".to_string());
+
+        let result = prepare_task_for_spawn(&input, &shell, false);
+
+        assert_eq!(
+            result.args,
+            vec![
+                "-i".to_string(),
+                "-c".to_string(),
+                "echo first && echo second 'test2 test3'".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_prepare_task_preserves_quoted_and_shell_variable_args() {
+        let input = SpawnInTerminal {
+            command: Some("rspec".to_string()),
+            args: vec![
+                "\"test file.rb:10\"".to_string(),
+                "$PATH".to_string(),
+                "$ZED_RELATIVE_FILE".to_string(),
+            ],
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::Program("sh".to_string());
+
+        let result = prepare_task_for_spawn(&input, &shell, false);
+
+        assert_eq!(
+            result.args,
+            vec![
+                "-i".to_string(),
+                "-c".to_string(),
+                "rspec \"test file.rb:10\" $PATH $ZED_RELATIVE_FILE".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_prepare_task_preserves_args_with_spaces_on_windows() {
+        let input = SpawnInTerminal {
+            command: Some("python".to_string()),
+            args: vec![
+                "main.py".to_string(),
+                "test1".to_string(),
+                "test2 test3".to_string(),
+            ],
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::Program("powershell.exe".to_string());
+
+        let result = prepare_task_for_spawn(&input, &shell, true);
+
+        assert_eq!(result.command, Some("powershell.exe".to_string()));
+        assert_eq!(
+            result.args,
+            vec![
+                "-C".to_string(),
+                "python main.py test1 'test2 test3'".to_string(),
+            ]
         );
     }
 
