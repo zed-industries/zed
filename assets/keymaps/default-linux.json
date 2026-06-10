@@ -45,6 +45,8 @@
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu",
       "ctrl-alt-shift-s": "workspace::ToggleWorktreeSecurity",
+      "ctrl-h k": "zed::DescribeKey",
+      "ctrl-h b": "zed::ToggleWhichKey",
     },
   },
   {

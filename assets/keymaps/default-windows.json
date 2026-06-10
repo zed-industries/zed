@@ -43,6 +43,8 @@
       "shift-alt-l": "lsp_tool::ToggleMenu",
       "ctrl-shift-alt-c": "editor::DisplayCursorNames",
       "ctrl-shift-alt-s": "workspace::ToggleWorktreeSecurity",
+      "ctrl-h k": "zed::DescribeKey",
+      "ctrl-h b": "zed::ToggleWhichKey",
     },
   },
   {
