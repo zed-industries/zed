@@ -1,4 +1,4 @@
-use crate::{commit_view::CommitView, git_timestamp};
+use crate::{commit_view::CommitView, format_git_timestamp, format_git_timestamp_for_surface};
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
@@ -9,7 +9,7 @@ use gpui::{
     StatefulInteractiveElement, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
-use project::git_store::Repository;
+use project::{git_store::Repository, project_settings::GitDateSurface};
 use settings::Settings;
 use std::hash::Hash;
 use theme_settings::ThemeSettings;
@@ -242,7 +242,7 @@ impl Render for CommitTooltip {
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
-        let absolute_timestamp = git_timestamp(
+        let absolute_timestamp = format_git_timestamp(
             self.commit.commit_time,
             time_format::TimestampFormat::MediumAbsolute,
             cx,
@@ -403,7 +403,9 @@ fn blame_entry_timestamp(
     cx: &App,
 ) -> String {
     match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => git_timestamp(timestamp, format, cx),
+        Ok(timestamp) => {
+            format_git_timestamp_for_surface(timestamp, format, GitDateSurface::Blame, cx)
+        }
         Err(_) => "Error parsing date".to_string(),
     }
 }
