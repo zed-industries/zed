@@ -664,13 +664,22 @@ impl TeacherJumpsPrompt {
     }
 
     fn related_file_patch_path(cursor_path: &Path, related_path: &Path) -> std::path::PathBuf {
+        // Related-file paths carry a worktree-root prefix that `cursor_path`
+        // lacks. If stripping it yields the cursor path exactly, this *is*
+        // the cursor file; checking this first handles the case where the
+        // root name coincides with the cursor path's first component (e.g.
+        // cursor `jaq/src/main.rs` in a worktree rooted at `jaq/`).
+        let stripped: std::path::PathBuf = related_path.iter().skip(1).collect();
+        if stripped == cursor_path {
+            return stripped;
+        }
         let cursor_first_component = cursor_path.components().next();
         let related_first_component = related_path.components().next();
         if related_first_component.is_some()
             && cursor_first_component != related_first_component
             && related_path.components().count() > 1
         {
-            related_path.iter().skip(1).collect()
+            stripped
         } else {
             related_path.to_path_buf()
         }
@@ -1101,6 +1110,34 @@ mod tests {
         // user cursor injected.
         assert_eq!(prompt.matches("let x = 1;").count(), 1);
         assert!(prompt.contains("<|user_cursor|>let x = 1;"));
+    }
+
+    #[test]
+    fn test_teacher_jumps_cursor_file_with_coinciding_worktree_root_name() {
+        // Worktree root `jaq` contains a `jaq/` subdirectory: the cursor path
+        // is `jaq/src/main.rs` while the related-file entry is prefixed with
+        // the root name (`jaq/jaq/src/main.rs`).
+        let mut example = make_example("fn main() {\n    let x = 1;\n}\n", 16, &[]);
+        example.spec.cursor_path = std::sync::Arc::from(std::path::Path::new("jaq/src/main.rs"));
+        {
+            let prompt_inputs = example.prompt_inputs.as_mut().unwrap();
+            prompt_inputs.cursor_path = std::path::Path::new("jaq/src/main.rs").into();
+            prompt_inputs.related_files.as_mut().unwrap()[0].path =
+                std::sync::Arc::from(std::path::Path::new("jaq/jaq/src/main.rs"));
+        }
+
+        let prompt = TeacherJumpsPrompt::format_prompt(&example, 8192).unwrap();
+        assert!(prompt.contains("<|user_cursor|>let x = 1;"));
+
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let cursor_markers = &marker_table[0].markers;
+        let start_tag = hashed_regions::marker_tag(&cursor_markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&cursor_markers[cursor_markers.len() - 1].0);
+        let response =
+            format!("`````\n{start_tag}\nfn main() {{\n    let x = 2;\n}}\n{end_tag}\n`````\n");
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+        assert!(patch.contains("--- a/jaq/src/main.rs"), "patch: {patch}");
     }
 
     #[test]
