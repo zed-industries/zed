@@ -57,6 +57,70 @@ impl EditableContextCoverage {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct PatchLocationMatch {
+    pub lines_tp: usize,
+    pub lines_fp: usize,
+    pub lines_fn: usize,
+    pub lines_precision: f64,
+    pub lines_recall: f64,
+    pub lines_f1: f64,
+
+    pub files_tp: usize,
+    pub files_fp: usize,
+    pub files_fn: usize,
+    pub files_precision: f64,
+    pub files_recall: f64,
+    pub files_f1: f64,
+}
+
+impl PatchLocationMatch {
+    pub fn new(
+        lines_tp: usize,
+        lines_fp: usize,
+        lines_fn: usize,
+        files_tp: usize,
+        files_fp: usize,
+        files_fn: usize,
+    ) -> Self {
+        Self {
+            lines_tp,
+            lines_fp,
+            lines_fn,
+            lines_precision: precision(lines_tp, lines_fp, lines_fn),
+            lines_recall: recall(lines_tp, lines_fp, lines_fn),
+            lines_f1: f1(lines_tp, lines_fp, lines_fn),
+            files_tp,
+            files_fp,
+            files_fn,
+            files_precision: precision(files_tp, files_fp, files_fn),
+            files_recall: recall(files_tp, files_fp, files_fn),
+            files_f1: f1(files_tp, files_fp, files_fn),
+        }
+    }
+}
+
+/// Measures how well an actual patch's edited file/line locations match an expected patch.
+pub fn patch_location_match(expected_patch: &str, actual_patch: &str) -> PatchLocationMatch {
+    let expected_patch = Patch::parse_unified_diff(expected_patch);
+    let actual_patch = Patch::parse_unified_diff(actual_patch);
+    let (expected_files, expected_anchor_lines, _) = expected_context(&expected_patch);
+    let (actual_files, mut actual_anchor_lines, _) = expected_context(&actual_patch);
+
+    normalize_actual_paths(
+        &expected_files,
+        &mut actual_anchor_lines,
+        actual_files.iter().cloned().collect(),
+    );
+    let actual_files = actual_anchor_lines.keys().cloned().collect();
+
+    let (lines_tp, lines_fp, lines_fn) =
+        match_anchor_rows(&expected_anchor_lines, &actual_anchor_lines);
+    let (files_tp, files_fp, files_fn) = classify_values(&expected_files, &actual_files);
+
+    PatchLocationMatch::new(lines_tp, lines_fp, lines_fn, files_tp, files_fp, files_fn)
+}
+
 /// Measures how much expected edit context was retrieved and how much unrelated context was retrieved.
 pub fn editable_context_coverage(
     expected_patch: &str,
@@ -199,6 +263,87 @@ fn retrieved_context(context: &[Excerpt]) -> (BTreeSet<String>, BTreeMap<String,
     }
 
     (retrieved_files, retrieved_lines)
+}
+
+fn normalize_actual_paths(
+    expected_files: &BTreeSet<String>,
+    actual_anchor_lines: &mut BTreeMap<String, BTreeSet<u32>>,
+    actual_files: BTreeSet<String>,
+) {
+    let mut normalized = BTreeMap::new();
+
+    for actual_path in actual_files {
+        let normalized_path = normalize_actual_path(expected_files, &actual_path);
+        if let Some(rows) = actual_anchor_lines.remove(&actual_path) {
+            normalized
+                .entry(normalized_path)
+                .or_insert_with(BTreeSet::new)
+                .extend(rows);
+        }
+    }
+
+    *actual_anchor_lines = normalized;
+}
+
+fn normalize_actual_path(expected_files: &BTreeSet<String>, actual_path: &str) -> String {
+    if expected_files.contains(actual_path) {
+        return actual_path.to_string();
+    }
+
+    if let Some(stripped_path) = strip_first_path_component(actual_path) {
+        if expected_files.contains(stripped_path) {
+            return stripped_path.to_string();
+        }
+    }
+
+    actual_path.to_string()
+}
+
+fn strip_first_path_component(path: &str) -> Option<&str> {
+    path.split_once('/')
+        .map(|(_, rest)| rest)
+        .filter(|rest| !rest.is_empty())
+}
+
+fn match_anchor_rows(
+    expected: &BTreeMap<String, BTreeSet<u32>>,
+    actual: &BTreeMap<String, BTreeSet<u32>>,
+) -> (usize, usize, usize) {
+    let mut true_positives = 0;
+    let mut false_positives = 0;
+    let mut false_negatives = 0;
+    let paths = expected
+        .keys()
+        .chain(actual.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for path in paths {
+        let expected_rows = expected.get(&path).cloned().unwrap_or_default();
+        let actual_rows = actual.get(&path).cloned().unwrap_or_default();
+        let matched = match_rows_with_window(&expected_rows, &actual_rows);
+        true_positives += matched;
+        false_positives += actual_rows.len().saturating_sub(matched);
+        false_negatives += expected_rows.len().saturating_sub(matched);
+    }
+
+    (true_positives, false_positives, false_negatives)
+}
+
+fn match_rows_with_window(expected: &BTreeSet<u32>, actual: &BTreeSet<u32>) -> usize {
+    let mut unmatched_expected = expected.clone();
+    let mut matched = 0;
+
+    for actual_row in actual {
+        let start = actual_row.saturating_sub(LINE_RELEVANCE_WINDOW);
+        let end = actual_row.saturating_add(LINE_RELEVANCE_WINDOW);
+        if let Some(expected_row) = unmatched_expected.range(start..=end).next().copied() {
+            unmatched_expected.remove(&expected_row);
+            matched += 1;
+        }
+    }
+
+    matched
 }
 
 fn insert_anchor_row(
@@ -501,5 +646,71 @@ mod tests {
         );
 
         assert_eq!(score, EditableContextCoverage::new(0, 0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn patch_location_match_counts_file_and_nearby_line_matches() {
+        let expected = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -50,1 +50,1 @@
+            -let value = 1;
+            +let value = 2;
+        "};
+        let actual = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -55,1 +55,1 @@
+            -let value = 1;
+            +let value = 2;
+        "};
+
+        let score = patch_location_match(expected, actual);
+
+        assert_eq!(score, PatchLocationMatch::new(1, 0, 0, 1, 0, 0));
+    }
+
+    #[test]
+    fn patch_location_match_counts_missing_and_extra_files() {
+        let expected = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,1 +1,1 @@
+            -let value = 1;
+            +let value = 2;
+        "};
+        let actual = indoc! {"
+            --- a/src/lib.rs
+            +++ b/src/lib.rs
+            @@ -1,1 +1,1 @@
+            -let value = 1;
+            +let value = 2;
+        "};
+
+        let score = patch_location_match(expected, actual);
+
+        assert_eq!(score, PatchLocationMatch::new(0, 1, 1, 0, 1, 1));
+    }
+
+    #[test]
+    fn patch_location_match_normalizes_project_prefixed_actual_path() {
+        let expected = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,1 +1,1 @@
+            -let value = 1;
+            +let value = 2;
+        "};
+        let actual = indoc! {"
+            --- a/project/src/main.rs
+            +++ b/project/src/main.rs
+            @@ -1,1 +1,1 @@
+            -let value = 1;
+            +let value = 2;
+        "};
+
+        let score = patch_location_match(expected, actual);
+
+        assert_eq!(score, PatchLocationMatch::new(1, 0, 0, 1, 0, 0));
     }
 }

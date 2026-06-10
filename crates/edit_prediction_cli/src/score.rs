@@ -66,18 +66,6 @@ pub async fn run_scoring(
                 None
             };
 
-            let prepared_expected_patches = edit_prediction_metrics::prepare_expected_patches(
-                &expected_patches_with_cursors,
-                original_text,
-                old_editable_region.as_deref(),
-            )
-            .with_context(|| {
-                format!(
-                    "Expected patch did not apply for {}",
-                    example_for_scoring.spec.name
-                )
-            })?;
-
             let cursor_path = example_for_scoring.spec.cursor_path.as_ref();
             let context = context_excerpts(
                 &example_for_scoring,
@@ -85,6 +73,30 @@ pub async fn run_scoring(
                 retrieved_context_byte_limit,
                 context_source_filter.as_deref(),
             );
+
+            let prepared_expected_patches = match edit_prediction_metrics::prepare_expected_patches(
+                &expected_patches_with_cursors,
+                original_text,
+                old_editable_region.as_deref(),
+            ) {
+                Ok(prepared_expected_patches) => prepared_expected_patches,
+                Err(_) if !context.is_empty() => expected_patches_with_cursors
+                    .iter()
+                    .map(|(patch, cursor_offset)| edit_prediction_metrics::PreparedExpectedPatch {
+                        patch: patch.clone(),
+                        text: original_text.to_string(),
+                        cursor_editable_region_offset: *cursor_offset,
+                    })
+                    .collect(),
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Expected patch did not apply for {}",
+                            example_for_scoring.spec.name
+                        )
+                    });
+                }
+            };
 
             let mut scores = vec![];
             if allow_missing_predictions && example_for_scoring.predictions.is_empty() {
@@ -354,6 +366,15 @@ pub fn print_report(
     let mut editable_context_files_f1_sum = 0.0;
     let mut total_editable_context_lines = ClassificationMetrics::default();
     let mut total_editable_context_files = ClassificationMetrics::default();
+    let mut jump_location_count: usize = 0;
+    let mut jump_location_lines_precision_sum = 0.0;
+    let mut jump_location_lines_recall_sum = 0.0;
+    let mut jump_location_lines_f1_sum = 0.0;
+    let mut jump_location_files_precision_sum = 0.0;
+    let mut jump_location_files_recall_sum = 0.0;
+    let mut jump_location_files_f1_sum = 0.0;
+    let mut total_jump_location_lines = ClassificationMetrics::default();
+    let mut total_jump_location_files = ClassificationMetrics::default();
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
@@ -490,6 +511,26 @@ pub fn print_report(
                     true_positives: coverage.files_tp,
                     false_positives: coverage.files_fp,
                     false_negatives: coverage.files_fn,
+                });
+            }
+
+            if let Some(location) = &score.jump_location {
+                jump_location_count += 1;
+                jump_location_lines_precision_sum += location.lines_precision;
+                jump_location_lines_recall_sum += location.lines_recall;
+                jump_location_lines_f1_sum += location.lines_f1;
+                jump_location_files_precision_sum += location.files_precision;
+                jump_location_files_recall_sum += location.files_recall;
+                jump_location_files_f1_sum += location.files_f1;
+                total_jump_location_lines.accumulate(&ClassificationMetrics {
+                    true_positives: location.lines_tp,
+                    false_positives: location.lines_fp,
+                    false_negatives: location.lines_fn,
+                });
+                total_jump_location_files.accumulate(&ClassificationMetrics {
+                    true_positives: location.files_tp,
+                    false_positives: location.files_fp,
+                    false_negatives: location.files_fn,
                 });
             }
 
@@ -670,6 +711,29 @@ pub fn print_report(
                 total_editable_context_files.true_positives,
                 total_editable_context_files.false_positives,
                 total_editable_context_files.false_negatives
+            );
+        }
+        if jump_location_count > 0 {
+            let count = jump_location_count as f64;
+            println!(
+                "Jump location lines: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
+                jump_location_lines_precision_sum / count * 100.0,
+                jump_location_lines_recall_sum / count * 100.0,
+                jump_location_lines_f1_sum / count * 100.0,
+                jump_location_count,
+                total_jump_location_lines.true_positives,
+                total_jump_location_lines.false_positives,
+                total_jump_location_lines.false_negatives
+            );
+            println!(
+                "Jump location files: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
+                jump_location_files_precision_sum / count * 100.0,
+                jump_location_files_recall_sum / count * 100.0,
+                jump_location_files_f1_sum / count * 100.0,
+                jump_location_count,
+                total_jump_location_files.true_positives,
+                total_jump_location_files.false_positives,
+                total_jump_location_files.false_negatives
             );
         }
 
