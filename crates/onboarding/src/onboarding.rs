@@ -509,6 +509,33 @@ impl Dismissable for AgentPanelAutoOpened {
     const KEY: &'static str = "agent_panel_auto_opened_after_onboarding";
 }
 
+/// In-memory companion to the persisted `AgentPanelAutoOpened` flag. The
+/// persisted flag is written asynchronously, so several leave-signals firing in
+/// the same tick (e.g. on "Finish": deactivation + focus-out + the explicit
+/// call) would all read it as not-yet-set and each reveal the panel. This flag
+/// is set synchronously the moment we reveal, so later signals in the same tick
+/// see it and skip.
+#[derive(Default)]
+struct AgentPanelAutoOpenedThisSession(bool);
+
+impl Global for AgentPanelAutoOpenedThisSession {}
+
+impl AgentPanelAutoOpenedThisSession {
+    fn is_set(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|this| this.0)
+    }
+
+    fn set(cx: &mut App) {
+        cx.update_default_global::<Self, _>(|this, _| this.0 = true);
+    }
+}
+
+/// Whether the agent panel has already been auto-opened after onboarding, this
+/// session or any previous one.
+fn agent_panel_already_auto_opened(cx: &App) -> bool {
+    AgentPanelAutoOpenedThisSession::is_set(cx) || AgentPanelAutoOpened::dismissed(cx)
+}
+
 /// Returns whether the user has at least one agent configured: either signed in
 /// to the Zed Agent, or one of the featured external agents installed.
 fn any_agent_configured(cx: &App) -> bool {
@@ -529,6 +556,35 @@ fn any_agent_configured(cx: &App) -> bool {
     featured_agent_installed || zed_agent_signed_in
 }
 
+/// How the agent panel is revealed after onboarding. Injectable as a global so
+/// tests can observe reveals: the production implementation opens the concrete
+/// `AgentPanel` (whose constructor is private to `agent_ui`), while tests can
+/// substitute a recorder. Returns whether the panel was actually revealed, so
+/// the one-shot is only "spent" on a real reveal (e.g. not when the panel is
+/// disabled).
+#[derive(Clone)]
+struct AgentPanelRevealer(
+    Arc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) -> bool + Send + Sync>,
+);
+
+impl Global for AgentPanelRevealer {}
+
+impl AgentPanelRevealer {
+    fn get(cx: &App) -> Self {
+        cx.try_global::<Self>().cloned().unwrap_or_else(|| {
+            AgentPanelRevealer(Arc::new(|workspace, window, cx| {
+                let panel_enabled = workspace
+                    .panel::<AgentPanel>(cx)
+                    .is_some_and(|panel| panel.read(cx).enabled(cx));
+                if panel_enabled {
+                    workspace.open_panel::<AgentPanel>(window, cx);
+                }
+                panel_enabled
+            }))
+        })
+    }
+}
+
 /// Reveals the agent panel at most once ever, if the user has configured an
 /// agent. This is intended to be called when the user *leaves* onboarding (by
 /// finishing setup or navigating elsewhere), never the moment an agent is
@@ -538,18 +594,19 @@ fn any_agent_configured(cx: &App) -> bool {
 /// deferred (via `with_active_or_new_workspace`) so it runs after the current
 /// pane/item/focus update has settled rather than re-entering the workspace.
 fn open_agent_panel_after_onboarding(cx: &mut App) {
-    if AgentPanelAutoOpened::dismissed(cx) {
+    if agent_panel_already_auto_opened(cx) {
         return;
     }
     if !any_agent_configured(cx) {
         return;
     }
 
-    with_active_or_new_workspace(cx, |workspace, window, cx| {
-        // Re-check inside the deferred closure: another exit may have already
-        // revealed the panel, and we only want to "spend" the one-shot when we
-        // actually reveal it.
-        if AgentPanelAutoOpened::dismissed(cx) {
+    let revealer = AgentPanelRevealer::get(cx);
+    with_active_or_new_workspace(cx, move |workspace, window, cx| {
+        // Re-check inside the deferred closure: another exit (possibly earlier in
+        // this same tick) may have already revealed the panel, and we only want
+        // to "spend" the one-shot when we actually reveal it.
+        if agent_panel_already_auto_opened(cx) {
             return;
         }
         // A modal opened from onboarding (e.g. the base keymap picker) counts as
@@ -558,15 +615,14 @@ fn open_agent_panel_after_onboarding(cx: &mut App) {
         if workspace.has_active_modal(window, cx) {
             return;
         }
-        let panel_enabled = workspace
-            .panel::<AgentPanel>(cx)
-            .is_some_and(|panel| panel.read(cx).enabled(cx));
-        if !panel_enabled {
-            return;
-        }
 
-        AgentPanelAutoOpened::set_dismissed(true, cx);
-        workspace.open_panel::<AgentPanel>(window, cx);
+        if (revealer.0)(workspace, window, cx) {
+            // Set the synchronous flag first so any sibling exits queued in this
+            // same tick observe it and don't re-reveal before the async write
+            // below lands.
+            AgentPanelAutoOpenedThisSession::set(cx);
+            AgentPanelAutoOpened::set_dismissed(true, cx);
+        }
     });
 }
 
@@ -815,4 +871,272 @@ mod persistence {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{DismissEvent, TestAppContext, UpdateGlobal, VisualTestContext};
+    use project::Project;
+    use settings::SettingsStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use workspace::{ModalView, MultiWorkspace, dock::test::TestPanel};
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // Isolate the KVP DB so the once-ever flag is hermetic per test and
+            // doesn't read/write the developer's real database.
+            cx.set_global(db::AppDatabase::test_new());
+            let app_state = workspace::AppState::test(cx);
+            // `AppState::test` builds a client but doesn't install it as the
+            // global; `Onboarding::new`/`any_agent_configured` read it via
+            // `Client::global`.
+            Client::set_global(app_state.client.clone(), cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            // The basics page renders theme previews for specific named themes
+            // that aren't part of the base set; register stand-ins (cloned from
+            // the base theme) so rendering doesn't panic in tests.
+            let registry = theme::ThemeRegistry::global(cx);
+            if let Ok(base) = registry.get("One Dark") {
+                for name in [
+                    "One Light",
+                    "Ayu Light",
+                    "Gruvbox Light",
+                    "Ayu Dark",
+                    "Gruvbox Dark",
+                ] {
+                    let mut theme = (*base).clone();
+                    theme.name = name.into();
+                    registry.insert_themes([theme]);
+                }
+            }
+        });
+    }
+
+    /// Replaces the real agent-panel opener with a recorder, returning a counter
+    /// of how many times a reveal actually happened.
+    fn record_reveals(cx: &mut App) -> Arc<AtomicUsize> {
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_for_revealer = count.clone();
+        cx.set_global(AgentPanelRevealer(Arc::new(
+            move |_workspace, _window, _cx| {
+                count_for_revealer.fetch_add(1, Ordering::SeqCst);
+                true
+            },
+        )));
+        count
+    }
+
+    /// Marks an agent as configured so `any_agent_configured` returns true.
+    fn set_agent_configured(cx: &mut App) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{"agent_servers":{"cursor":{"type":"registry"}}}"#, cx)
+                .unwrap();
+        });
+    }
+
+    /// Builds a workspace with an active, focused onboarding item and returns the
+    /// reveal counter. Leaves the agent unconfigured by default.
+    async fn setup_onboarding(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Workspace>,
+        Entity<Onboarding>,
+        Arc<AtomicUsize>,
+        gpui::AnyWindowHandle,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let any_window: gpui::AnyWindowHandle = window.into();
+        let cx = &mut VisualTestContext::from_window(any_window, cx);
+
+        let count = cx.update(|_, cx| record_reveals(cx));
+
+        let onboarding = workspace.update_in(cx, |workspace, window, cx| {
+            let onboarding = Onboarding::new(workspace, cx);
+            workspace.add_item_to_active_pane(Box::new(onboarding.clone()), None, true, window, cx);
+            onboarding
+        });
+        // Render once so the focus-out subscription registers, then focus it.
+        cx.run_until_parked();
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            let handle = onboarding.focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.run_until_parked();
+
+        (workspace, onboarding, count, any_window)
+    }
+
+    #[gpui::test]
+    async fn test_finish_reveals_when_configured(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_finish_does_not_reveal_when_not_configured(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[gpui::test]
+    async fn test_deactivated_reveals_when_configured(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_workspace, onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_focus_out_to_dock_panel_reveals(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        // Add a dock panel and move focus to it. Onboarding stays the active
+        // center item, so this exercises the focus-out path (not deactivated).
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(workspace::dock::DockPosition::Left, 0, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            let handle = panel.focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_reveals_only_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+
+        // A subsequent leave must not reveal again.
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_leaving_unconfigured_then_configured_reveals_later(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_workspace, onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        // Leave once with nothing configured: no reveal, one-shot not spent.
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+
+        // Configure an agent, then leave again: now it reveals.
+        cx.update(|_, cx| set_agent_configured(cx));
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_modal_suppresses_reveal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        // Opening a modal moves focus out of onboarding, but a modal means we're
+        // still in setup, so the reveal must be suppressed.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |_, cx| TestModal::new(cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+
+        // Dismiss the modal and genuinely leave: now it reveals.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |_, cx| TestModal::new(cx));
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    struct TestModal {
+        focus_handle: FocusHandle,
+    }
+
+    impl TestModal {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+            }
+        }
+    }
+
+    impl Render for TestModal {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div().track_focus(&self.focus_handle)
+        }
+    }
+
+    impl Focusable for TestModal {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for TestModal {}
+
+    impl ModalView for TestModal {}
 }
