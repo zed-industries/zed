@@ -2914,7 +2914,8 @@ impl Thread {
                 | LanguageModelCompletionEvent::ReasoningDetails(_)
                 | LanguageModelCompletionEvent::ToolUse(_)
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                | LanguageModelCompletionEvent::StartMessage { .. } => {}
+                | LanguageModelCompletionEvent::StartMessage { .. }
+                | LanguageModelCompletionEvent::Compaction { .. } => {}
             }
         }
 
@@ -3116,7 +3117,7 @@ impl Thread {
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
-            Started | Queued { .. } => {}
+            Started | Queued { .. } | Compaction { .. } => {}
         }
 
         Ok(None)
@@ -3707,6 +3708,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
+            compact_at_tokens: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -4325,7 +4327,8 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
-            | MessageContent::ToolUse(_) => 0,
+            | MessageContent::ToolUse(_)
+            | MessageContent::Compaction { .. } => 0,
         })
         .sum()
 }
@@ -4361,7 +4364,8 @@ fn truncate_user_message_to_byte_budget(
             MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
-            | MessageContent::ToolUse(_) => {}
+            | MessageContent::ToolUse(_)
+            | MessageContent::Compaction { .. } => {}
         }
     }
 
