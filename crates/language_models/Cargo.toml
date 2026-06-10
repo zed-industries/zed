@@ -16,6 +16,7 @@ ai_onboarding.workspace = true
 async-lock.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+atomic_chat = { workspace = true, features = ["schemars"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws_http_client.workspace = true

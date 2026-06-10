@@ -1,6 +1,6 @@
 ---
 title: Use a Local Model - Zed
-description: Configure Ollama, LM Studio, local OpenAI-compatible servers, and local edit prediction in Zed.
+description: Configure Ollama, LM Studio, Atomic Chat, local OpenAI-compatible servers, and local edit prediction in Zed.
 ---
 
 # Use a Local Model
@@ -11,6 +11,7 @@ Use local models when you run the model on your machine or on infrastructure you
 | --------------------------------- | -------------------- | --------------- | ---------------- | -------------------------------------------------- |
 | Ollama                            | Yes                  | Separate config | Separate config  | Configure Ollama for Zed AI features               |
 | LM Studio                         | Yes                  | Separate config | Separate config  | Configure LM Studio for Zed AI features            |
+| Atomic Chat                       | Yes                  | Separate config | Separate config  | Local OpenAI-compatible app with model autodiscovery |
 | Local OpenAI-compatible server    | Yes                  | Separate config | Separate config  | Configure base URL, model, and key if needed       |
 | Local/self-hosted edit prediction | Edit Prediction only | No              | No               | Uses [Edit Prediction](./edit-prediction.md) setup |
 
@@ -96,6 +97,26 @@ Use LM Studio for local models with Zed Agent, Inline Assistant, and similar mod
 4. In Zed, select an LM Studio model from the model dropdown.
 
 If your LM Studio server requires a key, enter the key in the provider UI or set `LMSTUDIO_API_KEY`.
+
+## Atomic Chat {#atomic-chat}
+
+Use [Atomic Chat](https://atomic.chat/) for local models with Zed Agent, Inline Assistant, and similar model-backed Zed AI features. Atomic Chat is a local app that serves models over an OpenAI-compatible API (default base URL `http://localhost:1337/v1`).
+
+1. Download and install [Atomic Chat](https://atomic.chat/).
+2. Launch the app, download at least one model, and make sure its local API server is running.
+3. In Zed, select an Atomic Chat model from the model dropdown.
+
+Zed automatically discovers the models your Atomic Chat server exposes. An API key is optional—set it only if your local server requires authentication, either in the provider UI or via `ATOMIC_CHAT_API_KEY`. To point Zed at a non-default host or port, configure `api_url`:
+
+```json [settings]
+{
+  "language_models": {
+    "atomic_chat": {
+      "api_url": "http://localhost:1337/v1"
+    }
+  }
+}
+```
 
 ## Local OpenAI-Compatible Servers {#openai-compatible}
 
