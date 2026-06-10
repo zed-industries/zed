@@ -90,99 +90,140 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         });
     }
 
-    let mut openai_compatible_providers = AllLanguageModelSettings::get_global(cx)
+    let mut openai_compatible_provider_settings = AllLanguageModelSettings::get_global(cx)
         .openai_compatible
         .keys()
         .cloned()
         .collect::<HashSet<_>>();
-    let mut anthropic_compatible_providers = AllLanguageModelSettings::get_global(cx)
+    let mut anthropic_compatible_provider_settings = AllLanguageModelSettings::get_global(cx)
         .anthropic_compatible
         .keys()
         .cloned()
         .collect::<HashSet<_>>();
+    let mut registered_openai_compatible_providers = HashSet::default();
+    let mut registered_anthropic_compatible_providers = HashSet::default();
 
     registry.update(cx, |registry, cx| {
-        register_compatible_providers(
+        registered_openai_compatible_providers = register_new_compatible_providers(
             registry,
-            &HashSet::default(),
-            &openai_compatible_providers,
+            std::mem::take(&mut registered_openai_compatible_providers),
+            &openai_compatible_provider_settings,
             &client,
+            "OpenAI",
             OpenAiCompatibleLanguageModelProvider::new,
             cx,
         );
-        register_compatible_providers(
+        registered_anthropic_compatible_providers = register_new_compatible_providers(
             registry,
-            &HashSet::default(),
-            &anthropic_compatible_providers,
+            std::mem::take(&mut registered_anthropic_compatible_providers),
+            &anthropic_compatible_provider_settings,
             &client,
+            "Anthropic",
             AnthropicCompatibleLanguageModelProvider::new,
             cx,
         );
     });
     cx.observe_global::<SettingsStore>(move |cx| {
-        let openai_compatible_providers_new = AllLanguageModelSettings::get_global(cx)
+        let openai_compatible_provider_settings_new = AllLanguageModelSettings::get_global(cx)
             .openai_compatible
             .keys()
             .cloned()
             .collect::<HashSet<_>>();
-        if openai_compatible_providers_new != openai_compatible_providers {
-            registry.update(cx, |registry, cx| {
-                register_compatible_providers(
-                    registry,
-                    &openai_compatible_providers,
-                    &openai_compatible_providers_new,
-                    &client,
-                    OpenAiCompatibleLanguageModelProvider::new,
-                    cx,
-                );
-            });
-            openai_compatible_providers = openai_compatible_providers_new;
-        }
-
-        let anthropic_compatible_providers_new = AllLanguageModelSettings::get_global(cx)
+        let anthropic_compatible_provider_settings_new = AllLanguageModelSettings::get_global(cx)
             .anthropic_compatible
             .keys()
             .cloned()
             .collect::<HashSet<_>>();
-        if anthropic_compatible_providers_new != anthropic_compatible_providers {
+
+        if openai_compatible_provider_settings_new != openai_compatible_provider_settings
+            || anthropic_compatible_provider_settings_new != anthropic_compatible_provider_settings
+        {
             registry.update(cx, |registry, cx| {
-                register_compatible_providers(
+                registered_openai_compatible_providers = unregister_removed_compatible_providers(
                     registry,
-                    &anthropic_compatible_providers,
-                    &anthropic_compatible_providers_new,
+                    &registered_openai_compatible_providers,
+                    &openai_compatible_provider_settings_new,
+                    cx,
+                );
+                registered_anthropic_compatible_providers = unregister_removed_compatible_providers(
+                    registry,
+                    &registered_anthropic_compatible_providers,
+                    &anthropic_compatible_provider_settings_new,
+                    cx,
+                );
+
+                registered_openai_compatible_providers = register_new_compatible_providers(
+                    registry,
+                    std::mem::take(&mut registered_openai_compatible_providers),
+                    &openai_compatible_provider_settings_new,
                     &client,
+                    "OpenAI",
+                    OpenAiCompatibleLanguageModelProvider::new,
+                    cx,
+                );
+                registered_anthropic_compatible_providers = register_new_compatible_providers(
+                    registry,
+                    std::mem::take(&mut registered_anthropic_compatible_providers),
+                    &anthropic_compatible_provider_settings_new,
+                    &client,
+                    "Anthropic",
                     AnthropicCompatibleLanguageModelProvider::new,
                     cx,
                 );
             });
-            anthropic_compatible_providers = anthropic_compatible_providers_new;
+            openai_compatible_provider_settings = openai_compatible_provider_settings_new;
+            anthropic_compatible_provider_settings = anthropic_compatible_provider_settings_new;
         }
     })
     .detach();
 }
 
-fn register_compatible_providers<T: LanguageModelProvider + LanguageModelProviderState>(
+fn unregister_removed_compatible_providers(
     registry: &mut LanguageModelRegistry,
-    old: &HashSet<Arc<str>>,
-    new: &HashSet<Arc<str>>,
-    client: &Arc<Client>,
-    new_provider: fn(Arc<str>, Arc<dyn HttpClient>, &mut App) -> T,
+    registered: &HashSet<Arc<str>>,
+    settings: &HashSet<Arc<str>>,
     cx: &mut Context<LanguageModelRegistry>,
-) {
-    for provider_id in old {
-        if !new.contains(provider_id) {
+) -> HashSet<Arc<str>> {
+    let mut remaining = HashSet::default();
+    for provider_id in registered {
+        if settings.contains(provider_id) {
+            remaining.insert(provider_id.clone());
+        } else {
             registry.unregister_provider(LanguageModelProviderId::from(provider_id.clone()), cx);
         }
     }
+    remaining
+}
 
-    for provider_id in new {
-        if !old.contains(provider_id) {
-            registry.register_provider(
-                Arc::new(new_provider(provider_id.clone(), client.http_client(), cx)),
-                cx,
-            );
+fn register_new_compatible_providers<T: LanguageModelProvider + LanguageModelProviderState>(
+    registry: &mut LanguageModelRegistry,
+    mut registered: HashSet<Arc<str>>,
+    settings: &HashSet<Arc<str>>,
+    client: &Arc<Client>,
+    provider_kind: &'static str,
+    new_provider: fn(Arc<str>, Arc<dyn HttpClient>, &mut App) -> T,
+    cx: &mut Context<LanguageModelRegistry>,
+) -> HashSet<Arc<str>> {
+    for provider_id in settings {
+        if registered.contains(provider_id) {
+            continue;
         }
+
+        let language_model_provider_id = LanguageModelProviderId::from(provider_id.clone());
+        if registry.provider(&language_model_provider_id).is_some() {
+            log::warn!(
+                "Ignoring {provider_kind}-compatible provider `{provider_id}` because another language model provider is already registered with that id"
+            );
+            continue;
+        }
+
+        registry.register_provider(
+            Arc::new(new_provider(provider_id.clone(), client.http_client(), cx)),
+            cx,
+        );
+        registered.insert(provider_id.clone());
     }
+    registered
 }
 
 fn register_language_model_providers(

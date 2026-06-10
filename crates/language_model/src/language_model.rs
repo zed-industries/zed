@@ -322,11 +322,7 @@ impl LanguageModelCompletionError {
             AnthropicError::HttpResponseError {
                 status_code,
                 message,
-            } => Self::HttpResponseError {
-                provider,
-                status_code,
-                message,
-            },
+            } => Self::from_http_status(provider, status_code, message, None),
             AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
                 provider,
                 retry_after: Some(retry_after),

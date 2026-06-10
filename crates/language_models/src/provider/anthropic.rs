@@ -601,7 +601,7 @@ impl LanguageModel for AnthropicModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new().map_stream(response))
+            Ok(AnthropicEventMapper::new(PROVIDER_NAME).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -733,14 +733,16 @@ pub fn into_anthropic(
 }
 
 pub struct AnthropicEventMapper {
+    provider_name: LanguageModelProviderName,
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
 }
 
 impl AnthropicEventMapper {
-    pub fn new() -> Self {
+    pub fn new(provider_name: LanguageModelProviderName) -> Self {
         Self {
+            provider_name,
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
@@ -755,7 +757,10 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
+                Err(error) => vec![Err(LanguageModelCompletionError::from_anthropic(
+                    error,
+                    self.provider_name.clone(),
+                ))],
             })
         })
     }
@@ -897,7 +902,10 @@ impl AnthropicEventMapper {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
-                vec![Err(error.into())]
+                vec![Err(LanguageModelCompletionError::from_anthropic_api(
+                    error,
+                    self.provider_name.clone(),
+                ))]
             }
             _ => Vec::new(),
         }
