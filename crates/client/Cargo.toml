@@ -14,6 +14,9 @@ doctest = false
 
 [features]
 test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
+# Staff-only: compiles in the Zed Sim state-injection path. OFF by default, so
+# release builds contain no injection code. See tooling/zed-sim/INJECTION_PLAN.md.
+staff-sim = []
 
 [dependencies]
 anyhow.workspace = true

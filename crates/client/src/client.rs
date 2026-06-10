@@ -3,6 +3,8 @@ pub mod test;
 
 mod llm_token;
 mod proxy;
+#[cfg(feature = "staff-sim")]
+pub mod sim_state;
 pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
