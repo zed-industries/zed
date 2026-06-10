@@ -273,9 +273,10 @@ impl Onboarding {
         })
     }
 
-    fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
+    fn on_finish(_: &Finish, window: &mut Window, cx: &mut App) {
         telemetry::event!("Finish Setup");
         go_to_welcome_page(cx);
+        open_agent_panel_after_onboarding(window, cx);
     }
 
     fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
@@ -430,6 +431,14 @@ impl Item for Onboarding {
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
+
+    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The user has navigated away from onboarding (e.g. opened a file or
+        // switched tabs) without explicitly finishing setup. Treat this as an
+        // exit from onboarding and reveal the agent panel if they configured an
+        // agent, so it's easy to find.
+        open_agent_panel_after_onboarding(window, cx);
+    }
 }
 
 fn go_to_welcome_page(cx: &mut App) {
@@ -466,6 +475,55 @@ fn go_to_welcome_page(cx: &mut App) {
             pane.remove_item(onboarding_id, false, false, window, cx);
         });
     });
+}
+
+/// Tracks whether the agent panel has already been auto-opened after onboarding,
+/// so we only reveal it once and don't re-open it every time the user navigates
+/// away from the onboarding tab.
+#[derive(Default)]
+struct AgentPanelAutoOpened(bool);
+
+impl Global for AgentPanelAutoOpened {}
+
+/// Returns whether the user has at least one agent configured: either signed in
+/// to the Zed Agent, or one of the featured external agents installed.
+fn any_agent_configured(cx: &App) -> bool {
+    let installed_agents = cx
+        .global::<SettingsStore>()
+        .get::<AllAgentServersSettings>(None);
+    let featured_agent_installed = basics_page::FEATURED_AGENT_IDS
+        .iter()
+        .any(|id| installed_agents.contains_key(*id));
+
+    let status = *Client::global(cx).status().borrow();
+    let zed_agent_signed_in = !(status.is_signed_out()
+        || matches!(
+            status,
+            client::Status::AuthenticationError | client::Status::ConnectionError
+        ));
+
+    featured_agent_installed || zed_agent_signed_in
+}
+
+/// Reveals and focuses the agent panel once, if the user has configured an
+/// agent. This is intended to be called when the user *leaves* onboarding
+/// (by finishing setup or navigating elsewhere), never the moment an agent is
+/// configured, so the panel doesn't pop open mid-setup.
+fn open_agent_panel_after_onboarding(window: &mut Window, cx: &mut App) {
+    let already_opened = cx.try_global::<AgentPanelAutoOpened>().is_some_and(|g| g.0);
+    if already_opened {
+        return;
+    }
+
+    // Only "spend" the one-shot when there's actually an agent to reveal. If the
+    // user leaves onboarding without configuring anything, a later exit can
+    // still open the panel once they do.
+    if !any_agent_configured(cx) {
+        return;
+    }
+
+    cx.update_default_global::<AgentPanelAutoOpened, _>(|opened, _| opened.0 = true);
+    window.dispatch_action(zed_actions::assistant::FocusAgent.boxed_clone(), cx);
 }
 
 pub async fn handle_import_vscode_settings(
