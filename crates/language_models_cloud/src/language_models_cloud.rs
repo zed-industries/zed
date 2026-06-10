@@ -171,12 +171,14 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
 
         let mut body = String::new();
         let headers = response.headers().clone();
-        response.body_mut().read_to_string(&mut body).await.map_err(
-            |error| LanguageModelCompletionError::ApiReadResponseError {
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| LanguageModelCompletionError::ApiReadResponseError {
                 provider: PROVIDER_NAME,
                 error,
-            },
-        )?;
+            })?;
         Err(ApiError {
             status,
             body,
