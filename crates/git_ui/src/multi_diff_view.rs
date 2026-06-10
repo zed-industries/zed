@@ -1,13 +1,14 @@
+use crate::file_diff_view::build_buffer_diff;
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, SharedString, Task, Window,
+    Focusable, Font, IntoElement, Render, SharedString, Task, Window,
 };
-use language::{Buffer, Capability, OffsetRangeExt};
+use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
-use project::Project;
+use project::{Project, ProjectPath};
 use std::{
     any::{Any, TypeId},
     path::{Path, PathBuf},
@@ -18,7 +19,7 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -140,36 +141,6 @@ fn common_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
     Some(prefix)
 }
 
-async fn build_buffer_diff(
-    old_buffer: &Entity<Buffer>,
-    new_buffer: &Entity<Buffer>,
-    cx: &mut AsyncApp,
-) -> Result<Entity<BufferDiff>> {
-    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-
-    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                new_buffer_snapshot.text.clone(),
-                Some(old_buffer_snapshot.text().into()),
-                Some(true),
-                new_buffer_snapshot.language().cloned(),
-                cx,
-            )
-        })
-        .await;
-
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
-    })
-    .await;
-
-    Ok(diff)
-}
-
 impl MultiDiffView {
     pub fn open(
         diff_pairs: Vec<[String; 2]>,
@@ -228,6 +199,7 @@ impl MultiDiffView {
             editor.start_temporary_diff_override();
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.set_render_diff_hunks_as_unstaged(true, cx);
             editor.set_render_diff_hunk_controls(
                 Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                 cx,
@@ -313,6 +285,10 @@ impl Item for MultiDiffView {
         Some(Box::new(self.editor.clone()))
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
+    }
+
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
@@ -338,7 +314,7 @@ impl Item for MultiDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.editor.breadcrumbs(cx)
     }
 

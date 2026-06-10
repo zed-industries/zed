@@ -1,10 +1,9 @@
-use gh_workflow::{ctx::Context, *};
+use gh_workflow::*;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
-    extension_bump::{RepositoryTarget, generate_token},
     runners,
-    steps::{self, CommonJobConditions, NamedJob, named},
+    steps::{self, CommonJobConditions, NamedJob, RepositoryTarget, generate_token, named},
     vars::{self, StepOutput},
 };
 
@@ -28,7 +27,7 @@ fn publish_job() -> NamedJob {
     }
 
     fn upload_binary() -> Step<Run> {
-        named::bash("script/upload-extension-cli ${{ github.sha }}")
+        named::bash(r#"script/upload-extension-cli "$GITHUB_SHA""#)
             .add_env((
                 "DIGITALOCEAN_SPACES_ACCESS_KEY",
                 vars::DIGITALOCEAN_SPACES_ACCESS_KEY,
@@ -42,7 +41,7 @@ fn publish_job() -> NamedJob {
     named::job(
         Job::default()
             .with_repository_owner_guard()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_linux())
@@ -52,15 +51,12 @@ fn publish_job() -> NamedJob {
 }
 
 fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(RepositoryTarget::current()),
-    );
+    let (generate_token, generated_token) =
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into();
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
-            sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
+            sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"$GITHUB_SHA\"/" \
                 tooling/xtask/src/tasks/workflows/extension_tests.rs
         "#})
     }
@@ -92,40 +88,23 @@ fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput)
         short_sha
     );
 
-    named::uses("peter-evans", "create-pull-request", "v7").with(
-        Input::default()
-            .add("title", title.clone())
-            .add(
-                "body",
-                indoc! {r#"
-                    This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
+    steps::CreatePrStep::new(title, "update-extension-cli-sha", generated_token)
+        .with_body(indoc::indoc! {r#"
+            This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
 
-                    Release Notes:
+            Release Notes:
 
-                    - N/A
-                "#},
-            )
-            .add("commit-message", title)
-            .add("branch", "update-extension-cli-sha")
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("assignees", Context::github().actor().to_string()),
-    )
+            - N/A
+        "#})
+        .into()
 }
 
 fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
     let extensions_repo = RepositoryTarget::new("zed-industries", &["extensions"]);
-    let (generate_token, generated_token) = generate_token(
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(extensions_repo),
-    );
+    let (generate_token, generated_token) =
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(extensions_repo)
+            .into();
 
     fn checkout_extensions_repo(token: &StepOutput) -> Step<Use> {
         named::uses(
@@ -139,7 +118,7 @@ fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
-            sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: ${{ github.sha }}/" \
+            sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
                 .github/workflows/ci.yml
         "#})
     }
@@ -165,33 +144,17 @@ fn create_pull_request_extensions(
 ) -> Step<Use> {
     let title = format!("Bump extension CLI version to `{}`", short_sha);
 
-    named::uses("peter-evans", "create-pull-request", "v7").with(
-        Input::default()
-            .add("title", title.clone())
-            .add(
-                "body",
-                indoc! {r#"
-                    This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
-                "#},
-            )
-            .add("commit-message", title)
-            .add("branch", "update-extension-cli-sha")
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("labels", "allow-no-extension")
-            .add("assignees", Context::github().actor().to_string()),
-    )
+    steps::CreatePrStep::new(title, "update-extension-cli-sha", generated_token)
+        .with_body(indoc::indoc! {r#"
+            This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
+        "#})
+        .with_labels("allow-no-extension")
+        .into()
 }
 
 fn get_short_sha() -> (Step<Run>, StepOutput) {
     let step = named::bash(indoc::indoc! {r#"
-        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     "#})
     .id("short-sha");
 

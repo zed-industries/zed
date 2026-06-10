@@ -11,7 +11,7 @@ use gpui::{
 use markdown::{Markdown, MarkdownElement};
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
@@ -211,7 +211,7 @@ impl BlameRenderer for GitBlameRenderer {
         .render(window, cx);
 
         let short_commit_id = sha
-            .get(..8)
+            .get(..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
         let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
@@ -238,7 +238,11 @@ impl BlameRenderer for GitBlameRenderer {
 
         let message = details
             .as_ref()
-            .map(|_| MarkdownElement::new(markdown.clone(), markdown_style).into_any())
+            .map(|_| {
+                MarkdownElement::new(markdown.clone(), markdown_style)
+                    .scroll_handle(scroll_handle.clone())
+                    .into_any()
+            })
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = details
@@ -322,10 +326,11 @@ impl BlameRenderer for GitBlameRenderer {
                                                         format!("#{}", pr.number),
                                                     )
                                                     .color(Color::Muted)
-                                                    .icon(IconName::PullRequest)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .icon_size(IconSize::Small)
+                                                    .start_icon(
+                                                        Icon::new(IconName::PullRequest)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         cx.open_url(pr.url.as_str())
@@ -339,10 +344,11 @@ impl BlameRenderer for GitBlameRenderer {
                                                     short_commit_id.clone(),
                                                 )
                                                 .color(Color::Muted)
-                                                .icon(IconName::FileGit)
-                                                .icon_color(Color::Muted)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
+                                                .start_icon(
+                                                    Icon::new(IconName::FileGit)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Muted),
+                                                )
                                                 .on_click(move |_, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.sha.clone().into(),

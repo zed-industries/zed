@@ -73,18 +73,23 @@ impl Editor {
     ) {
         let display_snapshot = self.display_snapshot(cx);
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-        let new_screen_top = self
-            .selections
-            .newest_display(&display_snapshot)
-            .head()
-            .row()
-            .0;
+        let selection_head = self.selections.newest_display(&display_snapshot).head();
+
+        let sticky_headers_len =
+            self.visible_sticky_header_count_for_point(&display_snapshot, selection_head, cx)
+                as u32;
+
+        let new_screen_top = selection_head.row().0;
         let header_offset = display_snapshot
             .buffer_snapshot()
             .show_headers()
             .then(|| display_snapshot.buffer_header_height())
             .unwrap_or(0);
-        let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows + header_offset);
+
+        // If the number of sticky headers exceeds the vertical_scroll_margin,
+        // we need to adjust the scroll top a bit further
+        let adjustment = scroll_margin_rows.max(sticky_headers_len) + header_offset;
+        let new_screen_top = new_screen_top.saturating_sub(adjustment);
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 

@@ -1,25 +1,14 @@
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use ::util::ResultExt;
 use anyhow::Result;
 use convert_case::{Case, Casing};
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, Window};
+use credentials_provider::CredentialsProvider;
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, TaskExt, Window};
 use language_model::{ApiKeyState, AuthenticateError, EnvVar};
 use settings::SettingsStore;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
-
-/// Parses tool call arguments JSON, treating empty strings as empty objects.
-///
-/// Many LLM providers return empty strings for tool calls with no arguments.
-/// This helper normalizes that behavior by converting empty strings to `{}`.
-pub fn parse_tool_arguments(arguments: &str) -> Result<serde_json::Value, serde_json::Error> {
-    if arguments.is_empty() {
-        Ok(serde_json::Value::Object(Default::default()))
-    } else {
-        serde_json::Value::from_str(arguments)
-    }
-}
 
 pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
     fn api_url(&self) -> &str;
@@ -29,11 +18,13 @@ pub struct ApiCompatibleProviderState<S: ApiCompatibleProviderSettings> {
     pub id: Arc<str>,
     pub api_key_state: ApiKeyState,
     pub settings: S,
+    pub credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
     pub fn new(
         id: Arc<str>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         resolve_settings: for<'a> fn(&'a str, &'a App) -> Option<&'a S>,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -56,6 +47,7 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
                     EnvVar::new(api_key_env_var_name),
                 ),
                 settings,
+                credentials_provider,
             }
         })
     }
@@ -70,21 +62,34 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let api_url = SharedString::new(self.settings.api_url());
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            self.credentials_provider.clone(),
+            cx,
+        )
     }
 
     pub fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = SharedString::new(self.settings.api_url());
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            self.credentials_provider.clone(),
+            cx,
+        )
     }
 
     pub fn update_settings(&mut self, settings: S, cx: &mut Context<Self>) {
         if self.settings != settings {
             let api_url = SharedString::new(settings.api_url());
-            self.api_key_state
-                .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
+            self.api_key_state.handle_url_change(
+                api_url,
+                |this| &mut this.api_key_state,
+                self.credentials_provider.clone(),
+                cx,
+            );
             self.settings = settings;
             cx.notify();
         }
@@ -147,6 +152,7 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderConfigurationView<S>
             return;
         }
 
+        // url changes can cause the editor to be displayed again
         self.api_key_editor
             .update(cx, |input, cx| input.set_text("", window, cx));
 
@@ -236,11 +242,8 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                     h_flex().flex_shrink_0().child(
                         Button::new("reset-api-key", "Reset API Key")
                             .label_size(LabelSize::Small)
-                            .icon(IconName::Undo)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
+                            .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                             .layer(ElevationIndex::ModalSurface)
-                            .disabled(env_var_set)
                             .when(env_var_set, |this| {
                                 this.tooltip(Tooltip::text(format!(
                                     "To reset your API key, unset the {env_var_name} environment variable.",

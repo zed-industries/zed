@@ -3,6 +3,7 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
+use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, BorrowAppContext, Entity};
 use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
@@ -37,7 +38,7 @@ pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| 
 });
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -246,6 +247,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         matcher: LanguageMatcher {
             path_suffixes: vec!["js".into()],
             first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+            ..LanguageMatcher::default()
         },
         ..Default::default()
     });
@@ -458,15 +460,26 @@ fn test_edit_events(cx: &mut gpui::App) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            BufferEvent::Edited,
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
             BufferEvent::DirtyChanged,
-            BufferEvent::Edited,
-            BufferEvent::Edited,
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
+        vec![
+            BufferEvent::Edited {
+                source: BufferEditSource::Remote
+            },
+            BufferEvent::DirtyChanged
+        ]
     );
 
     buffer1.update(cx, |buffer, cx| {
@@ -481,11 +494,21 @@ fn test_edit_events(cx: &mut gpui::App) {
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged,]
+        vec![
+            BufferEvent::Edited {
+                source: BufferEditSource::User
+            },
+            BufferEvent::DirtyChanged,
+        ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
+        vec![
+            BufferEvent::Edited {
+                source: BufferEditSource::Remote
+            },
+            BufferEvent::DirtyChanged
+        ]
     );
 }
 
@@ -549,7 +572,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
     let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
-    smol::future::yield_now().await;
+    yield_now().await;
 
     // Edit the buffer while the normalization task is running.
     let version_before_edit = buffer.update(cx, |buffer, _| buffer.version());
@@ -827,23 +850,26 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    // Without space, we only match on names
+    // Single-atom queries (no whitespace): all matched chars must land in the leaf,
+    // so items whose ancestor path coincidentally contains the query chars don't
+    // show up unless the leaf itself matches.
     assert_eq!(
         search(&outline, "oon", cx).await,
         &[
-            ("mod module", vec![]),                    // included as the parent of a match
-            ("enum LoginState", vec![]),               // included as the parent of a match
-            ("LoggingOn", vec![1, 7, 8]),              // matches
-            ("impl Drop for Person", vec![7, 18, 19]), // matches in two disjoint names
+            ("mod module", vec![]),                     // parent context for LoggingOn
+            ("enum LoginState", vec![]),                // parent context for LoggingOn
+            ("LoggingOn", vec![1, 7, 8]),               // all three chars in leaf
+            ("impl Eq for Person", vec![9, 16, 17]),    // o-o-n in "for Person"
+            ("impl Drop for Person", vec![11, 18, 19]), // o-o-n in "for Person"
         ]
     );
 
+    // Multi-atom queries: rows whose match lives entirely in an ancestor
+    // are kept as context (empty positions, score zeroed) so descendants
+    // of a matched container surface alongside it.
     assert_eq!(
         search(&outline, "dp p", cx).await,
-        &[
-            ("impl Drop for Person", vec![5, 8, 9, 14]),
-            ("fn drop", vec![]),
-        ]
+        &[("impl Drop for Person", vec![5, 14]), ("fn drop", vec![]),]
     );
     assert_eq!(
         search(&outline, "dpn", cx).await,
@@ -852,8 +878,8 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(&outline, "impl ", cx).await,
         &[
-            ("impl Eq for Person", vec![0, 1, 2, 3, 4]),
-            ("impl Drop for Person", vec![0, 1, 2, 3, 4]),
+            ("impl Eq for Person", vec![0, 1, 2, 3]),
+            ("impl Drop for Person", vec![0, 1, 2, 3]),
             ("fn drop", vec![]),
         ]
     );
@@ -868,12 +894,16 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         query: &'a str,
         cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
-        let matches = cx
+        let entries = cx
             .update(|cx| outline.search(query, cx.background_executor().clone()))
             .await;
-        matches
+        entries
             .into_iter()
-            .map(|mat| (outline.items[mat.candidate_id].text.as_str(), mat.positions))
+            .map(|entry| {
+                let candidate_id = entry.candidate_id();
+                let positions = entry.into_match().map(|m| m.positions).unwrap_or_default();
+                (outline.items[candidate_id].text.as_str(), positions)
+            })
             .collect::<Vec<_>>()
     }
 }
@@ -976,7 +1006,7 @@ fn test_outline_annotations(cx: &mut App) {
             .items
             .into_iter()
             .map(|item| (
-                item.text,
+                item.text.to_string(),
                 item.depth,
                 item.annotation_range
                     .map(|range| { buffer.read(cx).text_for_range(range).collect::<String>() })
@@ -1076,7 +1106,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|item| {
                 (
-                    item.text,
+                    item.text.to_string(),
                     item.range.start.to_point(snapshot)..item.range.end.to_point(snapshot),
                 )
             })
@@ -3237,7 +3267,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 async fn test_preview_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     });
 
     let insertion_style = HighlightStyle {
@@ -4092,7 +4122,13 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     let snapshot = buffer.read(cx).snapshot();
 
     // Get all chunks and verify their bitmaps
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        },
+    );
 
     for chunk in chunks {
         let chunk_text = chunk.text;

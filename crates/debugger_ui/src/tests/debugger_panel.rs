@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     persistence::DebuggerPaneItem,
     tests::{start_debug_session, start_debug_session_with},
@@ -27,7 +28,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use terminal_view::terminal_panel::TerminalPanel;
@@ -1228,6 +1229,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -1960,7 +1962,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_a.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "second.rs",
@@ -1974,7 +1976,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_b.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "main.rs",
@@ -2054,7 +2056,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_a_active = pane_a.read(cx).active_item().unwrap();
             let pane_a_editor = pane_a_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_a_path = pane_a_editor.read(cx).project_path(cx).unwrap();
+            let pane_a_path = pane_a_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_a_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2159,7 +2161,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_b_active = pane_b.read(cx).active_item().unwrap();
             let pane_b_editor = pane_b_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_b_path = pane_b_editor.read(cx).project_path(cx).unwrap();
+            let pane_b_path = pane_b_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_b_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2230,7 +2232,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2292,7 +2294,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "main.rs",
@@ -2479,5 +2481,77 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
     assert!(
         child_disconnect_called.load(Ordering::SeqCst),
         "Child session should have received disconnect request"
+    );
+}
+
+#[gpui::test]
+async fn test_restart_request_is_not_sent_more_than_once_until_response(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, move |client| {
+        client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_restart_request: Some(true),
+                ..Default::default()
+            })
+        });
+    })
+    .unwrap();
+
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let restart_count = Arc::new(AtomicUsize::new(0));
+
+    client.on_request::<dap::requests::Restart, _>({
+        let restart_count = restart_count.clone();
+        move |_, _| {
+            restart_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    });
+
+    // This works because the restart request sender is on the foreground thread
+    // so it will start running after the gpui update stack is cleared
+    session.update(cx, |session, cx| {
+        session.restart(None, cx);
+        session.restart(None, cx);
+        session.restart(None, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        restart_count.load(Ordering::SeqCst),
+        1,
+        "Only one restart request should be sent while a restart is in-flight"
+    );
+
+    session.update(cx, |session, cx| {
+        session.restart(None, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        restart_count.load(Ordering::SeqCst),
+        2,
+        "A second restart should be allowed after the first one completes"
     );
 }

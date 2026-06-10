@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use editor::{Editor, MultiBufferOffset};
 use gpui::{
-    Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task,
-    WeakEntity, Window,
+    App, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use language::Diagnostic;
 use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use util::ResultExt;
-use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
@@ -28,7 +28,7 @@ pub struct DiagnosticIndicator {
 
 impl Render for DiagnosticIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let indicator = h_flex().gap_2();
+        let indicator = h_flex().gap_2().min_w_0().overflow_x_hidden();
         if !ProjectSettings::get_global(cx).diagnostics.button {
             return indicator.hidden();
         }
@@ -64,12 +64,19 @@ impl Render for DiagnosticIndicator {
                 .message
                 .split_once('\n')
                 .map_or(&*diagnostic.message, |(first, _)| first);
+            let diagnostics_already_active = self.any_active_diagnostics(cx);
+            let tooltip = if !diagnostics_already_active {
+                "Expand Diagnostics"
+            } else {
+                "Next Diagnostic"
+            };
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
-                    .tooltip(|_window, cx| {
+                    .truncate(true)
+                    .tooltip(move |_window, cx| {
                         Tooltip::for_action(
-                            "Next Diagnostic",
+                            tooltip,
                             &editor::actions::GoToDiagnostic::default(),
                             cx,
                         )
@@ -153,10 +160,18 @@ impl DiagnosticIndicator {
         }
     }
 
+    fn any_active_diagnostics(&self, cx: &mut Context<Self>) -> bool {
+        if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
+            editor.read(cx).any_active_diagnostics()
+        } else {
+            false
+        }
+    }
+
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
-                editor.go_to_diagnostic_impl(
+                editor.go_to_diagnostic_at_cursor(
                     editor::Direction::Next,
                     GoToDiagnosticSeverityFilter::default(),
                     window,
@@ -222,5 +237,11 @@ impl StatusItemView for DiagnosticIndicator {
             self._observe_active_editor = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings.diagnostics.get_or_insert_default().button = Some(false);
+        }))
     }
 }

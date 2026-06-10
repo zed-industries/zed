@@ -408,7 +408,7 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, &mut |left, right| {
-        is_subword_start(left, right, &classifier) || left == '\n'
+        is_subword_start(left, right, &classifier) || left == '\n' || right == '\n'
     })
 }
 
@@ -431,6 +431,7 @@ pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) ->
     let is_word_start = classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
     let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
         || left == '_' && right != '_'
+        || left != '_' && right == '_'
         || left.is_lowercase() && right.is_uppercase();
     is_word_start || is_subword_start
 }
@@ -484,7 +485,7 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
-        is_subword_end(left, right, &classifier) || right == '\n'
+        is_subword_end(left, right, &classifier) || left == '\n' || right == '\n'
     })
 }
 
@@ -519,6 +520,7 @@ pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> b
 fn is_subword_boundary_end(left: char, right: char, classifier: &CharClassifier) -> bool {
     classifier.is_word('-') && left != '-' && right == '-'
         || left != '_' && right == '_'
+        || left == '_' && right != '_'
         || left.is_lowercase() && right.is_uppercase()
 }
 
@@ -586,22 +588,30 @@ pub fn start_of_excerpt(
     direction: Direction,
 ) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
+    let Some((_, excerpt_range)) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(map);
+            let Some(start_anchor) = map.anchor_in_excerpt(excerpt_range.context.start) else {
+                return display_point;
+            };
+            let mut start = start_anchor.to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
-                let Some(excerpt) = map.buffer_snapshot().excerpt_before(excerpt.id()) else {
+                let Some(excerpt) = map.buffer_snapshot().excerpt_before(start_anchor) else {
                     return display_point;
                 };
-                start = excerpt.start_anchor().to_display_point(map);
+                if let Some(start_anchor) = map.anchor_in_excerpt(excerpt.context.start) {
+                    start = start_anchor.to_display_point(map);
+                }
             }
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(map);
+            let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) else {
+                return display_point;
+            };
+            let mut end = end_anchor.to_display_point(map);
             *end.row_mut() += 1;
             map.clip_point(end, Bias::Right)
         }
@@ -614,12 +624,15 @@ pub fn end_of_excerpt(
     direction: Direction,
 ) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
+    let Some((_, excerpt_range)) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(map);
+            let Some(start_anchor) = map.anchor_in_excerpt(excerpt_range.context.start) else {
+                return display_point;
+            };
+            let mut start = start_anchor.to_display_point(map);
             if start.row() > DisplayRow(0) {
                 *start.row_mut() -= 1;
             }
@@ -628,18 +641,23 @@ pub fn end_of_excerpt(
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(map);
+            let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) else {
+                return display_point;
+            };
+            let mut end = end_anchor.to_display_point(map);
             *end.column_mut() = 0;
             if end <= display_point {
                 *end.row_mut() += 1;
                 let point_end = map.display_point_to_point(end, Bias::Right);
-                let Some(excerpt) = map
+                let Some((_, excerpt_range)) = map
                     .buffer_snapshot()
                     .excerpt_containing(point_end..point_end)
                 else {
                     return display_point;
                 };
-                end = excerpt.end_anchor().to_display_point(map);
+                if let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) {
+                    end = end_anchor.to_display_point(map);
+                }
                 *end.column_mut() = 0;
             }
             end
@@ -720,7 +738,8 @@ pub fn find_boundary_point(
             && is_boundary(prev_ch, ch)
         {
             if return_point_before_boundary {
-                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+                let point = prev_offset.to_point(map.buffer_snapshot());
+                return map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right);
             } else {
                 break;
             }
@@ -729,7 +748,8 @@ pub fn find_boundary_point(
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }
-    map.clip_point(offset.to_display_point(map), Bias::Right)
+    let point = offset.to_point(map.buffer_snapshot());
+    map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
 }
 
 pub fn find_preceding_boundary_trail(
@@ -818,13 +838,15 @@ pub fn find_boundary_trail(
         prev_ch = Some(ch);
     }
 
-    let trail = trail_offset
-        .map(|trail_offset| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
+    let trail = trail_offset.map(|trail_offset| {
+        let point = trail_offset.to_point(map.buffer_snapshot());
+        map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
+    });
 
-    (
-        trail,
-        map.clip_point(offset.to_display_point(map), Bias::Right),
-    )
+    (trail, {
+        let point = offset.to_point(map.buffer_snapshot());
+        map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
+    })
 }
 
 pub fn find_boundary(
@@ -973,10 +995,10 @@ mod tests {
         }
 
         // Subword boundaries are respected
-        assert("lorem_ˇipˇsum", cx);
+        assert("loremˇ_ˇipsum", cx);
         assert("lorem_ˇipsumˇ", cx);
-        assert("ˇlorem_ˇipsum", cx);
-        assert("lorem_ˇipsum_ˇdolor", cx);
+        assert("ˇloremˇ_ipsum", cx);
+        assert("lorem_ˇipsumˇ_dolor", cx);
         assert("loremˇIpˇsum", cx);
         assert("loremˇIpsumˇ", cx);
 
@@ -1156,10 +1178,10 @@ mod tests {
         }
 
         // Subword boundaries are respected
-        assert("loˇremˇ_ipsum", cx);
+        assert("loremˇ_ˇipsum", cx);
         assert("ˇloremˇ_ipsum", cx);
-        assert("loremˇ_ipsumˇ", cx);
-        assert("loremˇ_ipsumˇ_dolor", cx);
+        assert("loremˇ_ˇipsum", cx);
+        assert("lorem_ˇipsumˇ_dolor", cx);
         assert("loˇremˇIpsum", cx);
         assert("loremˇIpsumˇDolor", cx);
 
@@ -1172,7 +1194,7 @@ mod tests {
         assert("loremˇ    ipsumˇ   ", cx);
         assert("loremˇ-ˇipsum", cx);
         assert("loremˇ#$@-ˇipsum", cx);
-        assert("loremˇ_ipsumˇ", cx);
+        assert("loremˇ_ˇipsum", cx);
         assert(" ˇbcˇΔ", cx);
         assert(" abˇ——ˇcd", cx);
     }
@@ -1388,10 +1410,100 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_word_movement_over_folds(cx: &mut gpui::App) {
+        use crate::display_map::Crease;
+
+        init_test(cx);
+
+        // Simulate a mention: `hello [@file.txt](file:///path) world`
+        // The fold covers `[@file.txt](file:///path)` and is replaced by "⋯".
+        // Display text: `hello ⋯ world`
+        let buffer_text = "hello [@file.txt](file:///path) world";
+        let buffer = MultiBuffer::build_simple(buffer_text, cx);
+        let font = font("Helvetica");
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font,
+                px(14.0),
+                None,
+                0,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        display_map.update(cx, |map, cx| {
+            // Fold the `[@file.txt](file:///path)` range (bytes 6..31)
+            map.fold(
+                vec![Crease::simple(
+                    Point::new(0, 6)..Point::new(0, 31),
+                    FoldPlaceholder::test(),
+                )],
+                cx,
+            );
+        });
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        // "hello " (6 bytes) + "⋯" (3 bytes) + " world" (6 bytes) = "hello ⋯ world"
+        assert_eq!(snapshot.text(), "hello ⋯ world");
+
+        // Ctrl+Right from before fold ("hello |⋯ world") should skip past the fold.
+        // Cursor at column 6 = start of fold.
+        let before_fold = DisplayPoint::new(DisplayRow(0), 6);
+        let after_fold = next_word_end(&snapshot, before_fold);
+        // Should land past the fold, not get stuck at fold start.
+        assert!(
+            after_fold > before_fold,
+            "next_word_end should move past the fold: got {:?}, started at {:?}",
+            after_fold,
+            before_fold
+        );
+
+        // Ctrl+Right from "hello" should jump past "hello" to the fold or past it.
+        let at_start = DisplayPoint::new(DisplayRow(0), 0);
+        let after_hello = next_word_end(&snapshot, at_start);
+        assert_eq!(
+            after_hello,
+            DisplayPoint::new(DisplayRow(0), 5),
+            "next_word_end from start should land at end of 'hello'"
+        );
+
+        // Ctrl+Left from after fold should move to before the fold.
+        // "⋯" ends at column 9. " world" starts at 9. Column 15 = end of "world".
+        let after_world = DisplayPoint::new(DisplayRow(0), 15);
+        let before_world = previous_word_start(&snapshot, after_world);
+        assert_eq!(
+            before_world,
+            DisplayPoint::new(DisplayRow(0), 10),
+            "previous_word_start from end should land at start of 'world'"
+        );
+
+        // Ctrl+Left from start of "world" should land before fold.
+        let start_of_world = DisplayPoint::new(DisplayRow(0), 10);
+        let landed = previous_word_start(&snapshot, start_of_world);
+        // The fold acts as a word, so we should land at the fold start (column 6).
+        assert_eq!(
+            landed,
+            DisplayPoint::new(DisplayRow(0), 6),
+            "previous_word_start from 'world' should land at fold start"
+        );
+
+        // End key from start should go to end of line (column 15), not fold start.
+        let end_pos = line_end(&snapshot, at_start, false);
+        assert_eq!(
+            end_pos,
+            DisplayPoint::new(DisplayRow(0), 15),
+            "line_end should go to actual end of line, not fold start"
+        );
+    }
+
     fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         crate::init(cx);
     }
 }

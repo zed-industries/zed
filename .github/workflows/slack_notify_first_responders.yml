@@ -5,25 +5,54 @@ on:
     types: [labeled]
 
 env:
-  FIRST_RESPONDER_LABELS: '["priority:P0", "priority:P1"]'
+  PRIORITY_LABELS: '["priority:P0", "priority:P1"]'
+  REPRODUCIBLE_LABEL: 'state:reproducible'
+  FREQUENCY_LABELS: '["frequency:always", "frequency:common"]'
 
 jobs:
   notify-slack:
     if: github.repository_owner == 'zed-industries' && github.event.issue.state == 'open'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    # Serialize per-issue so concurrent `labeled` events can't both observe
+    # the trifecta and double-notify.
+    concurrency:
+      group: slack-notify-first-responders-${{ github.event.issue.number }}
+      cancel-in-progress: false
 
     steps:
-      - name: Check if label requires first responder notification
+      - name: Check if label combination requires first responder notification
         id: check-label
         env:
           LABEL_NAME: ${{ github.event.label.name }}
+          ISSUE_LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
         run: |
-          if echo '${{ env.FIRST_RESPONDER_LABELS }}' | jq -e --arg label "$LABEL_NAME" 'index($label) != null' > /dev/null; then
-            echo "should_notify=true" >> "$GITHUB_OUTPUT"
-            echo "Label '$LABEL_NAME' requires first responder notification"
-          else
+          set -euo pipefail
+
+          # Gate on the just-added label so unrelated labeling on an
+          # already-qualifying issue doesn't re-fire the notification.
+          TRIGGER_LABELS=$(jq -cn \
+            --argjson priority "$PRIORITY_LABELS" \
+            --arg repro "$REPRODUCIBLE_LABEL" \
+            --argjson freq "$FREQUENCY_LABELS" \
+            '$priority + [$repro] + $freq')
+
+          if ! echo "$TRIGGER_LABELS" | jq -e --arg l "$LABEL_NAME" 'index($l) != null' > /dev/null; then
+            echo "Added label '$LABEL_NAME' is not in the trigger set, skipping"
             echo "should_notify=false" >> "$GITHUB_OUTPUT"
-            echo "Label '$LABEL_NAME' does not require first responder notification, skipping"
+            exit 0
+          fi
+
+          MATCHED_PRIORITY=$(echo "$ISSUE_LABELS_JSON" | jq -r --argjson priority "$PRIORITY_LABELS" 'map(select(. as $x | $priority | index($x) != null)) | first // ""')
+          HAS_REPRO=$(echo "$ISSUE_LABELS_JSON" | jq --arg l "$REPRODUCIBLE_LABEL" 'index($l) != null')
+          HAS_FREQ=$(echo "$ISSUE_LABELS_JSON" | jq --argjson freq "$FREQUENCY_LABELS" 'any(.[]; . as $x | $freq | index($x) != null)')
+
+          if [ -n "$MATCHED_PRIORITY" ] && [ "$HAS_REPRO" = "true" ] && [ "$HAS_FREQ" = "true" ]; then
+            echo "Confirmed high-frequency $MATCHED_PRIORITY, notifying"
+            echo "notify_reason=confirmed $MATCHED_PRIORITY" >> "$GITHUB_OUTPUT"
+            echo "should_notify=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Combination not yet satisfied (priority=$MATCHED_PRIORITY, reproducible=$HAS_REPRO, frequency=$HAS_FREQ), skipping"
+            echo "should_notify=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Slack message payload
@@ -32,13 +61,13 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
           LABELED_BY: ${{ github.event.sender.login }}
-          LABEL_NAME: ${{ github.event.label.name }}
+          NOTIFY_REASON: ${{ steps.check-label.outputs.notify_reason }}
           LABELS_JSON: ${{ toJson(github.event.issue.labels.*.name) }}
         run: |
           LABELS=$(echo "$LABELS_JSON" | jq -r 'join(", ")')
 
           jq -n \
-            --arg label_name "$LABEL_NAME" \
+            --arg notify_reason "$NOTIFY_REASON" \
             --arg issue_title "$ISSUE_TITLE" \
             --arg issue_url "$ISSUE_URL" \
             --arg labeled_by "$LABELED_BY" \
@@ -49,7 +78,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "<!subteam^S096CPUUGLF> Issue labeled *\($label_name)*"
+                    "text": "<!subteam^S096CPUUGLF> New *\($notify_reason)* issue"
                   }
                 },
                 {

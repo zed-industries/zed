@@ -1,8 +1,11 @@
 use anyhow::Result;
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -32,6 +35,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct VercelAiGatewaySettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct VercelAiGatewayLanguageModelProvider {
@@ -41,6 +45,7 @@ pub struct VercelAiGatewayLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<AvailableModel>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
@@ -52,16 +57,26 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -78,8 +93,17 @@ impl State {
         let http_client = self.http_client.clone();
         let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
         let api_key = self.api_key_state.key(&api_url);
+        let extra_headers = VercelAiGatewayLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
+            let models = list_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                &extra_headers,
+            )
+            .await?;
             this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
@@ -100,7 +124,11 @@ impl State {
 }
 
 impl VercelAiGatewayLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>({
                 let mut last_settings = VercelAiGatewayLanguageModelProvider::settings(cx).clone();
@@ -116,6 +144,7 @@ impl VercelAiGatewayLanguageModelProvider {
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
@@ -254,9 +283,12 @@ impl VercelAiGatewayLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = VercelAiGatewayLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -270,6 +302,7 @@ impl VercelAiGatewayLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             let response = request.await.map_err(map_open_ai_error)?;
             Ok(response)
@@ -385,6 +418,10 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_split_token_display(&self) -> bool {
         true
     }
@@ -399,24 +436,6 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let max_token_count = self.max_token_count();
-        cx.background_spawn(async move {
-            let messages = crate::provider::open_ai::collect_tiktoken_messages(request);
-            let model = if max_token_count >= 100_000 {
-                "gpt-4o"
-            } else {
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
     }
 
     fn stream_completion(
@@ -440,6 +459,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             self.model.capabilities.prompt_cache_key,
             self.max_output_tokens(),
             None,
+            false,
         );
         let completions = self.stream_open_ai(request, cx);
         async move {
@@ -480,6 +500,7 @@ async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: Option<&str>,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<AvailableModel>, LanguageModelCompletionError> {
     let uri = format!("{api_url}/models?include_mappings=true");
     let mut request_builder = HttpRequest::builder()
@@ -490,6 +511,7 @@ async fn list_models(
         request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
     }
     let request = request_builder
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(|error| LanguageModelCompletionError::BuildRequestBody {
             provider: PROVIDER_NAME,
@@ -570,6 +592,7 @@ async fn list_models(
                 parallel_tool_calls,
                 prompt_cache_key,
                 chat_completions: true,
+                interleaved_reasoning: false,
             },
         });
     }

@@ -13,12 +13,12 @@ use std::{
     collections::BinaryHeap,
     fmt, iter,
     ops::{ControlFlow, Deref, DerefMut, Range},
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
+use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{
     Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches,
     QueryPredicateArg,
@@ -38,6 +38,35 @@ pub struct SyntaxSnapshot {
     interpolated_version: clock::Global,
     language_registry_version: usize,
     update_count: usize,
+}
+
+// Dropping deep treesitter Trees can be quite slow due to deallocating lots of memory.
+// To avoid blocking the main thread, we offload the drop operation to a background thread.
+impl Drop for SyntaxSnapshot {
+    fn drop(&mut self) {
+        static DROP_TX: LazyLock<std::sync::mpsc::Sender<SumTree<SyntaxLayerEntry>>> =
+            LazyLock::new(|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::Builder::new()
+                    .name("SyntaxSnapshot::drop".into())
+                    .spawn(move || while let Ok(_) = rx.recv() {})
+                    .expect("failed to spawn drop thread");
+                tx
+            });
+        // This does allocate a new Arc, but it's cheap and avoids blocking the main thread without needing to use an `Option` or `MaybeUninit`.
+        let _ = DROP_TX.send(std::mem::replace(
+            &mut self.layers,
+            SumTree::from_summary(SyntaxLayerSummary {
+                min_depth: Default::default(),
+                max_depth: Default::default(),
+                // Deliberately bogus anchors, doesn't matter in this context
+                range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
+                last_layer_range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
+                last_layer_language: Default::default(),
+                contains_unknown_injections: Default::default(),
+            }),
+        ));
+    }
 }
 
 #[derive(Default)]
@@ -194,7 +223,7 @@ impl ParseStepLanguage {
     fn name(&self) -> SharedString {
         match self {
             ParseStepLanguage::Loaded { language } => language.name().0,
-            ParseStepLanguage::Pending { name } => name.into(),
+            ParseStepLanguage::Pending { name } => name.clone().into(),
         }
     }
 
@@ -567,7 +596,7 @@ impl SyntaxSnapshot {
 
                 let bounded_position = SyntaxLayerPositionBeforeChange {
                     position: position.clone(),
-                    change: changed_regions.start_position(),
+                    change: changed_regions.start_position(text.remote_id()),
                 };
                 if bounded_position.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left);
@@ -1100,7 +1129,7 @@ impl<'a> SyntaxMapCaptures<'a> {
             let grammar_index = result
                 .grammars
                 .iter()
-                .position(|g| g.id == grammar.id())
+                .position(|g| g.id() == grammar.id())
                 .unwrap_or_else(|| {
                     result.grammars.push(grammar);
                     result.grammars.len() - 1
@@ -1244,7 +1273,7 @@ impl<'a> SyntaxMapMatches<'a> {
             let grammar_index = result
                 .grammars
                 .iter()
-                .position(|g| g.id == grammar.id())
+                .position(|g| g.id() == grammar.id())
                 .unwrap_or_else(|| {
                     result.grammars.push(grammar);
                     result.grammars.len() - 1
@@ -1925,11 +1954,11 @@ impl ChangedRegion {
 }
 
 impl ChangeRegionSet {
-    fn start_position(&self) -> ChangeStartPosition {
+    fn start_position(&self, buffer_id: BufferId) -> ChangeStartPosition {
         self.0.first().map_or(
             ChangeStartPosition {
                 depth: usize::MAX,
-                position: Anchor::MAX,
+                position: Anchor::max_for_buffer(buffer_id),
             },
             |region| ChangeStartPosition {
                 depth: region.depth,
@@ -1978,24 +2007,20 @@ impl ChangeRegionSet {
     }
 }
 
-impl Default for SyntaxLayerSummary {
-    fn default() -> Self {
-        Self {
-            max_depth: 0,
-            min_depth: 0,
-            range: Anchor::MAX..Anchor::MIN,
-            last_layer_range: Anchor::MIN..Anchor::MAX,
-            last_layer_language: None,
-            contains_unknown_injections: false,
-        }
-    }
-}
-
 impl sum_tree::Summary for SyntaxLayerSummary {
     type Context<'a> = &'a BufferSnapshot;
 
-    fn zero(_cx: &BufferSnapshot) -> Self {
-        Default::default()
+    fn zero(buffer: &BufferSnapshot) -> Self {
+        Self {
+            max_depth: 0,
+            min_depth: 0,
+            range: Anchor::max_for_buffer(buffer.remote_id())
+                ..Anchor::min_for_buffer(buffer.remote_id()),
+            last_layer_range: Anchor::min_for_buffer(buffer.remote_id())
+                ..Anchor::max_for_buffer(buffer.remote_id()),
+            last_layer_language: None,
+            contains_unknown_injections: false,
+        }
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
@@ -2003,7 +2028,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();
         } else {
-            if self.range == (Anchor::MAX..Anchor::MAX) {
+            if self.range.start.is_max() && self.range.end.is_max() {
                 self.range.start = other.range.start;
             }
             if other.range.end.cmp(&self.range.end, buffer).is_gt() {

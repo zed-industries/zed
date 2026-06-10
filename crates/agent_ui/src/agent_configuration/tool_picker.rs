@@ -172,17 +172,8 @@ impl PickerDelegate for ToolPickerDelegate {
         self.selected_index = ix;
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
-        let item = &self.filtered_items[ix];
-        match item {
-            PickerItem::Tool { .. } => true,
-            PickerItem::ContextServer { .. } => false,
-        }
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        matches!(self.filtered_items.get(ix), Some(PickerItem::Tool { .. }))
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -250,7 +241,9 @@ impl PickerDelegate for ToolPickerDelegate {
             return;
         }
 
-        let item = &self.filtered_items[self.selected_index];
+        let Some(item) = self.filtered_items.get(self.selected_index) else {
+            return;
+        };
 
         let PickerItem::Tool {
             name: tool_name,

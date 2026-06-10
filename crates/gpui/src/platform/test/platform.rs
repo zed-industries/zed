@@ -1,9 +1,10 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams,
+    size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -34,6 +35,7 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
+    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
 }
 
@@ -84,12 +86,38 @@ struct TestPrompt {
 pub(crate) struct TestPrompts {
     multiple_choice: VecDeque<TestPrompt>,
     new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
+    paths: VecDeque<(
+        PathPromptOptions,
+        oneshot::Sender<Result<Option<Vec<PathBuf>>>>,
+    )>,
 }
 
 impl TestPlatform {
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
-        let text_system = Arc::new(NoopTextSystem);
+        Self::with_platform(
+            executor,
+            foreground_executor,
+            Arc::new(NoopTextSystem),
+            None,
+        )
+    }
 
+    pub fn with_text_system(
+        executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Rc<Self> {
+        Self::with_platform(executor, foreground_executor, text_system, None)
+    }
+
+    pub fn with_platform(
+        executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        text_system: Arc<dyn PlatformTextSystem>,
+        headless_renderer_factory: Option<
+            Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>,
+        >,
+    ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
             foreground_executor,
@@ -107,6 +135,7 @@ impl TestPlatform {
             weak: weak.clone(),
             opened_url: Default::default(),
             text_system,
+            headless_renderer_factory,
         })
     }
 
@@ -121,6 +150,33 @@ impl TestPlatform {
             .pop_front()
             .expect("no pending new path prompt");
         tx.send(Ok(select_path(&path))).ok();
+    }
+
+    pub(crate) fn simulate_path_prompt_response(
+        &self,
+        select_paths: impl FnOnce(&PathPromptOptions) -> Option<Vec<std::path::PathBuf>>,
+    ) {
+        let (options, tx) = self
+            .prompts
+            .borrow_mut()
+            .paths
+            .pop_front()
+            .expect("no pending paths prompt");
+        let selection = select_paths(&options);
+        if let Some(paths) = &selection
+            && !options.multiple
+            && paths.len() > 1
+        {
+            panic!(
+                "selected {} paths for a prompt that does not allow multiple selection",
+                paths.len()
+            );
+        }
+        tx.send(Ok(selection)).ok();
+    }
+
+    pub(crate) fn did_prompt_for_paths(&self) -> bool {
+        !self.prompts.borrow().paths.is_empty()
     }
 
     #[track_caller]
@@ -299,11 +355,13 @@ impl Platform for TestPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
+        let renderer = self.headless_renderer_factory.as_ref().and_then(|f| f());
         let window = TestWindow::new(
             handle,
             params,
             self.weak.clone(),
             self.active_display.clone(),
+            renderer,
         );
         Ok(Box::new(window))
     }
@@ -322,9 +380,11 @@ impl Platform for TestPlatform {
 
     fn prompt_for_paths(
         &self,
-        _options: crate::PathPromptOptions,
+        options: crate::PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<std::path::PathBuf>>>> {
-        unimplemented!()
+        let (tx, rx) = oneshot::channel();
+        self.prompts.borrow_mut().paths.push_back((options, tx));
+        rx
     }
 
     fn prompt_for_new_path(
@@ -375,6 +435,12 @@ impl Platform for TestPlatform {
 
     fn set_cursor_style(&self, style: crate::CursorStyle) {
         *self.active_cursor.lock() = style;
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {}
+
+    fn is_cursor_visible(&self) -> bool {
+        true
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

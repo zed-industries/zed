@@ -1,21 +1,20 @@
+use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use anthropic::{AnthropicError, AnthropicModelMode};
 use anyhow::Result;
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AppContext, AsyncApp, Entity, Task, Window};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
 };
 use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 
-use crate::provider::anthropic::{
-    AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
-};
 use crate::provider::util::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,
     ApiCompatibleProviderState,
@@ -45,10 +44,46 @@ impl ApiCompatibleProviderSettings for AnthropicCompatibleSettings {
 
 pub type State = ApiCompatibleProviderState<AnthropicCompatibleSettings>;
 
+/// Convert a settings-defined `available_models` entry into an `anthropic::Model`.
+fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::Model {
+    let mode = match available.mode.unwrap_or_default() {
+        settings::ModelMode::Default => AnthropicModelMode::Default,
+        settings::ModelMode::Thinking { budget_tokens } => {
+            AnthropicModelMode::Thinking { budget_tokens }
+        }
+    };
+    let supports_thinking = matches!(mode, AnthropicModelMode::Thinking { .. });
+
+    anthropic::Model {
+        display_name: available
+            .display_name
+            .clone()
+            .unwrap_or_else(|| available.name.clone()),
+        id: available.name.clone(),
+        max_input_tokens: available.max_tokens,
+        max_output_tokens: available.max_output_tokens.unwrap_or(4_096),
+        default_temperature: available.default_temperature.unwrap_or(1.0),
+        mode,
+        supports_thinking,
+        supports_adaptive_thinking: false,
+        supports_images: available.capabilities.images,
+        supports_speed: false,
+        supported_effort_levels: Vec::new(),
+        tool_override: available.tool_override.clone(),
+        extra_beta_headers: available.extra_beta_headers.clone(),
+    }
+}
+
 impl AnthropicCompatibleLanguageModelProvider {
-    pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        id: Arc<str>,
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = State::new(
             id.clone(),
+            credentials_provider,
             |id, cx| {
                 crate::AllLanguageModelSettings::get_global(cx)
                     .anthropic_compatible
@@ -67,30 +102,23 @@ impl AnthropicCompatibleLanguageModelProvider {
 
     fn create_language_model(&self, model: AvailableModel) -> Arc<dyn LanguageModel> {
         let capabilities = model.capabilities.clone();
-        let model = anthropic::Model::Custom {
-            name: model.name,
-            display_name: model.display_name,
-            max_tokens: model.max_tokens,
-            tool_override: model.tool_override,
-            cache_configuration: model.cache_configuration.as_ref().map(|configuration| {
-                anthropic::AnthropicModelCacheConfiguration {
-                    max_cache_anchors: configuration.max_cache_anchors,
-                    should_speculate: configuration.should_speculate,
-                    min_total_token: configuration.min_total_token,
-                }
-            }),
-            max_output_tokens: model.max_output_tokens,
-            default_temperature: model.default_temperature,
-            extra_beta_headers: model.extra_beta_headers,
-            mode: model.mode.unwrap_or_default().into(),
+        // Compatible providers may not support Anthropic's automatic prompt
+        // caching; only request explicit (legacy) cache breakpoints when the
+        // user has opted in via `cache_configuration`.
+        let cache_mode = if model.cache_configuration.is_some() {
+            AnthropicPromptCacheMode::Legacy
+        } else {
+            AnthropicPromptCacheMode::Disabled
         };
+        let model = available_model_to_anthropic_model(&model);
 
         Arc::new(AnthropicCompatibleLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
+            id: LanguageModelId::from(model.id.clone()),
             provider_id: self.id.clone(),
             provider_name: self.name.clone(),
             model,
             capabilities,
+            cache_mode,
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
@@ -180,6 +208,7 @@ pub struct AnthropicCompatibleLanguageModel {
     provider_name: LanguageModelProviderName,
     model: anthropic::Model,
     capabilities: ModelCapabilities,
+    cache_mode: AnthropicPromptCacheMode,
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
@@ -214,17 +243,19 @@ impl AnthropicCompatibleLanguageModel {
                 });
             };
 
+            let extra_headers = CustomHeaders::default();
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
                 request,
                 beta_headers,
+                &extra_headers,
             );
 
             request
                 .await
-                .map_err(|error| LanguageModelCompletionError::from_anthropic(error, provider_name))
+                .map_err(|error| anthropic::completion_error_from_anthropic(error, provider_name))
         }
         .boxed()
     }
@@ -236,7 +267,7 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
+        LanguageModelName::from(self.model.display_name.clone())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -267,30 +298,19 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
+        self.model.supports_thinking
     }
 
     fn telemetry_id(&self) -> String {
-        format!("anthropic/{}", self.model.id())
+        format!("anthropic/{}", self.model.id)
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.model.max_input_tokens
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(self.model.max_output_tokens())
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // Unlike the first-party Anthropic provider, we don't call the count_tokens API here,
-        // since compatible providers may not implement it. Estimate locally instead.
-        cx.background_spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
-            .boxed()
+        Some(self.model.max_output_tokens)
     }
 
     fn stream_completion(
@@ -304,13 +324,19 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_anthropic(
+        let has_tools = !request.tools.is_empty();
+        let request_id = self.model.request_id(has_tools).to_string();
+        let mut request = into_anthropic(
             request,
-            self.model.request_id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-            self.model.mode(),
+            request_id,
+            self.model.default_temperature,
+            self.model.max_output_tokens,
+            self.model.mode.clone(),
+            self.cache_mode,
         );
+        if !self.model.supports_speed {
+            request.speed = None;
+        }
         let completion_request = self.stream_completion(request, cx);
         let provider_name = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
@@ -318,15 +344,5 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
             Ok(AnthropicEventMapper::new(provider_name).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        self.model
-            .cache_configuration()
-            .map(|configuration| LanguageModelCacheConfiguration {
-                max_cache_anchors: configuration.max_cache_anchors,
-                should_speculate: configuration.should_speculate,
-                min_total_token: configuration.min_total_token,
-            })
     }
 }

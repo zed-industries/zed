@@ -1,5 +1,6 @@
 use super::{
-    KernelSession, KernelSpecification, RunningKernel, WslKernelSpecification, start_kernel_tasks,
+    KernelSession, KernelSpecification, RunningKernel, WslKernelSpecification,
+    build_python_exec_shell_script, start_kernel_tasks,
 };
 use anyhow::{Context as _, Result};
 use futures::{
@@ -21,6 +22,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
 use uuid::Uuid;
 
 // Find a set of open ports. This creates a listener with port set to 0. The listener will be closed at the end when it goes out of scope.
@@ -54,6 +56,15 @@ impl Debug for WslRunningKernel {
             .field("process", &self.process)
             .finish()
     }
+}
+
+fn quote_posix_shell_arguments(arguments: &[String]) -> Result<String> {
+    let mut quoted_arguments = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        let quoted = shlex::try_quote(argument).map(|quoted| quoted.into_owned())?;
+        quoted_arguments.push(quoted);
+    }
+    Ok(quoted_arguments.join(" "))
 }
 
 impl WslRunningKernel {
@@ -129,9 +140,8 @@ impl WslRunningKernel {
             // `wsl -d <distro> --exec <argv0> <argv1> ...`
             // But we need to replace {connection_file} with wsl_connection_path.
 
-            let argv = kernel_specification.kernelspec.argv;
             anyhow::ensure!(
-                !argv.is_empty(),
+                !kernel_specification.kernelspec.argv.is_empty(),
                 "Empty argv in kernelspec {}",
                 kernel_specification.name
             );
@@ -182,92 +192,78 @@ impl WslRunningKernel {
             // We use bash -lc to run in a login shell for proper environment setup
             let mut kernel_args: Vec<String> = Vec::new();
 
-            if let Some(env) = &kernel_specification.kernelspec.env {
-                if !env.is_empty() {
-                    kernel_args.push("env".to_string());
-                    for (k, v) in env {
-                        kernel_args.push(format!("{}={}", k, v));
+            let resolved_argv: Vec<String> = kernel_specification
+                .kernelspec
+                .argv
+                .iter()
+                .map(|arg| {
+                    if arg == "{connection_file}" {
+                        wsl_connection_path.clone()
+                    } else {
+                        arg.clone()
                     }
+                })
+                .collect();
+
+            let executable = resolved_argv.first().map(String::as_str);
+            let needs_python_resolution = executable.map_or(false, |executable| {
+                executable == "python" || executable == "python3" || !executable.starts_with('/')
+            });
+
+            let mut env_assignments: Vec<String> = Vec::new();
+            if let Some(env) = &kernel_specification.kernelspec.env {
+                env_assignments.reserve(env.len());
+                for (key, value) in env {
+                    let assignment = format!("{key}={value}");
+                    let assignment = shlex::try_quote(&assignment)
+                        .map(|quoted| quoted.into_owned())?;
+                    env_assignments.push(assignment);
+                }
+
+                if !env_assignments.is_empty() {
+                    kernel_args.push("env".to_string());
+                    kernel_args.extend(env_assignments.iter().cloned());
                 }
             }
 
-            for arg in argv {
-                if arg == "{connection_file}" {
-                    kernel_args.push(wsl_connection_path.clone());
-                } else {
-                    kernel_args.push(arg.clone());
-                }
-            }
-
-            // because first command is python/python3 we need make sure it's present in the env
-            let first_cmd = kernel_args.first().map(|arg| {
-                arg.split_whitespace().next().unwrap_or(arg)
-            });
-
-            let needs_python_resolution = first_cmd.map_or(false, |cmd| {
-                cmd == "python" || cmd == "python3" || !cmd.starts_with('/')
-            });
+            kernel_args.extend(resolved_argv.iter().cloned());
 
             let shell_command = if needs_python_resolution {
-                // 1. Check for .venv/bin/python or .venv/bin/python3 in working directory
-                // 2. Fall back to system python3 or python
-                let rest_args: Vec<String> = kernel_args.iter().skip(1).cloned().collect();
-                let rest_string = rest_args
-                    .iter()
-                    .map(|arg| {
-                        if arg.contains(' ') || arg.contains('\'') || arg.contains('"') {
-                            format!("'{}'", arg.replace('\'', "'\\''"))
-                        } else {
-                            arg.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let rest_args: Vec<String> = resolved_argv.iter().skip(1).cloned().collect();
+                let arg_string = quote_posix_shell_arguments(&rest_args)?;
+                let set_env_command = if env_assignments.is_empty() {
+                    String::new()
+                } else {
+                    format!("export {}; ", env_assignments.join(" "))
+                };
 
                 let cd_command = if let Some(wd) = wsl_working_directory.as_ref() {
-                    format!("cd '{}' && ", wd.replace('\'', "'\\''"))
+                    let quoted_wd = shlex::try_quote(wd)
+                        .map(|quoted| quoted.into_owned())?;
+                    format!("cd {quoted_wd} && ")
                 } else {
                     String::new()
                 };
-                // TODO: find a better way to debug missing python issues in WSL
 
-                format!(
-                    "set -e; \
-                     {} \
-                     echo \"Working directory: $(pwd)\" >&2; \
-                     if [ -x .venv/bin/python ]; then \
-                       echo \"Found .venv/bin/python\" >&2; \
-                       exec .venv/bin/python {}; \
-                     elif [ -x .venv/bin/python3 ]; then \
-                       echo \"Found .venv/bin/python3\" >&2; \
-                       exec .venv/bin/python3 {}; \
-                     elif command -v python3 >/dev/null 2>&1; then \
-                       echo \"Found system python3\" >&2; \
-                       exec python3 {}; \
-                     elif command -v python >/dev/null 2>&1; then \
-                       echo \"Found system python\" >&2; \
-                       exec python {}; \
-                     else \
-                       echo 'Error: Python not found in .venv or PATH' >&2; \
-                       echo 'Contents of current directory:' >&2; \
-                       ls -la >&2; \
-                       echo 'PATH:' \"$PATH\" >&2; \
-                       exit 127; \
-                     fi",
-                    cd_command, rest_string, rest_string, rest_string, rest_string
-                )
+                build_python_exec_shell_script(&arg_string, &cd_command, &set_env_command)
             } else {
-                kernel_args
-                    .iter()
-                    .map(|arg| {
-                        if arg.contains(' ') || arg.contains('\'') || arg.contains('"') {
-                            format!("'{}'", arg.replace('\'', "'\\''"))
-                        } else {
-                            arg.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                let args_string = quote_posix_shell_arguments(&resolved_argv)?;
+
+                let cd_command = if let Some(wd) = wsl_working_directory.as_ref() {
+                    let quoted_wd = shlex::try_quote(wd)
+                        .map(|quoted| quoted.into_owned())?;
+                    format!("cd {quoted_wd} && ")
+                } else {
+                    String::new()
+                };
+
+                let env_prefix_inline = if !env_assignments.is_empty() {
+                    format!("env {} ", env_assignments.join(" "))
+                } else {
+                    String::new()
+                };
+
+                format!("{cd_command}exec {env_prefix_inline}{args_string}")
             };
 
             cmd.arg("bash")
@@ -331,7 +327,8 @@ impl WslRunningKernel {
                 "",
                 &session_id,
             )
-            .await?;
+            .await
+            .context("Failed to create iopub connection. Is `ipykernel` installed in the WSL environment? Try running `pip install ipykernel` inside your WSL distribution.")?;
 
             let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
             let shell_socket = runtimelib::create_client_shell_connection_with_identity(
@@ -571,8 +568,20 @@ pub async fn wsl_kernel_specifications(
                                 })
                             })
                             .collect::<Vec<_>>();
+                    } else if let Err(e) =
+                        serde_json::from_str::<LocalKernelSpecsResponse>(&json_str)
+                    {
+                        log::error!(
+                            "wsl_kernel_specifications parse error: {} \nJSON: {}",
+                            e,
+                            json_str
+                        );
                     }
+                } else {
+                    log::error!("wsl_kernel_specifications command failed");
                 }
+            } else if let Err(e) = output {
+                log::error!("wsl_kernel_specifications command execution failed: {}", e);
             }
 
             Vec::new()

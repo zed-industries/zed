@@ -2,7 +2,6 @@ use collections::HashMap;
 use gpui::{AppContext, Context, Entity, Window};
 use itertools::Itertools;
 use language::Buffer;
-use multi_buffer::MultiBufferOffset;
 use std::{ops::Range, sync::Arc, time::Duration};
 use text::{Anchor, AnchorRangeExt, Bias, BufferId, ToOffset, ToPoint};
 use util::ResultExt;
@@ -50,7 +49,7 @@ pub(super) fn refresh_linked_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
-    if !editor.mode().is_full() || editor.pending_rename.is_some() {
+    if !editor.lsp_data_enabled() || editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project()?.downgrade();
@@ -62,27 +61,15 @@ pub(super) fn refresh_linked_ranges(
         editor
             .update(cx, |editor, cx| {
                 let display_snapshot = editor.display_snapshot(cx);
-                let selections = editor
-                    .selections
-                    .all::<MultiBufferOffset>(&display_snapshot);
+                let selections = editor.selections.all_anchors(&display_snapshot);
                 let snapshot = display_snapshot.buffer_snapshot();
                 let buffer = editor.buffer.read(cx);
-                for selection in selections {
-                    let cursor_position = selection.head();
-                    let start_position = snapshot.anchor_before(cursor_position);
-                    let end_position = snapshot.anchor_after(selection.tail());
-                    if start_position.text_anchor.buffer_id != end_position.text_anchor.buffer_id
-                        || end_position.text_anchor.buffer_id.is_none()
+                for selection in selections.iter() {
+                    if let Some((_, range)) =
+                        snapshot.anchor_range_to_buffer_anchor_range(selection.range())
+                        && let Some(buffer) = buffer.buffer(range.start.buffer_id)
                     {
-                        // Throw away selections spanning multiple buffers.
-                        continue;
-                    }
-                    if let Some(buffer) = buffer.buffer_for_anchor(end_position, cx) {
-                        applicable_selections.push((
-                            buffer,
-                            start_position.text_anchor,
-                            end_position.text_anchor,
-                        ));
+                        applicable_selections.push((buffer, range.start, range.end));
                     }
                 }
             })

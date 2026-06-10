@@ -1,7 +1,7 @@
 use crate::{Tooltip, prelude::*};
 use gpui::{ClickEvent, IntoElement, ParentElement, SharedString};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ConfiguredApiCard {
     label: SharedString,
     button_label: Option<SharedString>,
@@ -52,6 +52,64 @@ impl ConfiguredApiCard {
     }
 }
 
+impl Component for ConfiguredApiCard {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn description() -> &'static str {
+        "A card used in AI provider settings to indicate that an API has been \
+        configured, with an optional action button to manage or reconfigure it."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        let container = || {
+            v_flex()
+                .w_72()
+                .p_2()
+                .gap_2()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().panel_background)
+        };
+
+        let examples = vec![
+            single_example(
+                "Default",
+                container()
+                    .child(ConfiguredApiCard::new("API key is configured"))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Custom Button Label",
+                container()
+                    .child(
+                        ConfiguredApiCard::new("OpenAI API key configured")
+                            .button_label("Remove Key"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "With Tooltip",
+                container()
+                    .child(
+                        ConfiguredApiCard::new("Anthropic API key configured")
+                            .tooltip_label("Click to reset your API key"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Disabled",
+                container()
+                    .child(ConfiguredApiCard::new("API key is configured").disabled(true))
+                    .into_any_element(),
+            ),
+        ];
+
+        example_group(examples).into_any_element()
+    }
+}
+
 impl RenderOnce for ConfiguredApiCard {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let button_label = self.button_label.unwrap_or("Reset Key".into());
@@ -80,10 +138,11 @@ impl RenderOnce for ConfiguredApiCard {
                         elem.tab_index(tab_index)
                     })
                     .label_size(LabelSize::Small)
-                    .icon(IconName::Undo)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
+                    .start_icon(
+                        Icon::new(IconName::Undo)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .disabled(self.disabled)
                     .when_some(self.tooltip_label, |this, label| {
                         this.tooltip(Tooltip::text(label))

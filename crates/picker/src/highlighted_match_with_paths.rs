@@ -5,6 +5,7 @@ pub struct HighlightedMatchWithPaths {
     pub prefix: Option<SharedString>,
     pub match_label: HighlightedMatch,
     pub paths: Vec<HighlightedMatch>,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, IntoElement)]
@@ -51,7 +52,9 @@ impl HighlightedMatch {
 }
 impl RenderOnce for HighlightedMatch {
     fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
-        HighlightedLabel::new(self.text, self.highlight_positions).color(self.color)
+        HighlightedLabel::new(self.text, self.highlight_positions)
+            .color(self.color)
+            .truncate()
     }
 }
 
@@ -63,18 +66,31 @@ impl HighlightedMatchWithPaths {
                 .color(Color::Muted)
         }))
     }
+
+    pub fn is_active(mut self, active: bool) -> Self {
+        self.active = active;
+        self
+    }
 }
 
 impl RenderOnce for HighlightedMatchWithPaths {
     fn render(mut self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         v_flex()
+            .min_w_0()
             .child(
-                h_flex().gap_1().child(self.match_label.clone()).when_some(
-                    self.prefix.as_ref(),
-                    |this, prefix| {
+                h_flex()
+                    .gap_1()
+                    .child(self.match_label.clone())
+                    .when_some(self.prefix.as_ref(), |this, prefix| {
                         this.child(Label::new(format!("({})", prefix)).color(Color::Muted))
-                    },
-                ),
+                    })
+                    .when(self.active, |this| {
+                        this.child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Accent),
+                        )
+                    }),
             )
             .when(!self.paths.is_empty(), |this| {
                 self.render_paths_children(this)

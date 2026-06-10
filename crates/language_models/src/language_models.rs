@@ -3,8 +3,11 @@ use std::sync::Arc;
 use ::settings::{Settings, SettingsStore};
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet};
+use credentials_provider::CredentialsProvider;
 use gpui::{App, Context, Entity};
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+use language_model::{
+    ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 pub mod extension;
@@ -25,15 +28,23 @@ use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
-use crate::provider::vercel::VercelLanguageModelProvider;
+use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
+use crate::provider::opencode::OpenCodeLanguageModelProvider;
 use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
+    let credentials_provider = client.credentials_provider();
     let registry = LanguageModelRegistry::global(cx);
     let built_in_provider_ids = registry.update(cx, |registry, cx| {
-        register_language_model_providers(registry, user_store, client.clone(), cx);
+        register_language_model_providers(
+            registry,
+            user_store,
+            client.clone(),
+            credentials_provider.clone(),
+            cx,
+        );
         registry
             .providers()
             .into_iter()
@@ -44,37 +55,43 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     // Subscribe to extension store events to track LLM extension installations
     if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
         cx.subscribe(&extension_store, {
-            let registry = registry.clone();
-            move |extension_store, event, cx| match event {
-                extension_host::Event::ExtensionInstalled(extension_id) => {
-                    if let Some(manifest) = extension_store
-                        .read(cx)
-                        .extension_manifest_for_id(extension_id)
-                    {
-                        if !manifest.language_model_providers.is_empty() {
-                            registry.update(cx, |registry, cx| {
-                                registry.extension_installed(extension_id.clone(), cx);
-                            });
+            let registry = registry.downgrade();
+            move |extension_store, event, cx| {
+                let Some(registry) = registry.upgrade() else {
+                    return;
+                };
+                match event {
+                    extension_host::Event::ExtensionInstalled(extension_id) => {
+                        if let Some(manifest) = extension_store
+                            .read(cx)
+                            .extension_manifest_for_id(extension_id)
+                        {
+                            if !manifest.language_model_providers.is_empty() {
+                                registry.update(cx, |registry, cx| {
+                                    registry.extension_installed(extension_id.clone(), cx);
+                                });
+                            }
                         }
                     }
-                }
-                extension_host::Event::ExtensionUninstalled(extension_id) => {
-                    registry.update(cx, |registry, cx| {
-                        registry.extension_uninstalled(extension_id, cx);
-                    });
-                }
-                extension_host::Event::ExtensionsUpdated => {
-                    let mut new_ids = HashSet::default();
-                    for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
-                        if !entry.manifest.language_model_providers.is_empty() {
-                            new_ids.insert(extension_id.clone());
-                        }
+                    extension_host::Event::ExtensionUninstalled(extension_id) => {
+                        registry.update(cx, |registry, cx| {
+                            registry.extension_uninstalled(extension_id, cx);
+                        });
                     }
-                    registry.update(cx, |registry, cx| {
-                        registry.sync_installed_llm_extensions(new_ids, cx);
-                    });
+                    extension_host::Event::ExtensionsUpdated => {
+                        let mut new_ids = HashSet::default();
+                        for (extension_id, entry) in extension_store.read(cx).installed_extensions()
+                        {
+                            if !entry.manifest.language_model_providers.is_empty() {
+                                new_ids.insert(extension_id.clone());
+                            }
+                        }
+                        registry.update(cx, |registry, cx| {
+                            registry.sync_installed_llm_extensions(new_ids, cx);
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         })
         .detach();
@@ -101,10 +118,16 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             &compatible_provider_settings,
             &built_in_provider_ids,
             &client,
+            &credentials_provider,
             cx,
         );
     });
+
+    let registry = registry.downgrade();
     cx.observe_global::<SettingsStore>(move |cx| {
+        let Some(registry) = registry.upgrade() else {
+            return;
+        };
         let compatible_provider_settings_new = CompatibleProviderSettings::global(cx);
 
         if compatible_provider_settings_new != compatible_provider_settings {
@@ -115,6 +138,7 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
                     &compatible_provider_settings_new,
                     &built_in_provider_ids,
                     &client,
+                    &credentials_provider,
                     cx,
                 );
             });
@@ -122,6 +146,50 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Recomputes and sets the [`LanguageModelRegistry`]'s environment fallback
+/// model based on currently authenticated providers.
+///
+/// Prefers the Zed cloud provider so that, once the user is signed in, we
+/// always pick a Zed-hosted model over models from other authenticated
+/// providers in the environment. If the Zed cloud provider is authenticated
+/// but hasn't finished loading its models yet, we don't fall back to another
+/// provider to avoid flickering between providers during sign in.
+pub fn update_environment_fallback_model(cx: &mut App) {
+    let registry = LanguageModelRegistry::global(cx);
+    let fallback_model = {
+        let registry = registry.read(cx);
+        let cloud_provider = registry.provider(&ZED_CLOUD_PROVIDER_ID);
+        if cloud_provider
+            .as_ref()
+            .is_some_and(|provider| provider.is_authenticated(cx))
+        {
+            cloud_provider.and_then(|provider| {
+                let model = provider
+                    .default_model(cx)
+                    .or_else(|| provider.recommended_models(cx).first().cloned())?;
+                Some(ConfiguredModel { provider, model })
+            })
+        } else {
+            registry
+                .providers()
+                .iter()
+                .filter(|provider| provider.is_authenticated(cx))
+                .find_map(|provider| {
+                    let model = provider
+                        .default_model(cx)
+                        .or_else(|| provider.recommended_models(cx).first().cloned())?;
+                    Some(ConfiguredModel {
+                        provider: provider.clone(),
+                        model,
+                    })
+                })
+        }
+    };
+    registry.update(cx, |registry, cx| {
+        registry.set_environment_fallback_model(fallback_model, cx);
+    });
 }
 
 #[derive(PartialEq, Eq)]
@@ -163,6 +231,7 @@ impl CompatibleProviderKind {
         registry: &mut LanguageModelRegistry,
         provider_id: Arc<str>,
         client: &Arc<Client>,
+        credentials_provider: &Arc<dyn CredentialsProvider>,
         cx: &mut Context<LanguageModelRegistry>,
     ) {
         match self {
@@ -170,6 +239,7 @@ impl CompatibleProviderKind {
                 Arc::new(OpenAiCompatibleLanguageModelProvider::new(
                     provider_id,
                     client.http_client(),
+                    credentials_provider.clone(),
                     cx,
                 )),
                 cx,
@@ -178,6 +248,7 @@ impl CompatibleProviderKind {
                 Arc::new(AnthropicCompatibleLanguageModelProvider::new(
                     provider_id,
                     client.http_client(),
+                    credentials_provider.clone(),
                     cx,
                 )),
                 cx,
@@ -192,6 +263,7 @@ fn reconcile_compatible_providers(
     settings: &CompatibleProviderSettings,
     built_in_provider_ids: &HashSet<LanguageModelProviderId>,
     client: &Arc<Client>,
+    credentials_provider: &Arc<dyn CredentialsProvider>,
     cx: &mut Context<LanguageModelRegistry>,
 ) -> HashMap<Arc<str>, CompatibleProviderKind> {
     let desired = desired_compatible_providers(settings, built_in_provider_ids);
@@ -207,7 +279,13 @@ fn reconcile_compatible_providers(
             continue;
         }
 
-        provider_kind.register_provider(registry, provider_id.clone(), client, cx);
+        provider_kind.register_provider(
+            registry,
+            provider_id.clone(),
+            client,
+            credentials_provider,
+            cx,
+        );
     }
 
     desired
@@ -263,6 +341,7 @@ fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
     user_store: Entity<UserStore>,
     client: Arc<Client>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     cx: &mut Context<LanguageModelRegistry>,
 ) {
     registry.register_provider(
@@ -276,59 +355,106 @@ fn register_language_model_providers(
     registry.register_provider(
         Arc::new(AnthropicLanguageModelProvider::new(
             client.http_client(),
+            credentials_provider.clone(),
             cx,
         )),
         cx,
     );
     registry.register_provider(
-        Arc::new(OpenAiLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(OpenAiLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
-        Arc::new(OllamaLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(OllamaLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
-        Arc::new(LmStudioLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(LmStudioLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
-        Arc::new(DeepSeekLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(DeepSeekLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
-        Arc::new(GoogleLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(GoogleLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
-        MistralLanguageModelProvider::global(client.http_client(), cx),
+        MistralLanguageModelProvider::global(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        ),
         cx,
     );
     registry.register_provider(
-        Arc::new(BedrockLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(BedrockLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
         Arc::new(OpenRouterLanguageModelProvider::new(
             client.http_client(),
+            credentials_provider.clone(),
             cx,
         )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(VercelLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
     registry.register_provider(
         Arc::new(VercelAiGatewayLanguageModelProvider::new(
             client.http_client(),
+            credentials_provider.clone(),
             cx,
         )),
         cx,
     );
     registry.register_provider(
-        Arc::new(XAiLanguageModelProvider::new(client.http_client(), cx)),
+        Arc::new(XAiLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(OpenCodeLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(Arc::new(CopilotChatLanguageModelProvider::new(cx)), cx);
+    registry.register_provider(
+        Arc::new(OpenAiSubscribedProvider::new(
+            client.http_client(),
+            credentials_provider,
+            cx,
+        )),
+        cx,
+    );
 }

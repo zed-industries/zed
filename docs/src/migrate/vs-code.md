@@ -59,6 +59,8 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.cursorSurroundingLines`             | `vertical_scroll_margin`                       |
 | `editor.hover.enabled`                      | `hover_popover_enabled`                        |
 | `editor.hover.delay`                        | `hover_popover_delay`                          |
+| `editor.hover.sticky`                       | `hover_popover_sticky`                         |
+| `editor.hover.hidingDelay`                  | `hover_popover_hiding_delay`                   |
 | `editor.parameterHints.enabled`             | `auto_signature_help`                          |
 | `editor.multiCursorModifier`                | `multi_cursor_modifier`                        |
 | `editor.selectionHighlight`                 | `selection_highlight`                          |
@@ -164,11 +166,11 @@ The following VS Code settings are automatically imported when you use **Import 
 
 Zed doesn’t import extensions or keybindings, but this import gets core editor behavior close to your VS Code setup. If you skip that step during setup, you can still import settings manually later via the command palette:
 
-`Cmd+Shift+P → Zed: Import VS Code Settings`
+`Cmd+Shift+P → {#action zed::ImportVsCodeSettings}`
 
 ## Set Up Editor Preferences
 
-You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Here’s how common VS Code settings translate:
 | VS Code | Zed | Notes |
@@ -184,7 +186,7 @@ Zed also supports per-project settings. You can find these in the Settings Edito
 
 ## Open or Create a Project
 
-After setup, press `Cmd+O` (`Ctrl+O` on Linux) to open a folder. This becomes your workspace in Zed. There's no support for multi-root workspaces or `.code-workspace` files like in VS Code. Zed keeps it simple: one folder, one workspace.
+After setup, press `Cmd+O` (`Ctrl+O` on Linux) to open a folder. By default, new folders open in the current window's threads sidebar, letting you work on multiple projects without juggling windows. See [Windows & Projects](../windows-and-projects.md) for details on managing multiple projects and opening in new windows.
 
 To start a new project, create a directory using your terminal or file manager, then open it in Zed. The editor will treat that folder as the root of your project.
 
@@ -242,7 +244,7 @@ Here’s a quick reference for where keybindings match and where they differ.
 To edit your keybindings:
 
 - Open the command palette (`Cmd+Shift+P`)
-- Run `Zed: Open Keymap Editor`
+- Run {#action zed::OpenKeymap}
 
 This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
 
@@ -250,25 +252,24 @@ Zed also supports chords (multi-key sequences) like `Cmd+K Cmd+C`, like VS Code 
 
 ## Differences in User Interfaces
 
-### No Workspace
+### Projects and Windows
 
 VS Code uses a dedicated Workspace concept, with multi-root folders, `.code-workspace` files, and a clear distinction between “a window” and “a workspace.”
-Zed simplifies this model.
+Zed takes a different approach.
 
 In Zed:
 
-- There is no workspace file format. Opening a folder is your project context.
+- **Multiple projects in one window**: You can open multiple folders in the same window. Each appears in the threads sidebar on the left, and you can switch between them while preserving your layout and agent threads. See [Windows & Projects](../windows-and-projects.md).
 
-- Zed does not support multi-root workspaces. You can only open one folder at a time in a window.
+- **No workspace file format**: There’s no `.code-workspace` equivalent. Opening a folder is your project context.
 
-- Most project-level behavior is scoped to the folder you open. Search, Git integration, tasks, and environment detection all treat the opened directory as the project root.
+- **Add Folder to Project**: If you want multiple folders in the same project (like VS Code’s multi-root), use File > Add Folder to Project. This adds another root to your current project’s file tree.
 
-- Per-project settings are optional. You can add a `.zed/settings.json` file inside a project to override global settings, but Zed does not use `.code-workspace` files and won’t import them.
+- **Per-project settings are optional**: You can add a `.zed/settings.json` file inside a project to override global settings.
 
-- You can start from a single file or an empty window. Zed doesn’t require you to open a folder to begin editing.
+- **You can start from a single file or an empty window**: Zed doesn’t require you to open a folder to begin editing.
 
-The result is a simpler model:
-Open a folder → work inside that folder → no additional workspace layer.
+The result is flexibility without complexity: multiple projects per window via the sidebar, or multiple folders per project via Add Folder to Project.
 
 ### Navigating in a Project
 
@@ -317,26 +318,20 @@ If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You c
 
 #### Configuring GitHub Copilot
 
-You should be able to sign-in to GitHub Copilot by clicking on the Zeta icon in the status bar and following the setup instructions.
-You can also add this to your settings:
+1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+2. Navigate to **AI → Edit Predictions**
+3. Click **Configure** next to "Configure Providers"
+4. Under **GitHub Copilot**, click **Sign in to GitHub**
 
-```json
-{
-  "features": {
-    "edit_prediction_provider": "copilot"
-  }
-}
-```
-
-To invoke completions, just start typing. Zed will offer suggestions inline for you to accept.
+Once signed in, just start typing. Zed will offer suggestions inline for you to accept.
 
 #### Additional AI Options
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed’s hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
-- Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html).
+- Use Zed’s hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
+- Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
+- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html).
 
 ### Advanced Config and Productivity Tweaks
 
@@ -356,7 +351,7 @@ Here are a few useful tweaks:
 "load_direnv": "shell_hook"
 ```
 
-**Custom Tasks**: Define build or run commands in your `tasks.json` (accessed via command palette: `zed: open tasks`):
+**Custom Tasks**: Define build or run commands in your `tasks.json` (accessed via command palette: {#action zed::OpenTasks}):
 
 ```json
 [
@@ -368,4 +363,4 @@ Here are a few useful tweaks:
 ```
 
 **Bring over custom snippets**
-Copy your VS Code snippet JSON directly into Zed's snippets folder (`zed: configure snippets`).
+Copy your VS Code snippet JSON directly into Zed's snippets folder ({#action snippets::ConfigureSnippets}).

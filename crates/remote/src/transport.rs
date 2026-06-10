@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::{
     RemoteArch, RemoteOs, RemotePlatform,
     json_log::LogRecord,
@@ -137,7 +139,12 @@ fn handle_rpc_messages_over_child_process_stdio(
                 if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
                     record.log(log::logger())
                 } else {
-                    eprintln!("(remote) {}", String::from_utf8_lossy(content));
+                    std::io::stderr()
+                        .write_fmt(format_args!(
+                            "(remote) {}\n",
+                            String::from_utf8_lossy(content)
+                        ))
+                        .ok();
                 }
             }
             stderr_buffer.drain(0..start_ix);
@@ -256,10 +263,6 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if build_remote_server.contains("mold") {
-        rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
-    }
-
     if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {
@@ -313,6 +316,7 @@ async fn build_remote_server_from_source(
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
             new_command("cargo")
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "zigbuild",
                     "--package",
@@ -328,7 +332,8 @@ async fn build_remote_server_from_source(
         )
         .await?;
     };
-    let bin_path = Path::new("target")
+    let bin_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .join("target")
         .join("remote_server")
         .join(&triple)
         .join("debug")

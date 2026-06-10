@@ -12,7 +12,7 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:\r?\n\s+-/gm;
+const RELEASE_NOTES_PATTERN = /Release Notes:(\r?\n)+- /gm;
 const body = danger.github.pr.body;
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
@@ -59,6 +59,39 @@ if (includesIssueUrl) {
       "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
     ].join("\n"),
   );
+}
+
+const SCHEMA_CHANGE_ATTESTATION =
+  "The corresponding database schema migration has been created in the Cloud repo and applied to the production database.";
+
+const MIGRATION_SCHEMA_FILES = [
+  "crates/collab/migrations/20251208000000_test_schema.sql",
+  "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
+];
+
+const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
+  MIGRATION_SCHEMA_FILES.some((schemaFilePath) => file.endsWith(schemaFilePath)),
+);
+
+if (modifiedSchemaFiles.length > 0) {
+  if (body.includes(SCHEMA_CHANGE_ATTESTATION)) {
+    message(
+      [
+        "This PR modifies database schema files.",
+        "",
+        `The author has attested that ${SCHEMA_CHANGE_ATTESTATION.substring(0, 1).toLowerCase() + SCHEMA_CHANGE_ATTESTATION.substring(1)}`,
+      ].join("\n"),
+    );
+  } else {
+    const modifiedSchemaFilesStr = modifiedSchemaFiles.map((path) => "`" + path + "`").join(", ");
+    fail(
+      [
+        `This PR modifies database schema files (${modifiedSchemaFilesStr}), which requires creating a schema migration in the Cloud repository.`,
+        "Once the schema migration has been created and applied, please add the following attestation to your PR description: ",
+        `"${SCHEMA_CHANGE_ATTESTATION}"`,
+      ].join("\n\n"),
+    );
+  }
 }
 
 const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";

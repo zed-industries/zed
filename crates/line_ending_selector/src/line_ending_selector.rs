@@ -40,7 +40,7 @@ impl LineEndingSelector {
     fn toggle(editor: &WeakEntity<Editor>, window: &mut Window, cx: &mut App) {
         let Some((workspace, buffer)) = editor
             .update(cx, |editor, cx| {
-                Some((editor.workspace()?, editor.active_excerpt(cx)?.1))
+                Some((editor.workspace()?, editor.active_buffer(cx)?))
             })
             .ok()
             .flatten()

@@ -9,6 +9,10 @@ autoexamples = false
 [lints]
 workspace = true
 
+[features]
+default = ["multithreaded"]
+multithreaded = ["dep:wasm_thread"]
+
 [lib]
 path = "src/gpui_web.rs"
 
@@ -16,6 +20,7 @@ path = "src/gpui_web.rs"
 gpui.workspace = true
 parking_lot = { workspace = true, features = ["nightly"] }
 gpui_wgpu.workspace = true
+http_client.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true
@@ -27,9 +32,10 @@ web-time.workspace = true
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3"
 raw-window-handle = "0.6"
-wasm_thread = { version = "0.3", features = ["es_modules"] }
+wasm_thread = { version = "0.3", features = ["es_modules"], optional = true }
 web-sys = { version = "0.3", features = [
     "console",
+    "CompositionEvent",
     "CssStyleDeclaration",
     "DataTransfer",
     "Document",
@@ -56,6 +62,11 @@ web-sys = { version = "0.3", features = [
     "Screen",
     "Storage",
     "VisualViewport",
+    "Headers",
+    "Request",
+    "RequestInit",
+    "RequestRedirect",
+    "Response",
     "WheelEvent",
     "Window",
 ] }

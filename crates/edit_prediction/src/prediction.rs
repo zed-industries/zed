@@ -1,10 +1,6 @@
-use std::{
-    ops::Range,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, sync::Arc};
 
-use cloud_llm_client::EditPredictionRejectReason;
+use cloud_llm_client::{EditPredictionRejectReason, PredictEditsRequestTrigger};
 use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
@@ -29,6 +25,9 @@ impl std::fmt::Display for EditPredictionId {
 pub struct EditPredictionResult {
     pub id: EditPredictionId,
     pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
+    pub display_prediction: Option<EditPrediction>,
+    pub model_version: Option<String>,
+    pub e2e_latency: std::time::Duration,
 }
 
 impl EditPredictionResult {
@@ -38,35 +37,68 @@ impl EditPredictionResult {
         edited_buffer_snapshot: &BufferSnapshot,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cursor_position: Option<PredictedCursorPosition>,
-        buffer_snapshotted_at: Instant,
-        response_received_at: Instant,
+        editable_range: Option<Range<Anchor>>,
         inputs: ZetaPromptInput,
         model_version: Option<String>,
+        trigger: PredictEditsRequestTrigger,
+        e2e_latency: std::time::Duration,
         cx: &mut AsyncApp,
     ) -> Self {
         if edits.is_empty() {
+            let empty_edits = Arc::new([]);
             return Self {
-                id,
+                id: id.clone(),
                 prediction: Err(EditPredictionRejectReason::Empty),
+                display_prediction: Some(EditPrediction {
+                    id,
+                    edits: empty_edits,
+                    cursor_position: None,
+                    editable_range,
+                    snapshot: edited_buffer_snapshot.clone(),
+                    edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
+                    buffer: edited_buffer.clone(),
+                    inputs,
+                    model_version: model_version.clone(),
+                    trigger,
+                }),
+                model_version,
+                e2e_latency,
             };
         }
 
-        let Some((edits, snapshot, edit_preview_task)) =
-            edited_buffer.read_with(cx, |buffer, cx| {
-                let new_snapshot = buffer.snapshot();
-                let edits: Arc<[_]> =
-                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits)?.into();
+        let (edits, snapshot) = edited_buffer.read_with(cx, |buffer, _cx| {
+            let new_snapshot = buffer.snapshot();
+            let edits: Option<Arc<[(Range<Anchor>, Arc<str>)]>> =
+                interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits).map(Arc::from);
 
-                Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
-            })
-        else {
+            (edits, new_snapshot)
+        });
+
+        let Some(edits) = edits else {
+            let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
             return Self {
-                id,
+                id: id.clone(),
                 prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
+                display_prediction: Some(EditPrediction {
+                    id,
+                    edits: empty_edits,
+                    cursor_position: None,
+                    editable_range,
+                    snapshot: edited_buffer_snapshot.clone(),
+                    edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
+                    inputs,
+                    buffer: edited_buffer.clone(),
+                    model_version: model_version.clone(),
+                    trigger,
+                }),
+                model_version,
+                e2e_latency,
             };
         };
 
-        let edit_preview = edit_preview_task.await;
+        let edit_preview = edited_buffer
+            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+            .await;
 
         Self {
             id: id.clone(),
@@ -74,14 +106,17 @@ impl EditPredictionResult {
                 id,
                 edits,
                 cursor_position,
+                editable_range,
                 snapshot,
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                buffer_snapshotted_at,
-                response_received_at,
-                model_version,
+                model_version: model_version.clone(),
+                trigger,
             }),
+            display_prediction: None,
+            model_version,
+            e2e_latency,
         }
     }
 }
@@ -91,13 +126,13 @@ pub struct EditPrediction {
     pub id: EditPredictionId,
     pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     pub cursor_position: Option<PredictedCursorPosition>,
+    pub editable_range: Option<Range<Anchor>>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     pub buffer: Entity<Buffer>,
-    pub buffer_snapshotted_at: Instant,
-    pub response_received_at: Instant,
     pub inputs: zeta_prompt::ZetaPromptInput,
     pub model_version: Option<String>,
+    pub trigger: PredictEditsRequestTrigger,
 }
 
 impl EditPrediction {
@@ -110,10 +145,6 @@ impl EditPrediction {
 
     pub fn targets_buffer(&self, buffer: &Buffer) -> bool {
         self.snapshot.remote_id() == buffer.remote_id()
-    }
-
-    pub fn latency(&self) -> Duration {
-        self.response_received_at - self.buffer_snapshotted_at
     }
 }
 
@@ -150,25 +181,26 @@ mod tests {
             id: EditPredictionId("prediction-1".into()),
             edits,
             cursor_position: None,
+            editable_range: None,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
             model_version: None,
+            trigger: PredictEditsRequestTrigger::Other,
             inputs: ZetaPromptInput {
                 events: vec![],
-                related_files: vec![],
+                related_files: Some(vec![]),
+                active_buffer_diagnostics: vec![],
                 cursor_path: Path::new("path.txt").into(),
                 cursor_offset_in_excerpt: 0,
                 cursor_excerpt: "".into(),
-                editable_range_in_excerpt: 0..0,
                 excerpt_start_row: None,
-                excerpt_ranges: None,
-                preferred_model: None,
+                excerpt_ranges: Default::default(),
+                syntax_ranges: None,
                 in_open_source_repo: false,
                 can_collect_data: false,
+                repo_url: None,
             },
-            buffer_snapshotted_at: Instant::now(),
-            response_received_at: Instant::now(),
         };
 
         cx.update(|cx| {
