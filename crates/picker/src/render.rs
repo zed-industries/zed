@@ -12,19 +12,17 @@ use crate::{
     ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
     head::Head,
     preview::state::{LayoutMode, StackedLayout, TelescopeLayout},
-    render::window_controls::{DragPreview, Left, Right},
+    render::window_controls::{Bottom, DragPreview, Left, Right},
 };
 
 pub mod window_controls;
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // A `Resizing` shape is transient state that only exists while a resize handle is being
-        // dragged. GPUI clears the active drag and forces a re-render on mouse-up, so the first
-        // frame where we are still `Resizing` without an active drag is when the drag just ended.
-        // Convert back to the serializable, viewport-relative resting shape at that point.
-        if matches!(self.shape, Shape::Resizing(_)) && !cx.has_active_drag() {
-            self.shape = self.shape.finalize(window);
+        if let Shape::Resizing(pos) = self.shape
+            && !cx.has_active_drag()
+        {
+            self.shape = Shape::centered_and_relative(pos, window);
         }
 
         let content = match &self.preview {
@@ -180,9 +178,8 @@ impl<D: PickerDelegate> Picker<D> {
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
             })
             .child(self.render_width_resize::<Left>(window, cx))
-            .child(self.render_width_resize::<Right>(window, cx));
-        // .child(self.render_height_resize(ReHeightSide::Top, window, cx))
-        // .child(self.render_height_resize(ReHeightSide::Bottom, window, cx));
+            .child(self.render_width_resize::<Right>(window, cx))
+            .child(self.render_height_resize::<Bottom>(window, cx));
 
         let Some(aside) = aside else {
             return menu;

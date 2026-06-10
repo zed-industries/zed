@@ -84,12 +84,27 @@ impl ViewPortHeight {
     fn as_pixels(&self, window: &Window) -> Pixels {
         window.viewport_size().height * self.0
     }
+    fn from_pixels(height: Pixels, window: &Window) -> Self {
+        Self(height / window.viewport_size().height)
+    }
+}
+
+impl ops::Add for ViewPortHeight {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
 }
 
 impl ViewPortWidth {
     const FULL: Self = Self(1.0);
     fn as_pixels(&self, window: &Window) -> Pixels {
         window.viewport_size().width * self.0
+    }
+
+    fn from_pixels(width: Pixels, window: &Window) -> Self {
+        Self(width / window.viewport_size().width)
     }
 }
 
@@ -139,20 +154,20 @@ pub(crate) enum Shape {
     /// This is also what is serialized
     HorizontallyCentered {
         width: ViewPortWidth,
-        top: ViewPortHeight,
-        bottom: ViewPortHeight,
+        height: ViewPortHeight,
     },
 }
 
 impl Shape {
+    const TOP: ViewPortHeight = ViewPortHeight(0.10);
     fn absolute_position_and_size(
         &self,
         preview: Option<&Preview>,
         window: &Window,
     ) -> AbsolutePositionAndShape {
-        let (width, top, bottom) = match self {
+        let (width, height) = match self {
             Shape::Resizing(res) => return *res,
-            Shape::HorizontallyCentered { width, top, bottom } => (width, top, bottom),
+            Shape::HorizontallyCentered { width, height } => (width, height),
         };
 
         let mut res = AbsolutePositionAndShape {
@@ -161,8 +176,8 @@ impl Shape {
             //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
             left: ((ViewPortWidth::FULL - *width) / 2.0).as_pixels(window),
             right: (ViewPortWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
-            top: top.as_pixels(window),
-            bottom: bottom.as_pixels(window),
+            top: Self::TOP.as_pixels(window),
+            bottom: (Self::TOP + *height).as_pixels(window),
             preview_size: None,
         };
 
@@ -181,7 +196,7 @@ impl Shape {
     /// The top-left corner of the picker in window coordinates.
     pub(crate) fn origin(&self, window: &Window) -> Point<Pixels> {
         let pos = self.absolute_position_and_size(None, window);
-        point(pos.left, pos.top)
+        point(pos.left, Self::TOP.as_pixels(window))
     }
 
     /// Sets the picker's width and height from the shape.
@@ -195,18 +210,12 @@ impl Shape {
         div.h(pos.bottom - pos.top)
     }
 
-    /// Converts a transient [`Shape::Resizing`] (absolute pixels, produced while dragging) back into
-    /// the centered, viewport-relative form that is the resting/serialized state. No-op for shapes
-    /// that are already in that form.
-    pub(crate) fn finalize(&self, window: &Window) -> Self {
-        let Shape::Resizing(pos) = self else {
-            return *self;
-        };
-        let viewport = window.viewport_size();
+    /// Resizing done, re-center the picker and use relative sizes instead of
+    /// pixels again
+    pub(crate) fn centered_and_relative(pos: AbsolutePositionAndShape, window: &Window) -> Self {
         Shape::HorizontallyCentered {
-            width: ViewPortWidth((pos.right - pos.left) / viewport.width),
-            top: ViewPortHeight(pos.top / viewport.height),
-            bottom: ViewPortHeight(pos.bottom / viewport.height),
+            width: ViewPortWidth::from_pixels(pos.right - pos.left, window),
+            height: ViewPortHeight::from_pixels(pos.bottom - pos.top, window),
         }
     }
 }
@@ -215,8 +224,7 @@ impl Default for Shape {
     fn default() -> Self {
         Self::HorizontallyCentered {
             width: ViewPortWidth(0.6),
-            top: ViewPortHeight(0.2),
-            bottom: ViewPortHeight(0.8),
+            height: ViewPortHeight(0.6),
         }
     }
 }
