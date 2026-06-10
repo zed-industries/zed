@@ -38,7 +38,6 @@ Some Zed AI features have their own model or prompt settings in `settings.json`,
 - `agent.commit_message_model`
 - `agent.thread_summary_model`
 - `agent.subagent_model`
-- `agent.auto_compact`
 - `agent.commit_message_instructions`
 - `agent.inline_alternatives`
 
