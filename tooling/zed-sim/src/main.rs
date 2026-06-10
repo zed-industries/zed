@@ -46,7 +46,9 @@ fn main() -> Result<()> {
 }
 
 /// Resolves which Zed executable to launch, in priority order: explicit `--zed`
-/// flag, then `ZED_SIM_BINARY`, then the standard macOS app-bundle locations.
+/// flag, then `ZED_SIM_BINARY`, then a `zed` binary sitting next to this
+/// launcher (e.g. a staff build at target/debug/zed), then the standard macOS
+/// app-bundle locations.
 fn resolve_zed_binary(explicit: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(path) = explicit {
         ensure!(path.exists(), "Zed binary not found at {}", path.display());
@@ -63,6 +65,12 @@ fn resolve_zed_binary(explicit: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
 
+    // A `zed` built alongside this launcher (target/debug/zed next to
+    // target/debug/zed-sim). Lets `cargo run -p zed-sim` work with no flags.
+    if let Some(sibling) = sibling_zed_binary() {
+        return Ok(sibling);
+    }
+
     for candidate in default_binary_candidates() {
         if candidate.exists() {
             return Ok(candidate);
@@ -74,6 +82,13 @@ fn resolve_zed_binary(explicit: Option<PathBuf>) -> Result<PathBuf> {
          Pass --zed <path> or set ZED_SIM_BINARY=<path>.\n\
          Looked in: /Applications/Zed.app, Zed Preview.app, Zed Nightly.app."
     )
+}
+
+/// A `zed` executable in the same directory as this launcher binary, if present.
+fn sibling_zed_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.join("zed");
+    candidate.exists().then_some(candidate)
 }
 
 fn default_binary_candidates() -> Vec<PathBuf> {
