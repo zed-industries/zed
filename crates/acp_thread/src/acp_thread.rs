@@ -2612,13 +2612,9 @@ impl AcpThread {
     }
 
     /// Sends a prompt without displaying a user-message bubble for it.
-    ///
     /// This is used for native slash commands (e.g. `/compact`) that run a turn
     /// which produces its own thread entry (like the compaction summary). The
-    /// typed command isn't sent to the model as an ordinary user turn, so
-    /// echoing it as a user message would misleadingly imply the model received
-    /// that text. We also skip capturing a git checkpoint, since these commands
-    /// don't make edits the user would want to roll back to.
+    /// typed command isn't sent to the model as an ordinary user turn.
     pub fn send_command(
         &mut self,
         message: Vec<acp::ContentBlock>,
@@ -2630,7 +2626,7 @@ impl AcpThread {
     fn send_inner(
         &mut self,
         message: Vec<acp::ContentBlock>,
-        show_user_message: bool,
+        push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         let block = ContentBlock::new_combined(
@@ -2645,7 +2641,7 @@ impl AcpThread {
         let message_id = UserMessageId::new();
 
         self.run_turn(cx, async move |this, cx| {
-            if show_user_message {
+            if push_user_message {
                 this.update(cx, |this, cx| {
                     this.push_entry(
                         AgentThreadEntry::UserMessage(UserMessage {
