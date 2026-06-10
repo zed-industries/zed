@@ -6430,11 +6430,14 @@ impl ThreadView {
                                     this.track_scroll(&scroll_handle)
                                 })
                                 .overflow_hidden()
-                                .child(self.render_markdown(
-                                    chunk,
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                    cx,
-                                )),
+                                .child(
+                                    self.render_markdown(
+                                        chunk,
+                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+                                            .with_muted_text(cx),
+                                        cx,
+                                    ),
+                                ),
                         )
                         .when(is_constrained, |this| {
                             this.child(
