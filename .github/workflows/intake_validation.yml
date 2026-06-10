@@ -1,0 +1,121 @@
+name: Intake validation
+
+# Deterministic intake validation bot. On new issues + reporter follow-ups,
+# checks for missing system specs and outdated stable versions. Posts a
+# polite comment + applies `state:needs info` when either condition is hit.
+#
+# Mirrors the structure of:
+#   - .github/workflows/catch_blank_issues.yml      (staff bypass)
+#   - .github/workflows/comment_on_potential_duplicate_issues.yml (Python script)
+#
+# Mode is controlled by the repo variable `INTAKE_VALIDATION_MODE`:
+#   shadow  — no API writes; logs decisions to the run summary (default)
+#   live    — actually post comments + manage labels
+#   unset   — workflow no-ops (kill switch)
+#
+# Override per-run via the `workflow_dispatch` input.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to evaluate
+        required: true
+        type: number
+      mode:
+        description: Override mode for this run
+        type: choice
+        options: [shadow, live, dry-run]
+        default: shadow
+
+# One in-flight run per issue. A newer trigger on the same issue CANCELS
+# the in-flight run (cancel-in-progress) — safe because the newest run
+# reads the latest body + comments fresh and supersedes the older one.
+concurrency:
+  group: intake-validation-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  validate:
+    # Kill switch: skip if the repo variable isn't set, if the actor is the
+    # bot itself (recursion guard), or if this is a comment on a PR.
+    if: |
+      github.repository == 'zed-industries/zed'
+      && vars.INTAKE_VALIDATION_MODE != ''
+      && github.actor != 'zed-community-bot[bot]'
+      && (github.event_name != 'issue_comment' || github.event.issue.pull_request == null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout script
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: script/github-intake-validation.py
+          sparse-checkout-cone-mode: false
+
+      - name: Get GitHub app token
+        id: get-app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      # Mirror catch_blank_issues.yml: short-circuit on staff actors. For
+      # `issues` events the actor is the issue creator; for `issue_comment`
+      # events it's the comment author. Either way, staff shouldn't be
+      # gated by the bot.
+      - name: Check if actor is staff
+        id: check-staff
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.get-app-token.outputs.token }}
+          script: |
+            try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: context.payload.sender.login,
+              });
+              return response.data.state === 'active';
+            } catch (error) {
+              if (error.status === 404) {
+                return false;
+              }
+              throw error;
+            }
+
+      - if: steps.check-staff.outputs.result == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+        run: |
+          echo "::notice::Skipping issue #$ISSUE_NUMBER — actor is staff member"
+
+      - name: Set up Python
+        if: steps.check-staff.outputs.result == 'false'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.check-staff.outputs.result == 'false'
+        run: pip install requests
+
+      - name: Run intake validation
+        if: steps.check-staff.outputs.result == 'false'
+        env:
+          GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          # Manual dispatch input wins; otherwise fall back to the repo variable.
+          INTAKE_VALIDATION_MODE: ${{ inputs.mode || vars.INTAKE_VALIDATION_MODE }}
+        run: |
+          python script/github-intake-validation.py --issue "$ISSUE_NUMBER"
