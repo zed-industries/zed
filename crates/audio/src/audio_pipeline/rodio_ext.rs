@@ -8,7 +8,6 @@ use std::{
 };
 
 use crossbeam::queue::ArrayQueue;
-use denoise::{Denoiser, DenoiserError};
 use log::warn;
 use rodio::{
     ChannelCount, Sample, SampleRate, Source, conversions::SampleRateConverter, nz,
@@ -36,7 +35,6 @@ pub trait RodioExt: Source + Sized {
         duration: Duration,
     ) -> Result<(Replay, Replayable<Self>), ReplayDurationTooShort>;
     fn take_samples(self, n: usize) -> TakeSamples<Self>;
-    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError>;
     fn constant_params(
         self,
         channel_count: ChannelCount,
@@ -119,10 +117,6 @@ impl<S: Source> RodioExt for S {
             inner: self,
             left_to_take: n,
         }
-    }
-    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError> {
-        let res = Denoiser::try_new(self);
-        res
     }
     fn constant_params(
         self,

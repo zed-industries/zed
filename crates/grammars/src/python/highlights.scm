@@ -90,6 +90,16 @@
         name: (identifier) @variable.parameter) ; Default parameters
       (typed_default_parameter
         name: (identifier) @variable.parameter) ; Typed default parameters
+      (list_splat_pattern
+        (identifier) @variable.parameter) ; List splat parameters (*args)
+      (dictionary_splat_pattern
+        (identifier) @variable.parameter) ; Dictionary splat parameters (**kwargs)
+      (typed_parameter
+        (list_splat_pattern
+          (identifier) @variable.parameter)) ; Typed list splat parameters
+      (typed_parameter
+        (dictionary_splat_pattern
+          (identifier) @variable.parameter)) ; Typed dictionary splat parameters
     ]))
 
 ; Keyword arguments
@@ -344,3 +354,23 @@
     "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "frozendict" "int" "list"
     "memoryview" "object" "range" "set" "slice" "str" "tuple")
 ]
+
+((identifier) @type.class.builtin
+  (#any-of? @type.class.builtin
+    ; Exceptions
+    "BaseException" "Exception" "ArithmeticError" "BufferError" "LookupError" "AssertionError"
+    "AttributeError" "EOFError" "FloatingPointError" "GeneratorExit" "ImportError"
+    "ModuleNotFoundError" "IndexError" "KeyError" "KeyboardInterrupt" "MemoryError" "NameError"
+    "NotImplementedError" "OSError" "OverflowError" "RecursionError" "ReferenceError" "RuntimeError"
+    "StopIteration" "StopAsyncIteration" "SyntaxError" "IndentationError" "TabError" "SystemError"
+    "SystemExit" "TypeError" "UnboundLocalError" "UnicodeError" "UnicodeEncodeError"
+    "UnicodeDecodeError" "UnicodeTranslateError" "ValueError" "ZeroDivisionError" "EnvironmentError"
+    "IOError" "WindowsError" "BlockingIOError" "ChildProcessError" "ConnectionError"
+    "BrokenPipeError" "ConnectionAbortedError" "ConnectionRefusedError" "ConnectionResetError"
+    "FileExistsError" "FileNotFoundError" "InterruptedError" "IsADirectoryError"
+    "NotADirectoryError" "PermissionError" "ProcessLookupError" "TimeoutError" "ExceptionGroup"
+    "BaseExceptionGroup"
+    ; Warnings
+    "Warning" "UserWarning" "DeprecationWarning" "PendingDeprecationWarning" "SyntaxWarning"
+    "RuntimeWarning" "FutureWarning" "ImportWarning" "UnicodeWarning" "EncodingWarning"
+    "BytesWarning" "ResourceWarning"))

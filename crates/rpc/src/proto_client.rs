@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use collections::HashMap;
+use collections::{HashMap, TypeIdHashMap};
 use futures::{
     Future, FutureExt as _, Stream, StreamExt as _,
     channel::oneshot,
@@ -88,11 +88,11 @@ pub trait ProtoClient: Send + Sync {
 
 #[derive(Default)]
 pub struct ProtoMessageHandlerSet {
-    pub entity_types_by_message_type: HashMap<TypeId, TypeId>,
+    pub entity_types_by_message_type: TypeIdHashMap<TypeId>,
     pub entities_by_type_and_remote_id: HashMap<(TypeId, u64), EntityMessageSubscriber>,
-    pub entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
-    pub entities_by_message_type: HashMap<TypeId, AnyWeakEntity>,
-    pub message_handlers: HashMap<TypeId, ProtoMessageHandler>,
+    pub entity_id_extractors: TypeIdHashMap<fn(&dyn AnyTypedEnvelope) -> u64>,
+    pub entities_by_message_type: TypeIdHashMap<AnyWeakEntity>,
+    pub message_handlers: TypeIdHashMap<ProtoMessageHandler>,
 }
 
 pub type ProtoMessageHandler = Arc<

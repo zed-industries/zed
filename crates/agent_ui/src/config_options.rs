@@ -15,11 +15,17 @@ use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{
-    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
+use zed_actions::agent::ToggleModelSelector;
 
 use crate::ui::documentation_aside_side;
+use crate::{
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
+    ToggleThinkingEffortMenu,
+};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -336,6 +342,14 @@ impl ConfigOptionSelector {
         }
     }
 
+    fn handles_category_keybindings(&self, category: &acp::SessionConfigOptionCategory) -> bool {
+        self.config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.category.as_ref() == Some(category))
+            .is_some_and(|option| option.id == self.config_id)
+    }
+
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
             return Button::new("config-option-trigger", "Unknown")
@@ -369,10 +383,15 @@ impl Render for ConfigOptionSelector {
 
         let trigger_button = self.render_trigger_button(window, cx);
 
+        let show_category_keybindings = option
+            .category
+            .as_ref()
+            .is_some_and(|category| self.handles_category_keybindings(category));
+        let option_category = option.category.clone();
         let option_name = option.name.clone();
         let option_description: Option<SharedString> = option.description.map(Into::into);
 
-        let tooltip = Tooltip::element(move |_window, _cx| {
+        let tooltip = Tooltip::element(move |_window, cx| {
             let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
             if let Some(desc) = option_description.as_ref() {
                 content = content.child(
@@ -380,6 +399,56 @@ impl Render for ConfigOptionSelector {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 );
+            }
+
+            let action_tooltip_container = |label: &str, keybinding: KeyBinding| {
+                h_flex()
+                    .pt_1()
+                    .gap_2()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Label::new(label))
+                    .child(keybinding)
+            };
+
+            if show_category_keybindings && let Some(category) = &option_category {
+                match category {
+                    acp::SessionConfigOptionCategory::Mode => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Mode",
+                                KeyBinding::for_action(&ToggleProfileSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Through Modes",
+                                KeyBinding::for_action(&CycleModeSelector, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::Model => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Model",
+                                KeyBinding::for_action(&ToggleModelSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Favorite Models",
+                                KeyBinding::for_action(&CycleFavoriteModels, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::ThoughtLevel => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Thinking Effort",
+                                KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Thinking Effort",
+                                KeyBinding::for_action(&CycleThinkingEffort, cx),
+                            ));
+                    }
+                    _ => {}
+                }
             }
             content.into_any()
         });

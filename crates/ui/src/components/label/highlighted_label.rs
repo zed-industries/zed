@@ -71,6 +71,12 @@ impl HighlightedLabel {
     pub fn highlight_indices(&self) -> &[usize] {
         &self.highlight_indices
     }
+
+    /// Truncates the label from the start, keeping the end visible.
+    pub fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
+        self
+    }
 }
 
 impl HighlightedLabel {

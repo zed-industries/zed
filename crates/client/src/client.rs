@@ -540,13 +540,16 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
+    pub anthropic_retention: bool,
 }
 
 impl settings::Settings for TelemetrySettings {
     fn from_settings(content: &SettingsContent) -> Self {
+        let telemetry = content.telemetry.as_ref().unwrap();
         Self {
-            diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
-            metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
+            diagnostics: telemetry.diagnostics.unwrap(),
+            metrics: telemetry.metrics.unwrap(),
+            anthropic_retention: telemetry.anthropic_retention.unwrap(),
         }
     }
 }
@@ -1603,7 +1606,7 @@ impl Client {
     pub async fn cached_llm_token(
         &self,
         llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
@@ -1627,7 +1630,7 @@ impl Client {
     pub async fn authenticated_llm_request(
         &self,
         llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
         build_request: impl Fn(&str) -> Result<http_client::Request<http_client::AsyncBody>>,
     ) -> Result<http_client::Response<http_client::AsyncBody>> {
         let http_client = self.http_client();
@@ -1648,7 +1651,7 @@ impl Client {
     pub async fn refresh_llm_token(
         &self,
         llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
@@ -1668,7 +1671,7 @@ impl Client {
     pub async fn clear_and_refresh_llm_token(
         &self,
         llm_token: &LlmApiToken,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<String> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
