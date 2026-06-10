@@ -7264,7 +7264,13 @@ impl Sidebar {
                 SidebarSide::Right => "right",
             };
             telemetry::event!("Sidebar Add Project Clicked", side = side);
-            window.dispatch_action(Open::default().boxed_clone(), cx);
+            window.dispatch_action(
+                Open {
+                    create_new_window: Some(false),
+                }
+                .boxed_clone(),
+                cx,
+            );
         })
         .on_clone_repo(|_, window, cx| {
             window.dispatch_action(git::Clone.boxed_clone(), cx);
