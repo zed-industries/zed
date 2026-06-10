@@ -10,6 +10,7 @@ use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
+use text::TransactionId;
 use util::ResultExt;
 use workspace::searchable::Direction;
 
@@ -625,9 +626,14 @@ impl Vim {
         });
     }
 
-    pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn visual_delete(
+        &mut self,
+        line_mode: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
         self.store_visual_marks(window, cx);
-        self.update_editor(cx, |vim, editor, cx| {
+        let transaction_id = self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = line_mode || editor.selections.line_mode();
             editor.selections.set_line_mode(false);
@@ -707,7 +713,9 @@ impl Vim {
                 });
             })
         });
+        let transaction_id = transaction_id.flatten();
         self.switch_mode(Mode::Normal, true, window, cx);
+        transaction_id
     }
 
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -928,7 +936,7 @@ impl Vim {
             Some(Operator::Change) => self.substitute(None, false, window, cx),
             Some(Operator::Delete) => {
                 self.stop_recording(cx);
-                self.visual_delete(false, window, cx)
+                self.visual_delete(false, window, cx);
             }
             Some(Operator::Yank) => self.visual_yank(false, window, cx),
             _ => {} // Ignoring other operators

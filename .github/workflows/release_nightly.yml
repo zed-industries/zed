@@ -83,7 +83,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:

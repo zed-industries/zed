@@ -132,7 +132,12 @@ pub fn init(cx: &mut App) {
                             Err(err) => {
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
-                                        workspace.show_portal_error(err.to_string(), cx);
+                                        workspace.show_error(
+                                            workspace::workspace_error::PortalError::new(
+                                                err.to_string(),
+                                            ),
+                                            cx,
+                                        );
                                     })
                                     .ok();
                                 return None;
@@ -149,10 +154,10 @@ pub fn init(cx: &mut App) {
                                 log::error!("Failed to install dev extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
+                                        // NOTE: using `anyhow::context` here ends up not printing
+                                        // the error
                                         workspace.show_error(
-                                            // NOTE: using `anyhow::context` here ends up not printing
-                                            // the error
-                                            &format!("Failed to install dev extension: {}", err),
+                                            format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
                                     })

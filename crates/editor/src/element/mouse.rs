@@ -569,11 +569,15 @@ impl EditorElement {
                             if scroll_position != current_scroll_position {
                                 editor.scroll(scroll_position, axis, window, cx);
                                 cx.stop_propagation();
-                            } else if y < 0. {
+                            } else if y < 0. && !forbid_vertical_scroll {
                                 // Due to clamping, we may fail to detect cases of overscroll to the top;
                                 // We want the scroll manager to get an update in such cases and detect the change of direction
                                 // on the next frame.
-                                cx.notify();
+                                if editor.scroll_manager.should_notify_top_overscroll(axis) {
+                                    cx.notify();
+                                }
+                            } else {
+                                editor.scroll_manager.reset_top_overscroll_notification();
                             }
                         });
                     }
