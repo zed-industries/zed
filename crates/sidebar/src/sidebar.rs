@@ -1406,7 +1406,7 @@ impl Sidebar {
             .iter()
             .flat_map(|group| group.key.path_list().paths().iter().cloned())
             .collect();
-        all_paths.sort();
+        all_paths.sort_unstable();
         all_paths.dedup();
         let path_details =
             util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {

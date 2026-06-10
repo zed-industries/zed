@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
@@ -1054,6 +1054,8 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let experiments = cx
                 .background_spawn(async move {
+                    let organization_id =
+                        organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
                     let url = client
                         .http_client()
                         .build_zed_llm_url("/edit_prediction_experiments", &[])?;
@@ -3086,6 +3088,9 @@ impl EditPredictionStore {
     where
         Res: DeserializeOwned,
     {
+        let organization_id =
+            organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+
         let response = client
             .authenticated_llm_request(&llm_token, organization_id, |token| {
                 build(
