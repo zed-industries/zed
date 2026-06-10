@@ -3698,8 +3698,9 @@ impl Window {
         let scale_factor = self.scale_factor();
         let blur_radius = effect.radius.scale(scale_factor);
         if blur_radius.0 <= 0. {
-            if effect.tint.opacity(opacity).a > 0. {
-                self.paint_quad(fill(bounds, effect.tint).corner_radii(corner_radii));
+            let tint = effect.tint.opacity(opacity);
+            if tint.a > 0. {
+                self.paint_quad(fill(bounds, tint).corner_radii(corner_radii));
             }
             return;
         }
