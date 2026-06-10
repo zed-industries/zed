@@ -222,6 +222,7 @@ impl GitGraph {
                                         bounds,
                                     );
 
+                                    // This means that this branch was a checkout
                                     let going_right = to_column > current_column;
                                     let column_shift = if going_right {
                                         COMMIT_CIRCLE_RADIUS + COMMIT_CIRCLE_STROKE_WIDTH
@@ -316,7 +317,7 @@ impl GitGraph {
                         for builder in builders {
                             if let Ok(path) = builder.build() {
                                 // Paint each color on its own layer to stop overlapping lines
-                                // of different colors changing the color of a line
+                                // of different colors changing the color of a line.
                                 window.paint_layer(bounds, |window| {
                                     window.paint_path(path, line_color);
                                 });

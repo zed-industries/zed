@@ -4,7 +4,6 @@ use std::{
     cell::LazyCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
-    hint::cold_path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -21,21 +20,46 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SharedString, TasksIncluded};
 
+#[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
     let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
     ThreadTaskTimings::collect(&global_thread_timings, included)
 }
 
+#[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTimings {
     gpui::profiler::get_current_thread_task_timings(included)
 }
 
+#[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
     let global_timings = GLOBAL_THREAD_TIMINGS.lock();
     ThreadTaskStatistics::collect_and_reset(&global_timings, included)
+}
+
+#[cfg(not(feature = "profiler"))]
+#[doc(hidden)]
+pub fn get_all_timings(_included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
+    Vec::new()
+}
+#[cfg(not(feature = "profiler"))]
+#[doc(hidden)]
+pub fn get_current_thread_timings(_included: TasksIncluded) -> gpui::ThreadTaskTimings {
+    gpui::ThreadTaskTimings {
+        thread_name: None,
+        thread_id: std::thread::current().id(),
+        timings: Vec::new(),
+        stats: TaskStatistics::default(),
+        total_pushed: 0,
+    }
+}
+#[cfg(not(feature = "profiler"))]
+#[doc(hidden)]
+pub fn take_all_stats(_included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
+    Vec::new()
 }
 
 #[doc(hidden)]
@@ -378,6 +402,7 @@ impl ProfilingCollector {
 // Allow 16MiB of task timing entries.
 // VecDeque grows by doubling its capacity when full, so keep this a power of 2 to avoid wasting
 // memory.
+#[cfg(feature = "profiler")]
 const MAX_TASK_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
 #[doc(hidden)]
@@ -443,7 +468,7 @@ impl TaskStatistics {
     fn add_yield_timing(&mut self, task: TaskTiming) {
         let yielded_after = task.poll_duration();
         if yielded_after >= self.poll_time_to_beat {
-            cold_path(); // most tasks are not the worst, optimize for that
+            std::hint::cold_path(); // most tasks are not the worst, optimize for that
             let to_replace = self
                 .longest_poll_times
                 .iter()
@@ -464,7 +489,7 @@ impl TaskStatistics {
     fn add_runtime(&mut self, task: TaskTiming) {
         let runtime = task.since_spawn();
         if runtime >= self.runtime_to_beat {
-            cold_path(); // most tasks are not the worst, optimize for that
+            std::hint::cold_path(); // most tasks are not the worst, optimize for that
             let to_replace = self
                 .longest_runtimes
                 .iter()
@@ -530,6 +555,7 @@ impl ThreadTimings {
         }
     }
 
+    #[cfg(feature = "profiler")]
     pub fn update_running_task(
         &mut self,
         spawned: SpawnTime,
@@ -542,7 +568,10 @@ impl ThreadTimings {
             start,
         });
     }
+    #[cfg(not(feature = "profiler"))]
+    pub fn update_running_task(&mut self, _: SpawnTime, _: &'static std::panic::Location<'_>) {}
 
+    #[cfg(feature = "profiler")]
     pub fn save_task_timing(&mut self, ended: YieldTime) {
         let ActiveTiming {
             location,
@@ -563,7 +592,7 @@ impl ThreadTimings {
         self.stats.add_runtime(timing);
 
         if trace_enabled() {
-            cold_path(); // optimize for when the profiling is off
+            std::hint::cold_path(); // optimize for when the profiling is off
             if self.timings.len() >= MAX_TASK_TIMINGS {
                 self.timings.pop_front();
             }
@@ -571,6 +600,8 @@ impl ThreadTimings {
             self.total_pushed += 1;
         }
     }
+    #[cfg(not(feature = "profiler"))]
+    pub fn save_task_timing(&mut self, _: YieldTime) {}
 
     // Running tasks are included in the reliability trace, which is written
     // whenever the foreground executor makes no progress for > n seconds

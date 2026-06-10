@@ -183,7 +183,8 @@ type ActiveLaneIdx = usize;
 
 pub(super) enum AllCommitCount {
     NotLoaded,
-    Loaded(usize),
+    Loading(usize),
+    FullyLoaded(usize),
 }
 
 #[derive(Debug)]
@@ -251,6 +252,12 @@ impl CommitLine {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CommitLineKey {
+    child: Oid,
+    parent: Oid,
+}
+
 pub(super) struct GraphData {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
@@ -261,6 +268,8 @@ pub(super) struct GraphData {
     pub(super) max_commit_count: AllCommitCount,
     pub(super) max_lanes: usize,
     pub(super) lines: Vec<Rc<CommitLine>>,
+    active_commit_lines: HashMap<CommitLineKey, usize>,
+    active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
 }
 
 impl GraphData {
@@ -275,6 +284,8 @@ impl GraphData {
             max_commit_count: AllCommitCount::NotLoaded,
             max_lanes: 0,
             lines: Vec::default(),
+            active_commit_lines: HashMap::default(),
+            active_commit_lines_by_parent: HashMap::default(),
         }
     }
 
@@ -284,9 +295,30 @@ impl GraphData {
         self.parent_to_lanes.clear();
         self.commits.clear();
         self.lines.clear();
+        self.active_commit_lines.clear();
+        self.active_commit_lines_by_parent.clear();
         self.next_color = BranchColor(0);
         self.max_commit_count = AllCommitCount::NotLoaded;
         self.max_lanes = 0;
+    }
+
+    fn first_empty_lane_idx(&mut self) -> ActiveLaneIdx {
+        self.lane_states
+            .iter()
+            .position(LaneState::is_empty)
+            .unwrap_or_else(|| {
+                self.lane_states.push(LaneState::Empty);
+                self.lane_states.len() - 1
+            })
+    }
+
+    fn get_lane_color(&mut self, lane_idx: ActiveLaneIdx) -> BranchColor {
+        let accent_colors_count = self.accent_colors_count;
+        *self.lane_colors.entry(lane_idx).or_insert_with(|| {
+            let color_idx = self.next_color;
+            self.next_color = BranchColor((self.next_color.0 + 1) % accent_colors_count as u8);
+            color_idx
+        })
     }
 
     pub(super) fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
@@ -398,25 +430,6 @@ impl GraphData {
             }));
         }
 
-        self.max_commit_count = AllCommitCount::Loaded(self.commits.len());
-    }
-
-    fn first_empty_lane_idx(&mut self) -> ActiveLaneIdx {
-        self.lane_states
-            .iter()
-            .position(LaneState::is_empty)
-            .unwrap_or_else(|| {
-                self.lane_states.push(LaneState::Empty);
-                self.lane_states.len() - 1
-            })
-    }
-
-    fn get_lane_color(&mut self, lane_idx: ActiveLaneIdx) -> BranchColor {
-        let accent_colors_count = self.accent_colors_count;
-        *self.lane_colors.entry(lane_idx).or_insert_with(|| {
-            let color_idx = self.next_color;
-            self.next_color = BranchColor((self.next_color.0 + 1) % accent_colors_count as u8);
-            color_idx
-        })
+        self.max_commit_count = AllCommitCount::Loading(self.commits.len());
     }
 }
