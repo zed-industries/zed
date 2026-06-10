@@ -1,18 +1,18 @@
-use gpui::{AppContext, /*DragMoveEvent,*/ MouseButton, canvas};
+use gpui::{AppContext, canvas};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, App, Color, Context, Disableable, DocumentationAside, DocumentationSide,
-    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ListItem, ListItemSpacing,
-    ParentElement, Render, ScrollAxes, Scrollbars, StatefulInteractiveElement, Styled, StyledExt,
-    Window, WithScrollbar, div, h_flex, px, rems_from_px, utils::WithRemSize, v_flex,
+    App, Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
+    InteractiveElement, IntoElement, Label, LabelCommon, ListItem, ListItemSpacing, ParentElement,
+    Render, ScrollAxes, Scrollbars, Styled, StyledExt, Window, WithScrollbar, div, h_flex,
+    rems_from_px, utils::WithRemSize, v_flex,
 };
 
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, head::Head, preview::{
-        render::{do_nothing, set_highlighted_to},
-        state::{LayoutMode, StackedLayout, TelescopeLayout},
-    }, render::window_controls::{DragPreview, Left, Right}
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
+    head::Head,
+    preview::state::{LayoutMode, StackedLayout, TelescopeLayout},
+    render::window_controls::{DragPreview, Left, Right},
 };
 
 pub mod window_controls;
@@ -169,8 +169,8 @@ impl<D: PickerDelegate> Picker<D> {
             })
             .child(self.render_width_resize::<Left>(window, cx))
             .child(self.render_width_resize::<Right>(window, cx));
-            // .child(self.render_height_resize(ReHeightSide::Top, window, cx))
-            // .child(self.render_height_resize(ReHeightSide::Bottom, window, cx));
+        // .child(self.render_height_resize(ReHeightSide::Top, window, cx))
+        // .child(self.render_height_resize(ReHeightSide::Bottom, window, cx));
 
         let Some(aside) = aside else {
             return menu;
@@ -237,18 +237,18 @@ impl<D: PickerDelegate> Picker<D> {
     fn render_stacked_content(
         &self,
         preview: &Preview,
-        layout: StackedLayout,
+        _layout: StackedLayout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         v_flex()
             .child(
                 div()
-                    .h(layout.results_height)
+                    // .h(layout.results_height(self.shape, window))
                     .overflow_hidden()
                     .child(self.render_results(window, cx)),
             )
-            .child(self.render_results_resize(window, cx))
+            // .child(self.render_results_resize(window, cx))
             .child(preview.render(window, cx))
         // .child(self.render_vertical_resize(ResizeSide::End, window, cx))
     }
@@ -262,19 +262,19 @@ impl<D: PickerDelegate> Picker<D> {
     ) -> impl IntoElement {
         v_flex().relative().child(
             h_flex()
-                .h(layout.content_height)
+                .map(|this| self.shape.apply_height(this, window))
                 .child(
                     div()
                         .flex_1()
-                        .h(layout.content_height)
+                        .h_full()
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
                 // .child(self.render_telescope_preview_resize(window, cx))
                 .child(
                     div()
-                        .w(layout.preview_width)
-                        .h(layout.content_height)
+                        .w(layout.preview_size.as_pixels(window))
+                        .map(|this| self.shape.apply_height(this, window))
                         .overflow_hidden()
                         .child(preview.render(window, cx)),
                 ),
@@ -283,78 +283,78 @@ impl<D: PickerDelegate> Picker<D> {
     }
 }
 
-/// This is to make resizable pickers
-impl<D: PickerDelegate> Picker<D> {
-    fn render_results_resize(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_highlighted = window.use_state(cx, |_window, _cx| false);
-        let divider_size = px(window_controls::RESIZE_DIVIDER_SIZE);
-        let handle_height = px(window_controls::RESIZE_HANDLE_HEIGHT);
-        let handle_offset = (handle_height - divider_size) / 2.0;
+// TODO!(yara) re-add
+// impl<D: PickerDelegate> Picker<D> {
+//     fn render_results_resize(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+//         let is_highlighted = window.use_state(cx, |_window, _cx| false);
+//         let divider_size = px(window_controls::RESIZE_DIVIDER_SIZE);
+//         let handle_height = px(window_controls::RESIZE_HANDLE_HEIGHT);
+//         let handle_offset = (handle_height - divider_size) / 2.0;
 
-        div()
-            .id("resize-divider")
-            .relative()
-            .h(divider_size)
-            .w_full()
-            .bg(cx.theme().colors().border)
-            .when(*is_highlighted.read(cx), |this| {
-                this.bg(cx.theme().colors().border_focused)
-            })
-            .child(
-                div()
-                    .id("resize-handle")
-                    .absolute()
-                    .top(-handle_offset)
-                    .left_0()
-                    .right_0()
-                    .h(handle_height)
-                    .cursor_row_resize()
-                    .block_mouse_except_scroll()
-                    .on_hover(set_highlighted_to(is_highlighted.clone()))
-                    .on_mouse_down(MouseButton::Left, do_nothing), // TODO!(yara) resize drag for results done later
-                                                                   //         .on_drag(
-                                                                   //             ResizeDrag {
-                                                                   //                 mouse_start_y: window.mouse_position().y,
-                                                                   //                 results_height_start: self.picker_height,
-                                                                   //                 preview_height_start: self
-                                                                   //                     .preview
-                                                                   //                     .and_then(|p| {
-                                                                   //                         if let LayoutMode::Stacked(layout) = p.layout {
-                                                                   //                             Some(layout.preview_height)
-                                                                   //                         } else {
-                                                                   //                             None
-                                                                   //                         }
-                                                                   //                     })
-                                                                   //                     .unwrap_or(self.picker_height),
-                                                                   //             },
-                                                                   //             highlighted_drag_preview(is_highlighted.clone()),
-                                                                   //         )
-                                                                   //         .on_drop::<ResizeDrag>(clear_resize_highlight(is_highlighted.clone())),
-            )
-        // .on_drag_move::<ResizeDrag>(cx.listener(
-        //     |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
-        //         let drag = event.drag(cx);
-        //         let delta = event.event.position.y - drag.mouse_start_y;
-        //         let total_height = drag.results_height_start + drag.preview_height_start;
+//         div()
+//             .id("resize-divider")
+//             .relative()
+//             .h(divider_size)
+//             .w_full()
+//             .bg(cx.theme().colors().border)
+//             .when(*is_highlighted.read(cx), |this| {
+//                 this.bg(cx.theme().colors().border_focused)
+//             })
+//             .child(
+//                 div()
+//                     .id("resize-handle")
+//                     .absolute()
+//                     .top(-handle_offset)
+//                     .left_0()
+//                     .right_0()
+//                     .h(handle_height)
+//                     .cursor_row_resize()
+//                     .block_mouse_except_scroll()
+//                     .on_hover(set_highlighted_to(is_highlighted.clone()))
+//                     .on_mouse_down(MouseButton::Left, do_nothing), // TODO!(yara) resize drag for results done later
+//                                                                    //         .on_drag(
+//                                                                    //             ResizeDrag {
+//                                                                    //                 mouse_start_y: window.mouse_position().y,
+//                                                                    //                 results_height_start: self.picker_height,
+//                                                                    //                 preview_height_start: self
+//                                                                    //                     .preview
+//                                                                    //                     .and_then(|p| {
+//                                                                    //                         if let LayoutMode::Stacked(layout) = p.layout {
+//                                                                    //                             Some(layout.preview_height)
+//                                                                    //                         } else {
+//                                                                    //                             None
+//                                                                    //                         }
+//                                                                    //                     })
+//                                                                    //                     .unwrap_or(self.picker_height),
+//                                                                    //             },
+//                                                                    //             highlighted_drag_preview(is_highlighted.clone()),
+//                                                                    //         )
+//                                                                    //         .on_drop::<ResizeDrag>(clear_resize_highlight(is_highlighted.clone())),
+//             )
+//         // .on_drag_move::<ResizeDrag>(cx.listener(
+//         //     |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
+//         //         let drag = event.drag(cx);
+//         //         let delta = event.event.position.y - drag.mouse_start_y;
+//         //         let total_height = drag.results_height_start + drag.preview_height_start;
 
-        //         let new_results = (drag.results_height_start + delta)
-        //             .max(px(StackedLayout::MIN_PANEL_HEIGHT))
-        //             .min(total_height - px(StackedLayout::MIN_PANEL_HEIGHT));
-        //         let new_preview = total_height - new_results;
+//         //         let new_results = (drag.results_height_start + delta)
+//         //             .max(px(StackedLayout::MIN_PANEL_HEIGHT))
+//         //             .min(total_height - px(StackedLayout::MIN_PANEL_HEIGHT));
+//         //         let new_preview = total_height - new_results;
 
-        //         this.picker_height = new_results;
-        //         if let Some(Preview {
-        //             layout: LayoutMode::Stacked(StackedLayout { preview_height, .. }),
-        //             ..
-        //         }) = &mut this.preview
-        //         {
-        //             *preview_height = new_preview
-        //         }
-        //         cx.notify();
-        //     },
-        // ))
-    }
-}
+//         //         this.picker_height = new_results;
+//         //         if let Some(Preview {
+//         //             layout: LayoutMode::Stacked(StackedLayout { preview_height, .. }),
+//         //             ..
+//         //         }) = &mut this.preview
+//         //         {
+//         //             *preview_height = new_preview
+//         //         }
+//         //         cx.notify();
+//         //     },
+//         // ))
+//     }
+// }
 
 fn highlighted_drag_preview<T>(
     is_highlighted: gpui::Entity<bool>,

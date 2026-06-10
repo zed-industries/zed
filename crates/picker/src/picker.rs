@@ -13,16 +13,15 @@ use anyhow::Result;
 
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent,
-    Pixels, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list,
-    prelude::*, uniform_list,
+    FocusHandle, Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels,
+    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
+    uniform_list,
 };
 use head::Head;
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ops;
-use std::ops::Sub;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
@@ -56,10 +55,6 @@ actions!(
         ToMultiBuffer,
     ]
 );
-
-// TODO!(yara) move somewhere this makes sense
-pub(crate) const MIN_MODAL_WIDTH_REMS: f32 = 30.0;
-pub(crate) const MAX_MODAL_WIDTH_REMS: f32 = 70.0;
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
@@ -181,6 +176,15 @@ impl Shape {
                 .bottom(pos.bottom),
             Shape::HorizontallyCentered { width, top, bottom } => div
                 .w(width.as_pixels(window))
+                .top(top.as_pixels(window))
+                .bottom(bottom.as_pixels(window)),
+        }
+    }
+
+    fn apply_height(&self, div: Div, window: &mut Window) -> Div {
+        match self {
+            Shape::Resizing(pos) => div.top(pos.top).bottom(pos.bottom),
+            Shape::HorizontallyCentered { top, bottom, .. } => div
                 .top(top.as_pixels(window))
                 .bottom(bottom.as_pixels(window)),
         }

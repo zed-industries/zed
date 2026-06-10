@@ -3,17 +3,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use editor::scroll::Autoscroll;
-use editor::{
-    Editor, EditorEvent, HighlightKey, MultiBuffer, RowHighlightOptions, SelectionEffects,
-};
-use gpui::{App, FocusHandle, Subscription, Task};
+use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions, SelectionEffects};
+use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, Window};
 use language::Buffer;
 use project::Project;
-use ui::{ActiveTheme, ContextMenu, IntoElement, PopoverMenuHandle};
+use ui::{ActiveTheme, IntoElement};
 use util::rel_path::RelPath;
 
-use crate::preview::state::{LayoutMode, SavedQuickSearchLayout, StackedLayout, TelescopeLayout};
+use crate::preview::state::LayoutMode;
 
 pub mod render;
 pub mod state;
@@ -26,7 +24,7 @@ pub mod state;
 /// showing any condition (if any) and how many times the breakpoint got hit.
 pub struct Preview {
     content: Entity<EditorPreview>,
-    pub layout: LayoutMode,
+    pub(crate) layout: LayoutMode,
 }
 
 impl Preview {
@@ -34,20 +32,6 @@ impl Preview {
         Preview {
             content: cx.new(|cx| EditorPreview::new(project, window, cx)),
             layout: LayoutMode::default(),
-        }
-    }
-
-    pub fn width(&self) -> ui::Pixels {
-        match self.layout {
-            LayoutMode::Hidden | LayoutMode::Stacked(_) => ui::Pixels::ZERO,
-            LayoutMode::Telescope(layout) => layout.preview_width,
-        }
-    }
-
-    pub fn height(&self) -> ui::Pixels {
-        match self.layout {
-            LayoutMode::Stacked(layout) => layout.preview_height,
-            LayoutMode::Hidden | LayoutMode::Telescope(_) => ui::Pixels::ZERO,
         }
     }
 
@@ -126,13 +110,7 @@ struct SearchMatchLineHighlight;
 pub struct EditorPreview {
     project: Entity<Project>,
     current_path: Option<Arc<RelPath>>,
-    // /// The buffer currently shown in the preview, if any.
-    // buffer: Option<Entity<Buffer>>,
     preview_editor: Entity<Editor>,
-    /// TODO! should probably be in Preview not here
-    pub split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-    /// TODO! should probably be in Preview not here
-    pub focus_handle: FocusHandle,
 }
 
 impl EditorPreview {
@@ -170,9 +148,6 @@ impl EditorPreview {
             project,
             preview_editor,
             current_path: None,
-            // buffer: None,
-            split_popover_menu_handle: PopoverMenuHandle::default(),
-            focus_handle: cx.focus_handle(),
         }
     }
 

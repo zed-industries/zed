@@ -8,14 +8,10 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
-use project::search::SearchInputKind;
 use text::Anchor;
 use ui::Window;
 use workspace::{DismissDecision, ModalView, Workspace};
 
-/// Approach:
-///     - implement picker for this
-///     - turn picker into the quick search
 mod delegate;
 mod render;
 use delegate::TextPickerDelegate;
@@ -38,7 +34,6 @@ actions!(
 //   like ProjectSearchPicker?
 pub struct TextPicker {
     picker: Entity<Picker<TextPickerDelegate>>,
-    picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
 }
 
@@ -54,10 +49,8 @@ impl TextPicker {
     ) {
         pub use zed_actions::text_finder::Toggle;
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            let initial_query = None;
-
             let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, initial_query, window, cx).detach();
+                Self::open(window, cx).detach();
                 return;
             };
 
@@ -70,30 +63,14 @@ impl TextPicker {
         });
     }
 
-    fn open(
-        workspace: &mut Workspace,
-        initial_query: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<()> {
-        let project = workspace.project().read(cx);
-
-        let initial_query = initial_query.or_else(|| {
-            project
-                .search_history(SearchInputKind::Query)
-                .iter()
-                .next()
-                .map(|s| s.to_string())
-        });
-
+    fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
         cx.spawn_in(window, async move |workspace, cx| {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        let delegate =
-                            TextPickerDelegate::new(weak_workspace, project, initial_query, cx);
+                        let delegate = TextPickerDelegate::new(weak_workspace, project, cx);
 
                         Self::new(delegate, window, cx)
                     });
@@ -112,7 +89,6 @@ impl TextPicker {
 
         Self {
             picker,
-            picker_focus_handle,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
         }
     }

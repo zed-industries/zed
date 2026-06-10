@@ -57,11 +57,11 @@
 //! |          |      |
 //! -------------------
 
-use std::{any::type_name, marker::PhantomData, ops::Range};
+use std::{any::type_name, marker::PhantomData};
 
 use gpui::{
-    Action, Context, DragMoveEvent, Entity, FocusHandle, Focusable, Length, MouseButton, Point,
-    Styled, Window,
+    Action, Context, DragMoveEvent, Entity, FocusHandle, Focusable, MouseButton, Point, Styled,
+    Window,
 };
 use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use workspace::pane;
@@ -69,16 +69,8 @@ use workspace::pane;
 use crate::{
     AbsolutePositionAndShape, Picker, PickerDelegate, Preview, Shape, ToggleLayout,
     ToggleSplitMenu,
-    preview::{
-        render::do_nothing,
-        state::{LayoutMode, TelescopeLayout},
-    },
+    preview::{render::do_nothing, state::LayoutMode},
 };
-
-pub(crate) const RESIZE_HANDLE_WIDTH: f32 = 6.0;
-pub(crate) const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
-pub(crate) const RESIZE_DIVIDER_SIZE: f32 = 1.0;
-pub(crate) const RESIZE_CORNER_CLEARANCE: f32 = 18.0;
 
 pub struct DragPreview;
 
@@ -97,7 +89,6 @@ pub struct ResizeDrag {
 
 #[derive(Clone, Copy)]
 struct VerticalResizeDrag {
-    side: ReHeightSide,
     mouse_start: Pixels,
     height_start: Pixels,
     preview_height_start: Pixels,
@@ -107,8 +98,6 @@ struct VerticalResizeDrag {
 
 #[derive(Clone, Copy)]
 struct CornerResizeDrag {
-    horizontal_side: ResizeSide,
-    vertical_side: ResizeSide,
     mouse_start: gpui::Point<Pixels>,
     width_start: Pixels,
     preview_width_start: Pixels,
@@ -126,28 +115,9 @@ pub struct TelescopePreviewResizeDrag {
 
 #[derive(Clone, Copy)]
 pub struct TelescopeHeightResizeDrag {
-    pub(crate) side: ResizeSide,
     pub(crate) mouse_start_y: Pixels,
     pub(crate) content_height_start: Pixels,
     pub(crate) offset_start: Pixels,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum ResizeSide {
-    Left,
-    Right,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum ReHeightSide {
-    Top,
-    Bottom,
-}
-
-struct ShapePreDrag {
-    left: Pixels,
-    right: Pixels,
-    divider: Option<Pixels>,
 }
 
 #[derive(Clone, Copy)]
@@ -157,11 +127,17 @@ struct HorizontalResizeDrag<S> {
     mouse_pos_before: Point<Pixels>,
 }
 
-trait Side {
+pub(crate) trait Side {
     fn id() -> &'static str {
         type_name::<Self>()
     }
-    fn position(div: gpui::Stateful<Div>) -> gpui::Stateful<Div>;
+    fn handle_width(window: &Window) -> Pixels {
+        12.0 * window.rem_size()
+    }
+    fn handle_offset(window: &Window) -> Pixels {
+        Self::handle_width(window) / 2.0
+    }
+    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div>;
     fn current_position_and_shape(
         shape_before: AbsolutePositionAndShape,
         mouse_movement: Pixels,
@@ -170,10 +146,8 @@ trait Side {
 
 pub(crate) struct Left;
 impl Side for Left {
-    fn position(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
-        let handle_width = px(RESIZE_HANDLE_WIDTH);
-        let handle_offset = handle_width / 2.0;
-        div.left(-handle_offset)
+    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
+        div.left(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
         mut shape_before: AbsolutePositionAndShape,
@@ -185,10 +159,8 @@ impl Side for Left {
 }
 pub(crate) struct Right;
 impl Side for Right {
-    fn position(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
-        let handle_width = px(RESIZE_HANDLE_WIDTH);
-        let handle_offset = handle_width / 2.0;
-        div.right(-handle_offset)
+    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
+        div.right(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
         mut shape_before: AbsolutePositionAndShape,
@@ -217,18 +189,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let handle_width = px(RESIZE_HANDLE_WIDTH);
-        let handle_offset = handle_width / 2.0;
-        let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
-
         div()
             .id(S::id())
             .absolute()
-            .top(corner_clearance)
-            .bottom(corner_clearance)
-            .w(handle_width)
+            .top(S::handle_width(window))
+            .bottom(S::handle_width(window))
+            .w(S::handle_width(window))
             .cursor_col_resize()
-            .map(|this| S::position(this))
+            .map(|this| S::position(this, window))
             .block_mouse_except_scroll()
             .on_mouse_down(MouseButton::Left, do_nothing)
             .on_drag(
@@ -236,13 +204,13 @@ impl<D: PickerDelegate> Picker<D> {
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
             .on_drag_move::<HorizontalResizeDrag<S>>(cx.listener(
-                move |this, event: &DragMoveEvent<HorizontalResizeDrag<S>>, window, cx| {
+                move |this, event: &DragMoveEvent<HorizontalResizeDrag<S>>, _, cx| {
                     let drag = event.drag(cx);
                     let delta = event.event.position.x - drag.mouse_pos_before.x;
                     let shape_before = drag.shape_before;
                     this.shape =
                         Shape::Resizing(S::current_position_and_shape(shape_before, delta));
-                    /// TODO actual size if mouse button lifted
+                    // TODO!(yara) actual size if mouse button lifted
                     cx.notify();
                 },
             ))

@@ -1,31 +1,17 @@
 use gpui::{Action, Entity, MouseDownEvent};
 use ui::{
-    ActiveTheme, App, Color, Div, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
-    ParentElement, StatefulInteractiveElement, Styled, Window, div, h_flex, px, v_flex,
+    ActiveTheme, App, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
+    Styled, Window, div, v_flex,
 };
 
 use crate::ToMultiBuffer;
 
-// use gpui::{DragMoveEvent, Entity, MouseButton, MouseDownEvent};
-// use ui::{
-//     ActiveTheme, App, Color, Context, Div, FluentBuilder, InteractiveElement, IntoElement, Label,
-//     LabelCommon, LabelSize, ParentElement, StatefulInteractiveElement, Styled, Window, div, h_flex,
-//     px, v_flex,
-// };
-
-use crate::{
-    preview::{
-        EditorPreview,
-        state::{StackedLayout, TelescopeLayout},
-    },
-    // render::window_controls::{
-    //     ResizeSide, TelescopeHeightResizeDrag, TelescopePreviewResizeDrag, clear_resize_highlight,
-    //     highlighted_drag_preview,
-    // },
+use crate::preview::{
+    EditorPreview,
+    state::{StackedLayout, TelescopeLayout},
 };
 
 use super::state::LayoutMode;
-use crate::render::window_controls;
 
 mod on_drag;
 
@@ -70,12 +56,12 @@ impl EditorPreview {
     fn render_stacked_preview(
         &self,
         layout: StackedLayout,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut App,
     ) -> impl IntoElement {
         v_flex().child(
             div()
-                .h(layout.preview_height)
+                .h(layout.preview_size.as_pixels(window))
                 .overflow_hidden()
                 .child(self.editor_as_giant_button()),
         )

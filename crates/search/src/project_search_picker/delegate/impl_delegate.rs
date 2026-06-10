@@ -2,28 +2,23 @@ use crate::project_search_picker::delegate::TextPickerDelegate;
 use crate::{SearchOptions, project_search_picker::SearchMatch};
 use std::{ops::Range, sync::Arc, time::Duration};
 
-use editor::Editor;
 use file_icons::FileIcons;
 use futures::StreamExt;
-use gpui::{Action, AsyncApp, DismissEvent, Entity, HighlightStyle, StyledText, Task, TextStyle};
+use gpui::{AsyncApp, DismissEvent, Entity, HighlightStyle, StyledText, Task, TextStyle};
 use language::{Buffer, LanguageAwareStyling};
-use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use picker::{Picker, PickerDelegate};
 use project::{ProjectPath, SearchResults, search::SearchQuery, search::SearchResult};
 use settings::Settings;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, App, Color, Context, Div, Divider, FluentBuilder, HighlightedLabel, Icon,
-    InteractiveElement, LabelCommon, LabelSize, ListItem, ListItemSpacing, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, StyledTypography, Toggleable, Tooltip,
-    Window, div, h_flex, relative, v_flex,
+    ActiveTheme, App, Color, Context, Div, FluentBuilder, Icon, InteractiveElement, ListItem,
+    ListItemSpacing, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    StyledTypography, Toggleable, Tooltip, Window, div, h_flex, relative,
 };
-use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathMatcher;
 use workspace::item::ItemSettings;
-
-use super::InputPanel;
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 const CLICK_THRESHOLD_MS: u128 = 50;
@@ -124,7 +119,7 @@ impl PickerDelegate for TextPickerDelegate {
                 }
 
                 picker
-                    .update_in(cx, |picker, window, cx| {
+                    .update_in(cx, |picker, _, cx| {
                         let delegate = &mut picker.delegate;
 
                         if first_batch {
@@ -249,7 +244,7 @@ impl PickerDelegate for TextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let search_match = self.matches.get(ix)?;
