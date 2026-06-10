@@ -1074,15 +1074,18 @@ impl Editor {
 
         let url_finder = cx.spawn_in(window, async move |_editor, cx| {
             let url = if let Some(end_pos) = end_position {
-                find_url_from_range(&buffer, start_position..end_pos, cx.clone())
+                find_url_from_range(&buffer, start_position..end_pos, cx)
             } else {
-                find_url(&buffer, start_position, cx.clone()).map(|(_, url)| url)
+                find_url(&buffer, start_position, cx).map(|(_, url)| url)
             };
 
             if let Some(url) = url {
                 cx.update(|window, cx| {
                     if parse_zed_link(&url, cx).is_some() {
-                        window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                        window.dispatch_action(
+                            Box::new(zed_actions::OpenZedUrl { url: url.into() }),
+                            cx,
+                        );
                     } else {
                         cx.open_url(&url);
                     }
@@ -1310,12 +1313,12 @@ impl Editor {
                 return anyhow::Ok(Navigated::No);
             }
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
             }
             let mut num_locations = 0;
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
                 num_locations += ranges.len();
             }
@@ -1576,7 +1579,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn navigate_to_hover_links(
+    pub fn navigate_to_hover_links(
         &mut self,
         kind: Option<GotoDefinitionKind>,
         definitions: Vec<HoverLink>,
@@ -1591,7 +1594,7 @@ impl Editor {
             .into_iter()
             .filter_map(|def| match def {
                 HoverLink::Text(link) => Some(Task::ready(anyhow::Ok(Some(link.target)))),
-                HoverLink::InlayHint(lsp_location, server_id) => {
+                HoverLink::LspLocation(lsp_location, server_id) => {
                     let computation =
                         self.compute_target_location(lsp_location, server_id, window, cx);
                     Some(cx.background_spawn(computation))
@@ -1628,7 +1631,7 @@ impl Editor {
             })?;
             let mut num_locations = 0;
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
                 // Merge overlapping or contained ranges. After sorting by
                 // (start, Reverse(end)), we can merge in a single pass:
@@ -1727,8 +1730,10 @@ impl Editor {
                     Some(Either::Left(url)) => {
                         cx.update(|window, cx| {
                             if parse_zed_link(&url, cx).is_some() {
-                                window
-                                    .dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                                window.dispatch_action(
+                                    Box::new(zed_actions::OpenZedUrl { url: url.into() }),
+                                    cx,
+                                );
                             } else {
                                 cx.open_url(&url);
                             }
@@ -2084,6 +2089,9 @@ impl Editor {
                     Some(start..end)
                 }))
             }
+
+            let final_snapshot = multibuffer.snapshot(cx);
+            ranges.sort_by(|a, b| a.start.cmp(&b.start, &final_snapshot));
 
             multibuffer.with_title(title)
         });

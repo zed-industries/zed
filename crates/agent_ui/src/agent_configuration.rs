@@ -1174,7 +1174,6 @@ impl AgentConfiguration {
         };
 
         let source_kind = match source {
-            ExternalAgentSource::Extension => AiSettingItemSource::Extension,
             ExternalAgentSource::Registry => AiSettingItemSource::Registry,
             ExternalAgentSource::Custom => AiSettingItemSource::Custom,
         };
@@ -1218,26 +1217,6 @@ impl AgentConfiguration {
         });
 
         let uninstall_button = match source {
-            ExternalAgentSource::Extension => Some(
-                IconButton::new(
-                    SharedString::from(format!("uninstall-{}", id)),
-                    IconName::Trash,
-                )
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
-                .tooltip(Tooltip::text("Uninstall Agent Extension"))
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    let agent_name = agent_server_name.clone();
-
-                    if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
-                        store.get_extension_id_for_agent(&agent_name)
-                    }) {
-                        ExtensionStore::global(cx)
-                            .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
-                            .detach_and_log_err(cx);
-                    }
-                })),
-            ),
             ExternalAgentSource::Registry => {
                 let fs = self.fs.clone();
                 Some(
@@ -1476,8 +1455,6 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 args: vec![],
                                 env: HashMap::default(),
                                 default_mode: None,
-                                default_model: None,
-                                favorite_models: vec![],
                                 default_config_options: Default::default(),
                                 favorite_config_option_values: Default::default(),
                             },

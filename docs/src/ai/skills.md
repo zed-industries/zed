@@ -11,11 +11,15 @@ A skill is a folder containing a `SKILL.md` file with metadata and instructions.
 
 ## Adding Skills {#adding-skills}
 
-### Create Your Own {#create-your-own}
+### Create your own {#create-your-own}
 
-Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or let the agent pick it up automatically when you ask it to help create a skill.
+Zed includes a built-in `create-skill` skill — invoke it with `/create-skill` and the agent walks you through the process.
 
-See [Skill format](#skill-format) below for the folder structure and `SKILL.md` reference.
+You can also open the Skills Manager from the Agent Panel using {#kb agent::ManageSkills}, or by clicking `...` and selecting **Skills**. Outside the panel, use the {#action agent::OpenSkillCreator} action from the command palette, or click **Create Skill** on the **AI > Skills** settings page. The creator opens as a page in the settings window where you fill in the skill's name, description, body, and optionally toggle `disable-model-invocation`. The skill is saved to the scope of the settings file selected in the settings window — the **User** tab creates a global skill, while a **Project** tab creates a project-local skill — and the form shows exactly where the file will be written.
+
+Lastly, it's also possible to add a skill through importing it from an existing GitHub Markdown file. Open the command palette and look for the {#action agent::CreateSkillFromUrl} action. If your clipboard contains a supported GitHub `.md` URL, Zed pre-fills and fetches it automatically.
+
+See [Skill format](#skill-format) below for the full format reference.
 
 ### From the skills.sh Registry {#from-the-registry}
 
@@ -25,18 +29,30 @@ See [Skill format](#skill-format) below for the folder structure and `SKILL.md` 
 - [`frontend-design`](https://skills.sh/anthropics/skills/frontend-design): production-grade frontend interfaces with design polish
 - [`pdf`](https://skills.sh/anthropics/skills/pdf): PDF text extraction, merging, splitting, form filling, and OCR
 
-To install a skill from it, copy or clone its folder into your global or project-local skills folder.
+To install a skill, copy the skill's folder into `~/.agents/skills/` for global use, or into your project's `.agents/skills/` folder for project-local use.
 
-For example, to install the `frontend-design` skill from GitHub globally:
+## Managing Skills {#managing-skills}
 
-```sh
-cd ~/.agents/skills
-git clone --filter=blob:none --sparse https://github.com/anthropics/skills
-cd skills
-git sparse-checkout set frontend-design
-```
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to **AI > Skills**, or go directly to [agent.skills](zed://settings/agent.skills).
 
-For a project-local install, do the same inside your project's `.agents/skills/` folder.
+The **User** tab shows your global skills, and each **Project** tab shows the skills for that project.
+
+For each skill you can:
+
+- **Copy Share Link** — copies a `zed://skill` link that embeds the skill, ready to send to someone else (see [Sharing Skills](#sharing-skills))
+- **Open** — opens the skill's `SKILL.md` file in the editor
+- **Delete** — removes the skill folder from disk
+
+In the skills page, you'll see a **Create Skill** button that opens the settings window, providing the ability to create a skill directly through the UI.
+
+## Sharing Skills {#sharing-skills}
+
+You can hand a skill to a teammate without hosting it anywhere. In the Skills settings page, click the **link** icon on a skill row to copy a `zed://skill?data=…` link to your clipboard.
+The link is self-contained: it embeds the full `SKILL.md` contents (base64url-encoded), so the recipient doesn't need access to your project or any registry.
+
+When someone opens that link (for example by pasting it into their browser or clicking it in a chat), Zed opens the "Create Skill" page in the settings window, pre-filled with the shared skill.
+The recipient can review the name, description, and full body, choose a scope by selecting the **User** tab (global) or a **Project** tab, and click **Save** to install it.
+Nothing is written to disk until they explicitly save, so a shared link can never silently install instructions into someone's agent.
 
 ## Using Skills {#using-skills}
 
@@ -171,6 +187,10 @@ If a global and a project-local skill share the same name, the project-local ski
 ### Editing Skill Files {#editing-skill-files}
 
 The agent cannot edit `SKILL.md` files or their bundled resources without your explicit authorization, even in a trusted project. This prevents a compromised conversation from modifying the skills that govern future conversations.
+
+## Agent Path Boundaries {#agent-path-boundaries}
+
+Zed Skills apply to the Zed Agent. External Agents and Terminal Threads may have their own native skills, prompts, or instruction systems. Configure those in the External Agent or CLI.
 
 ## Limitations {#limitations}
 

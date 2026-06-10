@@ -1,10 +1,5 @@
-use alacritty_terminal::tty::Pty;
 use gpui::{Context, Task};
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
-#[cfg(target_os = "windows")]
-use std::num::NonZeroU32;
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
 use std::{path::PathBuf, sync::Arc};
 
 #[cfg(target_os = "windows")]
@@ -21,6 +16,13 @@ pub struct ProcessIdGetter {
 }
 
 impl ProcessIdGetter {
+    pub(crate) fn new(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle,
+            fallback_pid,
+        }
+    }
+
     pub fn fallback_pid(&self) -> Pid {
         Pid::from_u32(self.fallback_pid)
     }
@@ -28,13 +30,6 @@ impl ProcessIdGetter {
 
 #[cfg(unix)]
 impl ProcessIdGetter {
-    fn new(pty: &Pty) -> ProcessIdGetter {
-        ProcessIdGetter {
-            handle: pty.file().as_raw_fd(),
-            fallback_pid: pty.child().id(),
-        }
-    }
-
     fn pid(&self) -> Option<Pid> {
         // Negative pid means error.
         // Zero pid means no foreground process group is set on the PTY yet.
@@ -54,19 +49,6 @@ impl ProcessIdGetter {
 
 #[cfg(windows)]
 impl ProcessIdGetter {
-    fn new(pty: &Pty) -> ProcessIdGetter {
-        let child = pty.child_watcher();
-        let handle = child.raw_handle();
-        let fallback_pid = child.pid().unwrap_or_else(|| unsafe {
-            NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle as _)))
-        });
-
-        ProcessIdGetter {
-            handle: handle as i32,
-            fallback_pid: u32::from(fallback_pid),
-        }
-    }
-
     fn pid(&self) -> Option<Pid> {
         let pid = unsafe { GetProcessId(HANDLE(self.handle as _)) };
         // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
@@ -84,23 +66,23 @@ impl ProcessIdGetter {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProcessInfo {
-    pub name: String,
-    pub cwd: PathBuf,
-    pub argv: Vec<String>,
+pub(crate) struct ProcessInfo {
+    pub(crate) name: String,
+    pub(crate) cwd: PathBuf,
+    pub(crate) argv: Vec<String>,
 }
 
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
-pub struct PtyProcessInfo {
+pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
-    pub current: RwLock<Option<ProcessInfo>>,
+    pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
 }
 
 impl PtyProcessInfo {
-    pub fn new(pty: &Pty) -> PtyProcessInfo {
+    pub(crate) fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
         let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
@@ -111,13 +93,13 @@ impl PtyProcessInfo {
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
-            pid_getter: ProcessIdGetter::new(pty),
+            pid_getter,
             current: RwLock::new(None),
             task: Mutex::new(None),
         }
     }
 
-    pub fn pid_getter(&self) -> &ProcessIdGetter {
+    pub(crate) fn pid_getter(&self) -> &ProcessIdGetter {
         &self.pid_getter
     }
 
@@ -185,8 +167,13 @@ impl PtyProcessInfo {
         Some(info)
     }
 
+    #[cfg(all(test, unix))]
+    pub(crate) fn load_for_test(&self) -> Option<ProcessInfo> {
+        self.load()
+    }
+
     /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
-    pub fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
+    pub(crate) fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {
             return;
         }
@@ -215,7 +202,7 @@ impl PtyProcessInfo {
         }));
     }
 
-    pub fn pid(&self) -> Option<Pid> {
+    pub(crate) fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
     }
 }
