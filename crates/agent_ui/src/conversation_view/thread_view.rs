@@ -1942,12 +1942,19 @@ impl ThreadView {
             //
             // If editing the prompt that generated the edits, they are auto-rejected
             // through the `rewind` function in the `acp_thread`.
+            //
+            // Subagent edits never show up as diffs in the parent thread's entries (they
+            // are only forwarded to the parent's action log), so treat any earlier
+            // subagent tool call as potentially having edits. Keeping all edits is a
+            // no-op when the subagent didn't make any.
             let has_earlier_edits = thread.read_with(cx, |thread, _| {
-                thread
-                    .entries()
-                    .iter()
-                    .take(entry_ix)
-                    .any(|entry| entry.diffs().next().is_some())
+                thread.entries().iter().take(entry_ix).any(|entry| {
+                    entry.diffs().next().is_some()
+                        || matches!(
+                            entry,
+                            AgentThreadEntry::ToolCall(tool_call) if tool_call.is_subagent()
+                        )
+                })
             });
 
             if has_earlier_edits {
