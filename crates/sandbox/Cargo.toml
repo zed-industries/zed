@@ -25,4 +25,5 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
+log.workspace = true
 smol.workspace = true

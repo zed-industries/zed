@@ -3,9 +3,11 @@
 //! Sandboxed Windows terminal commands are routed through WSL and then executed
 //! under Bubblewrap inside Linux. Projects may be opened either from native
 //! Windows paths (`C:\Users\...`) or WSL UNC paths
-//! (`\\wsl.localhost\Ubuntu\home\...`). Native drive-letter paths are mapped to
-//! WSL's `/mnt/<drive>/...` view and use the user's default WSL distro unless a
-//! WSL UNC path in the request pins a specific distro.
+//! (`\\wsl.localhost\Ubuntu\home\...`). Native drive-letter paths are
+//! translated into the distro's filesystem view with `wslpath` (falling back
+//! to the conventional `/mnt/<drive>/...` mapping if that fails) and use the
+//! user's default WSL distro unless a WSL UNC path in the request pins a
+//! specific distro.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,38 @@ struct WslPath {
     path: String,
 }
 
+/// A path mapped for use inside WSL.
+///
+/// WSL UNC and WSL-absolute paths can be mapped structurally up front. Native
+/// drive-letter paths depend on the distro's automount configuration
+/// (`/etc/wsl.conf` can move the `/mnt` root), so they are translated with
+/// `wslpath` inside the distro — but a distro can only be chosen after every
+/// path has been parsed (WSL UNC paths pin one), hence this two-stage shape:
+/// parse structurally first, then resolve native paths via
+/// [`resolve_path_mapping`] once the distro is known.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PathMapping {
+    Wsl(WslPath),
+    NativeDrive {
+        /// The `\\?\`-stripped, forward-slashed form that `wslpath -u`
+        /// accepts (`wslpath` is a Linux binary and doesn't understand
+        /// backslash separators).
+        windows_path: String,
+        /// The conventional `/mnt/<drive>/...` mapping, used when `wslpath`
+        /// translation fails.
+        fallback: WslPath,
+    },
+}
+
+impl PathMapping {
+    fn distro(&self) -> Option<&str> {
+        match self {
+            PathMapping::Wsl(path) => path.distro.as_deref(),
+            PathMapping::NativeDrive { .. } => None,
+        }
+    }
+}
+
 /// Whether an error came from the Windows WSL sandbox setup path.
 pub fn is_wsl_sandbox_error(error: &anyhow::Error) -> bool {
     error.to_string().contains(WSL_SANDBOX_ERROR_PREFIX)
@@ -37,8 +71,9 @@ pub fn is_wsl_sandbox_error(error: &anyhow::Error) -> bool {
 /// this function.
 ///
 /// All writable paths and the cwd must be paths that can be mapped into WSL.
-/// WSL UNC paths may specify a distro; native drive-letter paths map to
-/// `/mnt/<drive>/...` and use either that distro or the default distro.
+/// WSL UNC paths may specify a distro; native drive-letter paths are
+/// translated with `wslpath` inside either that distro or the default distro
+/// (falling back to `/mnt/<drive>/...` if translation fails).
 ///
 /// `env` is forwarded into the sandboxed command via `bwrap --setenv` rather
 /// than being set on the `wsl.exe` process. Windows environment variables
@@ -55,7 +90,7 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
     cwd: Option<&Path>,
     env: &HashMap<String, String, S>,
 ) -> Result<(String, Vec<String>)> {
-    let cwd = match cwd {
+    let cwd_mapping = match cwd {
         Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
             format!(
                 "{WSL_SANDBOX_ERROR_PREFIX}: failed to map terminal cwd `{}` into WSL",
@@ -65,7 +100,7 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
         None => None,
     };
 
-    let writable_paths = writable_paths
+    let writable_mappings = writable_paths
         .iter()
         .map(|path| {
             path_to_wsl(path).with_context(|| {
@@ -77,7 +112,7 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let distro = select_distro(cwd.as_ref(), &writable_paths)?;
+    let distro = select_distro(cwd_mapping.as_ref(), &writable_mappings)?;
     let wsl_exe = wsl_exe_path();
     ensure!(
         wsl_exe.is_file(),
@@ -113,6 +148,15 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
         )
     })?;
     let mask_interop_dir = probe.contains("interop");
+
+    // Translate native drive-letter paths with `wslpath` now that the distro
+    // is known and WSL is confirmed to work.
+    let cwd = cwd_mapping.map(|mapping| resolve_path_mapping(&wsl_exe, distro.as_deref(), mapping));
+    let writable_paths = writable_mappings
+        .into_iter()
+        .map(|mapping| resolve_path_mapping(&wsl_exe, distro.as_deref(), mapping))
+        .collect::<Vec<_>>();
+
     if let Some(cwd) = &cwd {
         check_wsl_path_exists(&wsl_exe, distro.as_deref(), cwd, "terminal cwd")?;
     }
@@ -142,10 +186,13 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
 }
 
-fn select_distro(cwd: Option<&WslPath>, writable_paths: &[WslPath]) -> Result<Option<String>> {
-    let mut distro = cwd.and_then(|path| path.distro.clone());
-    for path in writable_paths {
-        let Some(path_distro) = path.distro.as_ref() else {
+fn select_distro(
+    cwd: Option<&PathMapping>,
+    writable_paths: &[PathMapping],
+) -> Result<Option<String>> {
+    let mut distro = cwd.and_then(|mapping| mapping.distro().map(str::to_string));
+    for mapping in writable_paths {
+        let Some(path_distro) = mapping.distro() else {
             continue;
         };
         match distro.as_deref() {
@@ -155,7 +202,7 @@ fn select_distro(cwd: Option<&WslPath>, writable_paths: &[WslPath]) -> Result<Op
                 distro,
                 path_distro
             ),
-            None => distro = Some(path_distro.clone()),
+            None => distro = Some(path_distro.to_string()),
         }
     }
     Ok(distro)
@@ -381,7 +428,53 @@ fn push_bind(args: &mut Vec<String>, flag: &str, source: &str, destination: &str
     ]);
 }
 
-fn directory_to_wsl(path: &Path) -> Result<WslPath> {
+/// Resolve a [`PathMapping`] into the final WSL path, translating native
+/// drive-letter paths with `wslpath -u` inside the chosen distro so the
+/// distro's actual automount configuration is honored. Falls back to the
+/// structural `/mnt/<drive>/...` mapping when translation fails (e.g. a
+/// distro without `wslpath`); a wrong fallback is still caught by the
+/// existence check that follows.
+fn resolve_path_mapping(wsl_exe: &Path, distro: Option<&str>, mapping: PathMapping) -> WslPath {
+    match mapping {
+        PathMapping::Wsl(path) => path,
+        PathMapping::NativeDrive {
+            windows_path,
+            fallback,
+        } => match translate_windows_path(wsl_exe, distro, &windows_path) {
+            Ok(path) => WslPath { distro: None, path },
+            Err(error) => {
+                log::warn!(
+                    "failed to translate `{windows_path}` with wslpath in {}; \
+                     falling back to `{}`: {error:#}",
+                    wsl_distro_label(distro),
+                    fallback.path
+                );
+                fallback
+            }
+        },
+    }
+}
+
+/// Translate a forward-slashed Windows path into the distro's view with
+/// `wslpath -u` (the same technique as
+/// `remote::transport::wsl::WslConnectionOptions::abs_windows_path_to_wsl_path`).
+fn translate_windows_path(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    windows_path: &str,
+) -> Result<String> {
+    let output = check_wsl_command_capture(
+        wsl_exe,
+        distro,
+        &["--exec", "wslpath", "-u", windows_path],
+        "translate a Windows path with `wslpath`",
+    )?;
+    let path = output.trim_end_matches(['\r', '\n']);
+    ensure!(path.starts_with('/'), "unexpected wslpath output: {path:?}");
+    Ok(path.to_string())
+}
+
+fn directory_to_wsl(path: &Path) -> Result<PathMapping> {
     ensure!(
         path.is_dir(),
         "Windows sandboxing via WSL can only use an existing directory as cwd: {}",
@@ -390,10 +483,10 @@ fn directory_to_wsl(path: &Path) -> Result<WslPath> {
     map_path_to_wsl(path)
 }
 
-fn path_to_wsl(path: &Path) -> Result<WslPath> {
+fn path_to_wsl(path: &Path) -> Result<PathMapping> {
     let path_string = path.to_string_lossy();
     if let Ok(path) = parse_wsl_absolute_path(&path_string) {
-        return Ok(path);
+        return Ok(PathMapping::Wsl(path));
     }
 
     ensure!(
@@ -404,9 +497,20 @@ fn path_to_wsl(path: &Path) -> Result<WslPath> {
     map_path_to_wsl(path)
 }
 
-fn map_path_to_wsl(path: &Path) -> Result<WslPath> {
-    let path = path.to_string_lossy();
-    parse_wsl_unc_path(&path).or_else(|_| parse_native_drive_path(&path))
+fn map_path_to_wsl(path: &Path) -> Result<PathMapping> {
+    let path_string = path.to_string_lossy();
+    if let Ok(path) = parse_wsl_unc_path(&path_string) {
+        return Ok(PathMapping::Wsl(path));
+    }
+    let fallback = parse_native_drive_path(&path_string)?;
+    let windows_path = path_string
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&path_string)
+        .replace('\\', "/");
+    Ok(PathMapping::NativeDrive {
+        windows_path,
+        fallback,
+    })
 }
 
 fn parse_wsl_absolute_path(path: &str) -> Result<WslPath> {
@@ -702,17 +806,62 @@ mod tests {
         let distro = select_distro(
             None,
             &[
-                WslPath {
-                    distro: None,
-                    path: "/mnt/c/project".to_string(),
+                PathMapping::NativeDrive {
+                    windows_path: "C:/project".to_string(),
+                    fallback: WslPath {
+                        distro: None,
+                        path: "/mnt/c/project".to_string(),
+                    },
                 },
-                WslPath {
+                PathMapping::Wsl(WslPath {
                     distro: Some("Ubuntu".to_string()),
                     path: "/home/me/project".to_string(),
-                },
+                }),
             ],
         )
         .unwrap();
         assert_eq!(distro.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn map_path_to_wsl_keeps_unc_paths_structural() {
+        let mapping = map_path_to_wsl(Path::new(r"\\wsl.localhost\Ubuntu\home\me")).unwrap();
+        assert_eq!(
+            mapping,
+            PathMapping::Wsl(WslPath {
+                distro: Some("Ubuntu".to_string()),
+                path: "/home/me".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn map_path_to_wsl_defers_native_paths_to_wslpath() {
+        let mapping = map_path_to_wsl(Path::new(r"C:\Users\me\project")).unwrap();
+        assert_eq!(
+            mapping,
+            PathMapping::NativeDrive {
+                windows_path: "C:/Users/me/project".to_string(),
+                fallback: WslPath {
+                    distro: None,
+                    path: "/mnt/c/Users/me/project".to_string(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn map_path_to_wsl_strips_verbatim_prefix_for_wslpath() {
+        let mapping = map_path_to_wsl(Path::new(r"\\?\D:\workspace")).unwrap();
+        assert_eq!(
+            mapping,
+            PathMapping::NativeDrive {
+                windows_path: "D:/workspace".to_string(),
+                fallback: WslPath {
+                    distro: None,
+                    path: "/mnt/d/workspace".to_string(),
+                },
+            }
+        );
     }
 }
