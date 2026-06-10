@@ -220,6 +220,38 @@ impl UserStore {
                 let mut status = client.status();
                 let weak = Arc::downgrade(&client);
                 drop(client);
+
+                // Zed Sim (staff-only): if ZED_SIM_STATE is set, render a
+                // simulated signed-in plan state entirely offline — no network,
+                // no credentials, no production. Done here so the current_user
+                // sender is in scope. Marked Authenticated but NOT connected.
+                #[cfg(feature = "staff-sim")]
+                if let Some(sim) = crate::sim_state::SimAuthState::from_env() {
+                    let response = crate::sim_state::synthesize_response(sim);
+                    // A synthetic legacy user id; the real id type (u64) differs
+                    // from the GitHub id on the response.
+                    let user_id: u64 = 9_999_999;
+                    let user = Arc::new(User {
+                        legacy_id: user_id,
+                        github_login: response.user.github_login.clone().into(),
+                        avatar_uri: response.user.avatar_url.clone().into(),
+                        name: response.user.name.clone(),
+                    });
+                    current_user_tx.send(Some(user.clone())).await.ok();
+                    if let Some(client) = weak.upgrade() {
+                        client.set_status(Status::Authenticated, cx);
+                    }
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.by_github_login
+                                .insert(user.github_login.clone(), user_id);
+                            this.users.insert(user_id, user);
+                            this.update_authenticated_user(response, cx)
+                        })
+                    })
+                    .log_err();
+                }
+
                 while let Some(status) = status.next().await {
                     // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
@@ -845,18 +877,6 @@ impl UserStore {
     pub fn clear_plan_and_usage(&mut self) {
         self.plan_info = None;
         self.edit_prediction_usage = None;
-    }
-
-    /// Staff-only (Zed Sim): apply a synthesized authenticated-user response,
-    /// exactly as if the server had returned it. Used to render a simulated
-    /// signed-in state offline. See `crate::sim_state`.
-    #[cfg(feature = "staff-sim")]
-    pub(crate) fn apply_sim_state(
-        &mut self,
-        response: GetAuthenticatedUserResponse,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_authenticated_user(response, cx);
     }
 
     fn update_authenticated_user(
