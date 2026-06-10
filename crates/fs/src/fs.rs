@@ -1081,7 +1081,14 @@ impl Fs for RealFs {
             pending_paths.clone(),
         ));
 
-        if let Err(e) = watcher.add(path) {
+        if let Err(e) = executor
+            .spawn({
+                let path = path.to_owned();
+                let watcher = watcher.clone();
+                async move { watcher.add(&path) }
+            })
+            .await
+        {
             log::warn!("Failed to watch {}:\n{e}", path.display());
         }
 
@@ -1097,10 +1104,17 @@ impl Fs for RealFs {
                     target = SanitizedPath::new(&canonical).as_path().to_path_buf();
                 }
             }
-            watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
-                watcher.add(parent).log_err();
-            }
+            executor
+                .spawn({
+                    let watcher = watcher.clone();
+                    async move {
+                        watcher.add(&target).ok();
+                        if let Some(parent) = target.parent() {
+                            watcher.add(parent).log_err();
+                        }
+                    }
+                })
+                .await;
         }
 
         (
