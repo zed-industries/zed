@@ -732,6 +732,24 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
     }
 }
 
+/// Explanation appended to the model-facing result when a sandboxed command
+/// fails because it tried to use WSL's Windows interop (see
+/// [`wsl_interop_blocked`]).
+const WSL_INTEROP_BLOCKED_NOTE: &str = "This command tried to launch a Windows \
+executable, which the sandbox blocks: WSL Windows interop is disabled so \
+sandboxed commands can't escape to the Windows host. The noisy `WSL ... ERROR` \
+lines below are from that blocked attempt, not a bug in the command. If you \
+genuinely need to run a Windows program, re-run with `unsandboxed: true`.";
+
+/// Whether terminal output contains the kernel-style diagnostics WSL prints
+/// when a Windows executable is launched inside our pid-namespaced sandbox
+/// (interop init fails to parse `/proc/1/stat`, which is now `bwrap`). These
+/// markers don't appear for ordinary Linux commands.
+#[cfg(target_os = "windows")]
+fn wsl_interop_blocked(content: &str) -> bool {
+    content.contains("UtilGetPpid") || content.contains("Failed to parse: /proc/1/stat")
+}
+
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
@@ -742,6 +760,15 @@ fn process_content(
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
     let is_empty = content.is_empty();
+
+    // On Windows, recognize the kernel-style diagnostics WSL prints when a
+    // command tries to launch a Windows executable inside the sandbox (where
+    // interop is deliberately disabled). They're noise the model can't act on,
+    // so we explain what actually happened.
+    #[cfg(target_os = "windows")]
+    let interop_blocked = wsl_interop_blocked(&content);
+    #[cfg(not(target_os = "windows"))]
+    let interop_blocked = false;
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
@@ -784,6 +811,11 @@ fn process_content(
                 } else {
                     content
                 }
+            }
+            Some(exit_code) if interop_blocked => {
+                format!(
+                    "Command \"{command}\" failed with exit code {exit_code}. {WSL_INTEROP_BLOCKED_NOTE}\n\n{content}"
+                )
             }
             Some(exit_code) => {
                 if is_empty {
