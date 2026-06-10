@@ -15,10 +15,10 @@ pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
 }
 
 pub struct ApiCompatibleProviderState<S: ApiCompatibleProviderSettings> {
-    pub id: Arc<str>,
+    id: Arc<str>,
     pub api_key_state: ApiKeyState,
     pub settings: S,
-    pub credentials_provider: Arc<dyn CredentialsProvider>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
@@ -189,16 +189,12 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
         let env_var_set = state.api_key_state.is_from_env_var();
         let env_var_name = state.api_key_state.env_var_name();
         let provider_name = self.provider_name;
-        let provider_article = match provider_name.chars().next() {
-            Some('A' | 'E' | 'I' | 'O' | 'U' | 'a' | 'e' | 'i' | 'o' | 'u') => "an",
-            _ => "a",
-        };
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(format!(
-                    "To use Zed's agent with {provider_article} {provider_name}-compatible provider, you need to add an API key."
+                    "To use Zed's agent with an {provider_name}-compatible provider, you need to add an API key."
                 )))
                 .child(
                     div()

@@ -15,7 +15,7 @@ use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 
-use crate::provider::util::{
+use crate::provider::api_compatible::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,
     ApiCompatibleProviderState,
 };
@@ -44,7 +44,6 @@ impl ApiCompatibleProviderSettings for AnthropicCompatibleSettings {
 
 pub type State = ApiCompatibleProviderState<AnthropicCompatibleSettings>;
 
-/// Convert a settings-defined `available_models` entry into an `anthropic::Model`.
 fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::Model {
     let mode = match available.mode.unwrap_or_default() {
         settings::ModelMode::Default => AnthropicModelMode::Default,

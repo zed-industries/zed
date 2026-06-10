@@ -4,6 +4,7 @@ use http_client::http::{HeaderName, HeaderValue};
 
 pub mod anthropic;
 pub mod anthropic_compatible;
+pub mod api_compatible;
 pub mod bedrock;
 pub mod cloud;
 pub mod copilot_chat;
@@ -17,8 +18,6 @@ pub mod open_ai_compatible;
 pub mod open_router;
 pub mod openai_subscribed;
 pub mod opencode;
-pub mod util;
-
 pub mod vercel_ai_gateway;
 pub mod x_ai;
 
