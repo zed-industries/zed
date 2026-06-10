@@ -153,10 +153,12 @@ fn backdrop_blur_rect_kernel_levels_are_clamped() {
 }
 
 #[test]
-fn zero_radius_backdrop_blur_rect_has_no_effective_kernel_levels() {
+fn non_positive_backdrop_blur_rect_has_no_effective_kernel_levels() {
     let mut backdrop_blur_rect = test_backdrop_blur_rect(0.);
     backdrop_blur_rect.blur_radius = ScaledPixels(0.);
+    assert_eq!(0, backdrop_blur_rect.effective_kernel_levels());
 
+    backdrop_blur_rect.blur_radius = ScaledPixels(-12.);
     assert_eq!(0, backdrop_blur_rect.effective_kernel_levels());
 }
 
