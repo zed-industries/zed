@@ -39,8 +39,30 @@ ZED_SIM_BINARY="/path/to/zed" cargo run -p zed-sim
 - **Brand-new user** — signed out, pristine first-run onboarding.
 - **Signed in** — a fresh profile that goes through the real sign-in flow.
 
-The Pro / Trial / Business states are shown as "coming soon" and arrive in
-Phase 2 (see `PLAN.md`).
+## Injected states (staff build)
+
+The **Pro / Pro Trial — active / Pro Trial — expired** buttons render those
+signed-in plan states **offline** — no backend, no token, no production (see
+`INJECTION_PLAN.md`). They only work on a build compiled with the `staff-sim`
+feature.
+
+Easiest way to run them:
+
+```sh
+./tooling/zed-sim/run.command
+```
+
+This builds the staff Zed (with injection) and starts the control panel. The
+first build is a full Zed compile (10–30 min); after that it's fast. Or do it
+manually:
+
+```sh
+cargo build -p zed --features staff-sim   # build the staff binary once
+cargo run -p zed-sim                       # start the launcher (auto-finds it)
+```
+
+Then click **Pro Trial — expired** and open the Agent panel to see the
+end-of-trial upsell. Business member/admin are deferred (need org modelling).
 
 ## Impersonation (real accounts, optional)
 
