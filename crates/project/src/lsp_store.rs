@@ -12021,7 +12021,9 @@ impl LspStore {
             return;
         }
 
-        let Some(local) = self.as_local_mut() else { return };
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
 
         local.prettier_store.update(cx, |prettier_store, cx| {
             prettier_store.update_prettier_settings(worktree_handle, changes, cx)
