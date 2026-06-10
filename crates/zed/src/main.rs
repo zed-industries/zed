@@ -566,6 +566,21 @@ fn main() {
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+
+        // Zed Sim (staff-only): if ZED_SIM_STATE is set, render a simulated
+        // signed-in plan state offline. No network, no credentials, no prod.
+        #[cfg(feature = "staff-sim")]
+        {
+            let client = client.clone();
+            let user_store = user_store.clone();
+            cx.spawn(async move |cx| {
+                client::sim_state::apply_from_env(&client, &user_store, cx)
+                    .await
+                    .log_err();
+            })
+            .detach();
+        }
+
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         language_extension::init(

@@ -13,6 +13,9 @@ workspace = true
 
 [features]
 tracy = ["ztracing/tracy"]
+# Staff-only: enables Zed Sim state injection. OFF by default; release builds
+# compile none of it. See tooling/zed-sim/INJECTION_PLAN.md.
+staff-sim = ["client/staff-sim"]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
 test-support = [
