@@ -15,7 +15,7 @@ use std::sync::Arc;
 use zeta_prompt::{
     ZetaFormat, ZetaPromptInput, format_edit_history_within_budget, format_expected_output,
     format_zeta_prompt,
-    hashed_regions::{self, SnippetMarkers, SnippetSource},
+    hashed_regions::{self, SnippetMarkers},
     max_edit_event_count_for_format, resolve_cursor_region,
 };
 
@@ -358,6 +358,12 @@ struct ParsedSpanEdit {
     cursor_offset_in_new_text: Option<usize>,
 }
 
+struct RelatedFileCursor {
+    file_ix: usize,
+    excerpt_ix: usize,
+    offset_in_excerpt: usize,
+}
+
 impl TeacherJumpsPrompt {
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
     pub(crate) const NO_EDITS: &str = "NO_EDITS";
@@ -372,10 +378,17 @@ impl TeacherJumpsPrompt {
             .as_ref()
             .context("example is missing prompt inputs")?;
         let marker_table = hashed_regions::build_marker_table(prompt_inputs);
+        let cursor = Self::locate_cursor_in_related_files(example, prompt_inputs)?;
 
         let edit_history = Self::format_edit_history(&prompt_inputs);
-        let context = Self::format_context(prompt_inputs, &marker_table, related_files_budget);
-        let cursor_excerpt = Self::format_cursor_excerpt(example, prompt_inputs, &marker_table)?;
+        let context = Self::format_context(
+            prompt_inputs,
+            &marker_table,
+            related_files_budget,
+            cursor.file_ix,
+        );
+        let cursor_excerpt =
+            Self::format_cursor_excerpt(example, prompt_inputs, &marker_table, &cursor)?;
 
         let prompt_template = crate::prompt_assets::get_prompt("teacher_jumps.md");
         let prompt = prompt_template
@@ -556,26 +569,18 @@ impl TeacherJumpsPrompt {
         prompt_inputs: &'a ZetaPromptInput,
         snippet: &SnippetMarkers,
     ) -> Result<&'a str> {
-        match snippet.source {
-            SnippetSource::CursorFile => Ok(prompt_inputs.cursor_excerpt.as_ref()),
-            SnippetSource::RelatedFile {
-                file_ix,
-                excerpt_ix,
-            } => {
-                let related_files = prompt_inputs
-                    .related_files
-                    .as_deref()
-                    .context("prompt inputs are missing related files")?;
-                let file = related_files
-                    .get(file_ix)
-                    .context("related file index out of range")?;
-                let excerpt = file
-                    .excerpts
-                    .get(excerpt_ix)
-                    .context("related excerpt index out of range")?;
-                Ok(excerpt.text.as_ref())
-            }
-        }
+        let related_files = prompt_inputs
+            .related_files
+            .as_deref()
+            .context("prompt inputs are missing related files")?;
+        let file = related_files
+            .get(snippet.file_ix)
+            .context("related file index out of range")?;
+        let excerpt = file
+            .excerpts
+            .get(snippet.excerpt_ix)
+            .context("related excerpt index out of range")?;
+        Ok(excerpt.text.as_ref())
     }
 
     fn snippet_path_and_start_row(
@@ -583,34 +588,79 @@ impl TeacherJumpsPrompt {
         prompt_inputs: &ZetaPromptInput,
         snippet: &SnippetMarkers,
     ) -> Result<(std::path::PathBuf, u32)> {
-        match snippet.source {
-            // Scoring applies the cursor-file patch to `cursor_excerpt`, so
-            // hunk rows stay excerpt-relative (row 0 = excerpt start).
-            SnippetSource::CursorFile => Ok((example.spec.cursor_path.as_ref().to_path_buf(), 0)),
-            SnippetSource::RelatedFile {
-                file_ix,
-                excerpt_ix,
-            } => {
-                let related_files = prompt_inputs
-                    .related_files
-                    .as_deref()
-                    .context("prompt inputs are missing related files")?;
-                let file = related_files
-                    .get(file_ix)
-                    .context("related file index out of range")?;
-                let excerpt = file
-                    .excerpts
-                    .get(excerpt_ix)
-                    .context("related excerpt index out of range")?;
-                Ok((
-                    Self::related_file_patch_path(
-                        example.spec.cursor_path.as_ref(),
-                        file.path.as_ref(),
-                    ),
-                    excerpt.row_range.start,
-                ))
+        let related_files = prompt_inputs
+            .related_files
+            .as_deref()
+            .context("prompt inputs are missing related files")?;
+        let file = related_files
+            .get(snippet.file_ix)
+            .context("related file index out of range")?;
+        let excerpt = file
+            .excerpts
+            .get(snippet.excerpt_ix)
+            .context("related excerpt index out of range")?;
+        Ok((
+            Self::related_file_patch_path(example.spec.cursor_path.as_ref(), file.path.as_ref()),
+            excerpt.row_range.start,
+        ))
+    }
+
+    /// Map the cursor (an offset within `cursor_excerpt`) to an offset within
+    /// the related-file excerpt that covers it. Related files are the single
+    /// source of truth for rendering and edit addressing; `cursor_excerpt` is
+    /// only used to derive the cursor position.
+    fn locate_cursor_in_related_files(
+        example: &Example,
+        prompt_inputs: &ZetaPromptInput,
+    ) -> Result<RelatedFileCursor> {
+        let related_files = prompt_inputs
+            .related_files
+            .as_deref()
+            .context("prompt inputs are missing related files")?;
+        let excerpt_start_row = prompt_inputs
+            .excerpt_start_row
+            .context("prompt inputs are missing excerpt_start_row")?;
+        let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
+        let excerpt_prefix = prompt_inputs
+            .cursor_excerpt
+            .get(..cursor_offset)
+            .context("cursor offset is out of bounds of the cursor excerpt")?;
+        let cursor_row = excerpt_start_row + excerpt_prefix.matches('\n').count() as u32;
+        let cursor_column = cursor_offset - excerpt_prefix.rfind('\n').map_or(0, |pos| pos + 1);
+
+        let cursor_path = example.spec.cursor_path.as_ref();
+        for (file_ix, file) in related_files.iter().enumerate() {
+            if Self::related_file_patch_path(cursor_path, file.path.as_ref()) != cursor_path {
+                continue;
+            }
+            for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
+                if cursor_row < excerpt.row_range.start || cursor_row > excerpt.row_range.end {
+                    continue;
+                }
+                let row_in_excerpt = (cursor_row - excerpt.row_range.start) as usize;
+                let Some(line_start) = line_start_offset(&excerpt.text, row_in_excerpt) else {
+                    continue;
+                };
+                let line_len = excerpt.text[line_start..]
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .len();
+                if cursor_column > line_len {
+                    continue;
+                }
+                return Ok(RelatedFileCursor {
+                    file_ix,
+                    excerpt_ix,
+                    offset_in_excerpt: line_start + cursor_column,
+                });
             }
         }
+
+        Err(anyhow!(
+            "cursor position is not covered by any related-file excerpt of the cursor file; \
+             teacher-jumps requires current-file context retrieval (e.g. `ep context --type=current-file,...`)"
+        ))
     }
 
     fn related_file_patch_path(cursor_path: &Path, related_path: &Path) -> std::path::PathBuf {
@@ -638,11 +688,14 @@ impl TeacherJumpsPrompt {
 
     /// Render related files with hashed region markers, within a token
     /// budget. Mirrors `zeta_prompt::format_related_files_within_budget`,
-    /// but inserts marker tags into every included excerpt.
+    /// but inserts marker tags into every included excerpt. The cursor file
+    /// is skipped: it renders in its own prompt section via
+    /// `format_cursor_excerpt`, and including it here would duplicate it.
     fn format_context(
         prompt_inputs: &ZetaPromptInput,
         marker_table: &[SnippetMarkers],
         max_tokens: usize,
+        cursor_file_ix: usize,
     ) -> String {
         let Some(related_files) = prompt_inputs.related_files.as_deref() else {
             return "(No context)".to_string();
@@ -662,14 +715,13 @@ impl TeacherJumpsPrompt {
 
         let mut candidates = Vec::new();
         for (file_ix, file) in related_files.iter().enumerate() {
+            if file_ix == cursor_file_ix {
+                continue;
+            }
             for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
                 let markers = marker_table.iter().find_map(|snippet| {
-                    (snippet.source
-                        == SnippetSource::RelatedFile {
-                            file_ix,
-                            excerpt_ix,
-                        })
-                    .then_some(&snippet.markers)
+                    (snippet.file_ix == file_ix && snippet.excerpt_ix == excerpt_ix)
+                        .then_some(&snippet.markers)
                 });
                 let mut rendered = String::new();
                 match markers {
@@ -753,33 +805,61 @@ impl TeacherJumpsPrompt {
         }
     }
 
+    /// Render the current file from its related-file entry, with marker tags
+    /// and the user cursor injected. The current file gets its own prompt
+    /// section but shares the related-file snippets and markers, so its
+    /// content appears in the prompt exactly once.
     fn format_cursor_excerpt(
         example: &Example,
         prompt_inputs: &ZetaPromptInput,
         marker_table: &[SnippetMarkers],
+        cursor: &RelatedFileCursor,
     ) -> Result<String> {
-        let cursor_markers = marker_table
-            .iter()
-            .find_map(|snippet| {
-                (snippet.source == SnippetSource::CursorFile).then_some(&snippet.markers)
-            })
-            .context("marker table is missing the cursor file snippet")?;
-
-        let excerpt = prompt_inputs.cursor_excerpt.as_ref();
-        let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
+        let related_files = prompt_inputs
+            .related_files
+            .as_deref()
+            .context("prompt inputs are missing related files")?;
+        let file = related_files
+            .get(cursor.file_ix)
+            .context("cursor file index out of range")?;
 
         let path_str = example.spec.cursor_path.to_string_lossy();
         let mut result = format!("`````{path_str}\n");
-        hashed_regions::write_snippet_with_markers(
-            &mut result,
-            excerpt,
-            cursor_markers,
-            Some((cursor_offset, Self::USER_CURSOR_MARKER)),
-        );
-        result.push_str("\n`````");
+        for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
+            let markers = marker_table
+                .iter()
+                .find_map(|snippet| {
+                    (snippet.file_ix == cursor.file_ix && snippet.excerpt_ix == excerpt_ix)
+                        .then_some(&snippet.markers)
+                })
+                .context("marker table is missing a cursor file snippet")?;
+            let cursor_in_excerpt = (excerpt_ix == cursor.excerpt_ix)
+                .then_some((cursor.offset_in_excerpt, Self::USER_CURSOR_MARKER));
+            hashed_regions::write_snippet_with_markers(
+                &mut result,
+                &excerpt.text,
+                markers,
+                cursor_in_excerpt,
+            );
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+            if excerpt.row_range.end < file.max_row {
+                result.push_str("...\n");
+            }
+        }
+        result.push_str("`````");
 
         Ok(result)
     }
+}
+
+fn line_start_offset(text: &str, row: usize) -> Option<usize> {
+    let mut offset = 0;
+    for _ in 0..row {
+        offset += text[offset..].find('\n')? + 1;
+    }
+    Some(offset)
 }
 
 /// Extract the cursor excerpt from an example.
@@ -919,22 +999,36 @@ mod tests {
         cursor_offset: usize,
         related: &[(&str, &[(&str, u32)])],
     ) -> Example {
-        let related_files = related
-            .iter()
-            .map(|(path, excerpts)| zeta_prompt::RelatedFile {
-                path: std::sync::Arc::from(std::path::Path::new(path)),
-                max_row: 1000,
-                excerpts: excerpts
-                    .iter()
-                    .map(|(text, start_row)| zeta_prompt::RelatedExcerpt {
-                        row_range: *start_row..*start_row + text.matches('\n').count() as u32,
-                        text: std::sync::Arc::from(*text),
-                        order: 0,
-                        context_source: zeta_prompt::ContextSource::CurrentFile,
-                    })
-                    .collect(),
-                in_open_source_repo: false,
-            })
+        // The cursor file is included as the first related file, mirroring
+        // `ContextSource::CurrentFile` context retrieval.
+        let cursor_file = zeta_prompt::RelatedFile {
+            path: std::sync::Arc::from(std::path::Path::new("src/main.rs")),
+            max_row: 1000,
+            excerpts: vec![zeta_prompt::RelatedExcerpt {
+                row_range: 0..cursor_excerpt.matches('\n').count() as u32,
+                text: std::sync::Arc::from(cursor_excerpt),
+                order: 0,
+                context_source: zeta_prompt::ContextSource::CurrentFile,
+            }],
+            in_open_source_repo: false,
+        };
+        let related_files = std::iter::once(cursor_file)
+            .chain(related.iter().map(|(path, excerpts)| {
+                zeta_prompt::RelatedFile {
+                    path: std::sync::Arc::from(std::path::Path::new(path)),
+                    max_row: 1000,
+                    excerpts: excerpts
+                        .iter()
+                        .map(|(text, start_row)| zeta_prompt::RelatedExcerpt {
+                            row_range: *start_row..*start_row + text.matches('\n').count() as u32,
+                            text: std::sync::Arc::from(*text),
+                            order: 0,
+                            context_source: zeta_prompt::ContextSource::CurrentFile,
+                        })
+                        .collect(),
+                    in_open_source_repo: false,
+                }
+            }))
             .collect();
 
         Example {
@@ -1003,6 +1097,43 @@ mod tests {
                 );
             }
         }
+        // The current file appears exactly once, in its own section, with the
+        // user cursor injected.
+        assert_eq!(prompt.matches("let x = 1;").count(), 1);
+        assert!(prompt.contains("<|user_cursor|>let x = 1;"));
+    }
+
+    #[test]
+    fn test_teacher_jumps_format_prompt_requires_current_file_context() {
+        let mut example = make_example("fn main() {}\n", 0, &[]);
+        example.prompt_inputs.as_mut().unwrap().related_files = Some(Vec::new());
+        assert!(TeacherJumpsPrompt::format_prompt(&example, 8192).is_err());
+    }
+
+    #[test]
+    fn test_teacher_jumps_cursor_file_hunks_are_file_absolute() {
+        let mut example = make_example("fn main() {\n    let x = 1;\n}\n", 16, &[]);
+        {
+            let prompt_inputs = example.prompt_inputs.as_mut().unwrap();
+            prompt_inputs.excerpt_start_row = Some(10);
+            prompt_inputs.related_files.as_mut().unwrap()[0].excerpts[0].row_range = 10..13;
+        }
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let cursor_markers = &marker_table[0].markers;
+        let start_tag = hashed_regions::marker_tag(&cursor_markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&cursor_markers[cursor_markers.len() - 1].0);
+
+        let response = format!(
+            "The user is changing x.\n\n`````\n{start_tag}\nfn main() {{\n    let x = 2;<|user_cursor|>\n}}\n{end_tag}\n`````\n"
+        );
+        let (patch, cursor) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+
+        // Hunk rows are file-absolute (1-based in the hunk header, excerpt
+        // starts at 0-based row 10).
+        assert!(patch.contains("@@ -11,"), "patch: {patch}");
+        let cursor = cursor.unwrap();
+        assert_eq!(cursor.row, 11);
     }
 
     #[test]

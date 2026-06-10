@@ -5,9 +5,11 @@
 //!
 //! Hashed identifiers are self-describing: a tag can be mapped back to its
 //! location without reproducing the exact rendering order of the prompt, so
-//! markers can be placed across *all* prompt context (the cursor file and
-//! every related-file excerpt), and budget-based truncation of related files
-//! doesn't shift the addressing of the remaining markers.
+//! markers can be placed across *all* prompt context, and budget-based
+//! truncation of related files doesn't shift the addressing of the remaining
+//! markers. All context, including the current file, lives in related files:
+//! context retrieval includes the current file via `ContextSource::CurrentFile`,
+//! so the cursor file is expected to be one of the related files.
 
 use crate::{ZetaPromptInput, multi_region};
 use anyhow::{Context as _, Result, anyhow};
@@ -25,41 +27,29 @@ pub fn marker_tag(id: &str) -> String {
     format!("{MARKER_TAG_PREFIX}{id}{MARKER_TAG_SUFFIX}")
 }
 
-/// Which piece of prompt context a marker-tagged snippet comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SnippetSource {
-    CursorFile,
-    RelatedFile { file_ix: usize, excerpt_ix: usize },
-}
-
 /// Marker tags assigned to one contiguous snippet of context.
 #[derive(Debug, Clone)]
 pub struct SnippetMarkers {
-    pub source: SnippetSource,
+    pub file_ix: usize,
+    pub excerpt_ix: usize,
     /// `(tag id, byte offset within the snippet text)`, sorted by offset.
     /// The first marker is at offset 0 and the last at `text.len()`.
     pub markers: Vec<(String, usize)>,
 }
 
-/// Assign hashed marker tags to the cursor excerpt and every related-file
-/// excerpt of `input`.
+/// Assign hashed marker tags to every related-file excerpt of `input`.
 ///
 /// The assignment is deterministic and independent of any later budget-based
 /// truncation, so the same table can be rebuilt when parsing model output.
 pub fn build_marker_table(input: &ZetaPromptInput) -> Vec<SnippetMarkers> {
     let mut used_ids = HashSet::new();
-    let mut snippets = vec![SnippetMarkers {
-        source: SnippetSource::CursorFile,
-        markers: assign_tags(&input.cursor_excerpt, &mut used_ids),
-    }];
+    let mut snippets = Vec::new();
     if let Some(related_files) = input.related_files.as_deref() {
         for (file_ix, file) in related_files.iter().enumerate() {
             for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
                 snippets.push(SnippetMarkers {
-                    source: SnippetSource::RelatedFile {
-                        file_ix,
-                        excerpt_ix,
-                    },
+                    file_ix,
+                    excerpt_ix,
                     markers: assign_tags(&excerpt.text, &mut used_ids),
                 });
             }
@@ -285,22 +275,10 @@ mod tests {
             ],
         );
         let table = build_marker_table(&input);
-        assert_eq!(table.len(), 4);
-        assert_eq!(table[0].source, SnippetSource::CursorFile);
-        assert_eq!(
-            table[1].source,
-            SnippetSource::RelatedFile {
-                file_ix: 0,
-                excerpt_ix: 0
-            }
-        );
-        assert_eq!(
-            table[3].source,
-            SnippetSource::RelatedFile {
-                file_ix: 1,
-                excerpt_ix: 0
-            }
-        );
+        assert_eq!(table.len(), 3);
+        assert_eq!((table[0].file_ix, table[0].excerpt_ix), (0, 0));
+        assert_eq!((table[1].file_ix, table[1].excerpt_ix), (0, 1));
+        assert_eq!((table[2].file_ix, table[2].excerpt_ix), (1, 0));
 
         let mut all_ids = HashSet::new();
         for snippet in &table {
