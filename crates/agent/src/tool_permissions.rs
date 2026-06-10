@@ -606,6 +606,7 @@ mod tests {
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
+            thread_history_density: Default::default(),
         }
     }
 

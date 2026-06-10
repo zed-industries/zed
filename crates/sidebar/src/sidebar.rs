@@ -6113,6 +6113,8 @@ impl Sidebar {
             format_history_entry_timestamp(Self::thread_display_time(&thread.metadata)).into()
         };
 
+        let density = AgentSettings::get_global(cx).thread_history_density;
+
         let is_remote = thread.workspace.is_remote(cx);
 
         let worktrees = apply_worktree_label_mode(
@@ -6144,6 +6146,7 @@ impl Sidebar {
             })
             .worktrees(worktrees)
             .timestamp(timestamp)
+            .compact(density == settings::ThreadHistoryDensity::Compact)
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(title_generating)
             .notified(has_notification)
@@ -6442,7 +6445,9 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = ElementId::from(format!("terminal-{}", terminal.metadata.terminal_id));
-        let timestamp = format_history_entry_timestamp(terminal.metadata.created_at);
+        let density = AgentSettings::get_global(cx).thread_history_density;
+        let timestamp: SharedString =
+            format_history_entry_timestamp(terminal.metadata.created_at).into();
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
         let sidebar_bg = color
@@ -6471,6 +6476,7 @@ impl Sidebar {
             .is_remote(is_remote)
             .worktrees(worktrees)
             .timestamp(timestamp)
+            .compact(density == settings::ThreadHistoryDensity::Compact)
             .notified(terminal.has_notification)
             .highlight_positions(highlight_positions)
             .selected(is_active)

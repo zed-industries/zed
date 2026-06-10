@@ -1231,6 +1231,17 @@
     //
     // Default: true
     "show_merge_conflict_indicator": true,
+    // The display density of the agent panel's thread history.
+    //
+    // 1. Show the timestamp in each thread's metadata row:
+    //    "comfortable"
+    // 2. Render each thread on a single line: the timestamp is hidden until
+    //    hovered (then shown to the left of the thread's actions) and diff
+    //    stats are pinned to the right of the title:
+    //    "compact"
+    //
+    // Default: comfortable
+    "thread_history_density": "comfortable",
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

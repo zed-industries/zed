@@ -613,8 +613,10 @@ impl ThreadsArchiveView {
 
                 let focus_handle = self.focus_handle.clone();
 
-                let timestamp =
-                    format_history_entry_timestamp(thread.created_at.unwrap_or(thread.updated_at));
+                let density = AgentSettings::get_global(cx).thread_history_density;
+                let timestamp: SharedString =
+                    format_history_entry_timestamp(thread.created_at.unwrap_or(thread.updated_at))
+                        .into();
 
                 let icon_from_external_svg = self
                     .agent_server_store
@@ -659,6 +661,8 @@ impl ThreadsArchiveView {
                         this.custom_icon_from_external_svg(svg)
                     })
                     .timestamp(timestamp)
+                    .compact(density == settings::ThreadHistoryDensity::Compact)
+                    .show_workspace_name(true)
                     .highlight_positions(highlight_positions.clone())
                     .project_paths(thread.folder_paths().paths_owned())
                     .worktrees(worktrees)

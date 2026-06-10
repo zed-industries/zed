@@ -45,6 +45,8 @@ pub struct ThreadItem {
     title_generating: bool,
     highlight_positions: Vec<usize>,
     timestamp: SharedString,
+    compact: bool,
+    show_workspace_name: bool,
     notified: bool,
     status: AgentThreadStatus,
     selected: bool,
@@ -80,6 +82,8 @@ impl ThreadItem {
             title_generating: false,
             highlight_positions: Vec::new(),
             timestamp: "".into(),
+            compact: false,
+            show_workspace_name: false,
             notified: false,
             status: AgentThreadStatus::default(),
             selected: false,
@@ -103,6 +107,23 @@ impl ThreadItem {
 
     pub fn timestamp(mut self, timestamp: impl Into<SharedString>) -> Self {
         self.timestamp = timestamp.into();
+        self
+    }
+
+    /// Renders the item as a single line: project/worktree metadata is hidden,
+    /// diff stats are pinned to the right (always visible when present), and the
+    /// timestamp is only shown on hover to the left of the action slot.
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
+
+    /// In compact mode, shows the thread's workspace (worktree) name on the
+    /// right of the row. This is intended for lists that aren't already grouped
+    /// by workspace (e.g. the thread history view), where the workspace would
+    /// otherwise only be discoverable via the hover tooltip.
+    pub fn show_workspace_name(mut self, show_workspace_name: bool) -> Self {
+        self.show_workspace_name = show_workspace_name;
         self
     }
 
@@ -365,10 +386,12 @@ impl RenderOnce for ThreadItem {
         } else if highlight_positions.is_empty() {
             Label::new(title)
                 .when_some(self.title_label_color, |label, color| label.color(color))
+                .when(self.hovered || self.compact, |label| label.truncate())
                 .into_any_element()
         } else {
             HighlightedLabel::new(title, highlight_positions)
                 .when_some(self.title_label_color, |label, color| label.color(color))
+                .when(self.hovered || self.compact, |label| label.truncate())
                 .into_any_element()
         };
 
@@ -395,26 +418,67 @@ impl RenderOnce for ThreadItem {
         let has_project_paths = project_paths.is_some();
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
+        let compact = self.compact;
+        // In compact mode the item is a single line: the timestamp moves next to
+        // the action slot on hover and the diff stats are pinned to the right of
+        // the title (always visible). In comfortable mode both live in the
+        // metadata row below the title.
+        let timestamp_in_action_row = has_timestamp && compact;
+        let show_timestamp_in_metadata = has_timestamp && !compact;
+        // The diff stat element can only be rendered once, so build it up front
+        // and place it in whichever row applies for the current mode.
+        let diff_stat = has_diff_stats
+            .then(|| DiffStat::new(diff_stat_id, added_count, removed_count).into_any_element());
+        let (title_row_diff_stat, metadata_diff_stat) = if compact {
+            (diff_stat, None)
+        } else {
+            (None, diff_stat)
+        };
 
         let show_tooltip = matches!(
             self.status,
             AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let linked_worktrees: Vec<ThreadItemWorktreeInfo> = self
+        // In compact mode each thread is a single line with no metadata row, so
+        // the workspace a thread belongs to would otherwise only be discoverable
+        // by hovering for the tooltip. When requested (lists that aren't grouped
+        // by workspace, such as the thread history view), surface the worktree
+        // name(s) inline on the right of the row so the workspace is identifiable
+        // at a glance.
+        let compact_workspace_label: Option<SharedString> = if compact && self.show_workspace_name {
+            let mut names: Vec<&str> = Vec::new();
+            for worktree in &self.worktrees {
+                if let Some(name) = worktree.worktree_name.as_ref() {
+                    if !names.contains(&name.as_ref()) {
+                        names.push(name.as_ref());
+                    }
+                }
+            }
+            (!names.is_empty()).then(|| SharedString::from(names.join(", ")))
+        } else {
+            None
+        };
+
+        // Worktree/branch information is surfaced as hover text (a tooltip) on
+        // the whole row rather than as an inline chip in the metadata row.
+        let worktree_tooltip_entries: Vec<(Option<SharedString>, Option<SharedString>)> = self
             .worktrees
             .into_iter()
             .filter(|wt| wt.kind == WorktreeKind::Linked)
             .filter(|wt| wt.worktree_name.is_some() || wt.branch_name.is_some())
+            .map(|wt| (wt.worktree_name, wt.branch_name))
             .collect();
 
-        let has_worktree = !linked_worktrees.is_empty();
+        let has_worktree = !worktree_tooltip_entries.is_empty();
 
-        let has_metadata = has_project_name
-            || has_project_paths
-            || has_worktree
-            || has_diff_stats
-            || has_timestamp;
+        // In compact mode the item is rendered as a single line, so the metadata
+        // row (project, diff stats, timestamp) is suppressed entirely.
+        let has_metadata = !compact
+            && (has_project_name
+                || has_project_paths
+                || has_diff_stats
+                || show_timestamp_in_metadata);
 
         v_flex()
             .id(self.id.clone())
@@ -449,27 +513,67 @@ impl RenderOnce for ThreadItem {
                             .child(icon)
                             .child(title_label),
                     )
-                    .when(self.is_truncated, |this| this.child(gradient_overlay))
-                    .when(self.hovered, |this| {
-                        this.when_some(self.action_slot, |this, slot| {
-                            let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
-                                .width(px(120.0))
-                                .right(px(8.))
-                                .gradient_stop(0.90)
-                                .group_name("thread-item");
-
-                            this.child(
-                                h_flex()
-                                    .relative()
-                                    .pr_1p5()
-                                    .child(overlay)
-                                    .child(slot)
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    }),
-                            )
-                        })
-                    }),
+                    // While hovered (or in compact mode) the title truncates with
+                    // an ellipsis (see `title_label`), so the fade gradient would
+                    // be redundant and could bleed over the right-hand cluster.
+                    .when(self.is_truncated && !self.hovered && !compact, |this| {
+                        this.child(gradient_overlay)
+                    })
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap_2()
+                            // In compact mode the workspace name is shown on
+                            // the right so the thread's project is identifiable
+                            // at a glance, in both the resting and hovered states.
+                            .when_some(compact_workspace_label, |this, label| {
+                                this.child(
+                                    div().max_w_24().child(
+                                        Label::new(label)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    ),
+                                )
+                            })
+                            // In compact mode the diff stats are pinned to the
+                            // right of the title and stay visible at all times.
+                            .when_some(title_row_diff_stat, |this, diff_stat| this.child(diff_stat))
+                            .when(self.hovered, |this| {
+                                this.when_some(self.action_slot, |this, slot| {
+                                    this.child(
+                                        h_flex()
+                                            .relative()
+                                            .pr_1p5()
+                                            .gap_1p5()
+                                            // The fade gradient hides title text
+                                            // bleeding behind the actions; in
+                                            // compact mode the title already
+                                            // truncates, so it isn't needed.
+                                            .when(!compact, |this| {
+                                                this.child(
+                                                    GradientFade::new(base_bg, hover_bg, hover_bg)
+                                                        .width(px(120.0))
+                                                        .right(px(8.))
+                                                        .gradient_stop(0.90)
+                                                        .group_name("thread-item"),
+                                                )
+                                            })
+                                            .when(timestamp_in_action_row, |this| {
+                                                this.child(
+                                                    Label::new(timestamp.clone())
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            })
+                                            .child(slot)
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                cx.stop_propagation()
+                                            }),
+                                    )
+                                })
+                            }),
+                    ),
             )
             .when(has_metadata, |this| {
                 this.child(
@@ -483,109 +587,36 @@ impl RenderOnce for ThreadItem {
                                 ),
                             )
                         })
-                        .when(
-                            has_project_name || has_project_paths || has_worktree,
-                            |this| {
-                                this.when_some(self.project_name, |this, name| {
-                                    this.child(
-                                        Label::new(name).size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                })
-                                .when(
-                                    has_project_name && (has_project_paths || has_worktree),
-                                    |this| this.child(dot_separator()),
+                        .when(has_project_name || has_project_paths, |this| {
+                            this.when_some(self.project_name, |this, name| {
+                                this.child(
+                                    Label::new(name).size(LabelSize::Small).color(Color::Muted),
                                 )
-                                .when_some(project_paths, |this, paths| {
+                            })
+                            .when(has_project_name && has_project_paths, |this| {
+                                this.child(dot_separator())
+                            })
+                            .when_some(
+                                project_paths,
+                                |this, paths| {
                                     this.child(
                                         Label::new(paths)
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )
-                                })
-                                .when(has_project_paths && has_worktree, |this| {
-                                    this.child(dot_separator())
-                                })
-                                .children(
-                                    linked_worktrees.into_iter().map(|wt| {
-                                        let worktree_label = wt.worktree_name.clone().map(|name| {
-                                            if wt.highlight_positions.is_empty() {
-                                                Label::new(name)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate()
-                                                    .into_any_element()
-                                            } else {
-                                                HighlightedLabel::new(
-                                                    name,
-                                                    wt.highlight_positions.clone(),
-                                                )
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .truncate()
-                                                .into_any_element()
-                                            }
-                                        });
-
-                                        // When only the branch is shown, lead with a branch icon;
-                                        // otherwise keep the worktree icon (which "covers" both the
-                                        // worktree and any accompanying branch).
-                                        let chip_icon = if wt.worktree_name.is_none()
-                                            && wt.branch_name.is_some()
-                                        {
-                                            IconName::GitBranch
-                                        } else {
-                                            IconName::GitWorktree
-                                        };
-
-                                        let branch_label = wt.branch_name.map(|branch| {
-                                            Label::new(branch)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .truncate()
-                                                .into_any_element()
-                                        });
-
-                                        let show_separator =
-                                            worktree_label.is_some() && branch_label.is_some();
-
-                                        h_flex()
-                                            .min_w_0()
-                                            .gap_0p5()
-                                            .child(
-                                                Icon::new(chip_icon)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Muted),
-                                            )
-                                            .when_some(worktree_label, |this, label| {
-                                                this.child(label)
-                                            })
-                                            .when(show_separator, |this| {
-                                                this.child(
-                                                    Label::new("/")
-                                                        .size(LabelSize::Small)
-                                                        .color(separator_color)
-                                                        .flex_shrink_0(),
-                                                )
-                                            })
-                                            .when_some(branch_label, |this, label| {
-                                                this.child(label)
-                                            })
-                                    }),
-                                )
-                            },
-                        )
+                                },
+                            )
+                        })
                         .when(
-                            (has_project_name || has_project_paths || has_worktree)
-                                && (has_diff_stats || has_timestamp),
+                            (has_project_name || has_project_paths)
+                                && (has_diff_stats || show_timestamp_in_metadata),
                             |this| this.child(dot_separator()),
                         )
-                        .when(has_diff_stats, |this| {
-                            this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
-                        })
-                        .when(has_diff_stats && has_timestamp, |this| {
+                        .when_some(metadata_diff_stat, |this, diff_stat| this.child(diff_stat))
+                        .when(has_diff_stats && show_timestamp_in_metadata, |this| {
                             this.child(dot_separator())
                         })
-                        .when(has_timestamp, |this| {
+                        .when(show_timestamp_in_metadata, |this| {
                             this.child(
                                 Label::new(timestamp.clone())
                                     .size(LabelSize::Small)
@@ -616,6 +647,47 @@ impl RenderOnce for ThreadItem {
                         .child(Label::new("Waiting for Confirmation"))
                         .into_any_element(),
                     _ => gpui::Empty.into_any_element(),
+                }))
+            })
+            // When there's no status tooltip, surface worktree/branch info on hover.
+            .when(!show_tooltip && has_worktree, |this| {
+                this.tooltip(Tooltip::element(move |_, _| {
+                    v_flex()
+                        .gap_0p5()
+                        .children(worktree_tooltip_entries.iter().map(
+                            |(worktree_name, branch_name)| {
+                                let chip_icon = if worktree_name.is_none() && branch_name.is_some()
+                                {
+                                    IconName::GitBranch
+                                } else {
+                                    IconName::GitWorktree
+                                };
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(chip_icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .when_some(worktree_name.clone(), |this, name| {
+                                        this.child(Label::new(name).size(LabelSize::Small))
+                                    })
+                                    .when(
+                                        worktree_name.is_some() && branch_name.is_some(),
+                                        |this| {
+                                            this.child(
+                                                Label::new("/")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        },
+                                    )
+                                    .when_some(branch_name.clone(), |this, branch| {
+                                        this.child(Label::new(branch).size(LabelSize::Small))
+                                    })
+                            },
+                        ))
+                        .into_any_element()
                 }))
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
@@ -959,6 +1031,54 @@ impl Component for ThreadItem {
                             .icon(IconName::AiClaude)
                             .timestamp("6h")
                             .hovered(true)
+                            .action_slot(
+                                IconButton::new("delete", IconName::Trash)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Compact (workspace on right)",
+                container()
+                    .child(
+                        ThreadItem::new("ti-10", "Compact thread showing its workspace")
+                            .icon(IconName::AiClaude)
+                            .compact(true)
+                            .show_workspace_name(true)
+                            .timestamp("15m")
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                worktree_name: Some("zed".into()),
+                                full_path: "/projects/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name: Some("main".into()),
+                            }])
+                            .added(12)
+                            .removed(3),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Compact (hovered)",
+                container()
+                    .child(
+                        ThreadItem::new("ti-11", "Hovering reveals timestamp and actions")
+                            .icon(IconName::AiClaude)
+                            .compact(true)
+                            .show_workspace_name(true)
+                            .timestamp("15m")
+                            .hovered(true)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                worktree_name: Some("zed".into()),
+                                full_path: "/projects/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name: Some("main".into()),
+                            }])
+                            .added(12)
+                            .removed(3)
                             .action_slot(
                                 IconButton::new("delete", IconName::Trash)
                                     .icon_size(IconSize::Small)
