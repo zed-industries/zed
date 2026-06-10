@@ -11,7 +11,6 @@ use std::sync::Arc;
 use ::lsp::LanguageServerName;
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
-use fs::normalize_path;
 use gpui::{App, Task};
 use language::LanguageName;
 use semver::Version;
@@ -57,7 +56,7 @@ pub trait Extension: Send + Sync + 'static {
 
     /// Returns a path relative to this extension's working directory.
     fn path_from_extension(&self, path: &Path) -> PathBuf {
-        normalize_path(&self.work_dir().join(path))
+        util::normalize_path(&self.work_dir().join(path))
     }
 
     async fn language_server_command(

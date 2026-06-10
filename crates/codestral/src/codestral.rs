@@ -2,6 +2,7 @@ use anyhow::Result;
 use edit_prediction::cursor_excerpt;
 use edit_prediction_types::{
     EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
+    EditPredictionRequestTrigger,
 };
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
@@ -48,9 +49,10 @@ pub fn codestral_api_key(cx: &App) -> Option<Arc<str>> {
 }
 
 pub fn load_codestral_api_key(cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+    let credentials_provider = zed_credentials_provider::global(cx);
     let api_url = codestral_api_url(cx);
     codestral_api_key_state(cx).update(cx, |key_state, cx| {
-        key_state.load_if_needed(api_url, |s| s, cx)
+        key_state.load_if_needed(api_url, |s| s, credentials_provider, cx)
     })
 }
 
@@ -221,6 +223,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         log::debug!("Codestral: Refresh called (debounce: {})", debounce);

@@ -1,10 +1,10 @@
 use anyhow::{Context as _, Result};
 use client::Client;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
-    actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, TaskExt,
+    Window, actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -30,8 +30,69 @@ use util::command::new_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
+
+#[derive(Debug)]
+struct MissingDependencyError(String);
+
+impl std::fmt::Display for MissingDependencyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
+
+#[cfg(target_os = "linux")]
+fn linux_rsync_install_hint() -> &'static str {
+    let os_release = match std::fs::read_to_string("/etc/os-release") {
+        Ok(os_release) => os_release,
+        Err(_) => return "Please install rsync using your package manager",
+    };
+
+    let mut distribution_ids = Vec::new();
+    for line in os_release.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("ID=") {
+            distribution_ids.push(value.trim_matches('"').to_ascii_lowercase());
+        } else if let Some(value) = trimmed.strip_prefix("ID_LIKE=") {
+            for id in value.trim_matches('"').split_whitespace() {
+                distribution_ids.push(id.to_ascii_lowercase());
+            }
+        }
+    }
+
+    let package_manager_hint = if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "arch")
+    {
+        Some("Install it with: sudo pacman -S rsync")
+    } else if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "debian" || distribution_id == "ubuntu")
+    {
+        Some("Install it with: sudo apt install rsync")
+    } else if distribution_ids.iter().any(|distribution_id| {
+        distribution_id == "fedora"
+            || distribution_id == "rhel"
+            || distribution_id == "centos"
+            || distribution_id == "rocky"
+            || distribution_id == "almalinux"
+    }) {
+        Some("Install it with: sudo dnf install rsync")
+    } else if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "nixos")
+    {
+        Some("Install pkgs.rsync from nixpkgs")
+    } else {
+        None
+    };
+
+    package_manager_hint.unwrap_or("Please install rsync using your package manager")
+}
 
 actions!(
     auto_update,
@@ -220,7 +281,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
             Some(&message),
-            &["Ok"],
+            &["OK"],
             cx,
         ));
         return;
@@ -240,7 +301,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             gpui::PromptLevel::Info,
             "Could not check for updates",
             Some("Auto-updates disabled for non-bundled app."),
-            &["Ok"],
+            &["OK"],
             cx,
         ));
     }
@@ -359,6 +420,12 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let poll_interval =
+            ReleaseChannel::try_global(cx).map_or(POLL_INTERVAL, |channel| match channel {
+                ReleaseChannel::Nightly => NIGHTLY_POLL_INTERVAL,
+                _ => POLL_INTERVAL,
+            });
+
         cx.spawn(async move |this, cx| {
             if cfg!(target_os = "windows") {
                 use util::ResultExt;
@@ -371,7 +438,7 @@ impl AutoUpdater {
 
             loop {
                 this.update(cx, |this, cx| this.poll(UpdateCheckType::Automatic, cx))?;
-                cx.background_executor().timer(POLL_INTERVAL).await;
+                cx.background_executor().timer(poll_interval).await;
             }
         })
     }
@@ -397,7 +464,15 @@ impl AutoUpdater {
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
+                    let is_missing_dependency =
+                        error.downcast_ref::<MissingDependencyError>().is_some();
                     this.status = match check_type {
+                        UpdateCheckType::Automatic if is_missing_dependency => {
+                            log::warn!("auto-update: {}", error);
+                            AutoUpdateStatus::Errored {
+                                error: Arc::new(error),
+                            }
+                        }
                         // Be quiet if the check was automated (e.g. when offline)
                         UpdateCheckType::Automatic => {
                             log::info!("auto-update check failed: error:{:?}", error);
@@ -644,8 +719,30 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let new_binary_path = Self::install_release(installer_dir, &target_path, cx)
+        #[cfg(test)]
+        let install_result = match cx
+            .try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
+            .map(|test_install| test_install(&target_path, cx))
+        {
+            Some(result) => result,
+            None => return Ok(()),
+        };
+
+        #[cfg(not(test))]
+        let install_result = {
+            let running_app_path = cx.update(|cx| cx.app_path())?;
+            let background_executor = cx.background_executor().clone();
+            let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
+            cx.background_spawn(Self::install_release(
+                installer_dir,
+                target_path.clone(),
+                running_app_path,
+                channel,
+                background_executor,
+            ))
             .await
+        };
+        let new_binary_path = install_result
             .with_context(|| format!("Failed to install update at: {}", target_path.display()))?;
         if let Some(new_binary_path) = new_binary_path {
             cx.update(|cx| cx.set_restart_path(new_binary_path));
@@ -715,11 +812,21 @@ impl AutoUpdater {
     }
 
     fn check_dependencies() -> Result<()> {
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        if which::which("rsync").is_err() {
+            let install_hint = linux_rsync_install_hint();
+            return Err(MissingDependencyError(format!(
+                "rsync is required for auto-updates but is not installed. {install_hint}"
+            ))
+            .into());
+        }
+
+        #[cfg(target_os = "macos")]
         anyhow::ensure!(
             which::which("rsync").is_ok(),
             "Could not auto-update because the required rsync utility was not found."
         );
+
         Ok(())
     }
 
@@ -734,21 +841,28 @@ impl AutoUpdater {
         Ok(installer_dir.path().join(filename))
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn install_release(
         installer_dir: InstallerDir,
-        target_path: &Path,
-        cx: &AsyncApp,
+        target_path: PathBuf,
+        running_app_path: PathBuf,
+        channel: &str,
+        background_executor: BackgroundExecutor,
     ) -> Result<Option<PathBuf>> {
-        #[cfg(test)]
-        if let Some(test_install) =
-            cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-        {
-            return test_install(target_path, cx);
-        }
         match OS {
-            "macos" => install_release_macos(&installer_dir, target_path, cx).await,
-            "linux" => install_release_linux(&installer_dir, target_path, cx).await,
-            "windows" => install_release_windows(target_path).await,
+            "macos" => {
+                install_release_macos(
+                    &installer_dir,
+                    &target_path,
+                    running_app_path,
+                    &background_executor,
+                )
+                .await
+            }
+            "linux" => {
+                install_release_linux(&installer_dir, &target_path, channel, running_app_path).await
+            }
+            "windows" => install_release_windows(&target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }
     }
@@ -770,17 +884,16 @@ impl AutoUpdater {
         should_show: bool,
         cx: &App,
     ) -> Task<Result<()>> {
+        let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
             if should_show {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
-                        "".to_string(),
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string(),
+                    "".to_string(),
+                )
+                .await?;
             } else {
-                KEY_VALUE_STORE
-                    .delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
+                kvp.delete_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY.to_string())
                     .await?;
             }
             Ok(())
@@ -788,10 +901,9 @@ impl AutoUpdater {
     }
 
     pub fn should_show_update_notification(&self, cx: &App) -> Task<Result<bool>> {
+        let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
-            Ok(KEY_VALUE_STORE
-                .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
-                .is_some())
+            Ok(kvp.read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?.is_some())
         })
     }
 }
@@ -895,11 +1007,10 @@ async fn download_release(
 async fn install_release_linux(
     temp_dir: &InstallerDir,
     downloaded_tar_gz: &Path,
-    cx: &AsyncApp,
+    channel: &str,
+    running_app_path: PathBuf,
 ) -> Result<Option<PathBuf>> {
-    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
-    let running_app_path = cx.update(|cx| cx.app_path())?;
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)
@@ -964,9 +1075,9 @@ async fn install_release_linux(
 async fn install_release_macos(
     temp_dir: &InstallerDir,
     downloaded_dmg: &Path,
-    cx: &AsyncApp,
+    running_app_path: PathBuf,
+    background_executor: &BackgroundExecutor,
 ) -> Result<Option<PathBuf>> {
-    let running_app_path = cx.update(|cx| cx.app_path())?;
     let running_app_filename = running_app_path
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
@@ -994,7 +1105,7 @@ async fn install_release_macos(
     // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
     let _unmounter = MacOsUnmounter {
         mount_path: mount_path.clone(),
-        background_executor: cx.background_executor(),
+        background_executor,
     };
 
     let mut cmd = new_command("rsync");
@@ -1033,8 +1144,7 @@ async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<P
     let mut cmd = new_command(downloaded_installer);
     cmd.arg("/verysilent")
         .arg("/update=true")
-        .arg("!desktopicon")
-        .arg("!quicklaunchicon");
+        .arg("/MERGETASKS=!desktopicon");
     let output = cmd.output().await?;
     anyhow::ensure!(
         output.status.success(),
@@ -1093,7 +1203,7 @@ mod tests {
     };
     use tempfile::tempdir;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }

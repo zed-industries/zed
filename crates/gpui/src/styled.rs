@@ -1,9 +1,9 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle,
-    StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
-    relative, rems,
+    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, SharedString,
+    StrikethroughStyle, StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow,
+    TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -58,6 +58,15 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/display)
     fn hidden(mut self) -> Self {
         self.style().display = Some(Display::None);
+        self
+    }
+
+    /// Set the space to be reserved for rendering the scrollbar.
+    ///
+    /// This will only affect the layout of the element when overflow for this element is set to
+    /// `Overflow::Scroll`.
+    fn scrollbar_width(mut self, width: impl Into<AbsoluteLength>) -> Self {
+        self.style().scrollbar_width = Some(width.into());
         self
     }
 
@@ -191,6 +200,7 @@ pub trait Styled: Sized {
     fn flex_none(mut self) -> Self {
         self.style().flex_grow = Some(0.);
         self.style().flex_shrink = Some(0.);
+        self.style().flex_basis = Some(Length::Auto);
         self
     }
 
@@ -201,24 +211,45 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the element to allow a flex item to grow to fill any available space.
+    /// Sets the flex item's grow factor.
     /// [Docs](https://tailwindcss.com/docs/flex-grow)
-    fn flex_grow(mut self) -> Self {
+    fn flex_grow(mut self, grow: f32) -> Self {
+        self.style().flex_grow = Some(grow);
+        self
+    }
+
+    /// Disables flex item growth (flex-grow: 0).
+    /// [Docs](https://tailwindcss.com/docs/flex-grow#dont-grow)
+    fn flex_grow_0(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self
+    }
+
+    /// Enables flex item growth (flex-grow: 1).
+    /// [Docs](https://tailwindcss.com/docs/flex-grow#grow-1)
+    fn flex_grow_1(mut self) -> Self {
         self.style().flex_grow = Some(1.);
         self
     }
 
-    /// Sets the element to allow a flex item to shrink if needed.
+    /// Sets the flex item's shrink factor.
     /// [Docs](https://tailwindcss.com/docs/flex-shrink)
-    fn flex_shrink(mut self) -> Self {
-        self.style().flex_shrink = Some(1.);
+    fn flex_shrink(mut self, shrink: f32) -> Self {
+        self.style().flex_shrink = Some(shrink);
         self
     }
 
-    /// Sets the element to prevent a flex item from shrinking.
+    /// Disables flex item shrinking (flex-shrink: 0).
     /// [Docs](https://tailwindcss.com/docs/flex-shrink#dont-shrink)
     fn flex_shrink_0(mut self) -> Self {
         self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    /// Enables flex item shrinking (flex-shrink: 1).
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink#shrink-1)
+    fn flex_shrink_1(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
         self
     }
 
@@ -711,20 +742,38 @@ pub trait Styled: Sized {
 
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
-        self.style().grid_cols = Some(cols);
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::Zero,
+        });
         self
     }
 
     /// Sets the grid columns with min-content minimum sizing.
     /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
     fn grid_cols_min_content(mut self, cols: u16) -> Self {
-        self.style().grid_cols_min_content = Some(cols);
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::MinContent,
+        });
+        self
+    }
+
+    /// Sets the grid columns with max-content maximum sizing for content-based column widths.
+    fn grid_cols_max_content(mut self, cols: u16) -> Self {
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::MaxContent,
+        });
         self
     }
 
     /// Sets the grid rows of this element.
     fn grid_rows(mut self, rows: u16) -> Self {
-        self.style().grid_rows = Some(rows);
+        self.style().grid_rows = Some(GridTemplate {
+            repeat: rows,
+            min_size: TemplateColumnMinSize::Zero,
+        });
         self
     }
 

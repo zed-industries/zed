@@ -16,7 +16,6 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
-client.workspace = true
 gpui.workspace = true
 human_bytes.workspace = true
 release_channel.workspace = true

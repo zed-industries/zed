@@ -138,6 +138,9 @@ pub enum ButtonStyle {
     /// A more de-emphasized version of the outlined button.
     OutlinedGhost,
 
+    /// Like [`ButtonStyle::Outlined`], but with a caller-provided border color.
+    OutlinedCustom(Hsla),
+
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
     #[default]
@@ -230,6 +233,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
@@ -280,6 +289,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_hover,
+                border_color,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -324,6 +339,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: cx.theme().colors().element_active,
+                border_color,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
@@ -360,6 +381,12 @@ impl ButtonStyle {
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
+                border_color,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
@@ -401,6 +428,12 @@ impl ButtonStyle {
             },
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
                 background: transparent_black(),
+                border_color: cx.theme().colors().border_disabled,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedCustom(_) => ButtonLikeStyles {
+                background: cx.theme().colors().element_disabled,
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -640,7 +673,7 @@ impl RenderOnce for ButtonLike {
 
         let is_outlined = matches!(
             self.style,
-            ButtonStyle::Outlined | ButtonStyle::OutlinedGhost
+            ButtonStyle::Outlined | ButtonStyle::OutlinedGhost | ButtonStyle::OutlinedCustom(_)
         );
 
         self.base
@@ -760,88 +793,86 @@ impl Component for ButtonLike {
         "ButtonZ"
     }
 
-    fn description() -> Option<&'static str> {
-        Some(ButtonLike::DOCS)
+    fn description() -> &'static str {
+        ButtonLike::DOCS
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group(vec![
-                        single_example(
-                            "Default",
-                            ButtonLike::new("default")
-                                .child(Label::new("Default"))
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Filled",
-                            ButtonLike::new("filled")
-                                .style(ButtonStyle::Filled)
-                                .child(Label::new("Filled"))
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Subtle",
-                            ButtonLike::new("outline")
-                                .style(ButtonStyle::Subtle)
-                                .child(Label::new("Subtle"))
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Tinted",
-                            ButtonLike::new("tinted_accent_style")
-                                .style(ButtonStyle::Tinted(TintColor::Accent))
-                                .child(Label::new("Accent"))
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Transparent",
-                            ButtonLike::new("transparent")
-                                .style(ButtonStyle::Transparent)
-                                .child(Label::new("Transparent"))
-                                .into_any_element(),
-                        ),
-                    ]),
-                    example_group_with_title(
-                        "Button Group Constructors",
-                        vec![
-                            single_example(
-                                "Left Rounded",
-                                ButtonLike::new_rounded_left("left_rounded")
-                                    .child(Label::new("Left Rounded"))
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Right Rounded",
-                                ButtonLike::new_rounded_right("right_rounded")
-                                    .child(Label::new("Right Rounded"))
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Button Group",
-                                h_flex()
-                                    .gap_px()
-                                    .child(
-                                        ButtonLike::new_rounded_left("bg_left")
-                                            .child(Label::new("Left"))
-                                            .style(ButtonStyle::Filled),
-                                    )
-                                    .child(
-                                        ButtonLike::new_rounded_right("bg_right")
-                                            .child(Label::new("Right"))
-                                            .style(ButtonStyle::Filled),
-                                    )
-                                    .into_any_element(),
-                            ),
-                        ],
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group(vec![
+                    single_example(
+                        "Default",
+                        ButtonLike::new("default")
+                            .child(Label::new("Default"))
+                            .into_any_element(),
                     ),
-                ])
-                .into_any_element(),
-        )
+                    single_example(
+                        "Filled",
+                        ButtonLike::new("filled")
+                            .style(ButtonStyle::Filled)
+                            .child(Label::new("Filled"))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Subtle",
+                        ButtonLike::new("outline")
+                            .style(ButtonStyle::Subtle)
+                            .child(Label::new("Subtle"))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Tinted",
+                        ButtonLike::new("tinted_accent_style")
+                            .style(ButtonStyle::Tinted(TintColor::Accent))
+                            .child(Label::new("Accent"))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Transparent",
+                        ButtonLike::new("transparent")
+                            .style(ButtonStyle::Transparent)
+                            .child(Label::new("Transparent"))
+                            .into_any_element(),
+                    ),
+                ]),
+                example_group_with_title(
+                    "Button Group Constructors",
+                    vec![
+                        single_example(
+                            "Left Rounded",
+                            ButtonLike::new_rounded_left("left_rounded")
+                                .child(Label::new("Left Rounded"))
+                                .style(ButtonStyle::Filled)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Right Rounded",
+                            ButtonLike::new_rounded_right("right_rounded")
+                                .child(Label::new("Right Rounded"))
+                                .style(ButtonStyle::Filled)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Button Group",
+                            h_flex()
+                                .gap_px()
+                                .child(
+                                    ButtonLike::new_rounded_left("bg_left")
+                                        .child(Label::new("Left"))
+                                        .style(ButtonStyle::Filled),
+                                )
+                                .child(
+                                    ButtonLike::new_rounded_right("bg_right")
+                                        .child(Label::new("Right"))
+                                        .style(ButtonStyle::Filled),
+                                )
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

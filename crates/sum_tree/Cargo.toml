@@ -14,7 +14,7 @@ path = "src/sum_tree.rs"
 doctest = false
 
 [dependencies]
-arrayvec = "0.7.1"
+heapless.workspace = true
 rayon.workspace = true
 log.workspace = true
 ztracing.workspace = true

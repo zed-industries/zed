@@ -1,4 +1,4 @@
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,9 +30,13 @@ pub struct GitPanelSettings {
     pub diff_stats: bool,
     pub show_count_badge: bool,
     pub starts_open: bool,
+    pub commit_title_max_length: usize,
 }
 
-impl ScrollbarVisibility for GitPanelSettings {
+#[derive(Default)]
+pub(crate) struct GitPanelScrollbarAccessor;
+
+impl ScrollbarVisibility for GitPanelScrollbarAccessor {
     fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
         // TODO: This PR should have defined Editor's `scrollbar.axis`
         // as an Option<ScrollbarAxis>, not a ScrollbarAxes as it would allow you to
@@ -42,7 +46,8 @@ impl ScrollbarVisibility for GitPanelSettings {
         // so we can show each axis based on the settings.
         //
         // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
-        self.scrollbar
+        GitPanelSettings::get_global(cx)
+            .scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
@@ -59,7 +64,11 @@ impl Settings for GitPanelSettings {
             file_icons: git_panel.file_icons.unwrap(),
             folder_icons: git_panel.folder_icons.unwrap(),
             scrollbar: ScrollbarSettings {
-                show: git_panel.scrollbar.unwrap().show.map(Into::into),
+                show: git_panel
+                    .scrollbar
+                    .unwrap()
+                    .show
+                    .map(ui_scrollbar_settings_from_raw),
             },
             fallback_branch_name: git_panel.fallback_branch_name.unwrap(),
             sort_by_path: git_panel.sort_by_path.unwrap(),
@@ -68,6 +77,7 @@ impl Settings for GitPanelSettings {
             diff_stats: git_panel.diff_stats.unwrap(),
             show_count_badge: git_panel.show_count_badge.unwrap(),
             starts_open: git_panel.starts_open.unwrap(),
+            commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
         }
     }
 }

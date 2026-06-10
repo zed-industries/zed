@@ -143,6 +143,21 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @variable.parameter      | Captures function/method parameters    |
 | @variant                 | Captures variants                      |
 
+#### Fallback captures
+
+A single Tree-sitter pattern can specify multiple captures on the same node to define fallback highlights.
+Zed resolves them right-to-left: It first tries the rightmost capture, and if the current theme has no style for it, falls back to the next capture to the left, and so on.
+
+For example:
+
+```scheme
+(type_identifier) @type @variable
+```
+
+Here Zed will first try to resolve `@variable` from the theme. If the theme defines a style for `@variable`, that style is used. Otherwise, Zed falls back to `@type`.
+
+This is useful when a language wants to provide a preferred highlight that not all themes may support, while still falling back to a more common capture that most themes define.
+
 ### Bracket matching
 
 The `brackets.scm` file defines matching brackets.
@@ -513,7 +528,7 @@ Each rule in the `semantic_token_rules` array is defined as follows:
 - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., `"#ff0000"`).
 - `background_color`: The background color to use for the token type, in hex format (e.g., `"#ff0000"`).
 - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
-- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+- `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token will have a strikethrough with the text color.
 - `font_weight`: One of `"normal"`, `"bold"`.
 - `font_style`: One of `"normal"`, `"italic"`.
 

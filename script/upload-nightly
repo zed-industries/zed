@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-bash -euo pipefail
+set -euo pipefail
 source script/lib/blob-store.sh
 
 bucket_name="zed-nightly-host"

@@ -1,6 +1,16 @@
-use shell_command_parser::extract_terminal_command_prefix;
+use acp_thread::PermissionPattern;
+use shell_command_parser::{extract_commands, extract_terminal_command_prefix};
 use std::path::{Path, PathBuf};
 use url::Url;
+
+/// Escapes a string for use in a regex pattern, but leaves dashes unescaped.
+///
+/// `regex::escape()` escapes dashes, but they are only special inside `[]`
+/// character classes. Leaving them unescaped produces cleaner patterns
+/// (e.g. `^git-lfs\s+pull` instead of `^git\-lfs\s+pull`).
+fn escape_for_pattern(text: &str) -> String {
+    regex::escape(text).replace("\\-", "-")
+}
 
 /// Normalize path separators to forward slashes for consistent cross-platform patterns.
 fn normalize_separators(path_str: &str) -> String {
@@ -42,26 +52,35 @@ fn extract_command_prefix(command: &str) -> Option<CommandPrefix> {
     })
 }
 
-/// Extracts a regex pattern from a terminal command based on the first token (command name).
+/// Extracts a regex pattern and display name from a terminal command.
 ///
 /// Returns `None` for commands starting with `./`, `/`, or other path-like prefixes.
 /// This is a deliberate security decision: we only allow pattern-based "always allow"
 /// rules for well-known command names (like `cargo`, `npm`, `git`), not for arbitrary
 /// scripts or absolute paths which could be manipulated by an attacker.
+pub fn extract_terminal_permission_pattern(command: &str) -> Option<PermissionPattern> {
+    let pattern = extract_terminal_pattern(command)?;
+    let display_name = extract_terminal_pattern_display(command)?;
+    Some(PermissionPattern {
+        pattern,
+        display_name,
+    })
+}
+
 pub fn extract_terminal_pattern(command: &str) -> Option<String> {
     let prefix = extract_command_prefix(command)?;
     let tokens = prefix.normalized_tokens;
 
     match tokens.as_slice() {
         [] => None,
-        [single] => Some(format!("^{}\\b", regex::escape(single))),
+        [single] => Some(format!("^{}\\b", escape_for_pattern(single))),
         [rest @ .., last] => Some(format!(
             "^{}\\s+{}(\\s|$)",
             rest.iter()
-                .map(|token| regex::escape(token))
+                .map(|token| escape_for_pattern(token))
                 .collect::<Vec<_>>()
                 .join("\\s+"),
-            regex::escape(last)
+            escape_for_pattern(last)
         )),
     }
 }
@@ -71,13 +90,42 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
     Some(prefix.display)
 }
 
+/// Extracts patterns for ALL commands in a pipeline, not just the first one.
+///
+/// For a command like `"cargo test 2>&1 | tail"`, this returns patterns for
+/// both `cargo` and `tail`. Path-based commands (e.g. `./script.sh`) are
+/// filtered out, and duplicate command names are deduplicated while preserving
+/// order.
+pub fn extract_all_terminal_patterns(command: &str) -> Vec<PermissionPattern> {
+    let commands = match extract_commands(command) {
+        Some(commands) => commands,
+        None => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+
+    for cmd in &commands {
+        let Some(permission_pattern) = extract_terminal_permission_pattern(cmd) else {
+            continue;
+        };
+
+        if results.contains(&permission_pattern) {
+            continue;
+        }
+
+        results.push(permission_pattern);
+    }
+
+    results
+}
+
 pub fn extract_path_pattern(path: &str) -> Option<String> {
     let parent = Path::new(path).parent()?;
     let parent_str = normalize_separators(parent.to_str()?);
     if parent_str.is_empty() || parent_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(&parent_str)))
+    Some(format!("^{}/", escape_for_pattern(&parent_str)))
 }
 
 pub fn extract_path_pattern_display(path: &str) -> Option<String> {
@@ -117,7 +165,7 @@ pub fn extract_copy_move_pattern(input: &str) -> Option<String> {
     if common_str.is_empty() || common_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(&common_str)))
+    Some(format!("^{}/", escape_for_pattern(&common_str)))
 }
 
 pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
@@ -133,7 +181,7 @@ pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
 pub fn extract_url_pattern(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     let domain = parsed.host_str()?;
-    Some(format!("^https?://{}", regex::escape(domain)))
+    Some(format!("^https?://{}", escape_for_pattern(domain)))
 }
 
 pub fn extract_url_pattern_display(url: &str) -> Option<String> {
@@ -162,7 +210,7 @@ mod tests {
         );
         assert_eq!(
             extract_terminal_pattern("git-lfs pull"),
-            Some("^git\\-lfs\\s+pull(\\s|$)".to_string())
+            Some("^git-lfs\\s+pull(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("my_script arg"),
@@ -205,7 +253,7 @@ mod tests {
         );
         assert_eq!(
             extract_terminal_pattern("PAGER='less -R' git log"),
-            Some("^PAGER='less \\-R'\\s+git\\s+log(\\s|$)".to_string())
+            Some("^PAGER='less -R'\\s+git\\s+log(\\s|$)".to_string())
         );
 
         // Path-like commands are rejected
@@ -274,6 +322,39 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_all_terminal_patterns_pipeline() {
+        assert_eq!(
+            extract_all_terminal_patterns("cargo test 2>&1 | tail"),
+            vec![
+                PermissionPattern {
+                    pattern: "^cargo\\s+test(\\s|$)".to_string(),
+                    display_name: "cargo test".to_string(),
+                },
+                PermissionPattern {
+                    pattern: "^tail\\b".to_string(),
+                    display_name: "tail".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_with_path_commands() {
+        assert_eq!(
+            extract_all_terminal_patterns("./script.sh | grep foo"),
+            vec![PermissionPattern {
+                pattern: "^grep\\s+foo(\\s|$)".to_string(),
+                display_name: "grep foo".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_all_paths() {
+        assert_eq!(extract_all_terminal_patterns("./a.sh | /usr/bin/b"), vec![]);
+    }
+
+    #[test]
     fn test_extract_path_pattern() {
         assert_eq!(
             extract_path_pattern("/Users/alice/project/src/main.rs"),
@@ -321,6 +402,22 @@ mod tests {
         assert_eq!(
             extract_url_pattern_display("http://api.example.com/v1/users"),
             Some("api.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_dashes_are_not_escaped() {
+        assert_eq!(
+            extract_terminal_pattern("git-lfs pull"),
+            Some("^git-lfs\\s+pull(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_url_pattern("https://typescript-eslint.io/rules/no-unused-vars"),
+            Some("^https?://typescript-eslint\\.io".to_string())
+        );
+        assert_eq!(
+            extract_path_pattern("/my-project/sub-dir/file.rs"),
+            Some("^/my-project/sub-dir/".to_string())
         );
     }
 

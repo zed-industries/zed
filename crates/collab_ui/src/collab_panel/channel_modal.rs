@@ -1,12 +1,13 @@
 use channel::{ChannelMembership, ChannelStore};
 use client::{
-    ChannelId, User, UserId, UserStore,
+    ChannelId, LegacyUserId, User, UserStore,
     proto::{self, ChannelRole, ChannelVisibility},
 };
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement,
-    Render, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, div,
+    Render, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, anchored, deferred,
+    div,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -363,15 +364,20 @@ impl PickerDelegate for ChannelModalDelegate {
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(selected_user) = self.user_at_index(self.selected_index) {
-            if Some(selected_user.id) == self.user_store.read(cx).current_user().map(|user| user.id)
+            if Some(selected_user.legacy_id)
+                == self
+                    .user_store
+                    .read(cx)
+                    .current_user()
+                    .map(|user| user.legacy_id)
             {
                 return;
             }
             match self.mode {
                 Mode::ManageMembers => self.show_context_menu(self.selected_index, window, cx),
-                Mode::InviteMembers => match self.member_status(selected_user.id, cx) {
+                Mode::InviteMembers => match self.member_status(selected_user.legacy_id, cx) {
                     Some(proto::channel_member::Kind::Invitee) => {
-                        self.remove_member(selected_user.id, window, cx);
+                        self.remove_member(selected_user.legacy_id, window, cx);
                     }
                     Some(proto::channel_member::Kind::Member) => {}
                     None => self.invite_member(selected_user, window, cx),
@@ -399,8 +405,13 @@ impl PickerDelegate for ChannelModalDelegate {
     ) -> Option<Self::ListItem> {
         let user = self.user_at_index(ix)?;
         let membership = self.member_at_index(ix);
-        let request_status = self.member_status(user.id, cx);
-        let is_me = self.user_store.read(cx).current_user().map(|user| user.id) == Some(user.id);
+        let request_status = self.member_status(user.legacy_id, cx);
+        let is_me = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .map(|user| user.legacy_id)
+            == Some(user.legacy_id);
 
         Some(
             ListItem::new(ix)
@@ -433,7 +444,7 @@ impl PickerDelegate for ChannelModalDelegate {
                                     Some(
                                         deferred(
                                             anchored()
-                                                .anchor(gpui::Corner::TopRight)
+                                                .anchor(gpui::Anchor::TopRight)
                                                 .child(menu.clone()),
                                         )
                                         .with_priority(1),
@@ -458,10 +469,16 @@ impl PickerDelegate for ChannelModalDelegate {
 }
 
 impl ChannelModalDelegate {
-    fn member_status(&self, user_id: UserId, cx: &App) -> Option<proto::channel_member::Kind> {
+    fn member_status(
+        &self,
+        user_id: LegacyUserId,
+        cx: &App,
+    ) -> Option<proto::channel_member::Kind> {
         self.members
             .iter()
-            .find_map(|membership| (membership.user.id == user_id).then_some(membership.kind))
+            .find_map(|membership| {
+                (membership.user.legacy_id == user_id).then_some(membership.kind)
+            })
             .or_else(|| {
                 self.channel_store
                     .read(cx)
@@ -488,7 +505,7 @@ impl ChannelModalDelegate {
 
     fn set_user_role(
         &mut self,
-        user_id: UserId,
+        user_id: LegacyUserId,
         new_role: ChannelRole,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -500,7 +517,11 @@ impl ChannelModalDelegate {
             update.await?;
             picker.update_in(cx, |picker, window, cx| {
                 let this = &mut picker.delegate;
-                if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user_id) {
+                if let Some(member) = this
+                    .members
+                    .iter_mut()
+                    .find(|m| m.user.legacy_id == user_id)
+                {
                     member.role = new_role;
                 }
                 cx.focus_self(window);
@@ -513,7 +534,7 @@ impl ChannelModalDelegate {
 
     fn remove_member(
         &mut self,
-        user_id: UserId,
+        user_id: LegacyUserId,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<()> {
@@ -524,7 +545,11 @@ impl ChannelModalDelegate {
             update.await?;
             picker.update_in(cx, |picker, window, cx| {
                 let this = &mut picker.delegate;
-                if let Some(ix) = this.members.iter_mut().position(|m| m.user.id == user_id) {
+                if let Some(ix) = this
+                    .members
+                    .iter_mut()
+                    .position(|m| m.user.legacy_id == user_id)
+                {
                     this.members.remove(ix);
                     this.matching_member_indices.retain_mut(|member_ix| {
                         if *member_ix == ix {
@@ -555,7 +580,7 @@ impl ChannelModalDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         let invite_member = self.channel_store.update(cx, |store, cx| {
-            store.invite_member(self.channel_id, user.id, ChannelRole::Member, cx)
+            store.invite_member(self.channel_id, user.legacy_id, ChannelRole::Member, cx)
         });
 
         cx.spawn_in(window, async move |this, cx| {
@@ -587,7 +612,7 @@ impl ChannelModalDelegate {
         let Some(membership) = self.member_at_index(ix) else {
             return;
         };
-        let user_id = membership.user.id;
+        let user_id = membership.user.legacy_id;
         let picker = cx.entity();
         let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
             let role = membership.role;

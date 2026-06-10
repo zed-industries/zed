@@ -1,22 +1,13 @@
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
-use crate::{File, LanguageToolchainStore, Location, Runnable};
+use crate::{Buffer, LanguageToolchainStore, Location, RunnableResolver};
 
 use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{App, Task};
+use gpui::{App, Entity, Task};
 use lsp::LanguageServerName;
 use task::{TaskTemplates, TaskVariables};
-use text::BufferId;
-
-pub struct RunnableRange {
-    pub buffer_id: BufferId,
-    pub run_range: Range<usize>,
-    pub full_range: Range<usize>,
-    pub runnable: Runnable,
-    pub extra_captures: HashMap<String, String>,
-}
 
 /// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
 /// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
@@ -37,12 +28,19 @@ pub trait ContextProvider: Send + Sync {
     }
 
     /// Provides all tasks, associated with the current language.
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(None)
     }
 
     /// A language server name, that can return tasks using LSP (ext) for this language.
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
+        None
+    }
+
+    /// A resolver for runnable queries that group captures with `@run_item`.
+    /// For each group, the resolver picks which `@run` range and extra captures
+    /// to surface. Without a resolver, grouped matches emit no runnables.
+    fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
         None
     }
 }
