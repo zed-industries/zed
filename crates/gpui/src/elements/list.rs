@@ -619,31 +619,39 @@ impl ListState {
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
-
         let mut scroll_top = state.logical_scroll_top();
-        let height = state
+        let viewport_height = state
             .last_layout_bounds
             .map_or(px(0.), |bounds| bounds.size.height);
         let padding = state.last_padding.unwrap_or_default();
 
-        if ix <= scroll_top.item_ix {
+        // calculate top coordinate
+        let mut cursor = state.items.cursor::<ListItemSummary>(());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+        let current_scroll_px = cursor.start().height + scroll_top.offset_in_item;
+
+        // calculate the item top boundary
+        cursor.seek(&Count(ix), Bias::Right);
+        let item_top = cursor.start().height + padding.top;
+
+        // calculate the item bottom boundary (item + 1 top boundary)
+        cursor.seek(&Count(ix + 1), Bias::Right);
+        let item_bottom = cursor.start().height + padding.top;
+
+        if item_top < current_scroll_px {
+            // CASE: Item is partially or fully ABOVE the viewport
             scroll_top.item_ix = ix;
             scroll_top.offset_in_item = px(0.);
-        } else {
-            let mut cursor = state.items.cursor::<ListItemSummary>(());
-            cursor.seek(&Count(ix + 1), Bias::Right);
-            let bottom = cursor.start().height + padding.top;
-            let goal_top = px(0.).max(bottom - height + padding.bottom);
+        } else if item_bottom > current_scroll_px + viewport_height {
+            // CASE: Item is partially or fully BELOW the viewport
+            let goal_top = item_bottom - viewport_height + padding.bottom;
 
             cursor.seek(&Height(goal_top), Bias::Left);
-            let start_ix = cursor.start().count;
-            let start_item_top = cursor.start().height;
-
-            if start_ix >= scroll_top.item_ix {
-                scroll_top.item_ix = start_ix;
-                scroll_top.offset_in_item = goal_top - start_item_top;
-            }
+            scroll_top.item_ix = cursor.start().count;
+            scroll_top.offset_in_item = goal_top - cursor.start().height;
         }
+
+        // ELSE: Item is already within the viewport! Do nothing.
 
         state.logical_scroll_top = Some(scroll_top);
     }
