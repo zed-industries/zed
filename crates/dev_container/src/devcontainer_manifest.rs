@@ -127,11 +127,11 @@ impl DevContainerManifest {
         let labels = vec![
             (
                 "devcontainer.local_folder",
-                (self.local_project_directory.display()).to_string(),
+                normalize_label_path(&self.local_project_directory.display().to_string()),
             ),
             (
                 "devcontainer.config_file",
-                (self.config_file().display()).to_string(),
+                normalize_label_path(&self.config_file().display().to_string()),
             ),
         ];
         labels
@@ -2986,6 +2986,24 @@ fn get_container_user_from_config(
     }
 
     Ok("root".to_string())
+}
+
+fn normalize_label_path(path: &str) -> String {
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let normalized = path.replace('/', "\\");
+        if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
+            let mut result = normalized[..1].to_lowercase();
+            result.push_str(&normalized[1..]);
+            result
+        } else {
+            normalized
+        }
+    }
 }
 
 #[cfg(test)]
