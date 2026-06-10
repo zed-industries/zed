@@ -6248,8 +6248,8 @@ impl BackdropBlurEffect {
     }
 
     /// Set a tint color composited over the blurred backdrop.
-    pub fn tint(mut self, tint: Hsla) -> Self {
-        self.tint = tint;
+    pub fn tint(mut self, tint: impl Into<Hsla>) -> Self {
+        self.tint = tint.into();
         self
     }
 }

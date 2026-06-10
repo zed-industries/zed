@@ -6,7 +6,7 @@ use gpui::{
     Animation, AnimationExt as _, App, BackdropBlurEffect, Bounds, Context, Corners, Hsla,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Window,
     WindowBounds, WindowOptions, canvas, div, hsla, point, prelude::*, pulsating_between, px, rgb,
-    size, white,
+    rgba, size, white,
 };
 use gpui_platform::application;
 
@@ -44,13 +44,13 @@ fn samples() -> [BlurSample; 5] {
         },
         BlurSample {
             radius: 18.,
-            tint: Some(hsla(0., 0., 1., 0.26)),
-            code: "BackdropBlurEffect::new(px(18.))\n    .tint(hsla(\n        0., 0., 1., 0.26,\n    ))",
+            tint: Some(rgba(0xffffff42).into()),
+            code: "BackdropBlurEffect::new(px(18.))\n    .tint(rgba(0xffffff42))",
         },
         BlurSample {
             radius: 32.,
-            tint: Some(hsla(36. / 360., 0.92, 0.55, 0.56)),
-            code: "BackdropBlurEffect::new(px(32.))\n    .tint(hsla(\n        36. / 360.,\n        0.92, 0.55, 0.56,\n    ))",
+            tint: Some(rgb(0xf59e0b).into()),
+            code: "BackdropBlurEffect::new(px(32.))\n    .tint(rgb(0xf59e0b))",
         },
         BlurSample {
             radius: 48.,

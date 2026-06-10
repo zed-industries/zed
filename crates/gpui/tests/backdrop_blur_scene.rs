@@ -1,6 +1,7 @@
 use gpui::{
-    BackdropBlurRect, Bounds, ContentMask, MAX_BACKDROP_BLUR_KERNEL_LEVELS, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Size, point,
+    BackdropBlurEffect, BackdropBlurRect, Bounds, ContentMask, Hsla,
+    MAX_BACKDROP_BLUR_KERNEL_LEVELS, PrimitiveBatch, Quad, ScaledPixels, Scene, Size, hsla, point,
+    px, rgb, rgba,
 };
 
 fn test_bounds(x: f32) -> Bounds<ScaledPixels> {
@@ -139,6 +140,29 @@ fn backdrop_blur_rect_radius_maps_to_kernel_levels() {
 #[test]
 fn backdrop_blur_rect_default_is_visible() {
     assert_eq!(1., BackdropBlurRect::default().opacity);
+}
+
+#[test]
+fn backdrop_blur_effect_tint_accepts_gpui_color_types() {
+    let hsla_tint = hsla(0.25, 0.5, 0.5, 0.25);
+    assert_eq!(
+        hsla_tint,
+        BackdropBlurEffect::new(px(1.)).tint(hsla_tint).tint
+    );
+
+    let rgba_tint = rgba(0xffffff42);
+    let expected_rgba_tint: Hsla = rgba_tint.into();
+    assert_eq!(
+        expected_rgba_tint,
+        BackdropBlurEffect::new(px(1.)).tint(rgba_tint).tint
+    );
+
+    let rgb_tint = rgb(0xf59e0b);
+    let expected_rgb_tint: Hsla = rgb_tint.into();
+    assert_eq!(
+        expected_rgb_tint,
+        BackdropBlurEffect::new(px(1.)).tint(rgb_tint).tint
+    );
 }
 
 #[test]
