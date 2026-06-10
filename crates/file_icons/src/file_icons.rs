@@ -38,6 +38,15 @@ impl FileIcons {
                 return maybe_path;
             }
 
+            // check if stem (before first dot) is in stems
+            // e.g. catch file named `Dockerfile.prod` or `Podfile.lock`
+            if let Some((stem, _)) = typ.split_once('.') {
+                let maybe_path = get_icon_from_suffix(stem);
+                if maybe_path.is_some() {
+                    return maybe_path;
+                }
+            }
+
             // check if suffix based on first dot is in suffixes
             // e.g. consider `module.js` as suffix to angular's module file named `auth.module.js`
             while let Some((_, suffix)) = typ.split_once('.') {
