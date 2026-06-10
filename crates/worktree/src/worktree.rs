@@ -4199,6 +4199,12 @@ impl BackgroundScanner {
 
                 path_prefix_request = self.path_prefixes_to_scan_rx.recv().fuse() => {
                     let Ok(request) = path_prefix_request else { break };
+
+                    if self.state.lock().await.path_prefixes_to_scan.contains(&request.path) {
+                        self.send_status_update(false, request.done, &[]).await;
+                        continue;
+                    }
+
                     log::trace!("adding path prefix {:?}", request.path);
 
                     let did_scan = self.forcibly_load_paths(std::slice::from_ref(&request.path)).await;
