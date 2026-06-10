@@ -257,6 +257,25 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Open Behavior",
+                description: "How projects open from the UI by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content.workspace.default_open_behavior.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
         ]
     }
     fn security_section() -> [SettingsPageItem; 2] {

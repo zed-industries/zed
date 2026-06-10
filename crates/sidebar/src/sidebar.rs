@@ -6570,15 +6570,7 @@ impl Sidebar {
                 IconButton::new("open-project", IconName::OpenFolder)
                     .icon_size(IconSize::Small)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
-                |_window, cx| {
-                    Tooltip::for_action(
-                        "Add Project",
-                        &OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
-                },
+                |_window, cx| Tooltip::for_action("Add Project", &OpenRecent::default(), cx),
             )
             .offset(gpui::Point {
                 x: px(-2.0),
@@ -7274,7 +7266,7 @@ impl Sidebar {
             telemetry::event!("Sidebar Add Project Clicked", side = side);
             window.dispatch_action(
                 Open {
-                    create_new_window: false,
+                    create_new_window: Some(false),
                 }
                 .boxed_clone(),
                 cx,

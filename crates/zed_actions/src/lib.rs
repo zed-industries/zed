@@ -620,7 +620,7 @@ pub mod assistant {
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Creates a project from a selected template.
@@ -631,7 +631,7 @@ pub struct OpenRemote {
     #[serde(default)]
     pub from_existing_connection: bool,
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Opens the dev container connection modal.
@@ -795,7 +795,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenFolderInWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 
     /// Open a wsl distro.
@@ -804,7 +804,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 }
 
