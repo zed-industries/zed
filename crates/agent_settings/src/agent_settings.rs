@@ -406,6 +406,7 @@ pub struct SandboxPermissions {
     pub allow_network: bool,
     pub allow_fs_write_all: bool,
     pub allow_unsandboxed: bool,
+    pub allow_git_access: bool,
     pub write_paths: Vec<PathBuf>,
 }
 
@@ -783,6 +784,7 @@ fn compile_sandbox_permissions(
         allow_network: content.allow_network.unwrap_or(false),
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        allow_git_access: content.allow_git_access.unwrap_or(false),
         write_paths,
     }
 }

@@ -16,8 +16,10 @@
 //!    under `sandbox-exec -f <config-path>`.
 //!
 //! Reads are permitted by default; writes are restricted to a caller-
-//! provided list of directories; network access and unrestricted writes
-//! must be opted into per command.
+//! provided list of directories; IP network access and unrestricted writes
+//! must be opted into per command. Callers may separately allow specific
+//! Unix domain sockets for local IPC; those do not permit sending packets to
+//! other machines.
 
 use std::path::Path;
 use std::{io::Write, path::PathBuf};
@@ -37,7 +39,7 @@ use tempfile::NamedTempFile;
 /// module deliberately doesn't expose).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SandboxPermissions {
-    /// Allow network access for the command.
+    /// Allow IP network access for the command.
     pub allow_network: bool,
     /// Allow unrestricted filesystem writes.
     pub allow_fs_write: bool,
@@ -66,11 +68,29 @@ impl SeatbeltConfigFile {
     /// false. Pass the project's worktree paths here — not the working
     /// directory of the command, since that is model-controlled and would
     /// let the model widen its own writable scope.
-    pub fn new(writable_directories: &[&Path], permissions: SandboxPermissions) -> Result<Self> {
+    ///
+    /// `protected_paths` lists paths whose file data reads and writes should
+    /// be blocked even if they fall under a readable or writable directory.
+    /// File metadata remains readable.
+    ///
+    /// `allowed_unix_socket_paths` lists Unix domain sockets the command may
+    /// connect to for local IPC even when IP network access is otherwise
+    /// disabled. This does not permit sending packets to other machines.
+    pub fn new(
+        writable_directories: &[&Path],
+        protected_paths: &[&Path],
+        allowed_unix_socket_paths: &[&Path],
+        permissions: SandboxPermissions,
+    ) -> Result<Self> {
         let mut file =
             NamedTempFile::new().context("failed to create temporary Seatbelt config file")?;
 
-        let config = generate_seatbelt_config(writable_directories, permissions)?;
+        let config = generate_seatbelt_config(
+            writable_directories,
+            protected_paths,
+            allowed_unix_socket_paths,
+            permissions,
+        )?;
         file.write_all(config.as_bytes())
             .context("failed to write Seatbelt config")?;
         file.flush().context("failed to flush Seatbelt config")?;
@@ -99,6 +119,12 @@ impl SeatbeltConfigFile {
 ///   the project's worktree paths here, not the working directory of the
 ///   command (the working directory is model-controlled, and using it as
 ///   the writable scope would let the model write outside the project).
+/// * `protected_paths` - Paths whose file data reads and writes should be
+///   denied even if they fall under a readable or writable directory. File
+///   metadata remains readable.
+/// * `allowed_unix_socket_paths` - Unix domain sockets the command may
+///   connect to for local IPC even when IP network access is otherwise
+///   disabled. This does not permit sending packets to other machines.
 /// * `permissions` - Sandbox relaxations requested for this command.
 ///
 /// # Returns
@@ -108,9 +134,16 @@ pub fn wrap_invocation(
     program: &str,
     args: &[String],
     writable_directories: &[&Path],
+    protected_paths: &[&Path],
+    allowed_unix_socket_paths: &[&Path],
     permissions: SandboxPermissions,
 ) -> Result<(String, Vec<String>, SeatbeltConfigFile)> {
-    let config_file = SeatbeltConfigFile::new(writable_directories, permissions)?;
+    let config_file = SeatbeltConfigFile::new(
+        writable_directories,
+        protected_paths,
+        allowed_unix_socket_paths,
+        permissions,
+    )?;
 
     let mut wrapped_args = vec![
         "-f".to_string(),
@@ -139,19 +172,38 @@ pub fn wrap_invocation(
 /// Writes to each entry in `writable_directories` (typically the project's
 /// worktree paths plus any per-command scratch directory the caller wants
 /// allowed) and the standard `/dev/*` write targets are also allowed by
-/// default; network access and unrestricted filesystem writes must be
-/// requested via [`SandboxPermissions`].
+/// default. File data reads and writes to paths in `protected_paths` are
+/// denied even when they would otherwise be readable or writable; file
+/// metadata remains readable. Unix domain socket paths in
+/// `allowed_unix_socket_paths` are reachable for local IPC even when IP
+/// network access is otherwise blocked; callers use this for trusted sockets
+/// inherited from the process
+/// environment, such as `SSH_AUTH_SOCK`. This does not permit sending
+/// packets to other machines.
+///
+/// Network access and unrestricted filesystem writes must be requested via
+/// [`SandboxPermissions`].
 ///
 /// The returned string is the textual content to write to the
 /// [`SeatbeltConfigFile`] passed to `sandbox-exec -f`.
 fn generate_seatbelt_config(
     writable_directories: &[&Path],
+    protected_paths: &[&Path],
+    allowed_unix_socket_paths: &[&Path],
     permissions: SandboxPermissions,
 ) -> Result<String> {
     // Canonicalize each writable path to resolve symlinks (e.g.,
     // /var -> /private/var on macOS). Fall back to the original path if
     // canonicalization fails.
     let canonical_writable_directories: Vec<PathBuf> = writable_directories
+        .iter()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        .collect();
+    let canonical_protected_paths: Vec<PathBuf> = protected_paths
+        .iter()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        .collect();
+    let canonical_unix_socket_paths: Vec<PathBuf> = allowed_unix_socket_paths
         .iter()
         .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
         .collect();
@@ -179,6 +231,18 @@ fn generate_seatbelt_config(
 
 ; Allow pseudo-terminal operations
 (allow pseudo-tty)
+(allow file-read* file-write* file-ioctl
+    (literal "/dev/ptmx"))
+(allow file-read* file-write*
+    (require-all
+        (regex #"^/dev/ttys[0-9]+")
+        (extension "com.apple.sandbox.pty")))
+
+; PTYs created before entering Seatbelt may lack the extension. Allow ioctls
+; on those slave TTYs so interactive shells and signing prompts can manipulate
+; terminal state.
+(allow file-ioctl
+    (regex #"^/dev/ttys[0-9]+"))
 "#
     .to_string();
 
@@ -216,6 +280,18 @@ fn generate_seatbelt_config(
         );
     }
 
+    for protected_path in &canonical_protected_paths {
+        let escaped_path = escape_sandbox_path(protected_path)?;
+        config.push_str(&format!(
+            r#"
+; Block Git metadata content access unless Git access is approved
+(deny file-read-data file-write*
+    (literal "{escaped_path}")
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
     if permissions.allow_network {
         config.push_str(
             r#"
@@ -223,6 +299,28 @@ fn generate_seatbelt_config(
 (allow network*)
 "#,
         );
+    }
+
+    if !canonical_unix_socket_paths.is_empty() {
+        config.push_str(
+            r#"
+; Allow local IPC to inherited Unix domain sockets. Seatbelt models this as
+; network-outbound, but this does not permit IP networking or sending packets
+; to other machines.
+(allow system-socket
+    (socket-domain AF_UNIX))
+"#,
+        );
+
+        for socket_path in &canonical_unix_socket_paths {
+            let escaped_path = escape_sandbox_path(socket_path)?;
+            config.push_str(&format!(
+                r#"(allow network-outbound
+    (remote unix-socket
+        (literal "{escaped_path}")))
+"#
+            ));
+        }
     }
 
     Ok(config)
@@ -252,7 +350,8 @@ mod tests {
     fn test_generate_seatbelt_config_contains_read_and_project_write_permissions_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let config =
-            generate_seatbelt_config(&[dir.as_path()], SandboxPermissions::default()).unwrap();
+            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
+                .unwrap();
 
         assert!(config.contains("(allow file-read*)"));
         assert!(config.contains("/Users/test/projects/myproject"));
@@ -266,6 +365,8 @@ mod tests {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let config = generate_seatbelt_config(
             &[dir.as_path()],
+            &[],
+            &[],
             SandboxPermissions {
                 allow_network: false,
                 allow_fs_write: true,
@@ -281,10 +382,151 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_seatbelt_config_allows_terminal_ioctls_by_default() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let config =
+            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
+                .unwrap();
+
+        assert!(config.contains("(allow file-ioctl"));
+        assert!(config.contains("/dev/ptmx"));
+        assert!(config.contains("^/dev/ttys[0-9]+"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_allows_unix_socket_paths_without_network() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let ssh_auth_socket = PathBuf::from("/private/tmp/com.apple.launchd.test/Listeners");
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[],
+            &[ssh_auth_socket.as_path()],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        assert!(config.contains("(allow system-socket"));
+        assert!(config.contains("AF_UNIX"));
+        assert!(config.contains("(allow network-outbound"));
+        assert!(config.contains("remote unix-socket"));
+        assert!(config.contains("(literal \"/private/tmp/com.apple.launchd.test/Listeners\")"));
+        assert!(!config.contains("(subpath \"/private/tmp/com.apple.launchd.test/Listeners\")"));
+        assert!(!config.contains("(allow network*)"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_denies_protected_path_data_and_writes() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let protected = dir.join(".gitignore");
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[protected.as_path()],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        assert!(config.contains("(deny file-read-data file-write*"));
+        assert!(config.contains("/Users/test/projects/myproject/.gitignore"));
+        assert!(config.contains("(literal \"/Users/test/projects/myproject/.gitignore\")"));
+        assert!(config.contains("(subpath \"/Users/test/projects/myproject/.gitignore\")"));
+    }
+
+    #[test]
+    fn test_sandbox_blocks_protected_path_contents_but_allows_metadata() {
+        use std::process::Command;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let protected_file = temp_dir.path().join(".gitignore");
+        std::fs::write(&protected_file, "target\n").unwrap();
+
+        let (program, args, _config_file) = wrap_invocation(
+            "/bin/sh",
+            &[
+                "-c".to_string(),
+                format!(
+                    "test -e '{}' && ! cat '{}' >/dev/null 2>&1 && ! sh -c 'echo changed > {}'",
+                    protected_file.display(),
+                    protected_file.display(),
+                    protected_file.display(),
+                ),
+            ],
+            &[temp_dir.path()],
+            &[protected_file.as_path()],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        let output = Command::new(&program)
+            .args(&args)
+            .output()
+            .expect("failed to execute sandbox-exec");
+
+        assert!(
+            output.status.success(),
+            "sandbox should allow metadata but deny protected data reads and writes: stderr={} stdout={}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+        assert_eq!(
+            std::fs::read_to_string(&protected_file).unwrap(),
+            "target\n"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_blocks_protected_paths_even_when_fs_writes_allowed() {
+        use std::process::Command;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let protected_file = temp_dir.path().join(".gitignore");
+        std::fs::write(&protected_file, "target\n").unwrap();
+
+        let (program, args, _config_file) = wrap_invocation(
+            "/bin/sh",
+            &[
+                "-c".to_string(),
+                format!(
+                    "! cat '{}' >/dev/null 2>&1 && ! sh -c 'echo changed > {}'",
+                    protected_file.display(),
+                    protected_file.display(),
+                ),
+            ],
+            &[temp_dir.path()],
+            &[protected_file.as_path()],
+            &[],
+            SandboxPermissions {
+                allow_network: false,
+                allow_fs_write: true,
+            },
+        )
+        .unwrap();
+
+        let output = Command::new(&program)
+            .args(&args)
+            .output()
+            .expect("failed to execute sandbox-exec");
+
+        assert!(
+            output.status.success(),
+            "protected paths should stay blocked even with unrestricted writes: stderr={} stdout={}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+        assert_eq!(
+            std::fs::read_to_string(&protected_file).unwrap(),
+            "target\n"
+        );
+    }
+
+    #[test]
     fn test_generate_seatbelt_config_contains_network_when_allowed() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let config = generate_seatbelt_config(
             &[dir.as_path()],
+            &[],
+            &[],
             SandboxPermissions {
                 allow_network: true,
                 allow_fs_write: false,
@@ -304,6 +546,8 @@ mod tests {
         let scratch_dir = PathBuf::from("/private/tmp/zed-agent-command");
         let config = generate_seatbelt_config(
             &[project_dir.as_path(), scratch_dir.as_path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -339,6 +583,8 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "echo hello".to_string()],
             &[temp_dir.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -360,6 +606,8 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "cat /etc/hosts".to_string()],
             &[temp_dir.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -385,6 +633,8 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "echo test 2>/dev/null".to_string()],
             &[temp_dir.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -410,6 +660,8 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "echo test 2>/dev/null".to_string()],
             &[temp_dir.path()],
+            &[],
+            &[],
             SandboxPermissions {
                 allow_network: false,
                 allow_fs_write: true,
@@ -443,6 +695,8 @@ mod tests {
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
             &[temp_dir.path()],
+            &[],
+            &[],
             SandboxPermissions {
                 allow_network: false,
                 allow_fs_write: true,
@@ -478,6 +732,8 @@ mod tests {
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
             &[project_dir.path(), scratch_dir.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -509,6 +765,8 @@ mod tests {
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
             &[temp_dir.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -541,6 +799,8 @@ mod tests {
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
             &[project_dir.path()],
+            &[],
+            &[],
             SandboxPermissions {
                 allow_network: false,
                 allow_fs_write: true,
@@ -579,6 +839,8 @@ mod tests {
                 format!("echo 'hello' > '{}'", forbidden_file.display()),
             ],
             &[project_dir.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();

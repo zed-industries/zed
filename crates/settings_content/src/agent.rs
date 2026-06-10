@@ -461,6 +461,12 @@ impl AgentSettingsContent {
             .allow_unsandboxed = Some(true);
     }
 
+    pub fn allow_sandbox_git_access(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_git_access = Some(true);
+    }
+
     pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
         let write_paths = &mut self
             .sandbox_permissions
@@ -716,6 +722,12 @@ pub struct SandboxPermissionsContent {
     /// prompting when they request `unsandboxed: true`.
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
+
+    /// Whether terminal commands may always read file contents from, and write
+    /// to, protected Git metadata paths without prompting when they request
+    /// `allow_git_access: true`.
+    /// Default: false
+    pub allow_git_access: Option<bool>,
 
     /// Directory subtrees that sandboxed terminal commands may always write
     /// to without prompting. Paths written by Zed are absolute.
@@ -997,6 +1009,7 @@ mod tests {
         settings.allow_sandbox_network();
         settings.allow_sandbox_fs_write_all();
         settings.allow_sandbox_unsandboxed();
+        settings.allow_sandbox_git_access();
         settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();

@@ -193,7 +193,12 @@ mod tests {
         assert!(rendered.contains("allow_network: true"));
         assert!(rendered.contains("fs_write_paths"));
         assert!(rendered.contains("allow_fs_write_all: true"));
+        assert!(rendered.contains("allow_git_access: true"));
         assert!(rendered.contains("unsandboxed: true"));
+        assert!(rendered.contains("file contents under `.git` directories"));
+        assert!(rendered.contains("Git metadata directories needed by opened worktrees"));
+        assert!(rendered.contains("inherited SSH agent socket"));
+        assert!(rendered.contains("cannot send network packets to other machines"));
         assert!(rendered.contains("for the rest of the thread"));
     }
 

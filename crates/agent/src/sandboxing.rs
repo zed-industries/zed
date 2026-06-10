@@ -38,6 +38,8 @@ pub(crate) struct SandboxRequest {
     pub network: bool,
     /// Allow unrestricted filesystem writes (the broad escape hatch).
     pub allow_fs_write_all: bool,
+    /// Allow reading file contents from, and writing to, protected Git metadata paths.
+    pub allow_git_access: bool,
     /// Run the command fully outside the sandbox.
     pub unsandboxed: bool,
     /// Concrete paths the command needs to write to. Each grants its whole
@@ -49,7 +51,11 @@ impl SandboxRequest {
     /// Whether this request asks for anything beyond the default sandbox
     /// scope, and therefore needs user approval.
     pub fn needs_escalation(&self) -> bool {
-        self.network || self.allow_fs_write_all || self.unsandboxed || !self.write_paths.is_empty()
+        self.network
+            || self.allow_fs_write_all
+            || self.allow_git_access
+            || self.unsandboxed
+            || !self.write_paths.is_empty()
     }
 }
 
@@ -64,6 +70,7 @@ impl SandboxRequest {
 pub(crate) struct ThreadSandboxGrants {
     network: bool,
     allow_fs_write_all: bool,
+    allow_git_access: bool,
     unsandboxed: bool,
     /// Canonicalized paths granted write access for the thread. Each covers its
     /// whole subtree; redundant children are pruned on insert.
@@ -93,6 +100,9 @@ impl ThreadSandboxGrants {
         {
             return false;
         }
+        if request.allow_git_access && !(self.allow_git_access || persistent.allow_git_access) {
+            return false;
+        }
         // A full-access write grant covers any concrete write request.
         if self.allow_fs_write_all || persistent.allow_fs_write_all {
             return true;
@@ -113,6 +123,7 @@ impl ThreadSandboxGrants {
     pub fn record(&mut self, request: &SandboxRequest) {
         self.network |= request.network;
         self.allow_fs_write_all |= request.allow_fs_write_all;
+        self.allow_git_access |= request.allow_git_access;
         self.unsandboxed |= request.unsandboxed;
         for path in &request.write_paths {
             util::paths::insert_subtree(&mut self.write_paths, path.clone());
@@ -142,6 +153,9 @@ impl ThreadSandboxGrants {
             allow_fs_write_all: persistent.allow_fs_write_all
                 || self.allow_fs_write_all
                 || request.allow_fs_write_all,
+            allow_git_access: persistent.allow_git_access
+                || self.allow_git_access
+                || request.allow_git_access,
             unsandboxed: request.unsandboxed,
             write_paths,
         }
@@ -156,6 +170,7 @@ mod tests {
         SandboxRequest {
             network,
             allow_fs_write_all: all,
+            allow_git_access: false,
             unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
         }
@@ -165,6 +180,7 @@ mod tests {
         SandboxRequest {
             network: false,
             allow_fs_write_all: false,
+            allow_git_access: false,
             unsandboxed: true,
             write_paths: Vec::new(),
         }
@@ -256,6 +272,7 @@ mod tests {
             allow_network: false,
             allow_fs_write_all: false,
             allow_unsandboxed: false,
+            allow_git_access: false,
             write_paths: vec![PathBuf::from("/tmp/build")],
         };
 
@@ -275,6 +292,7 @@ mod tests {
             allow_network: false,
             allow_fs_write_all: true,
             allow_unsandboxed: false,
+            allow_git_access: false,
             write_paths: Vec::new(),
         };
 
@@ -290,6 +308,7 @@ mod tests {
             allow_network: false,
             allow_fs_write_all: false,
             allow_unsandboxed: true,
+            allow_git_access: false,
             write_paths: Vec::new(),
         };
 
@@ -331,6 +350,7 @@ mod tests {
             allow_network: true,
             allow_fs_write_all: false,
             allow_unsandboxed: false,
+            allow_git_access: false,
             write_paths: vec![PathBuf::from("/tmp/always")],
         };
 
