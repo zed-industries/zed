@@ -2645,49 +2645,28 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git = git?;
-                let git_cmd = async |args: &[&str]| -> Result<String> {
-                    let output = git.build_command(args).output().await?;
-                    anyhow::ensure!(
-                        output.status.success(),
-                        String::from_utf8_lossy(&output.stderr).to_string()
-                    );
-                    Ok(String::from_utf8(output.stdout)?)
-                };
+                let output = git
+                    .build_command(&[
+                        "for-each-ref",
+                        "--format=%(refname)",
+                        "--contains",
+                        "HEAD",
+                        "refs/remotes/",
+                    ])
+                    .output()
+                    .await?;
 
-                let head = git_cmd(&["rev-parse", "HEAD"])
-                    .await
-                    .context("Failed to get HEAD")?
-                    .trim()
-                    .to_owned();
-
-                let mut remote_branches = vec![];
-                let mut add_if_matching = async |remote_head: &str| {
-                    if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await
-                        && merge_base.trim() == head
-                        && let Some(s) = remote_head.strip_prefix("refs/remotes/")
-                    {
-                        remote_branches.push(s.to_owned().into());
-                    }
-                };
-
-                // check the main branch of each remote
-                let remotes = git_cmd(&["remote"])
-                    .await
-                    .context("Failed to get remotes")?;
-                for remote in remotes.lines() {
-                    if let Ok(remote_head) =
-                        git_cmd(&["symbolic-ref", &format!("refs/remotes/{remote}/HEAD")]).await
-                    {
-                        add_if_matching(remote_head.trim()).await;
-                    }
+                if !output.status.success() {
+                    return Ok(vec![]);
                 }
 
-                // ... and the remote branch that the checked-out one is tracking
-                if let Ok(remote_head) =
-                    git_cmd(&["rev-parse", "--symbolic-full-name", "@{u}"]).await
-                {
-                    add_if_matching(remote_head.trim()).await;
-                }
+                let remote_branches = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(|line| line.trim())
+                    .filter(|line| !line.ends_with("/HEAD"))
+                    .filter_map(|line| line.strip_prefix("refs/remotes/"))
+                    .map(SharedString::from)
+                    .collect();
 
                 Ok(remote_branches)
             })
@@ -5147,6 +5126,59 @@ mod tests {
         let graph = graph_commits().await;
         assert!(graph.contains(&branch_sha));
         assert!(graph.contains(&hidden_sha));
+    }
+
+    #[gpui::test]
+    async fn test_check_for_pushed_commit(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        git_init_repo(&repo_dir);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // New repo doesn't have any commits yet
+        assert!(repo.check_for_pushed_commit().await.unwrap().is_empty());
+
+        git_command(
+            &repo_dir,
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+
+        // No remote branches exist yet
+        assert!(repo.check_for_pushed_commit().await.unwrap().is_empty());
+
+        // Create simulated remote branches
+        git_command(
+            &repo_dir,
+            ["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+        git_command(
+            &repo_dir,
+            ["update-ref", "refs/remotes/origin/other-branch", "HEAD"],
+        );
+        assert_eq!(
+            repo.check_for_pushed_commit().await.unwrap(),
+            vec![
+                SharedString::from("origin/main"),
+                SharedString::from("origin/other-branch")
+            ]
+        );
+
+        // Switch to a new branch, commit but do not push
+        git_command(&repo_dir, ["switch", "-c", "local-feature"]);
+        git_command(&repo_dir, ["commit", "--allow-empty", "-m", "Local commit"]);
+
+        // New commit has not been pushed
+        assert!(repo.check_for_pushed_commit().await.unwrap().is_empty());
     }
 
     #[test]
