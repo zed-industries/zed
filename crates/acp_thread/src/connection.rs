@@ -366,7 +366,7 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
-    fn supports_delete(&self, _cx: &App) -> bool {
+    fn supports_delete(&self) -> bool {
         false
     }
 

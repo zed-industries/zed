@@ -1082,7 +1082,10 @@ impl Editor {
             if let Some(url) = url {
                 cx.update(|window, cx| {
                     if parse_zed_link(&url, cx).is_some() {
-                        window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                        window.dispatch_action(
+                            Box::new(zed_actions::OpenZedUrl { url: url.into() }),
+                            cx,
+                        );
                     } else {
                         cx.open_url(&url);
                     }
@@ -1310,12 +1313,12 @@ impl Editor {
                 return anyhow::Ok(Navigated::No);
             }
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
             }
             let mut num_locations = 0;
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
                 num_locations += ranges.len();
             }
@@ -1628,7 +1631,7 @@ impl Editor {
             })?;
             let mut num_locations = 0;
             for ranges in locations.values_mut() {
-                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
                 // Merge overlapping or contained ranges. After sorting by
                 // (start, Reverse(end)), we can merge in a single pass:
@@ -1727,8 +1730,10 @@ impl Editor {
                     Some(Either::Left(url)) => {
                         cx.update(|window, cx| {
                             if parse_zed_link(&url, cx).is_some() {
-                                window
-                                    .dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                                window.dispatch_action(
+                                    Box::new(zed_actions::OpenZedUrl { url: url.into() }),
+                                    cx,
+                                );
                             } else {
                                 cx.open_url(&url);
                             }

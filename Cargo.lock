@@ -243,7 +243,6 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "context_server",
- "criterion",
  "ctor",
  "db",
  "editor",
@@ -271,6 +270,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proptest",
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
@@ -306,9 +306,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d197653697b91b3a2cfb579d061a3388cda9fdc79cb6f9393da65cbad46baf8"
+checksum = "5efba6592048ef8a9ac97de8d79b2d9933d8ac4d94f7a2de102348fed0c61103"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -328,9 +328,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e4fbf6733a900814fb921b2aac06612e15b42020b76a356fbc1192e725cebc"
+checksum = "4d176a10d4cb06e0262a738c3c5bf21ff0968db13a666e31cbca94a3d3d72e7c"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -338,9 +338,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d419a87e28240978e4bfdf2a5b91bccb95ae8d5b06e10721bb07c449b9f43dd"
+checksum = "c290bfa00c6b52339db66f8e9cf711d5f08530800529f7d619ff24d6cba253d0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -518,7 +518,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "skill_creator",
  "streaming_diff",
  "task",
  "telemetry",
@@ -2124,6 +2123,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "benchmarks"
+version = "0.1.0"
+dependencies = [
+ "action_log",
+ "agent",
+ "agent_settings",
+ "assets",
+ "criterion",
+ "editor",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_platform",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "lsp",
+ "multi_buffer",
+ "project",
+ "prompt_store",
+ "rand 0.9.4",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "zed_actions",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2440,7 +2470,6 @@ version = "0.1.0"
 dependencies = [
  "clock",
  "ctor",
- "futures 0.3.32",
  "gpui",
  "imara-diff",
  "language",
@@ -3194,6 +3223,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "parking_lot",
+ "serde",
  "serde_json",
  "thiserror 2.0.17",
  "yawc",
@@ -3373,7 +3403,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git_graph",
  "git_hosting_providers",
  "git_ui",
  "gpui",
@@ -3478,6 +3507,7 @@ dependencies = [
 name = "collections"
 version = "0.1.0"
 dependencies = [
+ "gpui_util",
  "indexmap 2.11.4",
  "rustc-hash 2.1.1",
 ]
@@ -5236,7 +5266,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5380,8 +5410,8 @@ dependencies = [
 
 [[package]]
 name = "dugong"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.1",
@@ -5391,8 +5421,8 @@ dependencies = [
 
 [[package]]
 name = "dugong-graphlib"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.1",
@@ -5524,6 +5554,7 @@ dependencies = [
  "debug_adapter_extension",
  "dirs",
  "edit_prediction",
+ "edit_prediction_context",
  "edit_prediction_metrics",
  "extension",
  "flate2",
@@ -5593,6 +5624,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "telemetry",
  "text",
  "tree-sitter",
  "util",
@@ -5680,7 +5712,6 @@ dependencies = [
  "clock",
  "collections",
  "convert_case 0.11.0",
- "criterion",
  "ctor",
  "dap",
  "db",
@@ -6032,7 +6063,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6266,6 +6297,7 @@ dependencies = [
  "env_logger 0.11.8",
  "extension",
  "fs",
+ "futures 0.3.32",
  "gpui_platform",
  "language",
  "log",
@@ -6811,7 +6843,7 @@ dependencies = [
  "is_executable",
  "libc",
  "log",
- "notify 8.2.0",
+ "notify 9.0.0-rc.4",
  "parking_lot",
  "paths",
  "proto",
@@ -7239,7 +7271,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7280,40 +7312,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "git_graph"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel 2.5.0",
- "collections",
- "db",
- "editor",
- "fs",
- "git",
- "git_ui",
- "gpui",
- "language",
- "language_model",
- "menu",
- "picker",
- "project",
- "project_panel",
- "rand 0.9.4",
- "release_channel",
- "remote_connection",
- "search",
- "serde_json",
- "settings",
- "smallvec",
- "task",
- "theme",
- "theme_settings",
- "time",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "git_hosting_providers"
 version = "0.1.0"
 dependencies = [
@@ -7342,6 +7340,7 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "askpass",
+ "async-channel 2.5.0",
  "buffer_diff",
  "call",
  "collections",
@@ -7374,9 +7373,11 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.4",
+ "release_channel",
  "remote",
  "remote_connection",
  "schemars 1.0.4",
+ "search",
  "serde",
  "serde_json",
  "settings",
@@ -7734,6 +7735,7 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-text",
  "core-video",
+ "criterion",
  "ctor",
  "derive_more",
  "embed-resource",
@@ -9615,7 +9617,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
- "fuzzy",
+ "fuzzy_nucleo",
  "globset",
  "gpui",
  "http_client",
@@ -9765,6 +9767,7 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_api_types",
+ "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.11.0",
@@ -10582,8 +10585,8 @@ dependencies = [
 
 [[package]]
 name = "manatee"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "indexmap 2.11.4",
  "nalgebra",
@@ -10877,8 +10880,8 @@ dependencies = [
 
 [[package]]
 name = "merman"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -10887,8 +10890,8 @@ dependencies = [
 
 [[package]]
 name = "merman-core"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "chrono",
  "euclid",
@@ -10913,8 +10916,8 @@ dependencies = [
 
 [[package]]
 name = "merman-render"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -11117,7 +11120,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11496,19 +11499,21 @@ dependencies = [
 
 [[package]]
 name = "notify"
-version = "8.2.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=ce58c24cad542c28e04ced02e20325a4ec28a31d#ce58c24cad542c28e04ced02e20325a4ec28a31d"
+version = "9.0.0-rc.4"
+source = "git+https://github.com/zed-industries/notify?rev=faecbc33db4f59313e5225ef766bfd9e54a54cfd#faecbc33db4f59313e5225ef766bfd9e54a54cfd"
 dependencies = [
  "bitflags 2.10.0",
- "fsevent-sys",
  "inotify 0.11.0",
  "kqueue",
  "libc",
  "log",
  "mio 1.2.0",
  "notify-types",
+ "objc2-core-foundation",
+ "objc2-core-services",
  "walkdir",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -11524,8 +11529,11 @@ dependencies = [
 
 [[package]]
 name = "notify-types"
-version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=ce58c24cad542c28e04ced02e20325a4ec28a31d#ce58c24cad542c28e04ced02e20325a4ec28a31d"
+version = "2.1.0"
+source = "git+https://github.com/zed-industries/notify?rev=faecbc33db4f59313e5225ef766bfd9e54a54cfd#faecbc33db4f59313e5225ef766bfd9e54a54cfd"
+dependencies = [
+ "bitflags 2.10.0",
+]
 
 [[package]]
 name = "ntapi"
@@ -11542,7 +11550,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11927,6 +11935,16 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
  "objc2-metal 0.2.2",
+]
+
+[[package]]
+name = "objc2-core-services"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "583300ad934cba24ff5292aee751ecc070f7ca6b39a574cc21b7b5e588e06a0b"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
 ]
 
 [[package]]
@@ -12412,13 +12430,12 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "futures 0.3.32",
- "fuzzy",
+ "fuzzy_nucleo",
  "gpui",
  "indoc",
  "language",
  "lsp",
  "menu",
- "ordered-float 2.10.1",
  "picker",
  "project",
  "rope",
@@ -15396,7 +15413,7 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "git+https://github.com/zed-industries/merman?rev=1c765dcca2ef5092fcde7bebe8374819563623ef#1c765dcca2ef5092fcde7bebe8374819563623ef"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#06094471f97acb10d0eebf8b92bac19ba2928eea"
 dependencies = [
  "derive_builder",
  "euclid",
@@ -15612,7 +15629,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -16563,6 +16580,7 @@ dependencies = [
  "agent_skills",
  "anyhow",
  "audio",
+ "cloud_api_types",
  "codestral",
  "component",
  "copilot",
@@ -16577,6 +16595,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
+ "http_client",
  "itertools 0.14.0",
  "language",
  "log",
@@ -16593,6 +16612,7 @@ dependencies = [
  "search",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "settings",
  "shell_command_parser",
  "strum 0.27.2",
@@ -16601,6 +16621,7 @@ dependencies = [
  "theme_settings",
  "title_bar",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -16728,6 +16749,7 @@ dependencies = [
  "log",
  "menu",
  "node_runtime",
+ "notifications",
  "platform_title_bar",
  "pretty_assertions",
  "project",
@@ -16873,33 +16895,6 @@ name = "siphasher"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
-
-[[package]]
-name = "skill_creator"
-version = "0.1.0"
-dependencies = [
- "agent_skills",
- "anyhow",
- "editor",
- "fs",
- "futures 0.3.32",
- "gpui",
- "http_client",
- "language",
- "menu",
- "notifications",
- "platform_title_bar",
- "release_channel",
- "serde_json",
- "serde_yaml_ng",
- "settings",
- "theme_settings",
- "ui",
- "ui_input",
- "util",
- "workspace",
- "worktree",
-]
 
 [[package]]
 name = "skrifa"
@@ -17067,7 +17062,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -18184,7 +18179,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -18621,6 +18616,7 @@ dependencies = [
  "chrono",
  "client",
  "cloud_api_types",
+ "command_palette_hooks",
  "db",
  "fs",
  "git_ui",
@@ -19554,6 +19550,7 @@ dependencies = [
  "markdown",
  "menu",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "workspace",
@@ -21183,7 +21180,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -22389,6 +22386,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "url",
  "util",
  "uuid",
  "windows 0.61.3",
@@ -22636,6 +22634,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
+
+[[package]]
 name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22827,7 +22831,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.6.0"
+version = "1.8.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22887,7 +22891,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git_graph",
  "git_hosting_providers",
  "git_ui",
  "go_to_line",
@@ -23114,7 +23117,6 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "util",
- "uuid",
 ]
 
 [[package]]
@@ -23171,7 +23173,7 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

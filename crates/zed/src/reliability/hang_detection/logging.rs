@@ -76,10 +76,9 @@ impl Reporter {
         task_stats: &[gpui::ThreadTaskStatistics],
     ) -> ReportMade {
         let foreground = self.foreground_thread;
-        let foreground = task_stats
-            .iter()
-            .find(|t| t.thread_id == foreground)
-            .expect("main thread should be in all statistics");
+        let Some(foreground) = task_stats.iter().find(|t| t.thread_id == foreground) else {
+            return false; // during startup the foreground may not yet have statistics
+        };
 
         let hangs: Vec<_> = foreground
             .stats
