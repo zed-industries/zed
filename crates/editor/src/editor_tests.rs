@@ -33269,6 +33269,36 @@ async fn test_paste_plain_text_from_other_app_replaces_selection_without_creatin
 }
 
 #[gpui::test]
+async fn test_paste_text_with_scheme_like_prefix_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    // `url::Url::parse` accepts this as a URL with the scheme `editor`, but it
+    // should not be treated as one when pasting.
+    let text = "editor: Fix double-click bracket selection for large spans";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("«(feat on git-ui-add-info-exclude-to-context-menus) Fmtˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("{text}ˇ"));
+}
+
+#[gpui::test]
 async fn test_paste_url_from_other_app_without_creating_markdown_link_in_non_markdown_language(
     cx: &mut gpui::TestAppContext,
 ) {
