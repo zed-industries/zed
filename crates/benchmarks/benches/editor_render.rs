@@ -6,18 +6,18 @@ use editor::{
 use gpui::{AppContext as _, BenchAppContext, Focusable as _, TestAppContext, TestDispatcher};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
-use ui::IntoElement;
 use util::RandomCharIter;
+use zed_actions::editor::{MoveDown, MoveUp};
 
 #[gpui::bench]
-fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &mut BenchAppContext) {
+fn editor_input_with_1000_cursors(cx: &mut BenchAppContext) {
     init_context(cx);
 
     let text = String::from_iter(["line:\n"; 1000]);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
-    let mut cx = cx.add_empty_window();
-    let editor = cx.update(|window, cx| {
+    let mut window = cx.add_empty_window();
+    let editor = window.update(|window, cx| {
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
@@ -35,8 +35,8 @@ fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &mut BenchAppCo
         editor
     });
 
-    bencher.iter(|| {
-        cx.update(|window, cx| {
+    cx.bench_iter(|_| {
+        window.update(|window, cx| {
             editor.update(cx, |editor, cx| {
                 editor.handle_input("hello world", window, cx);
                 editor.delete_to_previous_word_start(
@@ -80,8 +80,10 @@ fn open_editor_with_one_long_line(bencher: &mut Bencher<'_>, args: &(String, Tes
     });
 }
 
-fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
-    let mut cx = cx.clone();
+#[gpui::bench]
+fn editor_render(cx: &mut BenchAppContext) {
+    init_context(cx);
+
     let buffer = cx.update(|cx| {
         let mut rng = StdRng::seed_from_u64(1);
         let text_len = rng.random_range(10000..90000);
@@ -95,9 +97,9 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
         }
     });
 
-    let cx = cx.add_empty_window();
-    let editor = cx.update(|window, cx| {
-        let editor = cx.new(|cx| {
+    let mut window = cx.add_empty_window();
+    let editor = window.update(|window, cx| {
+        let editor = window.replace_root(cx, |window, cx| {
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor
@@ -106,14 +108,15 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
         editor
     });
 
-    bencher.iter(|| {
-        cx.update(|window, cx| {
-            let mut view = editor.clone().into_any_element();
-            let _ = view.request_layout(window, cx);
-            let _ = view.prepaint(window, cx);
-            view.paint(window, cx);
-        });
-    })
+    let mut move_down = true;
+    cx.bench_renderer(editor, move |editor, window, cx| {
+        if move_down {
+            editor.move_down(&MoveDown, window, cx);
+        } else {
+            editor.move_up(&MoveUp, window, cx);
+        }
+        move_down = !move_down;
+    });
 }
 
 fn init_context(cx: &mut BenchAppContext) {
@@ -141,16 +144,8 @@ fn criterion_benches(criterion: &mut criterion::Criterion) {
     let cx = gpui::TestAppContext::build(dispatcher, None);
     init_test_context(&cx);
 
-    let mut group = criterion.benchmark_group("Time to render");
-    group.bench_with_input(
-        BenchmarkId::new("editor_render", "TestAppContext"),
-        &cx,
-        editor_render,
-    );
-    group.finish();
-
     let text = String::from_iter(["char"; 1000]);
-    let input = (text, cx.clone());
+    let input = (text, cx);
     let mut group = criterion.benchmark_group("Build buffer with one long line");
     group.bench_with_input(
         BenchmarkId::new("editor_with_one_long_line", "(String, TestAppContext )"),
@@ -160,5 +155,10 @@ fn criterion_benches(criterion: &mut criterion::Criterion) {
     group.finish();
 }
 
-gpui::bench_group!(benches, editor_input_with_1000_cursors, criterion_benches);
+gpui::bench_group!(
+    benches,
+    editor_input_with_1000_cursors,
+    editor_render,
+    criterion_benches
+);
 gpui::bench_main!(benches);

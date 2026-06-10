@@ -53,6 +53,35 @@ Use `agent.commit_message_instructions` for instructions that apply only to gene
 
 For feature-specific model examples, see [Feature-specific Models](#feature-specific-models).
 
+## Automatic Compaction {#automatic-compaction}
+
+Zed Agent can automatically compact long threads before they reach the selected model's context window. Compaction summarizes earlier messages and keeps the conversation usable without starting a new thread.
+
+Automatic compaction is enabled by default and runs when the thread reaches `90%` of the model's context window. You can change the threshold or disable automatic compaction in `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "auto_compact": {
+      "enabled": true,
+      "threshold": "90%"
+    }
+  }
+}
+```
+
+The `threshold` value can be one of:
+
+| Value                           | Meaning                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| Percentage string, like `90%`   | Compact when the thread uses that percentage of the model's context window.    |
+| Positive integer, like `100000` | Compact after that many tokens have been used.                                 |
+| Negative integer, like `-20000` | Compact once fewer than that many tokens remain in the model's context window. |
+
+`0` is not a valid threshold. If the threshold is invalid, Zed falls back to `90%`.
+
+You can compact a Zed Agent thread manually at any time by typing `/compact` in the Agent Panel message editor. For more on thread token usage and compaction behavior, see [Token Usage and Compaction](./agent-panel.md#token-usage).
+
 ## External Agents {#external-agents}
 
 The External Agents section configures ACP-integrated agents.
