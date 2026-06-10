@@ -10,7 +10,7 @@ use std::{
     collections::VecDeque,
     sync::{
         LazyLock,
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, Ordering::Relaxed},
     },
     time::Duration,
 };
@@ -29,7 +29,7 @@ static GPUI_DEVTOOLS: LazyLock<RwLock<GpuiDevTools>> =
 
 /// Opens the GPUI devtools window for the given source window.
 pub fn open(source_window: &mut Window, cx: &mut App) {
-    let was_enabled = GPUI_DEVTOOLS_ENABLED.swap(true, SeqCst);
+    let was_enabled = GPUI_DEVTOOLS_ENABLED.swap(true, Relaxed);
     let window_id = source_window.handle.window_id();
     {
         let mut devtools = GPUI_DEVTOOLS.write();
@@ -43,7 +43,7 @@ pub fn open(source_window: &mut Window, cx: &mut App) {
 }
 
 pub(crate) fn enabled() -> bool {
-    GPUI_DEVTOOLS_ENABLED.load(SeqCst)
+    GPUI_DEVTOOLS_ENABLED.load(Relaxed)
 }
 
 pub(crate) fn forget_window(window_id: WindowId) {
@@ -61,7 +61,7 @@ pub(crate) fn forget_window(window_id: WindowId) {
         }
         any_window_open
     };
-    GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
+    GPUI_DEVTOOLS_ENABLED.store(any_window_open, Relaxed);
 }
 
 pub(crate) fn forget_entity(entity_id: EntityId) {
@@ -94,11 +94,14 @@ pub(crate) fn record_notify(event: NotifyEvent) {
 }
 
 pub(crate) fn record_frame(event: FrameEvent) {
-    if !enabled() || !window_open(event.window_id) {
+    if !enabled() {
         return;
     }
 
     let mut devtools = GPUI_DEVTOOLS.write();
+    if !devtools.is_window_open(event.window_id) {
+        return;
+    }
     let window_id = event.window_id;
     devtools.frames.push(event.clone());
     if devtools.paused_at.is_none() {
@@ -107,11 +110,14 @@ pub(crate) fn record_frame(event: FrameEvent) {
 }
 
 pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
-    if !enabled() || !window_open(event.window_id) {
+    if !enabled() {
         return;
     }
 
     let mut devtools = GPUI_DEVTOOLS.write();
+    if !devtools.is_window_open(event.window_id) {
+        return;
+    }
     let cause = devtools
         .latest_cause_by_entity
         .get(&event.invalidated_entity_id)
@@ -139,11 +145,14 @@ pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
 }
 
 pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bounds: Bounds<Pixels>) {
-    if !enabled() || !window_open(window_id) {
+    if !enabled() {
         return;
     }
 
     let mut devtools = GPUI_DEVTOOLS.write();
+    if !devtools.is_window_open(window_id) {
+        return;
+    }
     if devtools.paused_at.is_none() {
         devtools
             .window_state(window_id)
@@ -153,53 +162,70 @@ pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bound
 }
 
 pub(crate) fn record_view_render(event: ViewRenderEvent) {
-    if !enabled() || !window_open(event.window_id) {
+    if !enabled() {
+        return;
+    }
+
+    GPUI_DEVTOOLS.write().record_view_render(event);
+}
+
+impl GpuiDevTools {
+    fn record_view_render(&mut self, event: ViewRenderEvent) {
+        if !self.is_window_open(event.window_id) {
+            return;
+        }
+
+        let source = RenderSourceKey::from(&event);
+        let cause = self
+            .windows
+            .get(&event.window_id)
+            .and_then(|window_state| {
+                window_state
+                    .latest_dirty_cause_by_entity
+                    .get(&event.entity_id)
+            })
+            .copied();
+        let stale_cause =
+            cause.is_some_and(|cause| !cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+        let cause = cause.filter(|cause| cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+        if stale_cause && let Some(window_state) = self.windows.get_mut(&event.window_id) {
+            window_state
+                .latest_dirty_cause_by_entity
+                .remove(&event.entity_id);
+        }
+        match cause {
+            Some(cause) => {
+                self.latest_cause_by_render_source.insert(source, cause);
+            }
+            None => {
+                self.latest_cause_by_render_source.remove(&source);
+            }
+        }
+        let mut stats = RenderSourceStats::from_event(&event);
+        stats.cause = cause;
+        self.render_source_last_stats.insert(source, stats);
+        if self.paused_at.is_none() {
+            if let Some(bounds) = event.bounds {
+                self.window_state(event.window_id)
+                    .view_bounds
+                    .insert(event.entity_id, bounds);
+            }
+        }
+
+        self.renders.push(event);
+    }
+}
+
+pub(crate) fn record_animation(event: AnimationEvent) {
+    if !enabled() {
         return;
     }
 
     let mut devtools = GPUI_DEVTOOLS.write();
-    let source = RenderSourceKey::from(&event);
-    let cause = devtools
-        .windows
-        .get(&event.window_id)
-        .and_then(|window_state| {
-            window_state
-                .latest_dirty_cause_by_entity
-                .get(&event.entity_id)
-        })
-        .copied();
-    let stale_cause =
-        cause.is_some_and(|cause| !cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
-    let cause = cause.filter(|cause| cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
-    if stale_cause && let Some(window_state) = devtools.windows.get_mut(&event.window_id) {
-        window_state
-            .latest_dirty_cause_by_entity
-            .remove(&event.entity_id);
-    }
-    if let Some(cause) = cause {
-        devtools.latest_cause_by_render_source.insert(source, cause);
-    }
-    let mut stats = RenderSourceStats::from_event(&event);
-    stats.cause = cause;
-    devtools.render_source_last_stats.insert(source, stats);
-    if devtools.paused_at.is_none() {
-        if let Some(bounds) = event.bounds {
-            devtools
-                .window_state(event.window_id)
-                .view_bounds
-                .insert(event.entity_id, bounds);
-        }
-    }
-
-    devtools.renders.push(event);
-}
-
-pub(crate) fn record_animation(event: AnimationEvent) {
-    if !enabled() || !window_open(event.window_id) {
+    if !devtools.is_window_open(event.window_id) {
         return;
     }
-
-    GPUI_DEVTOOLS.write().animations.push(event);
+    devtools.animations.push(event);
 }
 
 fn close_source_window(window_id: WindowId) {
@@ -213,7 +239,7 @@ fn close_source_window(window_id: WindowId) {
         }
         any_window_open
     };
-    GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
+    GPUI_DEVTOOLS_ENABLED.store(any_window_open, Relaxed);
 }
 
 pub(crate) fn window_open(window_id: WindowId) -> bool {
@@ -261,10 +287,31 @@ impl NotifyEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FrameDiagnosticsReason {
+    Dirty,
+    Forced,
+    RequiredPresentation,
+    QueuedPresentation,
+    HighRateInput,
+}
+
+impl FrameDiagnosticsReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            FrameDiagnosticsReason::Dirty => "dirty",
+            FrameDiagnosticsReason::Forced => "forced",
+            FrameDiagnosticsReason::RequiredPresentation => "required_presentation",
+            FrameDiagnosticsReason::QueuedPresentation => "queued_presentation",
+            FrameDiagnosticsReason::HighRateInput => "high_rate_input",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct FrameEvent {
     pub(crate) window_id: WindowId,
-    pub(crate) reason: &'static str,
+    pub(crate) reason: FrameDiagnosticsReason,
     pub(crate) dirty_before_frame: bool,
     pub(crate) dirty_view_count: usize,
     pub(crate) invalidator_update_count: usize,
@@ -383,10 +430,6 @@ impl CacheMissReasons {
 
     pub(crate) fn insert_window_refreshing(&mut self) {
         self.0 |= Self::WINDOW_REFRESHING;
-    }
-
-    pub(crate) fn is_empty(self) -> bool {
-        self.0 == 0
     }
 
     fn labels(self) -> Vec<&'static str> {
@@ -676,7 +719,7 @@ impl NotifySourceKey {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct NotifyCause {
     source: NotifySourceKey,
     entity_id: EntityId,
@@ -806,5 +849,62 @@ mod tests {
 
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.iter().copied().collect::<Vec<_>>(), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn record_view_render_clears_previous_cause_when_latest_render_has_none() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+        let entity_id = EntityId::from(2);
+        devtools.open_window(window_id);
+
+        let notify_event = NotifyEvent {
+            entity_id,
+            entity_type: "Editor",
+            caller_file: "crates/editor/src/editor.rs",
+            caller_line: 10,
+            caller_column: 5,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now,
+        };
+        devtools
+            .window_state(window_id)
+            .latest_dirty_cause_by_entity
+            .insert(entity_id, NotifyCause::from_event(&notify_event));
+
+        let render_event = ViewRenderEvent {
+            window_id,
+            entity_id,
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: Some(Duration::from_millis(1)),
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        };
+        let source = RenderSourceKey::from(&render_event);
+
+        devtools.record_view_render(render_event.clone());
+        assert!(devtools.latest_cause_by_render_source.contains_key(&source));
+
+        devtools
+            .window_state(window_id)
+            .latest_dirty_cause_by_entity
+            .remove(&entity_id);
+        let mut render_event_without_cause = render_event;
+        render_event_without_cause.timestamp = now + Duration::from_millis(1);
+        devtools.record_view_render(render_event_without_cause);
+
+        assert!(!devtools.latest_cause_by_render_source.contains_key(&source));
+        assert!(
+            devtools
+                .render_source_last_stats
+                .get(&source)
+                .and_then(|stats| stats.cause)
+                .is_none()
+        );
     }
 }

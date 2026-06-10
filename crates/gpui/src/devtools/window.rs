@@ -488,7 +488,7 @@ fn snapshot_window(window_id: WindowId) -> DevtoolsSnapshot {
             .unwrap_or_else(|| "--".to_string());
         rows.push(DevtoolsRow::plain(format!(
             "last {} draw {}ms present {}ms views {} updates {} ops {} quads {}",
-            frame.reason,
+            frame.reason.as_str(),
             draw_duration,
             format_duration_ms(frame.present_duration),
             frame.dirty_view_count,

@@ -217,7 +217,7 @@ impl Element for AnyView {
                         };
 
                     #[cfg(any(feature = "inspector", debug_assertions))]
-                    let mut cache_miss_reasons = {
+                    let cache_miss_reasons = crate::devtools::enabled().then(|| {
                         let mut cache_miss_reasons = crate::devtools::CacheMissReasons::empty();
 
                         if let Some(element_state) = element_state.as_ref() {
@@ -241,14 +241,19 @@ impl Element for AnyView {
                         }
 
                         cache_miss_reasons
-                    };
+                    });
 
-                    #[cfg(any(feature = "inspector", debug_assertions))]
-                    if cache_miss_reasons.is_empty()
-                        && let Some(element_state) = element_state
+                    if let Some(element_state) = element_state
+                        && element_state.cache_key.bounds == bounds
+                        && element_state.cache_key.content_mask == content_mask
+                        && element_state.cache_key.text_style == text_style
+                        && !window.dirty_views.contains(&self.entity_id())
+                        && !window.refreshing
                     {
-                        let reuse_start = crate::devtools::enabled().then(Instant::now);
+                        #[cfg(any(feature = "inspector", debug_assertions))]
+                        let reuse_start = cache_miss_reasons.is_some().then(Instant::now);
                         let result = reuse_prepaint(window, cx, element_state);
+                        #[cfg(any(feature = "inspector", debug_assertions))]
                         if let Some(reuse_start) = reuse_start {
                             crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
                                 window_id: window.handle.window_id(),
@@ -266,20 +271,9 @@ impl Element for AnyView {
                         return result;
                     }
 
-                    #[cfg(not(any(feature = "inspector", debug_assertions)))]
-                    if let Some(element_state) = element_state
-                        && element_state.cache_key.bounds == bounds
-                        && element_state.cache_key.content_mask == content_mask
-                        && element_state.cache_key.text_style == text_style
-                        && !window.dirty_views.contains(&self.entity_id())
-                        && !window.refreshing
-                    {
-                        return reuse_prepaint(window, cx, element_state);
-                    }
-
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     #[cfg(any(feature = "inspector", debug_assertions))]
-                    let refresh_start = crate::devtools::enabled().then(Instant::now);
+                    let refresh_start = cache_miss_reasons.is_some().then(Instant::now);
                     let prepaint_start = window.prepaint_index();
                     let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                         let mut element = (self.render)(self, window, cx);
@@ -291,7 +285,9 @@ impl Element for AnyView {
                     let prepaint_end = window.prepaint_index();
                     window.refreshing = refreshing;
                     #[cfg(any(feature = "inspector", debug_assertions))]
-                    if let Some(refresh_start) = refresh_start {
+                    if let Some((refresh_start, cache_miss_reasons)) =
+                        refresh_start.zip(cache_miss_reasons)
+                    {
                         crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
                             window_id: window.handle.window_id(),
                             entity_id: self.entity_id(),

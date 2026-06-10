@@ -863,8 +863,6 @@ fn register_actions(
     _: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    workspace.register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL));
-
     #[cfg(any(feature = "inspector", debug_assertions))]
     workspace.register_action(|_, _: &OpenGpuiDevtools, window, cx| {
         gpui::devtools::open(window, cx);

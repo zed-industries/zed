@@ -115,10 +115,8 @@ impl EntityMap {
     }
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
-    pub fn reserve<T: 'static>(&mut self) -> Slot<T> {
+    pub fn reserve<T: 'static>(&self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        self.type_names.insert(id, std::any::type_name::<T>());
         Slot(Entity::new(id, Arc::downgrade(&self.ref_counts)))
     }
 

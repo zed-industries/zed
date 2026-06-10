@@ -1093,7 +1093,7 @@ impl InputRateTracker {
 #[cfg(any(feature = "inspector", debug_assertions))]
 #[derive(Clone, Copy, Debug)]
 struct FrameDiagnostics {
-    reason: FrameDiagnosticsReason,
+    reason: crate::devtools::FrameDiagnosticsReason,
     dirty_before_frame: bool,
     dirty_view_count: usize,
     invalidator_update_count: usize,
@@ -1102,49 +1102,23 @@ struct FrameDiagnostics {
 }
 
 #[cfg(any(feature = "inspector", debug_assertions))]
-#[derive(Clone, Copy, Debug)]
-enum FrameDiagnosticsReason {
-    Dirty,
-    Forced,
-    RequiredPresentation,
-    QueuedPresentation,
-    HighRateInput,
-}
-
-#[cfg(any(feature = "inspector", debug_assertions))]
-impl FrameDiagnosticsReason {
-    fn as_str(self) -> &'static str {
-        match self {
-            FrameDiagnosticsReason::Dirty => "dirty",
-            FrameDiagnosticsReason::Forced => "forced",
-            FrameDiagnosticsReason::RequiredPresentation => "required_presentation",
-            FrameDiagnosticsReason::QueuedPresentation => "queued_presentation",
-            FrameDiagnosticsReason::HighRateInput => "high_rate_input",
-        }
-    }
-}
-
-#[cfg(any(feature = "inspector", debug_assertions))]
 fn frame_diagnostics_reason(
     force_render: bool,
     dirty: bool,
     require_presentation: bool,
     queued_presentation: bool,
-    high_rate_input: bool,
-) -> FrameDiagnosticsReason {
-    match (
-        force_render,
-        dirty,
-        require_presentation,
-        queued_presentation,
-        high_rate_input,
-    ) {
-        (true, _, _, _, _) => FrameDiagnosticsReason::Forced,
-        (_, true, _, _, _) => FrameDiagnosticsReason::Dirty,
-        (_, _, true, _, _) => FrameDiagnosticsReason::RequiredPresentation,
-        (_, _, _, true, _) => FrameDiagnosticsReason::QueuedPresentation,
-        (_, _, _, _, true) => FrameDiagnosticsReason::HighRateInput,
-        (false, false, false, false, false) => FrameDiagnosticsReason::HighRateInput,
+) -> crate::devtools::FrameDiagnosticsReason {
+    use crate::devtools::FrameDiagnosticsReason;
+    if force_render {
+        FrameDiagnosticsReason::Forced
+    } else if dirty {
+        FrameDiagnosticsReason::Dirty
+    } else if require_presentation {
+        FrameDiagnosticsReason::RequiredPresentation
+    } else if queued_presentation {
+        FrameDiagnosticsReason::QueuedPresentation
+    } else {
+        FrameDiagnosticsReason::HighRateInput
     }
 }
 
@@ -1561,7 +1535,6 @@ impl Window {
                         dirty_before_frame,
                         request_frame_options.require_presentation,
                         queued_presentation,
-                        high_rate_input,
                     ),
                     dirty_before_frame,
                     dirty_view_count: invalidator.dirty_view_count(),
@@ -2863,13 +2836,10 @@ impl Window {
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     fn record_devtools_dirty_path(&self, entity: EntityId) {
-        let path_entity_ids = self
+        let path = self
             .rendered_frame
             .dispatch_tree
             .view_path_reversed(entity)
-            .collect::<Vec<_>>();
-        let path = path_entity_ids
-            .into_iter()
             .map(|entity_id| crate::devtools::DirtyPathSegment {
                 entity_id,
                 entity_type: self.devtools_view_type_name(entity_id),
@@ -2903,7 +2873,7 @@ impl Window {
         let stats = self.rendered_frame.scene.stats();
         crate::devtools::record_frame(crate::devtools::FrameEvent {
             window_id,
-            reason: diagnostics.reason.as_str(),
+            reason: diagnostics.reason,
             dirty_before_frame: diagnostics.dirty_before_frame,
             dirty_view_count: diagnostics.dirty_view_count,
             invalidator_update_count: diagnostics.invalidator_update_count,
