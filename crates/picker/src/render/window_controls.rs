@@ -59,16 +59,11 @@
 
 use std::{any::type_name, marker::PhantomData};
 
-use gpui::{
-    Action, Context, DragMoveEvent, Entity, FocusHandle, Focusable, MouseButton, Point, Styled,
-    Window,
-};
-use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
-use workspace::pane;
+use gpui::{Action, Context, DragMoveEvent, Focusable, MouseButton, Point, Styled, Window};
+use ui::{Tooltip, prelude::*};
 
 use crate::{
     AbsolutePositionAndShape, Picker, PickerDelegate, Preview, Shape, ToggleLayout,
-    ToggleSplitMenu,
     preview::{render::do_nothing, state::LayoutMode},
 };
 
@@ -78,13 +73,6 @@ impl Render for DragPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
     }
-}
-
-#[derive(Clone, Copy)]
-pub struct ResizeDrag {
-    pub mouse_start_y: Pixels,
-    pub results_height_start: Pixels,
-    pub preview_height_start: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -99,19 +87,6 @@ struct CornerResizeDrag<C> {
     shape_before: AbsolutePositionAndShape,
     phantom_data: PhantomData<C>,
     mouse_pos_before: Point<Pixels>,
-}
-
-#[derive(Clone, Copy)]
-pub struct TelescopePreviewResizeDrag {
-    pub(crate) mouse_start_x: Pixels,
-    pub(crate) preview_width_start: Pixels,
-}
-
-#[derive(Clone, Copy)]
-pub struct TelescopeHeightResizeDrag {
-    pub(crate) mouse_start_y: Pixels,
-    pub(crate) content_height_start: Pixels,
-    pub(crate) offset_start: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -390,65 +365,4 @@ impl<D: PickerDelegate> Picker<D> {
                 })
         }))
     }
-}
-
-pub(crate) fn render_split_menu(
-    split_menu_handle: PopoverMenuHandle<ContextMenu>,
-    focus_handle: FocusHandle,
-    _window: &mut Window,
-    cx: &mut App,
-) -> impl IntoElement {
-    PopoverMenu::new("split-menu-popover")
-        .with_handle(split_menu_handle)
-        .attach(gpui::Anchor::BottomRight)
-        .anchor(gpui::Anchor::TopRight)
-        .offset(gpui::Point {
-            x: px(0.0),
-            y: px(-2.0),
-        })
-        .trigger_with_tooltip(
-            ButtonLike::new("split-trigger")
-                .child(Label::new("Split…").size(LabelSize::Small))
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .child(
-                    ui::KeyBinding::for_action_in(&ToggleSplitMenu, &focus_handle, cx)
-                        .size(rems_from_px(10.)),
-                ),
-            {
-                let focus_handle = focus_handle.clone();
-                move |_window, cx| {
-                    Tooltip::for_action_in("Open in Split", &ToggleSplitMenu, &focus_handle, cx)
-                }
-            },
-        )
-        .menu({
-            let focus_handle = focus_handle.clone();
-            move |window, cx| {
-                Some(ContextMenu::build(window, cx, {
-                    let focus_handle = focus_handle.clone();
-                    move |menu, _, _| {
-                        menu.context(focus_handle)
-                            .action("Split Left", pane::SplitLeft::default().boxed_clone())
-                            .action("Split Right", pane::SplitRight::default().boxed_clone())
-                            .action("Split Up", pane::SplitUp::default().boxed_clone())
-                            .action("Split Down", pane::SplitDown::default().boxed_clone())
-                    }
-                }))
-            }
-        })
-}
-
-pub(crate) fn highlighted_drag_preview<T>(
-    is_highlighted: gpui::Entity<bool>,
-) -> impl Fn(&T, gpui::Point<Pixels>, &mut Window, &mut App) -> gpui::Entity<DragPreview> {
-    move |_, _, _, cx| {
-        is_highlighted.write(cx, true);
-        cx.new(|_| DragPreview)
-    }
-}
-
-pub(crate) fn clear_resize_highlight<T>(
-    is_highlighted: Entity<bool>,
-) -> impl Fn(&T, &mut Window, &mut App) {
-    move |_, _, cx| is_highlighted.write(cx, false)
 }

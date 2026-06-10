@@ -1,8 +1,8 @@
-use gpui::{AppContext, anchored, canvas};
+use gpui::{anchored, canvas};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
-    App, Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
+    Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
     InteractiveElement, IntoElement, Label, LabelCommon, ListItem, ListItemSpacing, ParentElement,
     Render, ScrollAxes, Scrollbars, Styled, StyledExt, Window, WithScrollbar, div, h_flex,
     rems_from_px, utils::WithRemSize, v_flex,
@@ -12,7 +12,7 @@ use crate::{
     ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
     head::Head,
     preview::state::{LayoutMode, StackedLayout, TelescopeLayout},
-    render::window_controls::{Bottom, DragPreview, Left, LeftCorner, Right, RightCorner},
+    render::window_controls::{Bottom, Left, LeftCorner, Right, RightCorner},
 };
 
 pub mod window_controls;
@@ -366,18 +366,3 @@ impl<D: PickerDelegate> Picker<D> {
 //         // ))
 //     }
 // }
-
-fn highlighted_drag_preview<T>(
-    is_highlighted: gpui::Entity<bool>,
-) -> impl Fn(&T, gpui::Point<ui::Pixels>, &mut Window, &mut App) -> gpui::Entity<DragPreview> {
-    move |_, _, _, cx| {
-        is_highlighted.write(cx, true);
-        cx.new(|_| DragPreview)
-    }
-}
-
-fn clear_resize_highlight<T>(
-    is_highlighted: gpui::Entity<bool>,
-) -> impl Fn(&T, &mut Window, &mut App) {
-    move |_, _, cx| is_highlighted.write(cx, false)
-}

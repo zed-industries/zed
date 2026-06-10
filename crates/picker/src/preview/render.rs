@@ -1,4 +1,4 @@
-use gpui::{Action, Entity, MouseDownEvent};
+use gpui::{Action, MouseDownEvent};
 use ui::{
     ActiveTheme, App, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled, Window, div, v_flex,
@@ -12,8 +12,6 @@ use crate::preview::{
 };
 
 use super::state::LayoutMode;
-
-mod on_drag;
 
 impl EditorPreview {
     pub(crate) fn render(
@@ -225,12 +223,6 @@ impl EditorPreview {
     //             },
     //         ))
     // }
-}
-
-pub(crate) fn set_highlighted_to(
-    is_highlighted: Entity<bool>,
-) -> impl Fn(&bool, &mut Window, &mut App) {
-    move |&hovered, _window, cx| is_highlighted.write(cx, hovered)
 }
 
 pub(crate) fn do_nothing(_: &MouseDownEvent, window: &mut Window, cx: &mut App) {
