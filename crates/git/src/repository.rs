@@ -800,6 +800,9 @@ pub trait GitRepository: Send + Sync {
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>>;
 
+    /// Returns the URL of all remotes.
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>>;
+
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
 
@@ -1707,6 +1710,25 @@ impl GitRepository for RealGitRepository {
                 } else {
                     Some(url.to_string())
                 }
+            })
+            .boxed()
+    }
+
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>> {
+        let git = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let mut urls = HashMap::default();
+                if let Ok(stdout) = git.run(&["remote", "-v"]).await {
+                    for line in stdout.lines() {
+                        if let Some(line) = line.strip_suffix(" (fetch)")
+                            && let Some((name, url)) = line.split_once(char::is_whitespace)
+                        {
+                            urls.insert(name.to_string(), url.trim_start().to_string());
+                        }
+                    }
+                }
+                urls
             })
             .boxed()
     }
@@ -5199,5 +5221,54 @@ mod tests {
                 })
                 .boxed()
         }
+    }
+
+    #[gpui::test]
+    async fn test_remote_urls(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        git_init_repo(&repo_dir);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let git = repo.git_binary();
+        git.run(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/zed-industries/zed.git",
+        ])
+        .await
+        .unwrap();
+        git.run(&[
+            "remote",
+            "add",
+            "upstream",
+            "/Users/user/My Projects/upstream.git",
+        ])
+        .await
+        .unwrap();
+
+        let remote_urls = repo.remote_urls().await;
+        assert_eq!(remote_urls.len(), 2);
+        assert_eq!(
+            remote_urls.get("origin").unwrap(),
+            "https://github.com/zed-industries/zed.git"
+        );
+        assert_eq!(
+            remote_urls.get("upstream").unwrap(),
+            "/Users/user/My Projects/upstream.git"
+        );
     }
 }

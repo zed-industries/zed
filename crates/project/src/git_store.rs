@@ -9914,8 +9914,9 @@ async fn compute_snapshot(
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
 
-    let remote_origin_url = backend.remote_url("origin").await;
-    let remote_upstream_url = backend.remote_url("upstream").await;
+    let mut remote_urls = backend.remote_urls().await;
+    let remote_origin_url = remote_urls.remove("origin");
+    let remote_upstream_url = remote_urls.remove("upstream");
 
     log::debug!("fetched remotes");
 

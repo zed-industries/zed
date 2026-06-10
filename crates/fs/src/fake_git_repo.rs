@@ -233,6 +233,11 @@ impl GitRepository for FakeGitRepository {
         async move { fut.await.ok() }.boxed()
     }
 
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>> {
+        let fut = self.with_state_async(false, |state| Ok(state.remotes.clone()));
+        async move { fut.await.unwrap_or_default() }.boxed()
+    }
+
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
         let mut entries = HashMap::default();
         self.with_state_async(false, |state| {
