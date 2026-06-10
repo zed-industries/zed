@@ -2644,31 +2644,26 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git?;
-                let output = git
-                    .build_command(&[
+                let Ok(output) = git?
+                    .run(&[
                         "for-each-ref",
                         "--format=%(refname)",
                         "--contains",
                         "HEAD",
                         "refs/remotes/",
                     ])
-                    .output()
-                    .await?;
+                    .await
+                else {
+                    return Ok(Vec::new());
+                };
 
-                if !output.status.success() {
-                    return Ok(vec![]);
-                }
-
-                let remote_branches = String::from_utf8_lossy(&output.stdout)
+                Ok(output
                     .lines()
                     .map(|line| line.trim())
                     .filter(|line| !line.ends_with("/HEAD"))
                     .filter_map(|line| line.strip_prefix("refs/remotes/"))
                     .map(SharedString::from)
-                    .collect();
-
-                Ok(remote_branches)
+                    .collect())
             })
             .boxed()
     }
