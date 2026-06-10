@@ -1911,9 +1911,17 @@
     // shell builtins and very short commands may not register. A theme chosen
     // manually with the `theme: terminal` action takes precedence over activity
     // switching for that terminal.
+    //
+    // The `terminal: toggle activity theme` action turns switching on and off
+    // without discarding the theme names. Interactive programs (editors,
+    // pagers, REPLs, `claude`, …) hold the foreground while waiting for input,
+    // so they count as busy only while producing output and idle once it stops;
+    // `interactive_programs` adds more program names to that built-in set.
     // "activity_theme": {
     //   "busy": "Ayu Dark",
-    //   "idle": "Ayu Light"
+    //   "idle": "Ayu Light",
+    //   "enabled": true,
+    //   "interactive_programs": []
     // },
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.

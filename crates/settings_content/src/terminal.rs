@@ -192,6 +192,9 @@ pub struct TerminalSettingsContent {
     /// A theme chosen manually with the `theme: terminal` action takes
     /// precedence over activity switching for that terminal.
     ///
+    /// Use the `terminal: toggle activity theme` action to turn switching on
+    /// and off without losing the configured theme names.
+    ///
     /// Example: `{ "busy": "Ayu Dark", "idle": "Ayu Light" }`
     ///
     /// Default: null
@@ -205,6 +208,20 @@ pub struct ActivityThemeContent {
     pub busy: String,
     /// Theme applied while the terminal is idle at the shell prompt.
     pub idle: String,
+    /// Whether activity switching is currently on. Lets the
+    /// `terminal: toggle activity theme` action flip the feature without
+    /// discarding the `busy`/`idle` theme names. When omitted, switching is on.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// Extra foreground programs to treat as interactive, in addition to the
+    /// built-in set (editors, pagers, REPLs, `claude`, …). An interactive
+    /// program holds the terminal foreground while waiting for input, so it is
+    /// considered busy only while it is actively producing output and idle once
+    /// that output stops. Matched case-insensitively against the program name.
+    ///
+    /// Default: []
+    pub interactive_programs: Option<Vec<String>>,
 }
 
 /// Shell configuration to open the terminal with.
