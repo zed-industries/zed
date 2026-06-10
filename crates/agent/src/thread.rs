@@ -10,7 +10,6 @@ use crate::{
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
-use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
@@ -2428,78 +2427,76 @@ impl Thread {
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
         loop {
-            if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
-                match Self::perform_compaction_if_needed(
-                    this,
-                    event_stream,
-                    cancellation_rx.clone(),
-                    cx,
-                )
-                .await
-                {
-                    // On success the telemetry event is deferred until the
-                    // completion below reports usage, so we can record an
-                    // accurate post-compaction context size (see
-                    // `handle_completion_event`).
-                    Ok(ControlFlow::Continue(())) => {}
-                    Ok(ControlFlow::Break(())) => {
-                        this.update(cx, |this, _| {
-                            this.emit_compaction_telemetry_outcome("canceled", None)
-                        })?;
-                        return Ok(());
-                    }
-                    Err(error) => {
-                        log::error!("Compaction failed: {}", error);
-                        let error_message = error.to_string();
-                        match error.downcast::<LanguageModelCompletionError>() {
-                            Ok(error) => {
-                                attempt += 1;
-                                match Self::retry_completion_error(
-                                    this,
-                                    event_stream,
-                                    &mut cancellation_rx,
-                                    error,
-                                    attempt,
-                                    cx,
-                                )
-                                .await
-                                {
-                                    Ok(ControlFlow::Break(())) => {
-                                        this.update(cx, |this, _| {
-                                            this.emit_compaction_telemetry_outcome("canceled", None)
-                                        })?;
-                                        return Ok(());
-                                    }
-                                    Ok(ControlFlow::Continue(())) => {
-                                        this.update(cx, |this, _| {
-                                            if let Some(telemetry) =
-                                                this.pending_compaction_telemetry.as_mut()
-                                            {
-                                                telemetry.retries += 1;
-                                            }
-                                        })?;
-                                        continue;
-                                    }
-                                    Err(retry_error) => {
-                                        this.update(cx, |this, _| {
-                                            this.emit_compaction_telemetry_outcome(
-                                                "failed",
-                                                Some(error_message),
-                                            )
-                                        })?;
-                                        return Err(retry_error);
-                                    }
+            match Self::perform_compaction_if_needed(
+                this,
+                event_stream,
+                cancellation_rx.clone(),
+                cx,
+            )
+            .await
+            {
+                // On success the telemetry event is deferred until the
+                // completion below reports usage, so we can record an
+                // accurate post-compaction context size (see
+                // `handle_completion_event`).
+                Ok(ControlFlow::Continue(())) => {}
+                Ok(ControlFlow::Break(())) => {
+                    this.update(cx, |this, _| {
+                        this.emit_compaction_telemetry_outcome("canceled", None)
+                    })?;
+                    return Ok(());
+                }
+                Err(error) => {
+                    log::error!("Compaction failed: {}", error);
+                    let error_message = error.to_string();
+                    match error.downcast::<LanguageModelCompletionError>() {
+                        Ok(error) => {
+                            attempt += 1;
+                            match Self::retry_completion_error(
+                                this,
+                                event_stream,
+                                &mut cancellation_rx,
+                                error,
+                                attempt,
+                                cx,
+                            )
+                            .await
+                            {
+                                Ok(ControlFlow::Break(())) => {
+                                    this.update(cx, |this, _| {
+                                        this.emit_compaction_telemetry_outcome("canceled", None)
+                                    })?;
+                                    return Ok(());
+                                }
+                                Ok(ControlFlow::Continue(())) => {
+                                    this.update(cx, |this, _| {
+                                        if let Some(telemetry) =
+                                            this.pending_compaction_telemetry.as_mut()
+                                        {
+                                            telemetry.retries += 1;
+                                        }
+                                    })?;
+                                    continue;
+                                }
+                                Err(retry_error) => {
+                                    this.update(cx, |this, _| {
+                                        this.emit_compaction_telemetry_outcome(
+                                            "failed",
+                                            Some(error_message),
+                                        )
+                                    })?;
+                                    return Err(retry_error);
                                 }
                             }
-                            Err(error) => {
-                                this.update(cx, |this, _| {
-                                    this.emit_compaction_telemetry_outcome(
-                                        "failed",
-                                        Some(error_message),
-                                    )
-                                })?;
-                                return Err(error);
-                            }
+                        }
+                        Err(error) => {
+                            this.update(cx, |this, _| {
+                                this.emit_compaction_telemetry_outcome(
+                                    "failed",
+                                    Some(error_message),
+                                )
+                            })?;
+                            return Err(error);
                         }
                     }
                 }
@@ -6127,7 +6124,6 @@ mod tests {
         let new_user_message_id = UserMessageId::new();
 
         cx.update(|cx| {
-            cx.update_flags(true, vec!["handoff".to_string()]);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
                 thread
@@ -6443,7 +6439,6 @@ mod tests {
         };
 
         cx.update(|cx| {
-            cx.update_flags(true, vec!["handoff".to_string()]);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
                 thread
