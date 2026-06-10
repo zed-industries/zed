@@ -15,6 +15,7 @@ path = "src/onboarding.rs"
 default = []
 
 [dependencies]
+agent_ui.workspace = true
 anyhow.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true

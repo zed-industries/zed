@@ -1,7 +1,8 @@
 use crate::multibuffer_hint::MultibufferHint;
+use agent_ui::AgentPanel;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use db::kvp::KeyValueStore;
+use db::kvp::{Dismissable, KeyValueStore};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
@@ -23,7 +24,7 @@ pub use workspace::welcome::ShowWelcome;
 use workspace::welcome::WelcomePage;
 use workspace::{
     AppState, Workspace, WorkspaceId,
-    dock::DockPosition,
+    dock::{DockPosition, Panel},
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
@@ -273,10 +274,10 @@ impl Onboarding {
         })
     }
 
-    fn on_finish(_: &Finish, window: &mut Window, cx: &mut App) {
+    fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
         telemetry::event!("Finish Setup");
         go_to_welcome_page(cx);
-        open_agent_panel_after_onboarding(window, cx);
+        open_agent_panel_after_onboarding(cx);
     }
 
     fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
@@ -432,12 +433,12 @@ impl Item for Onboarding {
         f(*event)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         // The user has navigated away from onboarding (e.g. opened a file or
         // switched tabs) without explicitly finishing setup. Treat this as an
         // exit from onboarding and reveal the agent panel if they configured an
         // agent, so it's easy to find.
-        open_agent_panel_after_onboarding(window, cx);
+        open_agent_panel_after_onboarding(cx);
     }
 }
 
@@ -477,13 +478,14 @@ fn go_to_welcome_page(cx: &mut App) {
     });
 }
 
-/// Tracks whether the agent panel has already been auto-opened after onboarding,
-/// so we only reveal it once and don't re-open it every time the user navigates
-/// away from the onboarding tab.
-#[derive(Default)]
-struct AgentPanelAutoOpened(bool);
+/// Persists whether the agent panel has already been auto-opened after
+/// onboarding, so we only ever reveal it once (across sessions) and don't
+/// re-open it every time the user navigates away from the onboarding tab.
+struct AgentPanelAutoOpened;
 
-impl Global for AgentPanelAutoOpened {}
+impl Dismissable for AgentPanelAutoOpened {
+    const KEY: &'static str = "agent_panel_auto_opened_after_onboarding";
+}
 
 /// Returns whether the user has at least one agent configured: either signed in
 /// to the Zed Agent, or one of the featured external agents installed.
@@ -505,13 +507,16 @@ fn any_agent_configured(cx: &App) -> bool {
     featured_agent_installed || zed_agent_signed_in
 }
 
-/// Reveals and focuses the agent panel once, if the user has configured an
-/// agent. This is intended to be called when the user *leaves* onboarding
-/// (by finishing setup or navigating elsewhere), never the moment an agent is
+/// Reveals the agent panel at most once ever, if the user has configured an
+/// agent. This is intended to be called when the user *leaves* onboarding (by
+/// finishing setup or navigating elsewhere), never the moment an agent is
 /// configured, so the panel doesn't pop open mid-setup.
-fn open_agent_panel_after_onboarding(window: &mut Window, cx: &mut App) {
-    let already_opened = cx.try_global::<AgentPanelAutoOpened>().is_some_and(|g| g.0);
-    if already_opened {
+///
+/// The panel is revealed without taking keyboard focus, and the actual open is
+/// deferred (via `with_active_or_new_workspace`) so it runs after the current
+/// pane/item update has settled rather than re-entering the workspace.
+fn open_agent_panel_after_onboarding(cx: &mut App) {
+    if AgentPanelAutoOpened::dismissed(cx) {
         return;
     }
 
@@ -522,8 +527,15 @@ fn open_agent_panel_after_onboarding(window: &mut Window, cx: &mut App) {
         return;
     }
 
-    cx.update_default_global::<AgentPanelAutoOpened, _>(|opened, _| opened.0 = true);
-    window.dispatch_action(zed_actions::assistant::FocusAgent.boxed_clone(), cx);
+    AgentPanelAutoOpened::set_dismissed(true, cx);
+    with_active_or_new_workspace(cx, |workspace, window, cx| {
+        let panel_enabled = workspace
+            .panel::<AgentPanel>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx));
+        if panel_enabled {
+            workspace.open_panel::<AgentPanel>(window, cx);
+        }
+    });
 }
 
 pub async fn handle_import_vscode_settings(
