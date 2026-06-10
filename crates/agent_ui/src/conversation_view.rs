@@ -162,8 +162,6 @@ impl From<anyhow::Error> for ThreadError {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if error.is::<language_model::PaymentRequiredError>() {
-            Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
@@ -180,6 +178,7 @@ impl From<anyhow::Error> for ThreadError {
                     }
                 }
                 PromptTooLarge { .. } => Self::PromptTooLarge,
+                PaymentRequired => Self::PaymentRequired,
                 NoApiKey { provider } => Self::NoApiKey {
                     provider: provider.to_string().into(),
                 },

@@ -3887,10 +3887,8 @@ impl Thread {
                     max_attempts: 3,
                 })
             }
-            Other(err) if err.is::<language_model::PaymentRequiredError>() => {
-                // Retrying won't help for Payment Required errors.
-                None
-            }
+            // Retrying won't help for Payment Required errors.
+            PaymentRequired => None,
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
