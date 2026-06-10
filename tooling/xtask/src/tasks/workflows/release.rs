@@ -1,4 +1,6 @@
-use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{
+    Event, Expression, Level, Permissions, Push, Run, Step, Use, Workflow, ctx::Context,
+};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
@@ -91,6 +93,7 @@ pub(crate) fn release() -> Workflow {
     );
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
@@ -339,9 +342,14 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
     };
 
     named::job(
-        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
-            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
-        ),
+        dependant_job(deps)
+            .runs_on(runners::LINUX_SMALL)
+            // Draft releases are only visible to tokens with push access, so viewing
+            // the still-draft release requires `contents: write`.
+            .permissions(Permissions::default().contents(Level::Write))
+            .add_step(
+                named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+            ),
     )
 }
 
@@ -452,6 +460,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
     named::job(
         dependant_job(&deps)
             .runs_on(runners::LINUX_MEDIUM)
+            .permissions(Permissions::default().contents(Level::Write))
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts())
@@ -616,6 +625,9 @@ pub(crate) fn push_release_update_notification(
 
     let mut job = dependant_job(&all_deps)
         .runs_on(runners::LINUX_SMALL)
+        // Draft releases are only visible to tokens with push access, so reading
+        // the release URL while it may still be a draft requires `contents: write`.
+        .permissions(Permissions::default().contents(Level::Write))
         .cond(Expression::new("always()"));
 
     for step in notify_slack(MessageType::Evaluated {

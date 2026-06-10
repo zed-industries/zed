@@ -1,4 +1,4 @@
-use gh_workflow::{Container, Event, Port, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Container, Event, Level, Permissions, Port, Push, Run, Step, Use, Workflow};
 use indoc::indoc;
 
 use crate::tasks::workflows::runners::{self, Platform};
@@ -14,6 +14,7 @@ pub(crate) fn deploy_collab() -> Workflow {
     let deploy = deploy(&[&publish]);
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default().push(Push::default().add_tag("collab-production")))
         .add_env(("DOCKER_BUILDKIT", "1"))
         .add_job(style.name, style.job)

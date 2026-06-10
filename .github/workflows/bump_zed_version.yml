@@ -8,6 +8,7 @@ on:
         description: 'Which channels to bump: all, main, preview, or stable'
         type: string
         default: all
+permissions: {}
 jobs:
   resolve_versions:
     if: github.repository_owner == 'zed-industries'

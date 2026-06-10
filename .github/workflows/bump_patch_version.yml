@@ -8,6 +8,8 @@ on:
         description: Branch name to run on
         required: true
         type: string
+permissions:
+  contents: read
 jobs:
   run_bump_patch_version:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

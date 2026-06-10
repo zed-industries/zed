@@ -103,6 +103,7 @@ pub(crate) fn run_tests() -> Workflow {
     ); // could be more specific here?
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .add_event(
             Event::default()
                 .push(

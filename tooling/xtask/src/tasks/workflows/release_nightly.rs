@@ -45,6 +45,7 @@ pub fn release_nightly() -> Workflow {
     let notify_on_failure = notify_on_failure(&bundle.jobs());
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default()
             // Fire 6 times a day
             .schedule([Schedule::new("0 */4 * * *")])

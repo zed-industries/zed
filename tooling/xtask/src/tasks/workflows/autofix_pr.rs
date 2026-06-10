@@ -15,6 +15,7 @@ pub fn autofix_pr() -> Workflow {
     let run_autofix = run_autofix(&pr_number, &run_clippy);
     let commit_changes = commit_changes(&pr_number, &run_autofix);
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .run_name(format!("autofix PR #{pr_number}"))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
@@ -91,6 +92,11 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     named::job(use_clang(
         Job::default()
             .runs_on(runners::LINUX_DEFAULT)
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Read)
+                    .pull_requests(Level::Read),
+            )
             .outputs([(
                 "has_changes".to_owned(),
                 "${{ steps.create-patch.outputs.has_changes }}".to_owned(),

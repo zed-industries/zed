@@ -17,6 +17,7 @@ pub fn bump_zed_version() -> Workflow {
     let stable_job = promote_to_stable(&target, &versions_job, &outputs);
 
     named::workflow()
+        .permissions(Permissions::default())
         .on(Event::default()
             .workflow_dispatch(WorkflowDispatch::default().add_input(target.name, target.input())))
         .add_job(versions_job.name, versions_job.job)

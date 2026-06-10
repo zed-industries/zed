@@ -314,6 +314,7 @@ pub(crate) fn deploy_docs() -> Workflow {
     let deploy_docs = deploy_docs_job(&channel, &checkout_ref);
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .add_event(
             Event::default().workflow_dispatch(
                 WorkflowDispatch::default()
@@ -366,6 +367,7 @@ pub(crate) fn deploy_nightly_docs() -> Workflow {
 
     named::workflow()
         .name("deploy_nightly_docs")
+        .permissions(Permissions::default().contents(Level::Read))
         .add_event(Event::default().push(Push::default().add_branch("main")))
         .add_job(deploy_docs.name, deploy_docs.job)
 }

@@ -13,6 +13,7 @@ use gh_workflow::*;
 pub fn nix_build() -> Workflow {
     let [nix_linux_x86_64, nix_mac_aarch64] = nix_pr_jobs(&["run-nix", "run-bundling"]);
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))

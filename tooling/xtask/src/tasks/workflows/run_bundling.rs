@@ -21,6 +21,7 @@ pub fn run_bundling() -> Workflow {
         windows_x86_64: bundle_windows(Arch::X86_64, None, &[]),
     };
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))

@@ -10,6 +10,7 @@ pub fn bump_patch_version() -> Workflow {
     let branch = WorkflowInput::string("branch", None).description("Branch name to run on");
     let bump_patch_version_job = run_bump_patch_version(&branch);
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default()
             .workflow_dispatch(WorkflowDispatch::default().add_input(branch.name, branch.input())))
         .concurrency(

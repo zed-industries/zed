@@ -8,6 +8,8 @@ on:
   push:
     tags:
     - extension-cli
+permissions:
+  contents: read
 jobs:
   publish_job:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

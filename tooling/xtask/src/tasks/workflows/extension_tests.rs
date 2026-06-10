@@ -41,6 +41,7 @@ pub(crate) fn extension_tests() -> Workflow {
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()

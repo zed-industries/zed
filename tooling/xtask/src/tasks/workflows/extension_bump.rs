@@ -58,6 +58,7 @@ pub(crate) fn extension_bump() -> Workflow {
     );
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()

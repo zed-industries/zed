@@ -13,6 +13,7 @@ pub fn publish_extension_cli() -> Workflow {
     let update_sha_in_extensions = update_sha_in_extensions(&publish);
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default().push(Push::default().tags(vec!["extension-cli".to_string()])))
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("CARGO_INCREMENTAL", 0))

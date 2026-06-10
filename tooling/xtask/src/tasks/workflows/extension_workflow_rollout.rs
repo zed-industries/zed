@@ -1,5 +1,6 @@
 use gh_workflow::{
-    Event, Expression, Job, Level, Run, Step, Strategy, Use, Workflow, WorkflowDispatch,
+    Event, Expression, Job, Level, Permissions, Run, Step, Strategy, Use, Workflow,
+    WorkflowDispatch,
 };
 use indoc::formatdoc;
 use indoc::indoc;
@@ -41,6 +42,7 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
     let create_tag = create_rollout_tag(&rollout_workflows, &filter_repos_input);
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
                 .add_input(filter_repos_input.name, filter_repos_input.input())
@@ -78,6 +80,7 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
             .result_encoding(ResultEncoding::Json)
             .custom_name("get_repositories")
             .id("list-repos")
+            .token(vars::GITHUB_TOKEN)
             .into();
 
         let filtered_repos = StepOutput::new(&step, "result");

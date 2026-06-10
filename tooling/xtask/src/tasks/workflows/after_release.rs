@@ -39,6 +39,7 @@ pub fn after_release() -> Workflow {
     };
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .add_env(("TAG_NAME", TAG_NAME_ENV))
         .add_env(("IS_PRERELEASE", IS_PRERELEASE_ENV))
         .on(Event::default()

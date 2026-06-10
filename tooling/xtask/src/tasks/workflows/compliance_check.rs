@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Job, Schedule, Workflow, WorkflowDispatch};
+use gh_workflow::{Event, Job, Level, Permissions, Schedule, Workflow, WorkflowDispatch};
 
 use crate::tasks::workflows::{
     release::{ComplianceContext, add_compliance_steps},
@@ -11,6 +11,7 @@ pub fn compliance_check() -> Workflow {
     let check = scheduled_compliance_check();
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default()
             .schedule([Schedule::new("30 17 * * 2")])
             .workflow_dispatch(WorkflowDispatch::default()))

@@ -9,6 +9,7 @@ pub fn danger() -> Workflow {
     let danger = danger_job();
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .on(Event::default()
             .pull_request(PullRequest::default().add_branch("main").types([
                 PullRequestType::Opened,

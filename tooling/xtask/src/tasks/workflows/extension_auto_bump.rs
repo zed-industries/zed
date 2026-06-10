@@ -20,6 +20,7 @@ pub(crate) fn extension_auto_bump() -> Workflow {
     let bump = bump_extension_versions(&detect);
 
     named::workflow()
+        .permissions(Permissions::default().contents(Level::Read))
         .add_event(
             Event::default().push(
                 Push::default()
