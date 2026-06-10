@@ -83,6 +83,10 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Persisted edit-tracking state (the agent's unreviewed edits) so diff
+    /// stats and the keep/reject review survive reloading the thread.
+    #[serde(default)]
+    pub action_log: Vec<action_log::SerializedEdit>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -133,6 +137,7 @@ impl SharedThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            action_log: Vec::new(),
         }
     }
 
@@ -317,6 +322,7 @@ impl DbThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            action_log: Vec::new(),
         })
     }
 }
@@ -768,6 +774,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            action_log: Vec::new(),
         }
     }
 

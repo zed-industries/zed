@@ -9,6 +9,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
+use serde::{Deserialize, Serialize};
 use std::{
     cmp,
     ops::Range,
@@ -62,6 +63,29 @@ pub struct ActionLog {
     last_reject_undo: Option<LastRejectUndo>,
     /// Tracks the last time files were read by the agent, to detect external modifications
     file_read_times: HashMap<PathBuf, MTime>,
+}
+
+/// A serializable snapshot of a single tracked buffer's edit state, used to
+/// persist the agent's unreviewed edits across reloads of a thread (see
+/// [`ActionLog::serialize`] and [`ActionLog::restore_edit`]).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SerializedEdit {
+    /// Absolute path of the edited file, used to reopen the buffer on restore.
+    pub abs_path: PathBuf,
+    /// The original ("diff base") contents the agent's edits are measured
+    /// against. Diffing this against the current file contents reproduces the
+    /// unreviewed edits and diff stats.
+    pub diff_base: String,
+    pub status: SerializedEditStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SerializedEditStatus {
+    Created {
+        existing_file_content: Option<String>,
+    },
+    Modified,
+    Deleted,
 }
 
 impl ActionLog {
@@ -1042,6 +1066,101 @@ impl ActionLog {
         DiffStats::all_files(self.changed_buffers(cx), cx)
     }
 
+    /// Serializes the edit state of every tracked buffer that currently has
+    /// unreviewed edits, so it can be persisted alongside the thread and later
+    /// restored with [`ActionLog::restore_edit`]. Buffers without a local file
+    /// path are skipped, since they can't be reopened on restore.
+    pub fn serialize(&self, cx: &App) -> Vec<SerializedEdit> {
+        self.tracked_buffers
+            .iter()
+            .filter(|(_, tracked)| tracked.has_edits(cx))
+            .filter_map(|(buffer, tracked)| {
+                let buffer = buffer.read(cx);
+                let abs_path = buffer.file()?.as_local()?.abs_path(cx);
+                let status = match &tracked.status {
+                    TrackedBufferStatus::Created {
+                        existing_file_content,
+                    } => SerializedEditStatus::Created {
+                        existing_file_content: existing_file_content
+                            .as_ref()
+                            .map(|content| content.to_string()),
+                    },
+                    TrackedBufferStatus::Modified => SerializedEditStatus::Modified,
+                    TrackedBufferStatus::Deleted => SerializedEditStatus::Deleted,
+                };
+                Some(SerializedEdit {
+                    abs_path,
+                    diff_base: tracked.diff_base.to_string(),
+                    status,
+                })
+            })
+            .collect()
+    }
+
+    /// Restores edit tracking for a buffer from previously [`serialize`]d state,
+    /// reinstating the original `diff_base` so the agent's unreviewed edits and
+    /// diff stats reappear after the thread is reloaded. The diff is recomputed
+    /// against the buffer's current contents.
+    ///
+    /// [`serialize`]: ActionLog::serialize
+    pub fn restore_edit(
+        &mut self,
+        buffer: Entity<Buffer>,
+        diff_base: String,
+        status: SerializedEditStatus,
+        cx: &mut Context<Self>,
+    ) {
+        let status = match status {
+            SerializedEditStatus::Created {
+                existing_file_content,
+            } => TrackedBufferStatus::Created {
+                existing_file_content: existing_file_content.map(Rope::from),
+            },
+            SerializedEditStatus::Modified => TrackedBufferStatus::Modified,
+            SerializedEditStatus::Deleted => TrackedBufferStatus::Deleted,
+        };
+
+        let open_lsp_handle = self.project.update(cx, |project, cx| {
+            project.register_buffer_with_language_servers(&buffer, cx)
+        });
+        let text_snapshot = buffer.read(cx).text_snapshot();
+        let language = buffer.read(cx).language().cloned();
+        let language_registry = buffer.read(cx).language_registry();
+        let diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&text_snapshot, cx);
+            diff.language_changed(language, language_registry, cx);
+            diff
+        });
+        let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
+        let tracked_buffer = TrackedBuffer {
+            buffer: buffer.clone(),
+            diff_base: Rope::from(diff_base),
+            unreviewed_edits: Patch::default(),
+            snapshot: text_snapshot,
+            status,
+            version: buffer.read(cx).version(),
+            diff,
+            diff_update: diff_update_tx,
+            _open_lsp_handle: open_lsp_handle,
+            _maintain_diff: cx.spawn({
+                let buffer = buffer.clone();
+                async move |this, cx| {
+                    Self::maintain_diff(this, buffer, diff_update_rx, cx)
+                        .await
+                        .ok();
+                }
+            }),
+            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
+        };
+        self.tracked_buffers.insert(buffer.clone(), tracked_buffer);
+        // Recompute the diff (and therefore the unreviewed edits) against the
+        // buffer's current contents. Treated as an agent change so the
+        // difference from `diff_base` is preserved as unreviewed.
+        if let Some(tracked_buffer) = self.tracked_buffers.get(&buffer) {
+            tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+        }
+    }
+
     /// Iterate over buffers changed since last read or edited by the model
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
@@ -1350,6 +1469,206 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_serialize_and_restore_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
+                    .unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        let original_stats = action_log.read_with(cx, |log, cx| log.diff_stats(cx));
+        assert!(
+            original_stats.lines_added > 0 || original_stats.lines_removed > 0,
+            "the agent's edits should produce a non-empty diff"
+        );
+        let original_hunks = unreviewed_hunks(&action_log, cx);
+
+        // Simulate persisting the thread and reloading it into a fresh action
+        // log: the serialized edits should reproduce the same diff and stats.
+        let serialized = action_log.read_with(cx, |log, cx| log.serialize(cx));
+        assert_eq!(
+            serialized.len(),
+            1,
+            "the one edited buffer should serialize"
+        );
+
+        let restored_log = cx.new(|_| ActionLog::new(project.clone()));
+        for edit in serialized {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(&edit.abs_path, cx)
+                })
+                .await
+                .unwrap();
+            restored_log.update(cx, |log, cx| {
+                log.restore_edit(buffer, edit.diff_base, edit.status, cx)
+            });
+        }
+        cx.run_until_parked();
+
+        let restored_stats = restored_log.read_with(cx, |log, cx| log.diff_stats(cx));
+        assert_eq!(
+            (restored_stats.lines_added, restored_stats.lines_removed),
+            (original_stats.lines_added, original_stats.lines_removed),
+            "restored diff stats should match the originals"
+        );
+        assert_eq!(
+            unreviewed_hunks(&restored_log, cx),
+            original_hunks,
+            "restored unreviewed hunks should match the originals"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_serialize_and_restore_created_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("lorem\nipsum\n", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let original_stats = action_log.read_with(cx, |log, cx| log.diff_stats(cx));
+        assert!(
+            original_stats.lines_added > 0,
+            "creating a file should register added lines"
+        );
+        let original_hunks = unreviewed_hunks(&action_log, cx);
+
+        let serialized = action_log.read_with(cx, |log, cx| log.serialize(cx));
+        assert_eq!(serialized.len(), 1);
+        assert!(
+            matches!(serialized[0].status, SerializedEditStatus::Created { .. }),
+            "a created file should serialize with Created status"
+        );
+
+        let restored_log = cx.new(|_| ActionLog::new(project.clone()));
+        for edit in serialized {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(&edit.abs_path, cx)
+                })
+                .await
+                .unwrap();
+            restored_log.update(cx, |log, cx| {
+                log.restore_edit(buffer, edit.diff_base, edit.status, cx)
+            });
+        }
+        cx.run_until_parked();
+
+        let restored_stats = restored_log.read_with(cx, |log, cx| log.diff_stats(cx));
+        assert_eq!(
+            (restored_stats.lines_added, restored_stats.lines_removed),
+            (original_stats.lines_added, original_stats.lines_removed),
+            "restored diff stats should match the originals"
+        );
+        assert_eq!(unreviewed_hunks(&restored_log, cx), original_hunks);
+    }
+
+    #[gpui::test]
+    async fn test_serialize_and_restore_deleted_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        let original_stats = action_log.read_with(cx, |log, cx| log.diff_stats(cx));
+        assert!(
+            original_stats.lines_removed > 0,
+            "deleting the file's contents should register removed lines"
+        );
+        let original_hunks = unreviewed_hunks(&action_log, cx);
+
+        let serialized = action_log.read_with(cx, |log, cx| log.serialize(cx));
+        assert_eq!(serialized.len(), 1);
+        assert!(
+            matches!(serialized[0].status, SerializedEditStatus::Deleted),
+            "a deleted file should serialize with Deleted status"
+        );
+
+        let restored_log = cx.new(|_| ActionLog::new(project.clone()));
+        for edit in serialized {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(&edit.abs_path, cx)
+                })
+                .await
+                .unwrap();
+            restored_log.update(cx, |log, cx| {
+                log.restore_edit(buffer, edit.diff_base, edit.status, cx)
+            });
+        }
+        cx.run_until_parked();
+
+        let restored_stats = restored_log.read_with(cx, |log, cx| log.diff_stats(cx));
+        assert_eq!(
+            (restored_stats.lines_added, restored_stats.lines_removed),
+            (original_stats.lines_added, original_stats.lines_removed),
+            "restored diff stats should match the originals"
+        );
+        assert_eq!(unreviewed_hunks(&restored_log, cx), original_hunks);
     }
 
     #[gpui::test(iterations = 10)]

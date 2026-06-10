@@ -1611,6 +1611,35 @@ impl Thread {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
+        // Reopening buffers is async, so restore the persisted edit tracking in
+        // the background. Best-effort: files that can no longer be opened (e.g.
+        // moved or deleted since the thread was saved) are skipped.
+        let serialized_edits = db_thread.action_log;
+        if !serialized_edits.is_empty() {
+            cx.spawn({
+                let action_log = action_log.downgrade();
+                let project = project.downgrade();
+                async move |_thread, cx| {
+                    for edit in serialized_edits {
+                        let Ok(open_task) = project.update(cx, |project, cx| {
+                            project.open_local_buffer(&edit.abs_path, cx)
+                        }) else {
+                            continue;
+                        };
+                        let Some(buffer) = open_task.await.log_err() else {
+                            continue;
+                        };
+                        action_log
+                            .update(cx, |action_log, cx| {
+                                action_log.restore_edit(buffer, edit.diff_base, edit.status, cx);
+                            })
+                            .ok();
+                    }
+                }
+            })
+            .detach();
+        }
+
         Self {
             id,
             prompt_id: PromptId::new(),
@@ -1689,6 +1718,7 @@ impl Thread {
                 }
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            action_log: self.action_log.read(cx).serialize(cx),
         };
 
         cx.background_spawn(async move {
