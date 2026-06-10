@@ -354,6 +354,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.supports_thinking
     }
 
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model.supports_disabling_thinking
+    }
+
     fn supports_fast_mode(&self) -> bool {
         self.model.supports_fast_mode
     }
