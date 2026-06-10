@@ -358,7 +358,7 @@ async fn predict_teacher(
             )
             .await
         }
-        TeacherBackend::Gpt52 => {
+        TeacherBackend::Gpt52 | TeacherBackend::Gpt54 | TeacherBackend::Gpt55 => {
             predict_openai(
                 example,
                 backend,
@@ -703,7 +703,7 @@ pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Resu
                     .await
                     .context("Failed to sync Anthropic batches")?;
             }
-            TeacherBackend::Gpt52 => {
+            TeacherBackend::Gpt52 | TeacherBackend::Gpt54 | TeacherBackend::Gpt55 => {
                 let llm_client = OPENAI_CLIENT.get_or_init(|| {
                     OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create OpenAI client")
@@ -793,7 +793,7 @@ fn pending_batch_count(provider: Option<&PredictionProvider>) -> anyhow::Result<
                 });
                 llm_client.pending_batch_count()
             }
-            TeacherBackend::Gpt52 => {
+            TeacherBackend::Gpt52 | TeacherBackend::Gpt54 | TeacherBackend::Gpt55 => {
                 let llm_client = OPENAI_CLIENT.get_or_init(|| {
                     OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create OpenAI client")

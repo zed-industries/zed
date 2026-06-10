@@ -399,6 +399,8 @@ pub enum TeacherBackend {
     #[default]
     Sonnet45,
     Gpt52,
+    Gpt54,
+    Gpt55,
 }
 
 impl std::fmt::Display for TeacherBackend {
@@ -407,6 +409,8 @@ impl std::fmt::Display for TeacherBackend {
             TeacherBackend::Sonnet46 => write!(f, "sonnet46"),
             TeacherBackend::Sonnet45 => write!(f, "sonnet45"),
             TeacherBackend::Gpt52 => write!(f, "gpt52"),
+            TeacherBackend::Gpt54 => write!(f, "gpt54"),
+            TeacherBackend::Gpt55 => write!(f, "gpt55"),
         }
     }
 }
@@ -418,10 +422,12 @@ impl std::str::FromStr for TeacherBackend {
         match s.to_lowercase().as_str() {
             "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
             "sonnet46" => Ok(TeacherBackend::Sonnet46),
-            "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
+            "gpt52" => Ok(TeacherBackend::Gpt52),
+            "gpt54" | "gpt" | "openai" => Ok(TeacherBackend::Gpt54),
+            "gpt55" => Ok(TeacherBackend::Gpt55),
             "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
             _ => anyhow::bail!(
-                "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52"
+                "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52, gpt54, gpt55"
             ),
         }
     }
@@ -433,6 +439,8 @@ impl TeacherBackend {
             TeacherBackend::Sonnet45 => "claude-sonnet-4-5",
             TeacherBackend::Sonnet46 => "claude-sonnet-4-6",
             TeacherBackend::Gpt52 => "gpt-5.2",
+            TeacherBackend::Gpt54 => "gpt-5.4",
+            TeacherBackend::Gpt55 => "gpt-5.5",
         }
     }
 }
