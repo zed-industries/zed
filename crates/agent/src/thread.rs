@@ -1314,9 +1314,10 @@ impl Thread {
         &self.id
     }
 
-    // Only used by Seatbelt-style sandboxes; Linux relies on bwrap's tmpfs
-    // `/tmp` and never needs a per-thread temp directory.
-    #[cfg(not(target_os = "linux"))]
+    // Only used by Seatbelt-style sandboxes (macOS); Linux relies on bwrap's
+    // tmpfs `/tmp` and Windows on the WSL bwrap tmpfs, so neither needs a
+    // per-thread temp directory.
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn sandboxed_terminal_temp_dir(
         &mut self,
         cx: &mut Context<Self>,
