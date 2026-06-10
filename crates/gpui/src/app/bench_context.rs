@@ -100,6 +100,7 @@ impl BenchReport {
 
     fn record_frame_timings<'i>(&self, timings: impl IntoIterator<Item = &'i FrameTiming>) {
         let mut snapshot = self.frame_snapshot.borrow_mut();
+        // `.ok()` on `record`: this operation is infallible (the histograms auto-resize).
         for timing in timings {
             snapshot
                 .draw
@@ -479,12 +480,21 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     }
 
     /// Runs GPUI benchmark teardown.
+    ///
+    /// Forgets any timers still armed on the shared dispatcher so they can't
+    /// fire during a later benchmark; assumes no other `BenchAppContext` is
+    /// live on this thread.
     pub fn teardown(mut self) {
         self.run_until_idle();
         self.update(|cx| {
             cx.quit();
         });
         self.run_until_idle();
+        self.background_executor
+            .dispatcher()
+            .as_bench()
+            .expect("validated in BenchAppContext::build")
+            .forget_pending_timers();
     }
 }
 

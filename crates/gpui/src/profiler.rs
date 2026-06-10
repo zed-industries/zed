@@ -696,8 +696,6 @@ impl FrameTiming {
 }
 
 // Allow 16MiB of frame timing entries.
-// VecDeque grows by doubling its capacity when full, so keep this a power of 2 to avoid wasting
-// memory.
 const MAX_FRAME_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<FrameTiming>();
 
 struct FrameTimings {

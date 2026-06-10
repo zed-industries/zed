@@ -62,7 +62,11 @@ impl IdleTracker {
         gpui_util::defer(|| self.decrement())
     }
 
-    fn notify(&self) {
+    /// Notifies waiters while holding the in-flight lock. `run_until_idle`
+    /// re-checks its wake conditions under this lock before waiting, so the
+    /// notification can't slip between its check and its wait and be lost.
+    fn notify_under_lock(&self) {
+        let _inflight = self.inflight.lock();
         self.condvar.notify_all();
     }
 }
@@ -224,31 +228,45 @@ impl BenchDispatcher {
                 continue;
             }
 
+            // Checked before taking the in-flight lock; the timer thread
+            // locks them in the opposite order, so nesting would deadlock.
             if self.has_due_timer() {
+                // Poll briefly: a firing timer leaves the heap just before it
+                // registers as in-flight.
                 let mut inflight = self.idle.inflight.lock();
                 self.idle
                     .condvar
                     .wait_for(&mut inflight, Duration::from_millis(1));
                 continue;
             }
+
             let mut inflight = self.idle.inflight.lock();
+            // Re-checked under the lock that `dispatch_on_main_thread`
+            // notifies under, so the notification can't be lost.
+            if self.main_queue_has_work() {
+                continue;
+            }
             if *inflight == 0 {
-                drop(inflight);
-                // Work that completed just before we took the lock may have
-                // queued new main-thread tasks; their sends happened before the
-                // corresponding in-flight decrements, so one more drain
-                // observes them all. Also re-check timers that became due in
-                // the meantime.
-                if self.drain_main_queue() || self.has_due_timer() {
-                    continue;
-                }
+                // Main-thread sends happen before in-flight decrements, and
+                // decrements happen under this lock, so the check above
+                // observed all completed work.
                 return;
             }
-            // Wakes on background/timer completion or new main-thread work.
-            // The timeout guards against notifications racing the drain above.
-            self.idle
-                .condvar
-                .wait_for(&mut inflight, Duration::from_millis(100));
+            // Woken when main-thread work arrives or the in-flight count
+            // reaches zero; both notify under this lock.
+            self.idle.condvar.wait(&mut inflight);
+        }
+    }
+
+    /// Forgets all pending timers so timers armed by one benchmark can't fire
+    /// during a later benchmark sharing this process-lifetime dispatcher.
+    ///
+    /// The runnables are leaked rather than dropped, since dropping one wakes
+    /// the awaiting task as if the timer had fired.
+    pub fn forget_pending_timers(&self) {
+        let mut state = self.timers.state.lock();
+        for entry in state.heap.drain() {
+            std::mem::forget(entry.runnable);
         }
     }
 
@@ -258,6 +276,10 @@ impl BenchDispatcher {
             .heap
             .peek()
             .is_some_and(|entry| entry.due <= Instant::now())
+    }
+
+    fn main_queue_has_work(&self) -> bool {
+        !self.main_receiver.lock().is_empty()
     }
 
     fn drain_main_queue(&self) -> bool {
@@ -303,7 +325,7 @@ impl PlatformDispatcher for BenchDispatcher {
             return;
         }
         // Wake `run_until_idle` if it's waiting for main-thread work.
-        self.idle.notify();
+        self.idle.notify_under_lock();
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
@@ -329,5 +351,91 @@ impl PlatformDispatcher for BenchDispatcher {
 
     fn as_bench(&self) -> Option<&BenchDispatcher> {
         Some(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+    use crate::{BackgroundExecutor, ForegroundExecutor};
+
+    #[test]
+    fn run_until_idle_completes_background_to_main_handoffs() {
+        let dispatcher = Arc::new(BenchDispatcher::new());
+        let background = BackgroundExecutor::new(dispatcher.clone());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        background
+            .spawn(async move {
+                thread::sleep(Duration::from_millis(10));
+                sender.send(()).ok();
+            })
+            .detach();
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    receiver.await.ok();
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        dispatcher.run_until_idle();
+        assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn timers_fire_in_real_time() {
+        let dispatcher = Arc::new(BenchDispatcher::new());
+        let background = BackgroundExecutor::new(dispatcher.clone());
+
+        let fired = Arc::new(AtomicBool::new(false));
+        let timer = background.timer(Duration::from_millis(10));
+        background
+            .spawn({
+                let fired = fired.clone();
+                async move {
+                    timer.await;
+                    fired.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !fired.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(fired.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn forget_pending_timers_prevents_stale_timers_from_firing() {
+        let dispatcher = Arc::new(BenchDispatcher::new());
+        let background = BackgroundExecutor::new(dispatcher.clone());
+
+        let fired = Arc::new(AtomicBool::new(false));
+        let timer = background.timer(Duration::from_millis(250));
+        background
+            .spawn({
+                let fired = fired.clone();
+                async move {
+                    timer.await;
+                    fired.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        dispatcher.run_until_idle();
+        dispatcher.forget_pending_timers();
+
+        thread::sleep(Duration::from_millis(400));
+        dispatcher.run_until_idle();
+        assert!(!fired.load(Ordering::SeqCst));
     }
 }

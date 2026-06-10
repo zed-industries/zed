@@ -36,6 +36,7 @@ pub mod prelude;
 /// Profiling utilities for task, frame, and thread performance tracking.
 pub mod profiler;
 #[cfg(any(
+    test,
     target_os = "windows",
     target_os = "linux",
     target_family = "wasm",
