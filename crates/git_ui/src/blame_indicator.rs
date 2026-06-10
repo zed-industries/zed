@@ -157,3 +157,187 @@ impl StatusItemView for BlameIndicator {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::EditorMode;
+    use git::blame::Blame;
+    use git::repository::repo_path;
+    use gpui::{Focusable as _, TestAppContext, UpdateGlobal as _};
+    use language::language_settings::AllLanguageSettings;
+    use multi_buffer::MultiBuffer;
+    use project::{FakeFs, Project, WorktreeSettings};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use theme::LoadThemes;
+    use util::path;
+    use workspace::WorkspaceSettings;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(LoadThemes::JustBase, cx);
+            AllLanguageSettings::register(cx);
+            editor::init(cx);
+            ProjectSettings::register(cx);
+            WorktreeSettings::register(cx);
+            WorkspaceSettings::register(cx);
+        });
+    }
+
+    fn blame_entry(author: Option<&str>, summary: Option<&str>) -> BlameEntry {
+        BlameEntry {
+            sha: "1b1b1b".parse().unwrap(),
+            range: 0..1,
+            original_line_number: 0,
+            author: author.map(Into::into),
+            author_mail: None,
+            author_time: Some(1_000_000_000),
+            author_tz: Some("+0000".into()),
+            committer_name: None,
+            committer_email: None,
+            committer_time: None,
+            committer_tz: None,
+            summary: summary.map(Into::into),
+            previous: None,
+            filename: "file.txt".into(),
+        }
+    }
+
+    #[test]
+    fn format_blame_matches_inline_blame_format() {
+        let entry = blame_entry(Some("Alice"), Some("Fix the bug"));
+        assert_eq!(
+            BlameIndicator::format_blame(&entry, "3 minutes ago", true),
+            SharedString::from("Alice, 3 minutes ago - Fix the bug"),
+        );
+        assert_eq!(
+            BlameIndicator::format_blame(&entry, "3 minutes ago", false),
+            SharedString::from("Alice, 3 minutes ago"),
+        );
+
+        // Multi-line summaries truncate to the first line, and a missing author
+        // renders an empty name rather than panicking.
+        let entry = blame_entry(None, Some("First line\nSecond line"));
+        assert_eq!(
+            BlameIndicator::format_blame(&entry, "3 minutes ago", true),
+            SharedString::from(", 3 minutes ago - First line"),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_indicator_tracks_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/my-repo"),
+            json!({
+                ".git": {},
+                "file.txt": "fn main() {}\n",
+            }),
+        )
+        .await;
+        fs.set_blame_for_repo(
+            Path::new(path!("/my-repo/.git")),
+            vec![(
+                repo_path("file.txt"),
+                Blame {
+                    entries: vec![blame_entry(Some("Alice"), Some("Initial commit"))],
+                    ..Default::default()
+                },
+            )],
+        );
+
+        // The feature is off by default; turn it on before opening the editor.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let blame = settings
+                        .git
+                        .get_or_insert_default()
+                        .status_bar_blame
+                        .get_or_insert_default();
+                    blame.enabled = Some(true);
+                    blame.show_commit_summary = Some(true);
+                });
+            });
+        });
+
+        let project = Project::test(fs, [path!("/my-repo").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            Editor::new(
+                EditorMode::full(),
+                multi_buffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        });
+
+        // Populate the editor's blame through the public toggle, then let it load.
+        // The editor must be focused: `GitBlame` defers entry generation while blurred.
+        editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+            editor.toggle_git_blame(&git::Blame, window, cx);
+        });
+        cx.run_until_parked();
+
+        let indicator = cx.new(|cx| BlameIndicator::new(cx));
+
+        let expected = editor
+            .update(cx, |editor, cx| {
+                editor.blame_entry_for_row(MultiBufferRow(0), cx)
+            })
+            .expect("row 0 should have a blame entry");
+
+        // Anchor to the fixture so the comparison below can't pass vacuously if
+        // the lookup returns a wrong-but-consistent entry.
+        assert_eq!(expected.author.as_deref(), Some("Alice"));
+
+        indicator.update_in(cx, |indicator, window, cx| {
+            indicator.set_active_pane_item(Some(&editor as &dyn ItemHandle), window, cx);
+        });
+
+        // The fixture commit is years old, so its relative phrasing is stable between
+        // the indicator's render and this assertion.
+        let relative = blame_entry_relative_timestamp(&expected);
+
+        indicator.read_with(cx, |indicator, _| {
+            assert_eq!(
+                indicator.current_blame,
+                Some(BlameIndicator::format_blame(&expected, &relative, true)),
+            );
+        });
+
+        // Disabling the setting clears the indicator via its settings observer.
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .git
+                        .get_or_insert_default()
+                        .status_bar_blame
+                        .get_or_insert_default()
+                        .enabled = Some(false);
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        indicator.read_with(cx, |indicator, _| {
+            assert_eq!(indicator.current_blame, None);
+        });
+    }
+}
