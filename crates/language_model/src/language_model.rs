@@ -1,5 +1,4 @@
 mod api_key;
-mod model;
 mod registry;
 mod request;
 
@@ -17,7 +16,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
-pub use crate::model::*;
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};

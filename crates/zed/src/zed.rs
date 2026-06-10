@@ -65,10 +65,10 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
-    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, InvalidSettingsError, KeybindSource,
+    KeymapFile, KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore,
+    VIM_KEYMAP_PATH, initial_local_debug_tasks_content, initial_project_settings_content,
+    initial_tasks_content, update_settings_file,
 };
 use sidebar::Sidebar;
 #[cfg(debug_assertions)]
@@ -940,7 +940,12 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window.unwrap_or_else(|| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    )
+                }),
                 window,
                 cx,
             );

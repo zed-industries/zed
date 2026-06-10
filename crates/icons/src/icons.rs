@@ -254,6 +254,7 @@ pub enum IconName {
     TextUnwrap,
     ThinkingMode,
     ThinkingModeOff,
+    ThisWindow,
     Thread,
     ThreadFromSummary,
     ThreadsSidebarLeftClosed,

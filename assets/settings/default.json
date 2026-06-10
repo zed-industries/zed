@@ -150,6 +150,14 @@
   //     that are already part of an open project)
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
+  // The default behavior when opening projects from the UI.
+  //
+  // May take 2 values:
+  //  1. Open projects as a new workspace in the current Zed window's sidebar
+  //         "default_open_behavior": "existing_window"
+  //  2. Open projects in a new window
+  //         "default_open_behavior": "new_window"
+  "default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.
@@ -990,8 +998,8 @@
     // Maximum length of the commit message title before a warning is shown.
     // Set to 0 to disable.
     //
-    // Default: 72
-    "commit_title_max_length": 72,
+    // Default: 0
+    "commit_title_max_length": 0,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
