@@ -10,6 +10,7 @@ use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
 pub mod clone;
+mod git_timestamp;
 
 use git::{
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -20,10 +21,9 @@ use gpui::{
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm};
-use project::{git_store::Repository, project_settings::ProjectSettings};
+use project::git_store::Repository;
 use project_diff::ProjectDiff;
-use settings::Settings as _;
-use time::{OffsetDateTime, UtcOffset};
+use time::OffsetDateTime;
 use ui::prelude::*;
 use workspace::{
     ModalView, OpenMode, Workspace,
@@ -65,6 +65,9 @@ pub mod worktree_service;
 
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
+pub use git_timestamp::{
+    GitTimestampFormatter, format_git_timestamp, format_git_timestamp_for_surface,
+};
 
 pub fn get_provider_icon(name: &str) -> IconName {
     match name {
@@ -77,95 +80,6 @@ pub fn get_provider_icon(name: &str) -> IconName {
         "Gitea" => IconName::Gitea,
         "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
-    }
-}
-
-pub fn custom_git_timestamp(timestamp: OffsetDateTime, cx: &App) -> Option<String> {
-    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    ProjectSettings::get_global(cx)
-        .git
-        .date_format
-        .as_ref()?
-        .format(timestamp, local_offset)
-}
-
-pub fn git_timestamp(
-    timestamp: OffsetDateTime,
-    fallback_format: time_format::TimestampFormat,
-    cx: &App,
-) -> String {
-    custom_git_timestamp(timestamp, cx).unwrap_or_else(|| {
-        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-        time_format::format_localized_timestamp(
-            timestamp,
-            OffsetDateTime::now_utc(),
-            local_offset,
-            fallback_format,
-        )
-    })
-}
-
-#[cfg(test)]
-mod timestamp_tests {
-    use super::*;
-    use gpui::{TestAppContext, UpdateGlobal};
-    use settings::SettingsStore;
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            ProjectSettings::register(cx);
-        });
-    }
-
-    fn set_git_date_format(cx: &mut TestAppContext, date_format: Option<&str>) {
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.git.get_or_insert_default().date_format =
-                        date_format.map(ToOwned::to_owned);
-                });
-            });
-        });
-    }
-
-    #[gpui::test]
-    fn test_custom_git_timestamp_uses_git_date_format_setting(cx: &mut TestAppContext) {
-        init_test(cx);
-        let timestamp = time::macros::datetime!(2020-06-15 12:34:56 UTC);
-
-        cx.read(|cx| {
-            assert_eq!(custom_git_timestamp(timestamp, cx), None);
-        });
-
-        set_git_date_format(cx, Some("commit [year]-[month]"));
-
-        cx.read(|cx| {
-            assert_eq!(
-                custom_git_timestamp(timestamp, cx).as_deref(),
-                Some("commit 2020-06")
-            );
-            assert_eq!(
-                git_timestamp(timestamp, time_format::TimestampFormat::Relative, cx),
-                "commit 2020-06"
-            );
-        });
-    }
-
-    #[gpui::test]
-    fn test_git_timestamp_falls_back_when_git_date_format_is_invalid(cx: &mut TestAppContext) {
-        init_test(cx);
-        set_git_date_format(cx, Some("[invalid]"));
-        let timestamp = OffsetDateTime::now_utc();
-
-        cx.read(|cx| {
-            assert_eq!(custom_git_timestamp(timestamp, cx), None);
-            assert_eq!(
-                git_timestamp(timestamp, time_format::TimestampFormat::Relative, cx),
-                "Just now"
-            );
-        });
     }
 }
 
@@ -1372,7 +1286,7 @@ mod view_commit_tests {
     use project::project_settings::ProjectSettings;
     use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{Settings as _, SettingsStore};
     use std::path::Path;
     use std::sync::Arc;
     use theme::LoadThemes;

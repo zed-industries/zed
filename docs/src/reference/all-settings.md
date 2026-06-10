@@ -2259,10 +2259,20 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     },
+    "date_style": "relative",
+    "absolute_date_format": null,
+    "blame": {
+      "show_avatar": true,
+      "date_style": null,
+      "absolute_date_format": null
+    },
+    "git_graph": {
+      "date_style": null,
+      "absolute_date_format": null
+    },
     "branch_picker": {
       "show_author_name": true
     },
-    "date_format": null,
     "hunk_style": "staged_hollow"
   }
 }
@@ -2407,10 +2417,33 @@ Example:
 }
 ```
 
-### Git Date Format
+### Git Date Style
 
-- Description: Custom date format for git graph and blame, using [`time` crate format descriptions](https://time-rs.github.io/book/api/format-description.html).
-- Setting: `date_format`
+- Description: Default date display style for git UI.
+- Setting: `date_style`
+- Default: `relative`
+
+**Options**
+
+- `relative`: Show relative timestamps, such as `60 minutes ago`.
+- `absolute`: Show absolute timestamps.
+
+### Git Absolute Date Format
+
+- Description: Default custom format for absolute git dates, using [`time` crate format descriptions](https://time-rs.github.io/book/api/format-description.html).
+- Setting: `absolute_date_format`
+- Default: `null`
+
+### Git Blame Date Overrides
+
+- Description: Git blame can override `git.date_style` and `git.absolute_date_format`; `null` uses the global git setting.
+- Settings: `blame.date_style`, `blame.absolute_date_format`
+- Default: `null`
+
+### Git Graph Date Overrides
+
+- Description: Git graph can override `git.date_style` and `git.absolute_date_format`; `null` uses the global git setting.
+- Settings: `git_graph.date_style`, `git_graph.absolute_date_format`
 - Default: `null`
 
 ### Branch Picker

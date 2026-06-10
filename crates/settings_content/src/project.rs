@@ -534,10 +534,14 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// Default date display style for git UI.
+    pub date_style: Option<GitDateStyleSetting>,
+    /// Default custom format for absolute git dates.
+    pub absolute_date_format: Option<String>,
     /// Git blame settings.
     pub blame: Option<BlameSettings>,
-    /// Custom date format for git graph and blame, using `time` format descriptions.
-    pub date_format: Option<String>,
+    /// Git graph settings.
+    pub git_graph: Option<GitGraphSettingsContent>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -674,13 +678,39 @@ pub struct InlineBlameSettings {
 }
 
 #[with_fallible_options]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BlameSettings {
     /// Whether to show the avatar of the author of the commit.
     ///
     /// Default: true
     pub show_avatar: Option<bool>,
+    /// Date display style for git blame timestamps. Defaults to the global git date style.
+    pub date_style: Option<GitDateStyleSetting>,
+    /// Custom format for absolute git blame dates. Defaults to the global absolute date format.
+    pub absolute_date_format: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct GitGraphSettingsContent {
+    /// Date display style for git graph timestamps. Defaults to the global git date style.
+    pub date_style: Option<GitDateStyleSetting>,
+    /// Custom format for absolute git graph dates. Defaults to the global absolute date format.
+    pub absolute_date_format: Option<String>,
+}
+
+#[derive(
+    Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDateStyleSetting {
+    /// Show relative timestamps such as "60 minutes ago".
+    #[default]
+    Relative,
+    /// Show absolute timestamps.
+    Absolute,
 }
 
 #[with_fallible_options]
@@ -880,6 +910,7 @@ pub enum GitHostingProviderKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ParseStatus, merge_from::MergeFrom};
 
     #[test]
     fn test_stdio_context_server_without_args() {
@@ -898,5 +929,53 @@ mod tests {
             panic!("expected Stdio variant, got {settings:?}");
         };
         assert_eq!(command.args, vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn parses_git_date_surface_overrides() {
+        let (settings, status) = crate::parse_json::<crate::SettingsContent>(
+            r#"{
+                "git": {
+                    "blame": { "date_style": null, "absolute_date_format": null },
+                    "git_graph": { "date_style": "absolute", "absolute_date_format": "[year]-[month]" }
+                }
+            }"#,
+        );
+
+        assert!(matches!(status, ParseStatus::Success));
+        let git = settings.unwrap().git.unwrap();
+        let blame = git.blame.unwrap();
+        let git_graph = git.git_graph.unwrap();
+        assert_eq!((blame.date_style, blame.absolute_date_format), (None, None));
+        assert_eq!(
+            (
+                git_graph.date_style,
+                git_graph.absolute_date_format.as_deref()
+            ),
+            (Some(GitDateStyleSetting::Absolute), Some("[year]-[month]"))
+        );
+    }
+
+    #[test]
+    fn git_date_surface_null_does_not_overwrite_custom_override() {
+        let mut settings = GitSettings {
+            blame: Some(BlameSettings {
+                date_style: Some(GitDateStyleSetting::Absolute),
+                absolute_date_format: Some("[year]".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        settings.merge_from(&GitSettings {
+            blame: Some(BlameSettings::default()),
+            ..Default::default()
+        });
+
+        let blame = settings.blame.unwrap();
+        assert_eq!(
+            (blame.date_style, blame.absolute_date_format.as_deref()),
+            (Some(GitDateStyleSetting::Absolute), Some("[year]"))
+        );
     }
 }

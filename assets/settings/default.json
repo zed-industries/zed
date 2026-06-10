@@ -1662,13 +1662,30 @@
       // The minimum column number to show the inline blame information at
       "min_column": 0,
     },
-    "blame": {
-      "show_avatar": true,
-    },
-    // Custom date format, based on time crate format descriptions:
+    // Default date display style for git UI.
+    // May take 2 values:
+    // 1. Show relative timestamps.
+    //      "date_style": "relative"
+    // 2. Show absolute timestamps.
+    //      "date_style": "absolute"
+    "date_style": "relative",
+    // Default custom format for absolute git dates, based on time crate format descriptions:
     // https://time-rs.github.io/book/api/format-description.html
     // e.g "[year]-[month]-[day] [hour]:[minute]:[second]"
-    "date_format": null,
+    "absolute_date_format": null,
+    "blame": {
+      "show_avatar": true,
+      // Date display style for git blame timestamps. `null` uses `git.date_style`.
+      "date_style": null,
+      // Custom format for absolute git blame dates. `null` uses `git.absolute_date_format`.
+      "absolute_date_format": null,
+    },
+    "git_graph": {
+      // Date display style for git graph timestamps. `null` uses `git.date_style`.
+      "date_style": null,
+      // Custom format for absolute git graph dates. `null` uses `git.absolute_date_format`.
+      "absolute_date_format": null,
+    },
     // Control which information is shown in the branch picker.
     "branch_picker": {
       "show_author_name": true,
