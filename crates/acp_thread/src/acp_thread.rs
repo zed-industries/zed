@@ -317,6 +317,12 @@ pub struct ContextCompaction {
     pub summary: Option<Entity<Markdown>>,
 }
 
+impl ContextCompaction {
+    pub fn is_in_progress(&self) -> bool {
+        self.status == ContextCompactionStatus::InProgress
+    }
+}
+
 #[derive(Debug)]
 pub struct ContextCompactionUpdate {
     pub id: ContextCompactionId,
@@ -887,6 +893,33 @@ impl ContentBlock {
         }
     }
 
+    /// Updates a Markdown block in place from a streaming text `block`, reusing
+    /// the existing `Markdown` entity rather than recreating it. Appends only the
+    /// new suffix when the update is a continuation (the common streaming case),
+    /// otherwise re-sets the source. Returns `false` when an in-place update isn't
+    /// applicable, so the caller can fall back to replacing the block wholesale.
+    ///
+    /// Recreating the entity on every streamed snapshot causes the rendered
+    /// element to tear down and rebuild, which flickers badly.
+    pub fn update_text_in_place(&mut self, block: &acp::ContentBlock, cx: &mut App) -> bool {
+        let ContentBlock::Markdown { markdown } = self else {
+            return false;
+        };
+        let acp::ContentBlock::Text(text_content) = block else {
+            return false;
+        };
+        let new_content = &text_content.text;
+        markdown.update(cx, |markdown, cx| {
+            let current = markdown.source().to_string();
+            match new_content.strip_prefix(&current) {
+                Some("") => {}
+                Some(suffix) => markdown.append(suffix, cx),
+                None => markdown.reset(new_content.clone().into(), cx),
+            }
+        });
+        true
+    }
+
     fn decode_image(
         image_content: &acp::ImageContent,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
@@ -1055,6 +1088,17 @@ impl ToolCallContent {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
+        // Update streaming text in place so the rendered markdown element is
+        // reused across snapshots instead of being recreated (which flickers).
+        if let (
+            Self::ContentBlock(block),
+            acp::ToolCallContent::Content(acp::Content { content, .. }),
+        ) = (&mut *self, &new)
+            && block.update_text_in_place(content, cx)
+        {
+            return Ok(true);
+        }
+
         let needs_update = match (&self, &new) {
             (Self::Diff(old_diff), acp::ToolCallContent::Diff(new_diff)) => {
                 old_diff.read(cx).needs_update(
@@ -1255,6 +1299,20 @@ pub struct RetryStatus {
     pub max_attempts: usize,
     pub started_at: Instant,
     pub duration: Duration,
+    pub meta: Option<acp::Meta>,
+}
+
+pub const REFUSAL_FALLBACK_MODEL_META_KEY: &str = "refusal_fallback_model";
+
+pub fn meta_with_refusal_fallback(model_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(REFUSAL_FALLBACK_MODEL_META_KEY.into(), model_name.into())])
+}
+
+pub fn refusal_fallback_model_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(REFUSAL_FALLBACK_MODEL_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
 }
 
 struct RunningTurn {
@@ -1563,6 +1621,15 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    pub fn is_compacting(&self) -> bool {
+        self.entries.last().is_some_and(|entry| {
+            matches!(
+                entry,
+                AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
+            )
+        })
     }
 
     pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
@@ -2714,7 +2781,7 @@ impl AcpThread {
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
-                        if canceled {
+                        if canceled && is_same_turn {
                             this.mark_pending_entries_as_canceled(cx);
                         }
 
@@ -5829,6 +5896,102 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_stale_cancelled_response_does_not_cancel_current_compaction(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let first_complete_rx = RefCell::new(Some(first_complete_rx));
+        let compaction_id = ContextCompactionId("test-compaction".into());
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let compaction_id = compaction_id.clone();
+            move |params, thread, mut cx| {
+                let first_complete_rx = first_complete_rx.borrow_mut().take();
+                let is_first = params.prompt.iter().any(|content| {
+                    matches!(content, acp::ContentBlock::Text(text) if text.text.contains("first"))
+                });
+                let compaction_id = compaction_id.clone();
+
+                async move {
+                    if is_first {
+                        if let Some(rx) = first_complete_rx {
+                            rx.await
+                                .expect("first completion sender should still be alive");
+                        }
+
+                        thread.update(&mut cx, |thread, cx| {
+                            thread.push_context_compaction(
+                                ContextCompaction {
+                                    id: compaction_id,
+                                    status: ContextCompactionStatus::InProgress,
+                                    summary: None,
+                                },
+                                cx,
+                            );
+                        })?;
+
+                        Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    } else {
+                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    }
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 1);
+
+        let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 2);
+
+        first_complete_tx
+            .send(())
+            .expect("first completion receiver should still be alive");
+
+        let response = first_request
+            .await
+            .expect("first request should complete")
+            .expect("first request should have response");
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+
+        thread.read_with(cx, |thread, _| {
+            let compaction = thread
+                .entries
+                .iter()
+                .find_map(|entry| {
+                    let AgentThreadEntry::ContextCompaction(compaction) = entry else {
+                        return None;
+                    };
+                    (compaction.id == compaction_id).then_some(compaction)
+                })
+                .expect("compaction entry should exist");
+
+            assert_eq!(
+                compaction.status,
+                ContextCompactionStatus::InProgress,
+                "a stale cancelled response from an older turn should not cancel current compaction"
+            );
+        });
+
+        second_request
+            .await
+            .expect("second request should complete");
+    }
+
+    #[gpui::test]
     async fn test_send_assigns_message_id_without_truncate_support(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -6102,6 +6265,71 @@ mod tests {
             let cost = thread.cost().expect("cost should be set");
             assert!((cost.amount - 0.42).abs() < f64::EPSILON);
             assert_eq!(cost.currency.as_ref(), "USD");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_preserves_token_usage(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(
+                        acp::UsageUpdate::new(5000, 10000).cost(acp::Cost::new(0.42, "USD")),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            thread.push_context_compaction(
+                ContextCompaction {
+                    id: ContextCompactionId("compaction-1".into()),
+                    status: ContextCompactionStatus::InProgress,
+                    summary: None,
+                },
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("context compaction should not clear token usage on its own");
+            assert_eq!(usage.used_tokens, 5000);
+            assert_eq!(usage.max_tokens, 10000);
+
+            let cost = thread
+                .cost()
+                .expect("context compaction should not clear cost on its own");
+            assert!((cost.amount - 0.42).abs() < f64::EPSILON);
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(1000, 10000)),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("token_usage should be restored by the next usage update");
+            assert_eq!(usage.used_tokens, 1000);
+            assert_eq!(usage.max_tokens, 10000);
         });
     }
 

@@ -938,7 +938,7 @@ impl WindowsWindowInner {
                 unsafe { GetWindowRect(handle, &mut rect) }.log_err();
                 // right and bottom bounds of RECT are exclusive, thus `-1`
                 let right = rect.right - rect.left - 1;
-                // the bounds include the padding frames, so accomodate for both of them
+                // the bounds include the padding frames, so accommodate for both of them
                 if right - 2 * frame_x <= cursor_point.x {
                     HTTOPRIGHT
                 } else {

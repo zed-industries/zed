@@ -1139,11 +1139,6 @@ pub struct Thread {
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
     /// the start of each request.
     current_request_token_usage: TokenUsage,
-    /// Telemetry captured when a context compaction starts but not yet emitted.
-    /// On success we defer emission until the next completion request reports
-    /// usage, so we can record an accurate post-compaction context size; on
-    /// failure or cancellation it is emitted immediately. See
-    /// [`CompactionTelemetry`].
     pending_compaction_telemetry: Option<CompactionTelemetry>,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -1439,6 +1434,13 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
+        // A tool call left only with the canceled sentinel produced nothing useful
+        // (the sentinel is model-facing only, and is inserted exactly when a tool
+        // had no real result). Don't replay it into the UI at all.
+        if tool_result.is_some_and(Self::is_canceled_tool_result) {
+            return;
+        }
+
         let output = tool_result
             .as_ref()
             .and_then(|result| result.output.clone());
@@ -1534,6 +1536,18 @@ impl Thread {
                 .raw_output(output),
             None,
         );
+    }
+
+    /// A canceled tool result carries only the model-facing `TOOL_CANCELED_MESSAGE`
+    /// sentinel (inserted exactly when a tool had no real result). It's never
+    /// meaningful to the user, so we detect it to skip replaying the tool call.
+    fn is_canceled_tool_result(tool_result: &LanguageModelToolResult) -> bool {
+        tool_result.is_error
+            && matches!(
+                tool_result.content.as_slice(),
+                [LanguageModelToolResultContent::Text(text)]
+                    if text.as_ref() == TOOL_CANCELED_MESSAGE
+            )
     }
 
     fn tool_result_content_for_replay(
@@ -2410,6 +2424,8 @@ impl Thread {
     ) -> Result<()> {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
+        // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
+        let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
         loop {
             match Self::perform_compaction_if_needed(
                 this,
@@ -2435,11 +2451,6 @@ impl Thread {
                     let error_message = error.to_string();
                     match error.downcast::<LanguageModelCompletionError>() {
                         Ok(error) => {
-                            // Count this attempt before retrying, mirroring
-                            // the normal completion path below. The retry
-                            // logic relies on `attempt` starting at 1 to
-                            // bound the number of retries (and to avoid
-                            // underflow when computing the backoff delay).
                             attempt += 1;
                             match Self::retry_completion_error(
                                 this,
@@ -2494,10 +2505,11 @@ impl Thread {
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
+            // If a refusal fallback is active, use that model instead.
             let (model, request) = this.update(cx, |this, cx| {
-                let model = this
-                    .model
+                let model = refusal_fallback_model
                     .clone()
+                    .or_else(|| this.model.clone())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
@@ -2527,6 +2539,7 @@ impl Thread {
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
+            let mut had_refusal = false;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
@@ -2608,6 +2621,14 @@ impl Thread {
 
                 tool_results.extend(batch_result.0);
                 if let Some(err) = batch_result.1 {
+                    let is_refusal = err
+                        .downcast_ref::<CompletionError>()
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
+                    if is_refusal {
+                        log::info!("Model refused request; checking for fallback model");
+                        had_refusal = true;
+                        break;
+                    }
                     error = Some(err.downcast()?);
                     break;
                 }
@@ -2632,6 +2653,59 @@ impl Thread {
                     running_turn.streaming_tool_inputs.drain();
                 }
             })?;
+
+            if had_refusal {
+                let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
+                    let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
+                    let fallback_id = match current_model.refusal_fallback_model_id() {
+                        Some(id) => id,
+                        None => {
+                            log::info!(
+                                "Refusal fallback: no fallback configured for model {} (provider {})",
+                                current_model.id().0,
+                                current_model.provider_id()
+                            );
+                            return None;
+                        }
+                    };
+                    let provider_id = current_model.provider_id();
+                    let found = LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .available_models(cx)
+                        .find(|m| {
+                            m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
+                        });
+                    if found.is_none() {
+                        log::info!(
+                            "Refusal fallback: fallback model {}/{} not found in available models",
+                            provider_id,
+                            fallback_id
+                        );
+                    }
+                    found
+                })?;
+
+                if let Some(fallback) = maybe_fallback {
+                    log::info!("Refusal fallback: retrying with {}", fallback.id().0);
+                    let fallback_name = fallback.name().0.clone();
+                    this.update(cx, |this, cx| {
+                        this.pending_message = None;
+                        this.set_model(fallback.clone(), cx);
+                    })?;
+                    event_stream.send_retry(acp_thread::RetryStatus {
+                        last_error: "Safety filter triggered".into(),
+                        attempt: 1,
+                        max_attempts: 1,
+                        started_at: Instant::now(),
+                        duration: Duration::MAX,
+                        meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
+                    });
+                    refusal_fallback_model = Some(fallback);
+                    continue;
+                }
+                log::info!("Request refused with no fallback model available");
+                return Err(CompletionError::Refusal.into());
+            }
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
@@ -2937,6 +3011,7 @@ impl Thread {
             max_attempts: max_attempts as usize,
             started_at: Instant::now(),
             duration: delay,
+            meta: None,
         })
     }
 
@@ -3877,7 +3952,7 @@ impl Thread {
             max_tokens,
             tokens_before,
             auto_compact_enabled: auto_compact.enabled,
-            auto_compact_threshold: auto_compact_threshold_display(auto_compact.threshold),
+            auto_compact_threshold: auto_compact.threshold.to_string(),
             auto_compact_threshold_tokens: auto_compact_threshold_token_count(
                 auto_compact.threshold,
                 max_tokens,
@@ -4135,6 +4210,9 @@ impl Thread {
                 // Retrying won't help for Payment Required errors.
                 None
             }
+            // Retrying won't help until the user consents to data retention
+            // or switches models.
+            DataRetentionConsentRequired { .. } => None,
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
@@ -4166,25 +4244,8 @@ fn auto_compact_threshold_token_count(
     }
 }
 
-/// Renders the configured auto-compaction threshold back into the same string
-/// form a user would enter in settings (e.g. `"90%"`, `"120000"`, `"-20000"`),
-/// for use in telemetry.
-fn auto_compact_threshold_display(threshold: AutoCompactThreshold) -> String {
-    match threshold {
-        AutoCompactThreshold::Percentage(percent) => format!("{}%", percent * 100.0),
-        AutoCompactThreshold::TokensUsed(tokens) => tokens.to_string(),
-        AutoCompactThreshold::TokensRemaining(tokens) => format!("-{tokens}"),
-    }
-}
-
 /// Snapshot of the data needed to report an `"Agent Compaction Completed"`
 /// telemetry event, captured when a compaction starts.
-///
-/// The event is emitted once per logical compaction (retries are counted in
-/// `retries` rather than producing separate events). On success the event is
-/// deferred until the next completion request reports usage so that
-/// `tokens_after` reflects the real post-compaction context size; on failure or
-/// cancellation the event is emitted immediately with no `tokens_after`.
 struct CompactionTelemetry {
     /// `"auto"` for threshold-triggered compaction, `"manual"` for `/compact`.
     trigger: &'static str,
@@ -4194,7 +4255,6 @@ struct CompactionTelemetry {
     model: String,
     model_provider: String,
     thinking_effort: Option<String>,
-    /// The model's context window size.
     max_tokens: u64,
     /// Tokens in the context window immediately before compaction.
     tokens_before: Option<u64>,

@@ -123,6 +123,7 @@ enum ThreadFeedback {
 #[derive(Debug)]
 pub(crate) enum ThreadError {
     PaymentRequired,
+    DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
     RateLimitExceeded {
@@ -196,6 +197,7 @@ impl From<anyhow::Error> for ThreadError {
                     provider: provider.to_string().into(),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
+                DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
                 BadRequestFormat { provider, .. }
                 | HttpResponseError { provider, .. }
                 | ApiEndpointNotFound { provider } => Self::ApiError {
@@ -1540,6 +1542,7 @@ impl ConversationView {
                     });
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1553,6 +1556,7 @@ impl ConversationView {
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -3442,6 +3446,21 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_data_retention_error_maps_from_provider_error() {
+        // The agent wraps the provider error in a fresh `anyhow::Error`, so
+        // the mapping must downcast to `LanguageModelCompletionError` rather
+        // than matching on the anyhow error directly.
+        let provider_error = LanguageModelCompletionError::DataRetentionConsentRequired {
+            model_name: "Claude Fable 5".to_string(),
+        };
+        let error = ThreadError::from(anyhow!(provider_error));
+        assert!(
+            matches!(error, ThreadError::DataRetentionConsentRequired),
+            "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
+        );
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
