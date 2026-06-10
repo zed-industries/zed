@@ -479,6 +479,26 @@ impl Copilot {
         cx.notify();
     }
 
+    /// Attach a project to this Copilot instance so that file-focus changes in the
+    /// project are forwarded to the language server via `textDocument/didFocus`.
+    /// The subscription is stored in `_subscriptions` and becomes a no-op once the
+    /// project entity is released.
+    pub fn attach_project(&mut self, project: Entity<Project>, cx: &mut Context<Self>) {
+        let subscription = cx.subscribe(&project, |this, project, e: &project::Event, cx| {
+            if let project::Event::ActiveEntryChanged(new_entry) = e
+                && let Ok(running) = this.server.as_authenticated()
+            {
+                let uri = new_entry
+                    .and_then(|id| project.read(cx).path_for_entry(id, cx))
+                    .and_then(|entry| project.read(cx).absolute_path(&entry, cx))
+                    .and_then(|abs_path| lsp::Uri::from_file_path(abs_path).ok());
+
+                _ = running.lsp.notify::<DidFocus>(DidFocusParams { uri });
+            }
+        });
+        self._subscriptions.push(subscription);
+    }
+
     fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
         let proxy_url = copilot_settings.proxy.clone()?;
         let no_verify = copilot_settings.proxy_no_verify;
@@ -1836,6 +1856,114 @@ mod tests {
                 "Copilot should be starting after disable_ai is set to false"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_attach_project_forwards_focus_notifications(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (copilot, mut lsp) = Copilot::fake(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file.rs": "fn main() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        cx.run_until_parked();
+
+        copilot.update(cx, |copilot, cx| {
+            copilot.attach_project(project.clone(), cx);
+        });
+
+        let entry_id = project.read_with(cx, |project, cx| {
+            let worktree = project.visible_worktrees(cx).next().unwrap();
+            worktree
+                .read(cx)
+                .entry_for_path(rel_path("file.rs"))
+                .unwrap()
+                .id
+        });
+
+        // Focusing an entry forwards a `textDocument/didFocus` notification carrying the
+        // absolute path of the focused file.
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
+        });
+        assert_eq!(
+            lsp.receive_notification::<DidFocus>().await.uri,
+            Some(lsp::Uri::from_file_path(path!("/root/file.rs")).unwrap()),
+        );
+
+        // Clearing the active entry forwards a notification without a URI.
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(None));
+        });
+        assert_eq!(lsp.receive_notification::<DidFocus>().await.uri, None);
+    }
+
+    #[gpui::test]
+    async fn test_attach_project_does_not_forward_when_unauthenticated(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (copilot, mut lsp) = Copilot::fake(cx);
+
+        // Move the fake server into an unauthenticated state so focus changes are ignored.
+        copilot.update(cx, |copilot, _| {
+            if let CopilotServer::Running(server) = &mut copilot.server {
+                server.sign_in_status = SignInStatus::SignedOut {
+                    awaiting_signing_in: false,
+                };
+            }
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "ignored.rs": "fn ignored() {}",
+                "focused.rs": "fn focused() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        cx.run_until_parked();
+
+        copilot.update(cx, |copilot, cx| {
+            copilot.attach_project(project.clone(), cx);
+        });
+
+        let (ignored_entry, focused_entry) = project.read_with(cx, |project, cx| {
+            let worktree = project.visible_worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            (
+                worktree.entry_for_path(rel_path("ignored.rs")).unwrap().id,
+                worktree.entry_for_path(rel_path("focused.rs")).unwrap().id,
+            )
+        });
+
+        // This focus change happens while unauthenticated and must be dropped.
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(Some(ignored_entry)));
+        });
+
+        // Once authenticated, the next focus change is forwarded. Because notifications are
+        // delivered in order, receiving the `focused.rs` notification first proves the
+        // earlier `ignored.rs` focus change never produced one.
+        copilot.update(cx, |copilot, _| {
+            if let CopilotServer::Running(server) = &mut copilot.server {
+                server.sign_in_status = SignInStatus::Authorized;
+            }
+        });
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::ActiveEntryChanged(Some(focused_entry)));
+        });
+
+        assert_eq!(
+            lsp.receive_notification::<DidFocus>().await.uri,
+            Some(lsp::Uri::from_file_path(path!("/root/focused.rs")).unwrap()),
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {

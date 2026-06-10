@@ -3168,6 +3168,47 @@ async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestApp
     });
 }
 
+#[gpui::test]
+async fn test_start_copilot_reuses_global_auth_server(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "fn main() {}"
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), vec![path!("/root").as_ref()], cx).await;
+
+    // Simulate the singleton Copilot language server owned by the global sign-in flow.
+    let global_auth = cx.update(|cx| {
+        copilot::GlobalCopilotAuth::set_global(
+            LanguageServerId(0),
+            fs,
+            node_runtime::NodeRuntime::unavailable(),
+            cx,
+        )
+    });
+
+    // Starting Copilot for the project must reuse the global server instead of spawning a
+    // second identical process.
+    let copilot = ep_store.update(cx, |store, cx| store.start_copilot_for_project(&project, cx));
+    assert_eq!(
+        copilot.as_ref().map(|copilot| copilot.entity_id()),
+        Some(global_auth.0.entity_id()),
+        "start_copilot_for_project should reuse the global Copilot server"
+    );
+
+    // The reused server is cached for the project, so subsequent lookups return it too.
+    let cached = ep_store.read_with(cx, |store, _| store.copilot_for_project(&project));
+    assert_eq!(
+        cached.map(|copilot| copilot.entity_id()),
+        Some(global_auth.0.entity_id()),
+    );
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.set_global(AppDatabase::test_new());

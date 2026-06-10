@@ -21,7 +21,7 @@ use cloud_llm_client::{
     ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
-use copilot::{Copilot, Reinstall};
+use copilot::{Copilot, GlobalCopilotAuth, Reinstall};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
@@ -1282,6 +1282,20 @@ impl EditPredictionStore {
         if state.copilot.is_some() {
             return state.copilot.clone();
         }
+
+        // If a GlobalCopilotAuth instance already owns a running language server, reuse
+        // it rather than spawning a second identical process. We attach the project so
+        // the shared server still receives `textDocument/didFocus` notifications for
+        // this project's active entry changes.
+        if let Some(global_auth) = cx.try_global::<GlobalCopilotAuth>().cloned() {
+            let project = project.clone();
+            global_auth.0.update(cx, |copilot, cx| {
+                copilot.attach_project(project, cx);
+            });
+            state.copilot = Some(global_auth.0.clone());
+            return state.copilot.clone();
+        }
+
         let _project = project.clone();
         let project = project.read(cx);
 
