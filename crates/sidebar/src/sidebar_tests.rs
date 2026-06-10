@@ -11927,6 +11927,86 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
 }
 
 #[gpui::test]
+async fn test_threads_repoint_to_main_when_git_worktree_removed(cx: &mut TestAppContext) {
+    // When a linked git worktree is deleted through Zed (e.g. via the
+    // worktree picker), unarchived threads that referenced it should be
+    // repointed to the main worktree, instead of keeping a dangling path.
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", serde_json::json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature"),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, ["/project".as_ref()], cx).await;
+    project.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // A historical thread that references the linked worktree.
+    save_thread_metadata_with_main_paths(
+        "wt-thread",
+        "Worktree Thread",
+        PathList::new(&[Path::new("/wt-feature")]),
+        PathList::new(&[Path::new("/project")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Remove the linked worktree via git, as the worktree picker does.
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    repository
+        .update(cx, |repository, _| {
+            repository.remove_worktree(PathBuf::from("/wt-feature"), true)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    cx.run_until_parked();
+
+    // The thread should now point at the main worktree.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        let entry = store
+            .entries()
+            .find(|entry| {
+                entry
+                    .session_id
+                    .as_ref()
+                    .is_some_and(|session_id| session_id.0.as_ref() == "wt-thread")
+            })
+            .expect("thread should still exist");
+        assert_eq!(
+            entry.folder_paths(),
+            &PathList::new(&[Path::new("/project")]),
+            "thread should be repointed to the main worktree"
+        );
+        assert_eq!(
+            entry.main_worktree_paths(),
+            &PathList::new(&[Path::new("/project")])
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_worktree_add_only_regroups_threads_for_changed_workspace(cx: &mut TestAppContext) {
     // When two workspaces share the same project group (same main path)
     // but have different folder paths (main repo vs linked worktree),

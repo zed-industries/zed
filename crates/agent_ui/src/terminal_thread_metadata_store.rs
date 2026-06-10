@@ -17,7 +17,12 @@ use ui::{App, Context, SharedString};
 use util::ResultExt as _;
 use workspace::PathList;
 
-use crate::{TerminalId, thread_metadata_store::WorktreePaths};
+use crate::{
+    TerminalId,
+    thread_metadata_store::{
+        WorktreePaths, repoint_removed_folder_to_main, worktree_paths_link_folder,
+    },
+};
 
 pub fn init(cx: &mut App) {
     TerminalThreadMetadataStore::init_global(cx);
@@ -294,6 +299,40 @@ impl TerminalThreadMetadataStore {
         for terminal_id in terminal_ids {
             if let Some(mut terminal) = self.terminals.get(&terminal_id).cloned() {
                 mutate(&mut terminal.worktree_paths);
+                self.save_internal(terminal);
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// Repoints every terminal thread that references `removed_folder_path`
+    /// as a linked git worktree back to the main worktree path of that pair,
+    /// after the worktree was removed from disk. Pairs where the folder path
+    /// is itself the main path are left alone.
+    pub fn reset_removed_worktree_to_main(
+        &mut self,
+        removed_folder_path: &Path,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &mut Context<Self>,
+    ) {
+        let terminal_ids: Vec<TerminalId> = self
+            .entries()
+            .filter(|terminal| {
+                same_remote_connection_identity(
+                    terminal.remote_connection.as_ref(),
+                    remote_connection,
+                ) && worktree_paths_link_folder(&terminal.worktree_paths, removed_folder_path)
+            })
+            .map(|terminal| terminal.terminal_id)
+            .collect();
+        if terminal_ids.is_empty() {
+            return;
+        }
+
+        for terminal_id in terminal_ids {
+            if let Some(mut terminal) = self.terminals.get(&terminal_id).cloned() {
+                repoint_removed_folder_to_main(&mut terminal.worktree_paths, removed_folder_path);
                 self.save_internal(terminal);
             }
         }
@@ -718,6 +757,53 @@ mod tests {
                     .main_worktree_paths()
                     .paths(),
                 old_main_paths.paths()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_removed_worktree_to_main_repoints_terminal_metadata(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let main_paths = PathList::new(&[Path::new("/repo")]);
+        let folder_paths = PathList::new(&[Path::new("/repo-feature")]);
+        let metadata = metadata(
+            "Dev Server",
+            WorktreePaths::from_path_lists(main_paths.clone(), folder_paths.clone()).unwrap(),
+        );
+        let terminal_id = metadata.terminal_id;
+
+        cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.reset_removed_worktree_to_main(Path::new("/repo-feature"), None, cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = TerminalThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            assert!(
+                store.entries_for_path(&folder_paths, None).next().is_none(),
+                "terminal should no longer be indexed under the removed worktree"
+            );
+            assert_eq!(
+                store
+                    .entries_for_path(&main_paths, None)
+                    .map(|entry| entry.terminal_id)
+                    .collect::<Vec<_>>(),
+                vec![terminal_id],
+                "terminal should be reindexed under the main worktree path"
+            );
+            assert_eq!(
+                store
+                    .entry(terminal_id)
+                    .unwrap()
+                    .main_worktree_paths()
+                    .paths(),
+                main_paths.paths()
             );
         });
     }

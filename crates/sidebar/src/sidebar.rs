@@ -986,23 +986,28 @@ impl Sidebar {
         .detach();
 
         let git_store = workspace.read(cx).project().read(cx).git_store().clone();
-        cx.subscribe_in(
-            &git_store,
-            window,
-            |this, _, event: &project::git_store::GitStoreEvent, _window, cx| {
-                if matches!(
-                    event,
-                    project::git_store::GitStoreEvent::RepositoryUpdated(
-                        _,
-                        project::git_store::RepositoryEvent::GitWorktreeListChanged
-                            | project::git_store::RepositoryEvent::HeadChanged,
-                        _,
-                    )
-                ) {
+        cx.subscribe_in(&git_store, window, {
+            let project = project.clone();
+            move |this, _, event: &project::git_store::GitStoreEvent, _window, cx| match event {
+                project::git_store::GitStoreEvent::RepositoryUpdated(
+                    _,
+                    project::git_store::RepositoryEvent::GitWorktreeListChanged
+                    | project::git_store::RepositoryEvent::HeadChanged,
+                    _,
+                ) => {
                     this.schedule_update_entries(false, cx);
                 }
-            },
-        )
+                project::git_store::GitStoreEvent::RepositoryUpdated(
+                    _,
+                    project::git_store::RepositoryEvent::GitWorktreeRemoved { worktree_abs_path },
+                    _,
+                ) => {
+                    this.repoint_threads_for_removed_worktree(&project, worktree_abs_path, cx);
+                    this.schedule_update_entries(false, cx);
+                }
+                _ => {}
+            }
+        })
         .detach();
 
         cx.subscribe_in(
@@ -1083,6 +1088,36 @@ impl Sidebar {
                 &old_folder_paths,
                 remote_connection.as_ref(),
                 &apply_path_changes,
+                store_cx,
+            );
+        });
+    }
+
+    /// Repoints unarchived threads (and terminal threads) that referenced
+    /// `removed_folder_path` as a linked git worktree back to their main
+    /// worktree path, after that worktree was removed from disk.
+    fn repoint_threads_for_removed_worktree(
+        &mut self,
+        project: &Entity<project::Project>,
+        removed_folder_path: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        if project.read(cx).is_via_collab() {
+            return;
+        }
+
+        let remote_connection = project.read(cx).remote_connection_options(cx);
+        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            store.reset_removed_worktree_to_main(
+                removed_folder_path,
+                remote_connection.as_ref(),
+                store_cx,
+            );
+        });
+        TerminalThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            store.reset_removed_worktree_to_main(
+                removed_folder_path,
+                remote_connection.as_ref(),
                 store_cx,
             );
         });

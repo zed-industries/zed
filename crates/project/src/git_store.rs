@@ -484,7 +484,15 @@ pub enum RepositoryEvent {
     BranchListChanged,
     StashEntriesChanged,
     GitWorktreeListChanged,
-    PendingOpsChanged { pending_ops: SumTree<PendingOps> },
+    /// A linked git worktree was removed from disk via a removal initiated
+    /// in this Zed instance (worktree picker deletion, the agent archive
+    /// flow, etc). Emitted only after the removal succeeded.
+    GitWorktreeRemoved {
+        worktree_abs_path: PathBuf,
+    },
+    PendingOpsChanged {
+        pending_ops: SumTree<PendingOps>,
+    },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
 }
 
@@ -7684,11 +7692,12 @@ impl Repository {
             .main_worktree_abs_path()
             .unwrap_or(self.snapshot.common_dir_abs_path.as_ref())
             .into();
+        let this = self.this.clone();
         self.send_job(
             "remove_worktree",
             Some(format!("git worktree remove: {}", path.display()).into()),
-            move |repo, cx| async move {
-                match repo {
+            move |repo, mut cx| async move {
+                let removal_result: Result<()> = match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) => {
                         // When forcing, delete the worktree directory ourselves before
                         // invoking git. `git worktree remove` can remove the admin
@@ -7758,7 +7767,19 @@ impl Repository {
 
                         Ok(())
                     }
-                }
+                };
+                removal_result?;
+
+                // Only notify subscribers once the worktree is actually gone,
+                // so they can safely repoint state that referenced the path.
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(RepositoryEvent::GitWorktreeRemoved {
+                        worktree_abs_path: path,
+                    });
+                })
+                .ok();
+
+                Ok(())
             },
         )
     }
@@ -8184,6 +8205,11 @@ impl Repository {
             .collect();
         if *self.snapshot.linked_worktrees != *new_linked_worktrees {
             cx.emit(RepositoryEvent::GitWorktreeListChanged);
+        }
+        for worktree_abs_path in
+            removed_linked_worktree_paths(&self.snapshot.linked_worktrees, &new_linked_worktrees)
+        {
+            cx.emit(RepositoryEvent::GitWorktreeRemoved { worktree_abs_path });
         }
         self.snapshot.linked_worktrees = new_linked_worktrees;
         self.snapshot.remote_upstream_url = update.remote_upstream_url;
@@ -9374,6 +9400,267 @@ mod tests {
         });
     }
 
+    fn git_worktree(path: &str, ref_name: Option<&str>, sha: &str) -> GitWorktree {
+        GitWorktree {
+            path: PathBuf::from(path),
+            ref_name: ref_name.map(|name| name.to_string().into()),
+            sha: sha.to_string().into(),
+            is_main: false,
+            is_bare: false,
+        }
+    }
+
+    #[test]
+    fn test_removed_linked_worktree_paths_reports_removals() {
+        let old = [
+            git_worktree("/worktrees/a", Some("refs/heads/a"), "aaa"),
+            git_worktree("/worktrees/b", Some("refs/heads/b"), "bbb"),
+        ];
+        let new = [git_worktree("/worktrees/b", Some("refs/heads/b"), "bbb")];
+
+        assert_eq!(
+            removed_linked_worktree_paths(&old, &new),
+            vec![PathBuf::from("/worktrees/a")]
+        );
+        assert!(removed_linked_worktree_paths(&new, &new).is_empty());
+    }
+
+    #[test]
+    fn test_removed_linked_worktree_paths_suppresses_renames() {
+        // A branch worktree moved to a new path: same ref_name reappears.
+        let old = [git_worktree("/worktrees/a", Some("refs/heads/a"), "aaa")];
+        let new = [git_worktree(
+            "/worktrees/a-moved",
+            Some("refs/heads/a"),
+            "aaa",
+        )];
+        assert!(removed_linked_worktree_paths(&old, &new).is_empty());
+
+        // A detached worktree moved to a new path: same sha reappears.
+        let old = [git_worktree("/worktrees/detached", None, "ccc")];
+        let new = [git_worktree("/worktrees/detached-moved", None, "ccc")];
+        assert!(removed_linked_worktree_paths(&old, &new).is_empty());
+
+        // A removal alongside a rename: only the removal is reported.
+        let old = [
+            git_worktree("/worktrees/a", Some("refs/heads/a"), "aaa"),
+            git_worktree("/worktrees/b", Some("refs/heads/b"), "bbb"),
+        ];
+        let new = [git_worktree(
+            "/worktrees/a-moved",
+            Some("refs/heads/a"),
+            "aaa",
+        )];
+        assert_eq!(
+            removed_linked_worktree_paths(&old, &new),
+            vec![PathBuf::from("/worktrees/b")]
+        );
+
+        // A removed branch worktree whose sha matches an added detached
+        // worktree is not a rename: the identities differ.
+        let old = [git_worktree("/worktrees/a", Some("refs/heads/a"), "aaa")];
+        let new = [git_worktree("/worktrees/detached", None, "aaa")];
+        assert_eq!(
+            removed_linked_worktree_paths(&old, &new),
+            vec![PathBuf::from("/worktrees/a")]
+        );
+    }
+
+    /// Sets up a project whose repository has a linked worktree at
+    /// `/root/worktrees/feature` on the `feature` branch, waiting until the
+    /// repository snapshot has picked the worktree up.
+    async fn init_repository_with_linked_worktree(
+        cx: &mut TestAppContext,
+    ) -> (Arc<FakeFs>, Entity<Project>, Entity<Repository>, PathBuf) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                "project": {
+                    ".git": {},
+                    "file.txt": "text",
+                },
+                "worktrees": {},
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new("/root/project/.git"),
+            &[("file.txt", "text".to_string())],
+            "deadbeef",
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/root/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let worktree_path = PathBuf::from("/root/worktrees/feature");
+
+        repository
+            .update(cx, |repository, _| {
+                repository.create_worktree(
+                    CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature".to_string(),
+                        base_sha: Some("deadbeef".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repository, _| {
+            assert!(
+                repository
+                    .snapshot
+                    .linked_worktrees
+                    .iter()
+                    .any(|worktree| worktree.path == worktree_path),
+                "repository snapshot should contain the linked worktree"
+            );
+        });
+
+        (fs, project, repository, worktree_path)
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_emits_git_worktree_removed(cx: &mut TestAppContext) {
+        use std::{cell::RefCell, rc::Rc};
+
+        let (_fs, _project, repository, worktree_path) =
+            init_repository_with_linked_worktree(cx).await;
+
+        let removed_paths = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&repository, {
+                let removed_paths = removed_paths.clone();
+                move |_, event: &RepositoryEvent, _| {
+                    if let RepositoryEvent::GitWorktreeRemoved { worktree_abs_path } = event {
+                        removed_paths.borrow_mut().push(worktree_abs_path.clone());
+                    }
+                }
+            })
+        });
+
+        // A failed removal must not emit the event.
+        let result = repository
+            .update(cx, |repository, _| {
+                repository.remove_worktree(PathBuf::from("/root/worktrees/nonexistent"), false)
+            })
+            .await
+            .unwrap();
+        assert!(
+            result.is_err(),
+            "removing a nonexistent worktree should fail"
+        );
+        cx.executor().run_until_parked();
+        assert!(
+            removed_paths.borrow().is_empty(),
+            "failed removal should not emit GitWorktreeRemoved"
+        );
+
+        // A successful removal emits the event with the removed path. The
+        // explicit event fires immediately; the rescan diff may emit a
+        // duplicate afterwards, which subscribers treat as a no-op.
+        repository
+            .update(cx, |repository, _| {
+                repository.remove_worktree(worktree_path.clone(), false)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.executor().run_until_parked();
+        let removed_paths = removed_paths.borrow();
+        assert!(
+            !removed_paths.is_empty() && removed_paths.iter().all(|path| *path == worktree_path),
+            "expected only removal events for {worktree_path:?}, got {removed_paths:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rescan_emits_git_worktree_removed_for_out_of_band_removal(
+        cx: &mut TestAppContext,
+    ) {
+        use std::{cell::RefCell, rc::Rc};
+
+        let (fs, _project, repository, worktree_path) =
+            init_repository_with_linked_worktree(cx).await;
+
+        let removed_paths = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&repository, {
+                let removed_paths = removed_paths.clone();
+                move |_, event: &RepositoryEvent, _| {
+                    if let RepositoryEvent::GitWorktreeRemoved { worktree_abs_path } = event {
+                        removed_paths.borrow_mut().push(worktree_abs_path.clone());
+                    }
+                }
+            })
+        });
+
+        // Remove the worktree behind Zed's back, as `git worktree remove`
+        // run from a terminal would, and let the rescan observe it.
+        fs.remove_worktree_for_repo(Path::new("/root/project/.git"), true, "refs/heads/feature")
+            .await;
+        cx.executor().run_until_parked();
+
+        assert_eq!(removed_paths.borrow().as_slice(), &[worktree_path]);
+    }
+
+    #[gpui::test]
+    async fn test_rescan_does_not_emit_removed_for_worktree_rename(cx: &mut TestAppContext) {
+        use std::{cell::RefCell, rc::Rc};
+
+        let (_fs, _project, repository, worktree_path) =
+            init_repository_with_linked_worktree(cx).await;
+
+        let removed_paths = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&repository, {
+                let removed_paths = removed_paths.clone();
+                move |_, event: &RepositoryEvent, _| {
+                    if let RepositoryEvent::GitWorktreeRemoved { worktree_abs_path } = event {
+                        removed_paths.borrow_mut().push(worktree_abs_path.clone());
+                    }
+                }
+            })
+        });
+
+        // `git worktree move` appears as removed-path + added-path in the
+        // rescan diff; the matching ref_name identifies it as a rename.
+        let new_path = PathBuf::from("/root/worktrees/feature-renamed");
+        repository
+            .update(cx, |repository, _| {
+                repository.rename_worktree(worktree_path.clone(), new_path.clone())
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        assert!(
+            removed_paths.borrow().is_empty(),
+            "a rename must not emit GitWorktreeRemoved, got {:?}",
+            removed_paths.borrow()
+        );
+        repository.read_with(cx, |repository, _| {
+            assert!(
+                repository
+                    .snapshot
+                    .linked_worktrees
+                    .iter()
+                    .any(|worktree| worktree.path == new_path),
+                "renamed worktree should appear at its new path in the snapshot"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_open_uncommitted_diff_skips_symlinks(cx: &mut TestAppContext) {
         use util::rel_path::rel_path;
@@ -9861,6 +10148,43 @@ mod tests {
     }
 }
 
+/// Paths of linked worktrees that were genuinely removed between two
+/// snapshots of the worktree list. A worktree that reappears at a different
+/// path with the same identity (`ref_name`, or `sha` for detached worktrees)
+/// is a rename (`git worktree move`) and is not reported: Zed's rename flow
+/// repoints threads to the *new* path, which a removal event would clobber.
+fn removed_linked_worktree_paths(
+    old_worktrees: &[GitWorktree],
+    new_worktrees: &[GitWorktree],
+) -> Vec<PathBuf> {
+    let removed: Vec<&GitWorktree> = old_worktrees
+        .iter()
+        .filter(|old| !new_worktrees.iter().any(|new| new.path == old.path))
+        .collect();
+    if removed.is_empty() {
+        return Vec::new();
+    }
+    let added: Vec<&GitWorktree> = new_worktrees
+        .iter()
+        .filter(|new| !old_worktrees.iter().any(|old| old.path == new.path))
+        .collect();
+
+    removed
+        .into_iter()
+        .filter(|removed_worktree| {
+            let is_renamed = added.iter().any(|added_worktree| {
+                match (&removed_worktree.ref_name, &added_worktree.ref_name) {
+                    (Some(removed_ref), Some(added_ref)) => removed_ref == added_ref,
+                    (None, None) => removed_worktree.sha == added_worktree.sha,
+                    _ => false,
+                }
+            });
+            !is_renamed
+        })
+        .map(|worktree| worktree.path.clone())
+        .collect()
+}
+
 /// This snapshot computes the repository state on the foreground thread while
 /// running the git commands on the background thread. We update branch, head,
 /// remotes, and worktrees first so the UI can react sooner, then compute file
@@ -9896,7 +10220,7 @@ async fn compute_snapshot(
     };
     let worktrees_future = {
         let backend = backend.clone();
-        async move { backend.worktrees().await.log_err().unwrap_or_default() }
+        async move { backend.worktrees().await.log_err() }
     };
     let (branches, head_commit, all_worktrees) =
         futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
@@ -9909,7 +10233,11 @@ async fn compute_snapshot(
     let branch = branches.iter().find(|branch| branch.is_head).cloned();
     let branch_list: Arc<[Branch]> = branches.into();
 
+    // A failed worktree listing yields an empty list below; remember the
+    // failure so it isn't mistaken for "all worktrees were removed".
+    let worktrees_fetch_failed = all_worktrees.is_none();
     let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
+        .unwrap_or_default()
         .into_iter()
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
@@ -9925,6 +10253,11 @@ async fn compute_snapshot(
         let branch_list_changed = *branch_list != *this.snapshot.branch_list;
         let branch_list_error_changed = branch_list_error != this.snapshot.branch_list_error;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
+        let removed_worktree_paths = if worktrees_fetch_failed {
+            Vec::new()
+        } else {
+            removed_linked_worktree_paths(&this.snapshot.linked_worktrees, &linked_worktrees)
+        };
 
         this.snapshot = RepositorySnapshot {
             id,
@@ -9950,6 +10283,10 @@ async fn compute_snapshot(
 
         if worktrees_changed {
             cx.emit(RepositoryEvent::GitWorktreeListChanged);
+        }
+
+        for worktree_abs_path in removed_worktree_paths {
+            cx.emit(RepositoryEvent::GitWorktreeRemoved { worktree_abs_path });
         }
 
         this.snapshot.clone()

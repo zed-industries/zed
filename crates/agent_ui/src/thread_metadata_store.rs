@@ -28,7 +28,7 @@ use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
-use crate::DEFAULT_THREAD_TITLE;
+use crate::{DEFAULT_THREAD_TITLE, terminal_thread_metadata_store::TerminalThreadMetadataStore};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadId(uuid::Uuid);
@@ -88,8 +88,9 @@ pub(crate) fn run_thread_metadata_migrations(connection: &db::sqlez::connection:
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
     let migration_task = migrate_thread_metadata(cx);
-    migrate_thread_remote_connections(cx, migration_task);
+    let migration_task = migrate_thread_remote_connections(cx, migration_task);
     migrate_thread_ids(cx);
+    sweep_removed_worktrees(migration_task, cx).detach_and_log_err(cx);
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
@@ -189,7 +190,10 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
     })
 }
 
-fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::Result<()>>) {
+fn migrate_thread_remote_connections(
+    cx: &mut App,
+    migration_task: Task<anyhow::Result<()>>,
+) -> Task<anyhow::Result<()>> {
     let store = ThreadMetadataStore::global(cx);
     let db = store.read(cx).db.clone();
     let kvp = KeyValueStore::global(cx);
@@ -268,7 +272,6 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
 
         Ok(())
     })
-    .detach_and_log_err(cx);
 }
 
 fn migrate_thread_ids(cx: &mut App) {
@@ -298,6 +301,147 @@ fn migrate_thread_ids(cx: &mut App) {
         Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+/// One-shot startup reconciliation: linked git worktrees can be removed
+/// while Zed isn't running (`git worktree remove` from a terminal), in which
+/// case no `GitWorktreeRemoved` event ever fires. After the stores finish
+/// their initial reload, repoint local unarchived threads (and terminal
+/// threads) whose linked worktree folder no longer exists on disk back to
+/// their main worktree path.
+///
+/// Conservative rules:
+/// - Only `Ok(None)` from `fs.metadata` counts as definitely absent; stat
+///   errors (e.g. an unmounted volume) never trigger a repoint.
+/// - The pair's main path must verifiably still exist; if the whole project
+///   is gone, the thread is left alone.
+/// - Remote threads are skipped (their paths can't be stat'ed locally) and
+///   archived threads are skipped (restore relies on the stored paths).
+fn sweep_removed_worktrees(
+    migrations: Task<anyhow::Result<()>>,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let store = ThreadMetadataStore::global(cx);
+    let fs = <dyn Fs>::global(cx);
+
+    cx.spawn(async move |cx| {
+        // The migrations can unarchive threads and backfill remote
+        // connections; waiting for them (and for the reloads they trigger)
+        // ensures the sweep sees a fully-populated cache and never
+        // misclassifies a remote thread as local.
+        migrations.await?;
+        store.read_with(cx, |store, _| store.reload_task()).await;
+
+        // The terminal store is initialized after this store in
+        // `agent_ui::init`, so resolve it lazily here.
+        let terminal_store = cx.update(|cx| TerminalThreadMetadataStore::try_global(cx));
+        if let Some(terminal_store) = &terminal_store {
+            terminal_store
+                .read_with(cx, |store, _| store.reload_task())
+                .await;
+        }
+
+        let mut candidate_pairs: HashSet<(PathBuf, PathBuf)> = store.read_with(cx, |store, _| {
+            store
+                .entries()
+                .filter(|thread| !thread.archived && thread.remote_connection.is_none())
+                .flat_map(|thread| {
+                    thread
+                        .worktree_paths
+                        .ordered_pairs()
+                        .filter(|(main, folder)| main != folder)
+                        .map(|(main, folder)| (main.clone(), folder.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        });
+        if let Some(terminal_store) = &terminal_store {
+            candidate_pairs.extend(terminal_store.read_with(cx, |store, _| {
+                store
+                    .entries()
+                    .filter(|terminal| terminal.remote_connection.is_none())
+                    .flat_map(|terminal| {
+                        terminal
+                            .worktree_paths
+                            .ordered_pairs()
+                            .filter(|(main, folder)| main != folder)
+                            .map(|(main, folder)| (main.clone(), folder.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        }
+
+        if candidate_pairs.is_empty() {
+            return Ok(());
+        }
+
+        let unique_paths: HashSet<PathBuf> = candidate_pairs
+            .iter()
+            .flat_map(|(main, folder)| [main.clone(), folder.clone()])
+            .collect();
+
+        // `Some(true)` = present, `Some(false)` = definitely absent,
+        // `None` = stat error (treated as unknown, never repointed).
+        let path_states = cx
+            .background_spawn({
+                let fs = fs.clone();
+                async move {
+                    let mut states = HashMap::<PathBuf, Option<bool>>::default();
+                    for path in unique_paths {
+                        let state = match fs.metadata(&path).await {
+                            Ok(Some(_)) => Some(true),
+                            Ok(None) => Some(false),
+                            Err(error) => {
+                                log::warn!(
+                                    "worktree sweep: failed to stat {}: {error:#}",
+                                    path.display()
+                                );
+                                None
+                            }
+                        };
+                        states.insert(path, state);
+                    }
+                    states
+                }
+            })
+            .await;
+
+        let removed_paths: Vec<PathBuf> = candidate_pairs
+            .into_iter()
+            .filter(|(main, folder)| {
+                path_states.get(folder).copied().flatten() == Some(false)
+                    && path_states.get(main).copied().flatten() == Some(true)
+            })
+            .map(|(_, folder)| folder)
+            .collect();
+
+        if removed_paths.is_empty() {
+            return Ok(());
+        }
+
+        log::info!(
+            "worktree sweep: repointing threads for {} removed worktree(s)",
+            removed_paths.len()
+        );
+
+        cx.update(|cx| {
+            store.update(cx, |store, cx| {
+                for path in &removed_paths {
+                    store.reset_removed_worktree_to_main(path, None, cx);
+                }
+            });
+            if let Some(terminal_store) = &terminal_store {
+                terminal_store.update(cx, |store, cx| {
+                    for path in &removed_paths {
+                        store.reset_removed_worktree_to_main(path, None, cx);
+                    }
+                });
+            }
+        });
+
+        anyhow::Ok(())
+    })
 }
 
 struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
@@ -360,6 +504,32 @@ impl ThreadMetadata {
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
         same_remote_connection_identity(self.remote_connection.as_ref(), remote_connection)
+    }
+}
+
+/// Returns true if `paths` contains a linked pair whose folder path is
+/// `folder_path`, i.e. a pair whose main path differs from the folder path.
+pub(crate) fn worktree_paths_link_folder(paths: &WorktreePaths, folder_path: &Path) -> bool {
+    paths
+        .ordered_pairs()
+        .any(|(main, folder)| folder.as_path() == folder_path && main != folder)
+}
+
+/// Rewrites every linked `(main, folder_path)` pair in `paths` to
+/// `(main, main)`, repointing it at the main worktree. Pairs where the
+/// folder path is itself the main path are left alone.
+pub(crate) fn repoint_removed_folder_to_main(paths: &mut WorktreePaths, folder_path: &Path) {
+    let mains_to_repoint: Vec<PathBuf> = paths
+        .ordered_pairs()
+        .filter(|(main, folder)| folder.as_path() == folder_path && *main != *folder)
+        .map(|(main, _)| main.clone())
+        .collect();
+    if mains_to_repoint.is_empty() {
+        return;
+    }
+    paths.remove_folder_path(folder_path);
+    for main in &mains_to_repoint {
+        paths.add_path(main, main);
     }
 }
 
@@ -1000,6 +1170,36 @@ impl ThreadMetadataStore {
             .collect();
 
         self.mutate_thread_paths(&thread_ids, mutate, cx);
+    }
+
+    /// Repoints every unarchived thread that references `removed_folder_path`
+    /// as a linked git worktree back to the main worktree path of that pair,
+    /// after the worktree was removed from disk. Archived threads are left
+    /// untouched so the archive/restore flow keeps working, and pairs where
+    /// the folder path is itself the main path are left alone (removing them
+    /// would leave the thread with no paths at all).
+    pub fn reset_removed_worktree_to_main(
+        &mut self,
+        removed_folder_path: &Path,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_ids: Vec<ThreadId> = self
+            .entries()
+            .filter(|thread| {
+                !thread.archived
+                    && thread.matches_remote_connection(remote_connection)
+                    && worktree_paths_link_folder(&thread.worktree_paths, removed_folder_path)
+            })
+            .map(|thread| thread.thread_id)
+            .collect();
+
+        let removed_folder_path = removed_folder_path.to_path_buf();
+        self.mutate_thread_paths(
+            &thread_ids,
+            |paths| repoint_removed_folder_to_main(paths, &removed_folder_path),
+            cx,
+        );
     }
 
     fn mutate_thread_paths(
@@ -1923,7 +2123,7 @@ mod tests {
         clear_thread_metadata_remote_connection_backfill(cx);
         cx.update(|cx| {
             let migration_task = migrate_thread_metadata(cx);
-            migrate_thread_remote_connections(cx, migration_task);
+            migrate_thread_remote_connections(cx, migration_task).detach_and_log_err(cx);
         });
         cx.run_until_parked();
     }
@@ -2477,7 +2677,7 @@ mod tests {
 
         clear_thread_metadata_remote_connection_backfill(cx);
         cx.update(|cx| {
-            migrate_thread_remote_connections(cx, Task::ready(Ok(())));
+            migrate_thread_remote_connections(cx, Task::ready(Ok(()))).detach_and_log_err(cx);
         });
         cx.run_until_parked();
 
@@ -4028,6 +4228,304 @@ mod tests {
 
         let result = WorktreePaths::from_path_lists(main, folder);
         assert!(result.is_err());
+    }
+
+    #[gpui::test]
+    async fn test_reset_removed_worktree_to_main_repoints_unarchived_threads(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let removed_path = Path::new("/worktrees/feature/zed");
+        let main_path = Path::new("/projects/zed");
+        let now = Utc::now();
+
+        let mut linked_thread = make_metadata("linked", "Linked", now, PathList::default());
+        linked_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/feature/zed")]);
+        let linked_id = linked_thread.thread_id;
+
+        let mut archived_thread = make_metadata("archived", "Archived", now, PathList::default());
+        archived_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/feature/zed")]);
+        archived_thread.archived = true;
+        let archived_id = archived_thread.thread_id;
+
+        let mut remote_thread = make_metadata("remote", "Remote", now, PathList::default());
+        remote_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/feature/zed")]);
+        remote_thread.remote_connection = Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 1 },
+        ));
+        let remote_id = remote_thread.thread_id;
+
+        let mut legacy_thread = make_metadata("legacy", "Legacy", now, PathList::default());
+        legacy_thread.worktree_paths =
+            make_worktree_paths(&[("/worktrees/feature/zed", "/worktrees/feature/zed")]);
+        let legacy_id = legacy_thread.thread_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(linked_thread, cx);
+                store.save(archived_thread, cx);
+                store.save(remote_thread, cx);
+                store.save(legacy_thread, cx);
+                store.reset_removed_worktree_to_main(removed_path, None, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+
+            let linked = store.entry(linked_id).unwrap();
+            assert_eq!(
+                linked.folder_paths(),
+                &PathList::new(&[main_path]),
+                "linked thread should be repointed to the main worktree"
+            );
+            assert_eq!(linked.main_worktree_paths(), &PathList::new(&[main_path]));
+            assert!(
+                store
+                    .entries_for_path(&PathList::new(&[main_path]), None)
+                    .any(|thread| thread.thread_id == linked_id),
+                "repointed thread should be reindexed under the main path"
+            );
+
+            let archived = store.entry(archived_id).unwrap();
+            assert_eq!(
+                archived.folder_paths(),
+                &PathList::new(&[removed_path]),
+                "archived threads must keep their folder paths for restore"
+            );
+
+            let remote = store.entry(remote_id).unwrap();
+            assert_eq!(
+                remote.folder_paths(),
+                &PathList::new(&[removed_path]),
+                "threads on other hosts must not be touched"
+            );
+
+            let legacy = store.entry(legacy_id).unwrap();
+            assert_eq!(
+                legacy.folder_paths(),
+                &PathList::new(&[removed_path]),
+                "legacy pairs where main == folder must be left alone"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_removed_worktree_to_main_preserves_other_folders(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut thread = make_metadata("multi", "Multi", Utc::now(), PathList::default());
+        thread.worktree_paths = make_worktree_paths(&[
+            ("/projects/zed", "/worktrees/feature/zed"),
+            ("/projects/cloud", "/projects/cloud"),
+        ]);
+        let thread_id = thread.thread_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(thread, cx);
+                store.reset_removed_worktree_to_main(Path::new("/worktrees/feature/zed"), None, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let thread = store.entry(thread_id).unwrap();
+            let pairs: Vec<(PathBuf, PathBuf)> = thread
+                .worktree_paths
+                .ordered_pairs()
+                .map(|(main, folder)| (main.clone(), folder.clone()))
+                .collect();
+            assert_eq!(
+                pairs,
+                vec![
+                    (
+                        PathBuf::from("/projects/cloud"),
+                        PathBuf::from("/projects/cloud")
+                    ),
+                    (
+                        PathBuf::from("/projects/zed"),
+                        PathBuf::from("/projects/zed")
+                    ),
+                ],
+                "only the removed pair should be rewritten; other folders survive"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_sweep_removed_worktrees_repoints_missing_local_worktrees(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::terminal_thread_metadata_store::TerminalThreadMetadata;
+
+        init_test(cx);
+
+        // `/worktrees/gone/zed`, `/projects/missing`, and `/worktrees/orphan`
+        // intentionally don't exist on disk.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/projects/zed", serde_json::json!({ "src": {} }))
+            .await;
+        fs.insert_tree("/worktrees/live/zed", serde_json::json!({ "src": {} }))
+            .await;
+        cx.update(|cx| {
+            <dyn Fs>::set_global(fs.clone(), cx);
+            TerminalThreadMetadataStore::init_global(cx);
+        });
+
+        let now = Utc::now();
+
+        let mut gone_thread = make_metadata("gone", "Gone", now, PathList::default());
+        gone_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/gone/zed")]);
+        let gone_id = gone_thread.thread_id;
+
+        let mut live_thread = make_metadata("live", "Live", now, PathList::default());
+        live_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/live/zed")]);
+        let live_id = live_thread.thread_id;
+
+        let mut archived_thread = make_metadata("archived", "Archived", now, PathList::default());
+        archived_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/gone/zed")]);
+        archived_thread.archived = true;
+        let archived_id = archived_thread.thread_id;
+
+        let mut remote_thread = make_metadata("remote", "Remote", now, PathList::default());
+        remote_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/zed", "/worktrees/gone/zed")]);
+        remote_thread.remote_connection = Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 1 },
+        ));
+        let remote_id = remote_thread.thread_id;
+
+        let mut orphan_thread = make_metadata("orphan", "Orphan", now, PathList::default());
+        orphan_thread.worktree_paths =
+            make_worktree_paths(&[("/projects/missing", "/worktrees/orphan")]);
+        let orphan_id = orphan_thread.thread_id;
+
+        let terminal_metadata = TerminalThreadMetadata {
+            terminal_id: crate::TerminalId::new(),
+            title: "Dev Server".into(),
+            custom_title: None,
+            created_at: now,
+            worktree_paths: make_worktree_paths(&[("/projects/zed", "/worktrees/gone/zed")]),
+            remote_connection: None,
+            working_directory: None,
+        };
+        let terminal_id = terminal_metadata.terminal_id;
+
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(gone_thread, cx);
+                store.save(live_thread, cx);
+                store.save(archived_thread, cx);
+                store.save(remote_thread, cx);
+                store.save(orphan_thread, cx);
+            });
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(terminal_metadata, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let sweep = cx.update(|cx| sweep_removed_worktrees(Task::ready(Ok(())), cx));
+        sweep.await.unwrap();
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+
+            let gone = store.entry(gone_id).unwrap();
+            assert_eq!(
+                gone.folder_paths(),
+                &PathList::new(&[Path::new("/projects/zed")]),
+                "thread with a missing worktree should be repointed to main"
+            );
+
+            let live = store.entry(live_id).unwrap();
+            assert_eq!(
+                live.folder_paths(),
+                &PathList::new(&[Path::new("/worktrees/live/zed")]),
+                "thread whose worktree still exists must not be touched"
+            );
+
+            let archived = store.entry(archived_id).unwrap();
+            assert_eq!(
+                archived.folder_paths(),
+                &PathList::new(&[Path::new("/worktrees/gone/zed")]),
+                "archived threads must keep their folder paths for restore"
+            );
+
+            let remote = store.entry(remote_id).unwrap();
+            assert_eq!(
+                remote.folder_paths(),
+                &PathList::new(&[Path::new("/worktrees/gone/zed")]),
+                "remote threads must not be touched by the local sweep"
+            );
+
+            let orphan = store.entry(orphan_id).unwrap();
+            assert_eq!(
+                orphan.folder_paths(),
+                &PathList::new(&[Path::new("/worktrees/orphan")]),
+                "pairs whose main path is also gone must be left alone"
+            );
+
+            let terminal_store = TerminalThreadMetadataStore::global(cx).read(cx);
+            let terminal = terminal_store.entry(terminal_id).unwrap();
+            assert_eq!(
+                terminal.folder_paths(),
+                &PathList::new(&[Path::new("/projects/zed")]),
+                "terminal thread with a missing worktree should be repointed to main"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_sweep_removed_worktrees_awaits_initial_store_reload(cx: &mut TestAppContext) {
+        // Save a thread straight into the database, then initialize a fresh
+        // store and immediately run the sweep. The sweep must wait for the
+        // store's initial reload instead of observing an empty cache.
+        let thread = std::thread::current();
+        let test_name = thread.name().unwrap_or("unknown_test");
+        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
+            &db_name,
+        )));
+
+        let mut metadata = make_metadata("session-1", "Thread", Utc::now(), PathList::default());
+        metadata.worktree_paths = make_worktree_paths(&[("/projects/zed", "/worktrees/gone/zed")]);
+        let thread_id = metadata.thread_id;
+        db.save(metadata).await.unwrap();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/projects/zed", serde_json::json!({ "src": {} }))
+            .await;
+
+        let sweep = cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            <dyn Fs>::set_global(fs.clone(), cx);
+            ThreadMetadataStore::init_global(cx);
+            sweep_removed_worktrees(Task::ready(Ok(())), cx)
+        });
+        sweep.await.unwrap();
+
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let entry = store.entry(thread_id).unwrap();
+            assert_eq!(
+                entry.folder_paths(),
+                &PathList::new(&[Path::new("/projects/zed")]),
+                "sweep should see threads loaded by the initial reload and repoint them"
+            );
+        });
     }
 
     /// Regression test: archiving a thread created in a git worktree must
