@@ -7,6 +7,7 @@
 //! WSL's `/mnt/<drive>/...` view and use the user's default WSL distro unless a
 //! WSL UNC path in the request pins a specific distro.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use smol::process::{Command, Stdio};
@@ -38,12 +39,21 @@ pub fn is_wsl_sandbox_error(error: &anyhow::Error) -> bool {
 /// All writable paths and the cwd must be paths that can be mapped into WSL.
 /// WSL UNC paths may specify a distro; native drive-letter paths map to
 /// `/mnt/<drive>/...` and use either that distro or the default distro.
+///
+/// `env` is forwarded into the sandboxed command via `bwrap --setenv` rather
+/// than being set on the `wsl.exe` process. Windows environment variables
+/// don't cross the WSL boundary unless they're listed in `WSLENV`, so without
+/// this the command would lose `PAGER` (used to stop `git` from paging into
+/// the PTY) and the rest of the project environment. Variables whose Windows
+/// values are meaningless or harmful inside Linux are dropped (see
+/// [`is_forwardable_env_var`]).
 pub fn wrap_invocation(
     program: &str,
     args: &[String],
     writable_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
+    env: &HashMap<String, String>,
 ) -> Result<(String, Vec<String>)> {
     let cwd = match cwd {
         Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
@@ -123,6 +133,7 @@ pub fn wrap_invocation(
         permissions,
         cwd.as_ref().map(|path| path.path.as_str()),
         mask_interop_dir,
+        env,
     ));
     wsl_args.push("--".to_string());
     wsl_args.push(program.to_string());
@@ -272,6 +283,7 @@ fn build_bwrap_args(
     permissions: SandboxPermissions,
     cwd: Option<&str>,
     mask_interop_dir: bool,
+    env: &HashMap<String, String>,
 ) -> Vec<String> {
     let mut args = Vec::new();
 
@@ -321,11 +333,35 @@ fn build_bwrap_args(
         "--die-with-parent".to_string(),
     ]);
 
+    // Forward the caller-provided environment into the command. Windows env
+    // set on the `wsl.exe` process doesn't reach the Linux command, so we
+    // re-apply it here on the sandbox's child instead.
+    for (name, value) in env {
+        if is_forwardable_env_var(name) {
+            args.extend(["--setenv".to_string(), name.clone(), value.clone()]);
+        }
+    }
+
     if let Some(cwd) = cwd {
         args.extend(["--chdir".to_string(), cwd.to_string()]);
     }
 
     args
+}
+
+/// Whether an environment variable should be forwarded into the Linux sandbox.
+///
+/// Most variables are safe to carry across, but a few hold Windows-specific
+/// values that would be meaningless or actively break the command inside WSL:
+/// `PATH` would shadow WSL's own `PATH` and stop the shell from finding Linux
+/// executables, and the temp-dir variables point at Windows paths that don't
+/// exist in WSL (bwrap provides a fresh tmpfs `/tmp` instead). Matched
+/// case-insensitively because Windows environment variable names are.
+fn is_forwardable_env_var(name: &str) -> bool {
+    const BLOCKED: [&str; 4] = ["PATH", "TMPDIR", "TMP", "TEMP"];
+    !BLOCKED
+        .iter()
+        .any(|blocked| name.eq_ignore_ascii_case(blocked))
 }
 
 fn push_bind(args: &mut Vec<String>, flag: &str, source: &str, destination: &str) {
@@ -484,6 +520,7 @@ mod tests {
             SandboxPermissions::default(),
             Some("/home/me/project"),
             true,
+            &HashMap::new(),
         );
         assert!(args.iter().any(|arg| arg == "--unshare-net"));
         assert!(
@@ -502,6 +539,7 @@ mod tests {
             },
             None,
             true,
+            &HashMap::new(),
         );
         assert!(!args.iter().any(|arg| arg == "--unshare-net"));
     }
@@ -516,6 +554,7 @@ mod tests {
             SandboxPermissions::default(),
             None,
             true,
+            &HashMap::new(),
         );
         assert!(args.windows(3).any(|window| window
             == [
@@ -535,6 +574,7 @@ mod tests {
             SandboxPermissions::default(),
             Some("/home/me/project"),
             true,
+            &HashMap::new(),
         );
         assert!(
             args.windows(2)
@@ -556,6 +596,7 @@ mod tests {
             },
             None,
             true,
+            &HashMap::new(),
         );
         // Interop is host code execution, not just a filesystem write, so it
         // stays blocked even when the user has granted unrestricted writes
@@ -576,12 +617,56 @@ mod tests {
         // there's nothing to mask and a `--tmpfs /run/WSL` would abort bwrap,
         // so the mount must be omitted. Unsetting the variable is harmless and
         // stays.
-        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false);
+        let args = build_bwrap_args(
+            &[],
+            SandboxPermissions::default(),
+            None,
+            false,
+            &HashMap::new(),
+        );
         assert!(
             args.windows(2)
                 .any(|window| window == ["--unsetenv", "WSL_INTEROP"])
         );
         assert!(!args.iter().any(|arg| arg == "/run/WSL"));
+    }
+
+    #[test]
+    fn bwrap_forwards_env_via_setenv() {
+        let env = HashMap::from([
+            ("PAGER".to_string(), String::new()),
+            ("CARGO_TERM_COLOR".to_string(), "always".to_string()),
+        ]);
+        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "PAGER", ""])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "CARGO_TERM_COLOR", "always"])
+        );
+    }
+
+    #[test]
+    fn bwrap_does_not_forward_windows_specific_env() {
+        // These hold Windows paths/values that would break or be meaningless
+        // inside WSL, so they must never cross the boundary. Names are matched
+        // case-insensitively, as Windows env var names are.
+        let env = HashMap::from([
+            ("Path".to_string(), r"C:\Windows\System32".to_string()),
+            (
+                "TEMP".to_string(),
+                r"C:\Users\me\AppData\Local\Temp".to_string(),
+            ),
+            (
+                "Tmp".to_string(),
+                r"C:\Users\me\AppData\Local\Temp".to_string(),
+            ),
+            ("TMPDIR".to_string(), r"C:\tmp".to_string()),
+        ]);
+        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        assert!(!args.iter().any(|arg| arg == "--setenv"));
     }
 
     #[test]

@@ -3058,6 +3058,7 @@ impl AcpThread {
                                 &args,
                                 cwd.as_deref(),
                                 sandbox_wrap,
+                                &env,
                             )?;
                         (task_command, task_args, sandbox_config, None)
                     } else {

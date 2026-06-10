@@ -175,6 +175,7 @@ pub(crate) fn apply_windows_wsl_sandbox_wrap(
     args: &[String],
     cwd: Option<&std::path::Path>,
     sandbox_wrap: SandboxWrap,
+    env: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
         .non_interactive()
@@ -191,7 +192,7 @@ pub(crate) fn apply_windows_wsl_sandbox_wrap(
         allow_fs_write: sandbox_wrap.allow_fs_write,
     };
     let (program, args) =
-        sandbox::windows_wsl::wrap_invocation(&program, &args, &writable, permissions, cwd)?;
+        sandbox::windows_wsl::wrap_invocation(&program, &args, &writable, permissions, cwd, env)?;
     Ok((program, args, None))
 }
 
