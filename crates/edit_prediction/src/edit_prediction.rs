@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
@@ -22,6 +22,7 @@ use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
+use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
@@ -55,6 +56,8 @@ use std::env;
 use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
+#[cfg(feature = "cli-support")]
+use zeta_prompt::ContextSource;
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
 use std::mem;
@@ -129,6 +132,7 @@ const GIT_CHANGED_FILE_SETS_COMMIT_LIMIT: usize = 100;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
+const REQUEST_TIMEOUT_BACKOFF: Duration = Duration::from_secs(10);
 
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
@@ -138,6 +142,10 @@ pub struct EditPredictionJumpsFeatureFlag;
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
     type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
@@ -165,6 +173,7 @@ pub struct EditPredictionStore {
     update_required: bool,
     edit_prediction_model: EditPredictionModel,
     zeta2_raw_config: Option<Zeta2RawConfig>,
+    request_backoff_until: Option<Instant>,
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
     pub mercury: Mercury,
@@ -838,6 +847,28 @@ pub(crate) fn buffer_path_with_id_fallback(
     }
 }
 
+fn predict_edits_request_trigger_from_editor_trigger(
+    trigger: EditPredictionRequestTrigger,
+) -> PredictEditsRequestTrigger {
+    match trigger {
+        EditPredictionRequestTrigger::DiagnosticNavigation => {
+            PredictEditsRequestTrigger::DiagnosticNavigation
+        }
+        EditPredictionRequestTrigger::Explicit => PredictEditsRequestTrigger::Explicit,
+        EditPredictionRequestTrigger::BufferEdit => PredictEditsRequestTrigger::BufferEdit,
+        EditPredictionRequestTrigger::LSPCompletionAccepted => {
+            PredictEditsRequestTrigger::LSPCompletionAccepted
+        }
+        EditPredictionRequestTrigger::PredictionAccepted => {
+            PredictEditsRequestTrigger::PredictionAccepted
+        }
+        EditPredictionRequestTrigger::PredictionPartiallyAccepted => {
+            PredictEditsRequestTrigger::PredictionPartiallyAccepted
+        }
+        EditPredictionRequestTrigger::Other => PredictEditsRequestTrigger::Other,
+    }
+}
+
 impl EditPredictionStore {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<EditPredictionStoreGlobal>()
@@ -925,6 +956,7 @@ impl EditPredictionStore {
             update_required: false,
             edit_prediction_model: EditPredictionModel::Zeta,
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
+            request_backoff_until: None,
             preferred_experiment: None,
             available_experiments: Vec::new(),
             mercury: Mercury::new(cx),
@@ -967,6 +999,27 @@ impl EditPredictionStore {
         self.zeta2_raw_config.as_ref()
     }
 
+    pub(crate) fn back_off_requests_after_timeout(&mut self, cx: &mut Context<Self>) {
+        self.request_backoff_until = Some(cx.background_executor().now() + REQUEST_TIMEOUT_BACKOFF);
+        log::info!(
+            "Backing off edit prediction requests for {:?} after Cloud timeout",
+            REQUEST_TIMEOUT_BACKOFF
+        );
+    }
+
+    fn request_backoff_active(&mut self, cx: &App) -> bool {
+        let Some(backoff_until) = self.request_backoff_until else {
+            return false;
+        };
+
+        if cx.background_executor().now() < backoff_until {
+            true
+        } else {
+            self.request_backoff_until = None;
+            false
+        }
+    }
+
     pub fn preferred_experiment(&self) -> Option<&str> {
         self.preferred_experiment.as_deref()
     }
@@ -1001,6 +1054,8 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let experiments = cx
                 .background_spawn(async move {
+                    let organization_id =
+                        organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
                     let url = client
                         .http_client()
                         .build_zed_llm_url("/edit_prediction_experiments", &[])?;
@@ -1249,6 +1304,7 @@ impl EditPredictionStore {
                     file_context.git_changed_file_sets = result
                         .context("failed to receive git changed file sets")
                         .flatten()
+                        .log_with_level(log::Level::Trace)
                         .map(|mut file_sets| file_sets.pop().unwrap_or_default())
                         .context("failed to load git changed file sets")
                         .map(Arc::new)
@@ -2188,21 +2244,25 @@ impl EditPredictionStore {
         project: Entity<Project>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
+        let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
+
         self.queue_prediction_refresh(
             project.clone(),
-            PredictEditsRequestTrigger::Other,
+            trigger,
             buffer.entity_id(),
             cx,
             move |this, cx| {
                 let Some(request_task) = this
                     .update(cx, |this, cx| {
-                        this.request_prediction(
-                            &project,
-                            &buffer,
+                        this.request_prediction_internal(
+                            project.clone(),
+                            buffer.clone(),
                             position,
-                            PredictEditsRequestTrigger::Other,
+                            trigger,
+                            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
                             cx,
                         )
                     })
@@ -2306,11 +2366,12 @@ impl EditPredictionStore {
 
                     let Some(prediction_result) = this
                         .update(cx, |this, cx| {
-                            this.request_prediction(
-                                &project,
-                                &jump_buffer,
+                            this.request_prediction_internal(
+                                project.clone(),
+                                jump_buffer.clone(),
                                 jump_position,
                                 PredictEditsRequestTrigger::Diagnostics,
+                                cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
                                 cx,
                             )
                         })?
@@ -2331,6 +2392,7 @@ impl EditPredictionStore {
                                 EditPredictionResult {
                                     id: prediction_result.id,
                                     prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                    display_prediction: None,
                                     model_version: prediction_result.model_version,
                                     e2e_latency: prediction_result.e2e_latency,
                                 }
@@ -2427,7 +2489,8 @@ impl EditPredictionStore {
             request_trigger: PredictEditsRequestTrigger,
         ) -> &mut Option<(EntityId, Instant)> {
             match request_trigger {
-                PredictEditsRequestTrigger::Diagnostics => {
+                PredictEditsRequestTrigger::Diagnostics
+                | PredictEditsRequestTrigger::DiagnosticNavigation => {
                     &mut project_state.last_jump_prediction_refresh
                 }
                 _ => &mut project_state.last_edit_prediction_refresh,
@@ -2519,14 +2582,18 @@ impl EditPredictionStore {
                 let new_current_prediction = if !is_cancelled
                     && let Some((prediction_result, requested_by)) = new_prediction_result
                 {
-                    match prediction_result.prediction {
-                        Ok(prediction) => {
+                    match prediction_result {
+                        EditPredictionResult {
+                            prediction: Ok(prediction),
+                            e2e_latency,
+                            ..
+                        } => {
                             let new_prediction = CurrentEditPrediction {
                                 requested_by,
                                 prediction,
                                 was_shown: false,
                                 shown_with: None,
-                                e2e_latency: prediction_result.e2e_latency,
+                                e2e_latency,
                             };
 
                             if let Some(current_prediction) =
@@ -2556,15 +2623,39 @@ impl EditPredictionStore {
                                 Some(new_prediction)
                             }
                         }
-                        Err(reject_reason) => {
+                        EditPredictionResult {
+                            id,
+                            prediction: Err(reject_reason),
+                            display_prediction,
+                            model_version,
+                            e2e_latency,
+                        } => {
+                            let should_show_rejected_prediction = matches!(
+                                reject_reason,
+                                EditPredictionRejectReason::Empty
+                                    | EditPredictionRejectReason::InterpolatedEmpty
+                            );
+
                             this.reject_prediction(
-                                prediction_result.id,
+                                id,
                                 reject_reason,
                                 false,
-                                prediction_result.model_version,
-                                Some(prediction_result.e2e_latency),
+                                model_version,
+                                Some(e2e_latency),
                                 cx,
                             );
+
+                            if should_show_rejected_prediction
+                                && let Some(display_prediction) = display_prediction
+                            {
+                                this.shown_predictions.push_front(display_prediction);
+                                if this.shown_predictions.len() > 50
+                                    && let Some(completion) = this.shown_predictions.pop_back()
+                                {
+                                    this.rated_predictions.remove(&completion.id);
+                                }
+                            }
+
                             None
                         }
                     }
@@ -2655,6 +2746,13 @@ impl EditPredictionStore {
             return Task::ready(Ok(None));
         }
 
+        if is_cloud_zeta && self.request_backoff_active(cx) {
+            log::debug!(
+                "Skipping Zeta edit prediction request while backing off after Cloud timeout"
+            );
+            return Task::ready(Ok(None));
+        }
+
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
@@ -2735,7 +2833,8 @@ impl EditPredictionStore {
                         inputs.snapshot.clone(),
                         inputs.position,
                         match trigger {
-                            PredictEditsRequestTrigger::Diagnostics => {
+                            PredictEditsRequestTrigger::Diagnostics
+                            | PredictEditsRequestTrigger::DiagnosticNavigation => {
                                 JumpExampleTrigger::Diagnostic
                             }
                             _ => JumpExampleTrigger::Prediction,
@@ -2768,7 +2867,11 @@ impl EditPredictionStore {
             if prediction.is_none()
                 && allow_jump
                 && has_events
-                && !matches!(trigger, PredictEditsRequestTrigger::Diagnostics)
+                && !matches!(
+                    trigger,
+                    PredictEditsRequestTrigger::Diagnostics
+                        | PredictEditsRequestTrigger::DiagnosticNavigation
+                )
             {
                 this.update(cx, |this, cx| {
                     this.refresh_prediction_from_diagnostics(
@@ -2985,6 +3088,9 @@ impl EditPredictionStore {
     where
         Res: DeserializeOwned,
     {
+        let organization_id =
+            organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+
         let response = client
             .authenticated_llm_request(&llm_token, organization_id, |token| {
                 build(
@@ -3029,6 +3135,9 @@ impl EditPredictionStore {
             let status = response.status();
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
+            if status == http_client::http::StatusCode::REQUEST_TIMEOUT {
+                return Err(anyhow::Error::new(CloudRequestTimeoutError));
+            }
             anyhow::bail!("Request failed with status: {status:?}\nBody: {body}");
         }
     }
@@ -3045,6 +3154,51 @@ impl EditPredictionStore {
             .update(cx, |store, cx| {
                 store.refresh(buffer.clone(), cursor_position, cx);
             });
+    }
+
+    #[cfg(feature = "cli-support")]
+    pub fn collect_editable_context(
+        &mut self,
+        project: Entity<Project>,
+        buffer: Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        oracle_paths: Vec<Arc<Path>>,
+        context_sources: Vec<ContextSource>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
+        use edit_prediction_context::{EditHistoryContextEntry, collect_editable_context};
+
+        let buffers_by_id = project.read(cx).opened_buffers(cx).into_iter().fold(
+            HashMap::default(),
+            |mut buffers_by_id, buffer| {
+                buffers_by_id.insert(buffer.read(cx).remote_id(), buffer.clone());
+                buffers_by_id
+            },
+        );
+        let edit_history = self
+            .edit_history_for_project(&project, cx)
+            .into_iter()
+            .filter_map(|event| {
+                let buffer = buffers_by_id.get(&event.old_snapshot.remote_id())?.clone();
+                Some(EditHistoryContextEntry {
+                    buffer,
+                    edited_range: event.total_edit_range,
+                })
+            })
+            .collect();
+
+        cx.spawn(async move |_, cx| {
+            collect_editable_context(
+                project,
+                buffer,
+                cursor_position,
+                edit_history,
+                oracle_paths,
+                context_sources,
+                cx,
+            )
+            .await
+        })
     }
 
     #[cfg(feature = "cli-support")]
@@ -3357,6 +3511,10 @@ fn merge_anchor_ranges(
 pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
+
+#[derive(Error, Debug)]
+#[error("Cloud request timed out")]
+pub(crate) struct CloudRequestTimeoutError;
 
 struct ZedPredictUpsell;
 

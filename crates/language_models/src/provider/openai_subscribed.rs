@@ -4,7 +4,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
+    http::{HeaderName, HeaderValue},
+};
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -273,9 +276,9 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 // `GET <codex_base_url>/models?client_version=...` (see
 // codex-rs/codex-api/src/endpoint/models.rs in openai/codex) and falls back to
 // a bundled models.json. Beyond going stale, the static approach also can't
-// model per-account access (e.g. free accounts cannot use gpt-5.4 or
-// gpt-5.3-codex even though paid accounts can), so the backend still rejects
-// some requests. The bundled list at
+// model per-account access (e.g. free accounts cannot use gpt-5.4 even though
+// paid accounts can), so the backend still rejects some requests. The bundled
+// list at
 // codex-rs/models-manager/models.json (openai/codex) is the closest
 // approximation; the entries below mirror that file's picker-visible models.
 #[derive(Clone, Debug, PartialEq)]
@@ -283,19 +286,11 @@ enum ChatGptModel {
     Gpt55,
     Gpt54,
     Gpt54Mini,
-    Gpt53Codex,
-    Gpt52,
 }
 
 impl ChatGptModel {
     fn all() -> Vec<Self> {
-        vec![
-            Self::Gpt55,
-            Self::Gpt54,
-            Self::Gpt54Mini,
-            Self::Gpt53Codex,
-            Self::Gpt52,
-        ]
+        vec![Self::Gpt55, Self::Gpt54, Self::Gpt54Mini]
     }
 
     fn id(&self) -> &str {
@@ -303,8 +298,6 @@ impl ChatGptModel {
             Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
-            Self::Gpt53Codex => "gpt-5.3-codex",
-            Self::Gpt52 => "gpt-5.2",
         }
     }
 
@@ -313,8 +306,6 @@ impl ChatGptModel {
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
-            Self::Gpt53Codex => "GPT-5.3 Codex",
-            Self::Gpt52 => "GPT-5.2",
         }
     }
 
@@ -360,7 +351,7 @@ impl ChatGptModel {
     fn supports_priority(&self) -> bool {
         match self {
             Self::Gpt55 | Self::Gpt54 => true,
-            Self::Gpt54Mini | Self::Gpt53Codex | Self::Gpt52 => false,
+            Self::Gpt54Mini => false,
         }
     }
 }
@@ -510,15 +501,24 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
 
-            let mut extra_headers: Vec<(String, String)> = vec![
-                ("originator".into(), "zed".into()),
-                ("OpenAI-Beta".into(), "responses=experimental".into()),
+            let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
+                (
+                    HeaderName::from_static("originator"),
+                    HeaderValue::from_static("zed"),
+                ),
+                (
+                    HeaderName::from_static("openai-beta"),
+                    HeaderValue::from_static("responses=experimental"),
+                ),
             ];
             if let Some(ref id) = creds.account_id {
                 if !id.is_empty() {
-                    extra_headers.push(("ChatGPT-Account-Id".into(), id.clone()));
+                    if let Ok(value) = HeaderValue::from_str(id) {
+                        header_pairs.push((HeaderName::from_static("chatgpt-account-id"), value));
+                    }
                 }
             }
+            let extra_headers = CustomHeaders::new(header_pairs);
 
             let access_token = creds.access_token.clone();
             request_limiter
@@ -529,7 +529,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                         CODEX_BASE_URL,
                         &access_token,
                         responses_request,
-                        extra_headers,
+                        &extra_headers,
                     )
                     .await
                     .map_err(LanguageModelCompletionError::from)

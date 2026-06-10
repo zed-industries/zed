@@ -24,7 +24,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -123,6 +123,7 @@ enum ThreadFeedback {
 #[derive(Debug)]
 pub(crate) enum ThreadError {
     PaymentRequired,
+    DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
     RateLimitExceeded {
@@ -196,6 +197,7 @@ impl From<anyhow::Error> for ThreadError {
                     provider: provider.to_string().into(),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
+                DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
                 BadRequestFormat { provider, .. }
                 | HttpResponseError { provider, .. }
                 | ApiEndpointNotFound { provider } => Self::ApiError {
@@ -459,15 +461,19 @@ fn permission_option_for_action(
 ) -> Option<&acp::PermissionOption> {
     if kind == acp::PermissionOptionKind::AllowAlways
         && let PermissionOptions::Flat(options) = options
-        && let Some(option) = options
-            .iter()
-            .find(|option| option.option_id.0.as_ref() == "allow_always")
+        && let Some(option) = options.iter().find(|option| {
+            option.option_id.0.as_ref() == acp_thread::SandboxPermission::AllowAlways.as_id()
+        })
     {
         return Some(option);
     }
 
     options.first_option_of_kind(kind)
 }
+
+pub struct StateChange;
+
+impl EventEmitter<StateChange> for ConversationView {}
 
 fn resolve_outcome_from_selection(
     options: &PermissionOptions,
@@ -841,6 +847,7 @@ impl ConversationView {
         }
 
         self.server_state = state;
+        cx.emit(StateChange);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         if matches!(&self.server_state, ServerState::Connected(_)) {
             cx.emit(RootThreadUpdated);
@@ -1172,16 +1179,12 @@ impl ConversationView {
             model_selector = None;
             mode_selector = None;
         } else {
-            // Fall back to legacy mode/model selectors
+            // Fall back to dedicated mode/model selectors
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
-                let agent_server = self.agent.clone();
-                let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
-                        agent_server,
-                        fs,
                         PopoverMenuHandle::default(),
                         self.focus_handle(cx),
                         window,
@@ -1354,6 +1357,7 @@ impl ConversationView {
             };
             if let Some(connected) = this.as_connected_mut() {
                 connected.auth_state = auth_state;
+                cx.emit(StateChange);
                 if let Some(view) = connected.active_view()
                     && view
                         .read(cx)
@@ -1538,6 +1542,7 @@ impl ConversationView {
                     });
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1551,6 +1556,7 @@ impl ConversationView {
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1851,6 +1857,7 @@ impl ConversationView {
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
+            cx.emit(StateChange);
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
@@ -1896,6 +1903,7 @@ impl ConversationView {
                             }) = this.as_connected_mut()
                             {
                                 pending_auth_method.take();
+                                cx.emit(StateChange);
                             }
                             if let Some(active) = this.root_thread_view() {
                                 active.update(cx, |active, cx| {
@@ -1917,6 +1925,7 @@ impl ConversationView {
         pending_auth_method.replace(method.clone());
 
         let authenticate = connection.authenticate(method, cx);
+        cx.emit(StateChange);
         cx.notify();
         self.auth_task = Some(cx.spawn_in(window, {
             async move |this, cx| {
@@ -1944,6 +1953,7 @@ impl ConversationView {
                         }) = this.as_connected_mut()
                         {
                             pending_auth_method.take();
+                            cx.emit(StateChange);
                         }
                         if let Some(active) = this.root_thread_view() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
@@ -3027,6 +3037,7 @@ impl ConversationView {
                             pending_auth_method: None,
                             _subscription: None,
                         };
+                        cx.emit(StateChange);
                         if let Some(view) = connected.active_view()
                             && view
                                 .read(cx)
@@ -3067,6 +3078,7 @@ fn native_available_skills(
             description: skill.description.into(),
             source: skill.source,
             skill_file_path: skill.skill_file_path,
+            warning: skill.warning,
         })
         .collect()
 }
@@ -3434,6 +3446,21 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_data_retention_error_maps_from_provider_error() {
+        // The agent wraps the provider error in a fresh `anyhow::Error`, so
+        // the mapping must downcast to `LanguageModelCompletionError` rather
+        // than matching on the anyhow error directly.
+        let provider_error = LanguageModelCompletionError::DataRetentionConsentRequired {
+            model_name: "Claude Fable 5".to_string(),
+        };
+        let error = ThreadError::from(anyhow!(provider_error));
+        assert!(
+            matches!(error, ThreadError::DataRetentionConsentRequired),
+            "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
+        );
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -8277,6 +8304,71 @@ pub(crate) mod tests {
                 "Floating row should disappear after scrolling brings the inline prompt into view"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_does_not_flicker_when_activity_bar_squeezes_list(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, _entry_ix, cx) =
+            setup_pending_permission_thread("perm-flicker", cx).await;
+
+        // Give the pending tool call tall content (like a full plan awaiting
+        // approval), so the floating row embedding it dwarfs the panel.
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        acp::ToolCallId::new("perm-flicker"),
+                        acp::ToolCallUpdateFields::new().content(vec![
+                            acp::ToolCallContent::Content(acp::Content::new(
+                                acp::ContentBlock::Text(acp::TextContent::new(
+                                    "Plan step\n\n".repeat(100),
+                                )),
+                            )),
+                        ]),
+                    )),
+                    cx,
+                )
+                .expect("tool call content update should be accepted");
+        });
+        cx.run_until_parked();
+
+        // Park the inline prompt below the viewport so the floating row renders.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            });
+        });
+
+        // Drive several real window draws. Each draw lays out the activity bar
+        // (containing the floating row) and the conversation list together, so
+        // the row's height feeds back into the list viewport height that the
+        // next frame's visibility decision is based on. Since showing the row
+        // squeezes the list to zero height, a decision that treats a
+        // zero-height viewport as "unknown" makes the row's visibility
+        // oscillate from frame to frame, flickering between the conversation
+        // and the permission prompt.
+        let mut row_visibility = Vec::new();
+        for _ in 0..4 {
+            thread_view.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+            thread_view.update_in(cx, |view, window, cx| {
+                row_visibility.push(
+                    view.render_main_agent_awaiting_permission(window, cx)
+                        .is_some(),
+                );
+            });
+        }
+        assert_eq!(
+            row_visibility,
+            vec![true; 4],
+            "Floating row visibility must be stable across frames (false entries mean flicker)"
+        );
     }
 
     #[gpui::test]
