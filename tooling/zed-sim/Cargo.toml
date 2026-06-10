@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap = { workspace = true }
 open.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 tiny_http.workspace = true

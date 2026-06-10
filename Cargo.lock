@@ -23164,6 +23164,7 @@ dependencies = [
  "anyhow",
  "clap",
  "open",
+ "serde",
  "serde_json",
  "smol",
  "tiny_http",

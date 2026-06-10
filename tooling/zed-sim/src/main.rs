@@ -1,6 +1,7 @@
 //! Zed Sim — an internal launcher that runs the real Zed binary in disposable,
 //! state-controlled profiles for staff testing. See `SPEC.md` and `PLAN.md`.
 
+mod config;
 mod profile;
 mod server;
 mod states;
@@ -28,12 +29,20 @@ struct Args {
     /// Don't open the control panel in a browser automatically.
     #[arg(long)]
     no_open: bool,
+
+    /// Path to the impersonation config file (JSON). Defaults to
+    /// `tooling/zed-sim/zed-sim.config.json`. Missing is fine — impersonation
+    /// simply stays unavailable.
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let zed_binary = resolve_zed_binary(args.zed)?;
-    server::serve(&zed_binary, args.port, !args.no_open)
+    let config_path = args.config.unwrap_or_else(config::default_path);
+    let app_config = config::load(&config_path)?;
+    server::serve(&zed_binary, &app_config, args.port, !args.no_open)
 }
 
 /// Resolves which Zed executable to launch, in priority order: explicit `--zed`

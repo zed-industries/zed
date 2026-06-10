@@ -42,6 +42,44 @@ ZED_SIM_BINARY="/path/to/zed" cargo run -p zed-sim
 The Pro / Trial / Business states are shown as "coming soon" and arrive in
 Phase 2 (see `PLAN.md`).
 
+## Impersonation (real accounts, optional)
+
+You can also launch a session signed in as another GitHub account **without any
+GitHub login** — you just supply a username. This uses Zed's internal
+impersonation path: it resolves the username via GitHub's public API, finds or
+creates that user on the backend, and signs in. No OAuth, no password, no
+keychain.
+
+This is powerful (an impersonation token can become *any* account on its
+backend), so it must point at a **preview backend, never production**.
+
+### Setup
+
+1. Copy the example config and fill it in:
+   ```sh
+   cp tooling/zed-sim/zed-sim.config.example.json tooling/zed-sim/zed-sim.config.json
+   ```
+   The real `zed-sim.config.json` is gitignored.
+2. Set `server_url` to your **preview** backend URL.
+3. Add the GitHub usernames you want under `accounts`.
+4. Supply the internal token. Prefer the env var so the secret never lands in a
+   file:
+   ```sh
+   ZED_SIM_IMPERSONATE_TOKEN="<preview-token>" cargo run -p zed-sim
+   ```
+   (`ZED_SIM_SERVER_URL` likewise overrides `server_url` if you'd rather pass it
+   via env.)
+
+Once configured, the **Impersonate** section lists your accounts; click one to
+launch a fresh Zed already signed in as that account.
+
+### Important: run from a terminal
+
+Stock Zed only honors impersonation when its stdout is a TTY. The launched Zed
+inherits this tool's stdout, so **run the tool from a terminal** (as `cargo run`
+does) for impersonation to take effect. Note that stock Zed prints the token to
+that terminal during sign-in — keep the preview token low-privilege.
+
 ## How it stays disposable
 
 Each launch creates a throwaway profile under your system temp directory
