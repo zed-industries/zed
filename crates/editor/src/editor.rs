@@ -9471,9 +9471,11 @@ impl Editor {
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
             }
-            multi_buffer::Event::Reloaded | multi_buffer::Event::BufferDiffChanged => {
-                cx.emit(EditorEvent::TitleChanged)
+            multi_buffer::Event::Reloaded => {
+                cx.emit(EditorEvent::TitleChanged);
+                cx.emit(EditorEvent::BufferReloaded);
             }
+            multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.update_diagnostics_state(window, cx);
             }
@@ -11578,6 +11580,7 @@ pub enum EditorEvent {
     },
     /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,
+    BufferReloaded,
     /// Emitted when this editor creates, undoes, or redoes an edit transaction.
     Edited {
         /// The transaction that changed the editor's buffer.
