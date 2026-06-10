@@ -4023,7 +4023,13 @@ impl GitPanel {
 
     fn row_diff_stat(row: &GitStatusRow) -> Option<DiffStat> {
         match row.section {
+            Section::Staged if row.entry.staging == StageStatus::PartiallyStaged => {
+                row.entry.staged_diff_stat
+            }
             Section::Staged => row.entry.staged_diff_stat.or(row.entry.diff_stat),
+            Section::Unstaged if row.entry.staging == StageStatus::PartiallyStaged => {
+                row.entry.unstaged_diff_stat
+            }
             Section::Unstaged => row.entry.unstaged_diff_stat.or(row.entry.diff_stat),
             Section::Conflict | Section::Untracked => row.entry.diff_stat,
         }
@@ -8282,7 +8288,7 @@ mod tests {
     }
 
     #[test]
-    fn test_row_diff_stat_falls_back_to_aggregate_stat() {
+    fn test_row_diff_stat_does_not_fall_back_to_aggregate_stat_for_partially_staged_files() {
         let entry = GitStatusEntry {
             repo_path: repo_path("partial.rs"),
             status: FileStatus::Tracked(git::status::TrackedStatus {
@@ -8303,20 +8309,14 @@ mod tests {
                 entry: entry.clone(),
                 section: Section::Staged,
             }),
-            Some(DiffStat {
-                added: 3,
-                deleted: 1,
-            })
+            None
         );
         assert_eq!(
             GitPanel::row_diff_stat(&GitStatusRow {
                 entry,
                 section: Section::Unstaged,
             }),
-            Some(DiffStat {
-                added: 3,
-                deleted: 1,
-            })
+            None
         );
     }
 
