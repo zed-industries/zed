@@ -11469,7 +11469,7 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "8.2.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=964aa676489c599105d97b9e6a00d15d372b9605#964aa676489c599105d97b9e6a00d15d372b9605"
+source = "git+https://github.com/zed-industries/notify.git?rev=6566ae63331ffd1f2025b18dc00c3049fb8588c9#6566ae63331ffd1f2025b18dc00c3049fb8588c9"
 dependencies = [
  "bitflags 2.10.0",
  "fsevent-sys",
@@ -11497,7 +11497,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=964aa676489c599105d97b9e6a00d15d372b9605#964aa676489c599105d97b9e6a00d15d372b9605"
+source = "git+https://github.com/zed-industries/notify.git?rev=6566ae63331ffd1f2025b18dc00c3049fb8588c9#6566ae63331ffd1f2025b18dc00c3049fb8588c9"
 
 [[package]]
 name = "ntapi"

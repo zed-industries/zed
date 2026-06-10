@@ -885,8 +885,8 @@ features = [
 
 [patch.crates-io]
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "964aa676489c599105d97b9e6a00d15d372b9605" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "964aa676489c599105d97b9e6a00d15d372b9605" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "6566ae63331ffd1f2025b18dc00c3049fb8588c9" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "6566ae63331ffd1f2025b18dc00c3049fb8588c9" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
