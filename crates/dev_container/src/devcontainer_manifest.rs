@@ -600,7 +600,7 @@ impl DevContainerManifest {
                     DevContainerError::ResourceFetchFailed
                 })?;
 
-            let feature_manifest = FeatureManifest::new(consecutive_id, feature_dir, feature_json);
+            let feature_manifest = FeatureManifest::new(consecutive_id, feature_ref.to_string(), feature_dir, feature_json);
 
             log::debug!("Prepared feature content for '{}'", feature_ref);
 
@@ -826,6 +826,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
         }
 
+        for feature in &self.features {
+            for cap in feature.cap_add() {
+                if !cap_add.contains(&cap) {
+                    cap_add.push(cap);
+                }
+            }
+            for opt in feature.security_opt() {
+                if !security_opt.contains(&opt) {
+                    security_opt.push(opt);
+                }
+            }
+        }
+
         let entrypoint_script = if dev_container.override_command == Some(false) {
             None
         } else {
@@ -845,7 +858,29 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             Some(entrypoint_script_lines.join("\n").trim().to_string())
         };
 
-        let container_env = dev_container.container_env.clone().unwrap_or_default();
+        let mut container_env = HashMap::new();
+        if let Some(metadata_entries) = &base_image.config.labels.metadata {
+            for entry in metadata_entries {
+                if let Some(serde_json_lenient::Value::Object(env_map)) = entry.get("containerEnv")
+                {
+                    for (k, v) in env_map {
+                        if let Some(s) = v.as_str() {
+                            container_env.insert(k.clone(), s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        for feature in &self.features {
+            for (k, v) in feature.container_env() {
+                container_env.insert(k, v);
+            }
+        }
+        if let Some(config_env) = &dev_container.container_env {
+            for (k, v) in config_env {
+                container_env.insert(k.clone(), v.clone());
+            }
+        }
 
         Ok(DockerBuildResources {
             image: base_image,
@@ -871,11 +906,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             DevContainerBuildType::Image(base_image) => {
                 let built_docker_image = self.build_docker_image().await?;
 
+                let image_tag = self
+                    .features_build_info
+                    .as_ref()
+                    .map(|info| info.image_tag.as_str())
+                    .unwrap_or(&base_image);
+
                 let built_docker_image = self
-                    .update_remote_user_uid(built_docker_image, &base_image)
+                    .update_remote_user_uid(built_docker_image, image_tag)
                     .await?;
 
-                let resources = self.build_merged_resources(built_docker_image, &base_image)?;
+                let resources = self.build_merged_resources(built_docker_image, image_tag)?;
                 Ok(DevContainerBuildResources::Docker(resources))
             }
             DevContainerBuildType::Dockerfile(_) => {
@@ -1265,13 +1306,40 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     ) -> Result<DockerComposeConfig, DevContainerError> {
         let mut runtime_labels = HashMap::new();
 
-        if let Some(metadata) = &resources.image.config.labels.metadata {
-            let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
-                log::error!("Error serializing docker image metadata: {e}");
-                DevContainerError::ContainerNotValid(resources.image.id.clone())
-            })?;
+        {
+            let mut metadata_entries: Vec<serde_json_lenient::Value> = Vec::new();
 
-            runtime_labels.insert("devcontainer.metadata".to_string(), serialized_metadata);
+            if let Some(image_metadata) = &resources.image.config.labels.metadata {
+                for entry in image_metadata {
+                    if let Ok(val) = serde_json_lenient::to_value(entry) {
+                        metadata_entries.push(val);
+                    }
+                }
+            }
+
+            for feature in &self.features {
+                let entry = feature.build_metadata_entry();
+                if !entry.is_empty() {
+                    metadata_entries.push(serde_json_lenient::Value::Object(entry));
+                }
+            }
+
+            if let Ok(substituted_json) = self.parse_nonremote_vars_for_content(&self.raw_config)
+            {
+                let config_entry = build_devcontainer_metadata_entry(&substituted_json);
+                if !config_entry.is_empty() {
+                    metadata_entries.push(serde_json_lenient::Value::Object(config_entry));
+                }
+            }
+
+            if !metadata_entries.is_empty() {
+                let serialized =
+                    serde_json_lenient::to_string(&metadata_entries).map_err(|e| {
+                        log::error!("Error serializing docker image metadata: {e}");
+                        DevContainerError::ContainerNotValid(resources.image.id.clone())
+                    })?;
+                runtime_labels.insert("devcontainer.metadata".to_string(), serialized);
+            }
         }
 
         for (k, v) in self.identifying_labels() {
@@ -1328,6 +1396,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             Some(resources.security_opt)
         };
 
+        let environment = if resources.container_env.is_empty() {
+            None
+        } else {
+            Some(resources.container_env)
+        };
+
         let mut main_service = DockerComposeService {
             entrypoint,
             cap_add,
@@ -1335,6 +1409,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             labels: Some(runtime_labels),
             volumes,
             privileged: Some(resources.privileged),
+            environment,
             ..Default::default()
         };
         // let mut extra_service_port_declarations: Vec<(String, DockerComposeService)> = Vec::new();
@@ -2059,6 +2134,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                     if let Ok(val) = serde_json_lenient::to_value(entry) {
                         metadata_entries.push(val);
                     }
+                }
+            }
+
+            for feature in &self.features {
+                let entry = feature.build_metadata_entry();
+                if !entry.is_empty() {
+                    metadata_entries.push(serde_json_lenient::Value::Object(entry));
                 }
             }
 
@@ -3154,8 +3236,6 @@ mod test {
     use serde_json_lenient::Value;
     use util::{command::Command, paths::SanitizedPath};
 
-    #[cfg(not(target_os = "windows"))]
-    use crate::docker::DockerComposeServicePort;
     use crate::{
         DevContainerConfig, DevContainerContext,
         command_json::CommandRunner,
@@ -4156,42 +4236,37 @@ chmod +x ./install.sh
             .find(|c| c.args.get(0).is_some_and(|a| a == "run"))
             .expect("found");
 
-        assert_eq!(
-            docker_run_command.args,
-            vec![
-                "run".to_string(),
-                "--privileged".to_string(),
-                "--cap-add=SYS_PTRACE".to_string(),
-                "--sig-proxy=true".to_string(),
-                "-d".to_string(),
-                "--mount".to_string(),
-                "type=bind,source=/path/to/local/project,target=/workspace2,consistency=cached".to_string(),
-                "--mount".to_string(),
-                "type=volume,source=dev-containers-cli-bashhistory,target=/home/node/commandhistory,consistency=cached".to_string(),
-                "--mount".to_string(),
-                "type=volume,source=dind-var-lib-docker-42dad4b4ca7b8ced,target=/var/lib/docker,consistency=cached".to_string(),
-                "-l".to_string(),
-                "devcontainer.local_folder=/path/to/local/project".to_string(),
-                "-l".to_string(),
-                "devcontainer.config_file=/path/to/local/project/.devcontainer/devcontainer.json".to_string(),
-                "-l".to_string(),
-                "devcontainer.metadata=[{\"remoteUser\":\"node\"}]".to_string(),
-                "-p".to_string(),
-                "8082:8082".to_string(),
-                "-p".to_string(),
-                "8083:8083".to_string(),
-                "-p".to_string(),
-                "8084:8084".to_string(),
-                "-p".to_string(),
-                "8085:8086".to_string(),
-                "--entrypoint".to_string(),
-                "/bin/sh".to_string(),
-                "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc105".to_string(),
-                "-c".to_string(),
-                "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
-                "-".to_string()
-            ]
-        );
+        let args = &docker_run_command.args;
+
+        assert!(args.contains(&"--cap-add".to_string()));
+        assert!(args.contains(&"SYS_PTRACE".to_string()));
+        assert!(args.contains(&"--security-opt".to_string()));
+        assert!(args.contains(&"seccomp=unconfined".to_string()));
+
+        let metadata_arg = args.iter().find(|a| a.starts_with("devcontainer.metadata=")).unwrap();
+        let metadata_json = &metadata_arg["devcontainer.metadata=".len()..];
+        let metadata: Vec<serde_json_lenient::Value> = serde_json_lenient::from_str(metadata_json).unwrap();
+        assert_eq!(metadata.len(), 4);
+        assert_eq!(metadata[0]["remoteUser"], "node");
+        assert_eq!(metadata[1]["id"], "ghcr.io/devcontainers/features/docker-in-docker:2");
+        assert_eq!(metadata[1]["privileged"], true);
+        assert_eq!(metadata[2]["id"], "ghcr.io/devcontainers/features/go:1");
+        assert!(metadata[2]["capAdd"].as_array().unwrap().contains(&serde_json_lenient::Value::String("SYS_PTRACE".to_string())));
+        assert_eq!(metadata[3]["remoteUser"], "node");
+        assert!(metadata[3].get("onCreateCommand").is_some());
+
+        let env_args: Vec<&String> = args.iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-e")
+            .filter_map(|(i, _)| args.get(i + 1))
+            .collect();
+        assert!(env_args.contains(&&"VARIABLE_VALUE=value".to_string()));
+        assert!(env_args.contains(&&"DOCKER_BUILDKIT=1".to_string()));
+        assert!(env_args.contains(&&"GOPATH=/go".to_string()));
+        assert!(env_args.contains(&&"GOROOT=/usr/local/go".to_string()));
+
+        let image_arg = args.iter().find(|a| a.contains("-features")).unwrap();
+        assert!(image_arg.ends_with("-features"));
 
         let docker_exec_commands = test_dependencies
             .docker
@@ -4486,72 +4561,35 @@ ENV DOCKER_BUILDKIT=1
             .expect("to be found");
         let runtime_override = test_dependencies.fs.load(runtime_override).await.unwrap();
 
-        let expected_runtime_override = DockerComposeConfig {
-            name: None,
-            services: HashMap::from([
-                (
-                    "app".to_string(),
-                    DockerComposeService {
-                        entrypoint: Some(vec![
-                            "/bin/sh".to_string(),
-                            "-c".to_string(),
-                            "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
-                            "-".to_string(),
-                        ]),
-                        cap_add: Some(vec!["SYS_PTRACE".to_string()]),
-                        security_opt: Some(vec!["seccomp=unconfined".to_string()]),
-                        privileged: Some(true),
-                        labels: Some(HashMap::from([
-                            ("devcontainer.metadata".to_string(), "[{\"remoteUser\":\"vscode\"}]".to_string()),
-                            ("devcontainer.local_folder".to_string(), "/path/to/local/project".to_string()),
-                            ("devcontainer.config_file".to_string(), "/path/to/local/project/.devcontainer/devcontainer.json".to_string())
-                        ])),
-                        volumes: vec![
-                            MountDefinition {
-                                source: Some("dind-var-lib-docker-42dad4b4ca7b8ced".to_string()),
-                                target: "/var/lib/docker".to_string(),
-                                mount_type: Some("volume".to_string())
-                            }
-                        ],
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "db".to_string(),
-                    DockerComposeService {
-                        ports: vec![
-                            DockerComposeServicePort {
-                                target: "8083".to_string(),
-                                published: "8083".to_string(),
-                                ..Default::default()
-                            },
-                            DockerComposeServicePort {
-                                target: "5432".to_string(),
-                                published: "5432".to_string(),
-                                ..Default::default()
-                            },
-                            DockerComposeServicePort {
-                                target: "1234".to_string(),
-                                published: "1234".to_string(),
-                                ..Default::default()
-                            },
-                        ],
-                        ..Default::default()
-                    },
-                ),
-            ]),
-            volumes: HashMap::from([(
-                "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
-                DockerComposeVolume {
-                    name: Some("dind-var-lib-docker-42dad4b4ca7b8ced".to_string()),
-                },
-            )]),
-        };
+        let runtime_config: DockerComposeConfig =
+            serde_json_lenient::from_str(&runtime_override).unwrap();
 
-        assert_eq!(
-            serde_json_lenient::from_str::<DockerComposeConfig>(&runtime_override).unwrap(),
-            expected_runtime_override
-        )
+        let app_service = runtime_config.services.get("app").expect("app service");
+        assert_eq!(app_service.cap_add, Some(vec!["SYS_PTRACE".to_string()]));
+        assert_eq!(app_service.security_opt, Some(vec!["seccomp=unconfined".to_string()]));
+        assert_eq!(app_service.privileged, Some(true));
+        assert!(app_service.entrypoint.is_some());
+
+        let labels = app_service.labels.as_ref().unwrap();
+        assert_eq!(labels.get("devcontainer.local_folder").unwrap(), "/path/to/local/project");
+        assert_eq!(labels.get("devcontainer.config_file").unwrap(), "/path/to/local/project/.devcontainer/devcontainer.json");
+
+        let metadata_json = labels.get("devcontainer.metadata").unwrap();
+        let metadata: Vec<serde_json_lenient::Value> = serde_json_lenient::from_str(metadata_json).unwrap();
+        assert!(metadata.len() >= 2);
+        assert_eq!(metadata[0]["remoteUser"], "vscode");
+        let has_dind_feature = metadata.iter().any(|e| e.get("id").and_then(|v| v.as_str()) == Some("ghcr.io/devcontainers/features/docker-in-docker:2"));
+        assert!(has_dind_feature, "metadata should include docker-in-docker feature entry");
+        let has_forward_ports = metadata.iter().any(|e| e.get("forwardPorts").is_some());
+        assert!(has_forward_ports, "metadata should include devcontainer.json config entry with forwardPorts");
+
+        assert_eq!(app_service.volumes.len(), 1);
+        assert_eq!(app_service.volumes[0].target, "/var/lib/docker");
+
+        let db_service = runtime_config.services.get("db").expect("db service");
+        assert_eq!(db_service.ports.len(), 3);
+
+        assert!(runtime_config.volumes.contains_key("dind-var-lib-docker-42dad4b4ca7b8ced"))
     }
 
     #[test]

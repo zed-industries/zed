@@ -163,6 +163,8 @@ pub(crate) struct DockerComposeService {
         deserialize_with = "deserialize_nullable_vec"
     )]
     pub(crate) command: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) environment: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -1105,6 +1107,13 @@ mod test {
                                 name: Some("custom port".to_string()),
                             },
                         ],
+                        environment: Some(HashMap::from([
+                            ("POSTGRES_DB".to_string(), "postgres".to_string()),
+                            ("POSTGRES_HOSTNAME".to_string(), "localhost".to_string()),
+                            ("POSTGRES_PASSWORD".to_string(), "postgres".to_string()),
+                            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+                            ("POSTGRES_USER".to_string(), "postgres".to_string()),
+                        ])),
                         ..Default::default()
                     },
                 ),
@@ -1117,6 +1126,13 @@ mod test {
                             source: Some("postgres-data".to_string()),
                             target: "/var/lib/postgresql/data".to_string(),
                         }],
+                        environment: Some(HashMap::from([
+                            ("POSTGRES_DB".to_string(), "postgres".to_string()),
+                            ("POSTGRES_HOSTNAME".to_string(), "localhost".to_string()),
+                            ("POSTGRES_PASSWORD".to_string(), "postgres".to_string()),
+                            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+                            ("POSTGRES_USER".to_string(), "postgres".to_string()),
+                        ])),
                         ..Default::default()
                     },
                 ),
