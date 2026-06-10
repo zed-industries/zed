@@ -3245,7 +3245,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -5308,6 +5307,30 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ## Agent
 
 Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
+
+### Auto Compact
+
+- Description: Settings for automatic Zed Agent context compaction.
+- Setting: `agent.auto_compact`
+- Default:
+
+```json [settings]
+{
+  "agent": {
+    "auto_compact": {
+      "enabled": true,
+      "threshold": "90%"
+    }
+  }
+}
+```
+
+**Options**
+
+- `enabled`: Whether to automatically compact long Zed Agent threads near the model's context limit.
+- `threshold`: When automatic compaction runs. Use a percentage string like `"90%"`, a positive integer for tokens used, or a negative integer for tokens remaining.
+
+See [Agent Settings](../ai/agent-settings.md#automatic-compaction) for examples and manual compaction with `/compact`.
 
 ## Collaboration Panel
 
