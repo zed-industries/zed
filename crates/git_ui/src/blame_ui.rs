@@ -1,7 +1,7 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
-    git_timestamp,
+    format_git_timestamp_for_surface,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
@@ -10,7 +10,10 @@ use gpui::{
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
-use project::{git_store::Repository, project_settings::ProjectSettings};
+use project::{
+    git_store::Repository,
+    project_settings::{GitDateSurface, ProjectSettings},
+};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
@@ -215,9 +218,10 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let absolute_timestamp = git_timestamp(
+        let absolute_timestamp = format_git_timestamp_for_surface(
             commit_time,
             time_format::TimestampFormat::MediumAbsolute,
+            GitDateSurface::Blame,
             cx,
         );
         let link_color = cx.theme().colors().text_accent;
@@ -427,7 +431,12 @@ fn deploy_blame_entry_context_menu(
 
 fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &App) -> String {
     match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => git_timestamp(timestamp, time_format::TimestampFormat::Relative, cx),
+        Ok(timestamp) => format_git_timestamp_for_surface(
+            timestamp,
+            time_format::TimestampFormat::Relative,
+            GitDateSurface::Blame,
+            cx,
+        ),
         Err(_) => "Error parsing date".to_string(),
     }
 }

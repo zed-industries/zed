@@ -1,7 +1,8 @@
 use crate::{
+    GitTimestampFormatter,
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
-    custom_git_timestamp, git_status_icon,
+    git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
@@ -33,6 +34,7 @@ use project::{
         CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
         RepositoryEvent, RepositoryId,
     },
+    project_settings::GitDateSurface,
 };
 use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
@@ -48,7 +50,7 @@ use std::{
 };
 use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
-use time::{OffsetDateTime, UtcOffset, macros::format_description};
+use time::{OffsetDateTime, macros::format_description};
 use ui::{
     Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
     Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
@@ -621,23 +623,30 @@ pub struct OpenAtCommit {
     pub sha: String,
 }
 
-fn format_local_timestamp(
+fn format_git_graph_timestamp(
     timestamp: i64,
     format: &[time::format_description::BorrowedFormatItem<'static>],
-    cx: &App,
+    formatter: &GitTimestampFormatter,
 ) -> Option<String> {
     let datetime = OffsetDateTime::from_unix_timestamp(timestamp).ok()?;
-    custom_git_timestamp(datetime, cx).or_else(|| {
-        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-        datetime.to_offset(local_offset).format(format).ok()
+
+    if formatter.date_style() == settings::GitDateStyleSetting::Relative {
+        return Some(formatter.format(datetime, time_format::TimestampFormat::Relative));
+    }
+
+    formatter.format_custom_absolute(datetime).or_else(|| {
+        datetime
+            .to_offset(formatter.local_offset())
+            .format(format)
+            .ok()
     })
 }
 
-fn format_timestamp(timestamp: i64, cx: &App) -> String {
-    format_local_timestamp(
+fn format_timestamp(timestamp: i64, formatter: &GitTimestampFormatter) -> String {
+    format_git_graph_timestamp(
         timestamp,
         format_description!("[day] [month repr:short] [year] [hour]:[minute]"),
-        cx,
+        formatter,
     )
     .unwrap_or_else(|| "Unknown".to_string())
 }
@@ -1766,6 +1775,7 @@ impl GitGraph {
 
         let row_height = Self::row_height(window, cx);
         let has_context_menu = self.has_context_menu();
+        let timestamp_formatter = GitTimestampFormatter::new(GitDateSurface::GitGraph, cx);
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1809,7 +1819,7 @@ impl GitGraph {
                 if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
-                    formatted_time = format_timestamp(data.commit_timestamp, cx);
+                    formatted_time = format_timestamp(data.commit_timestamp, &timestamp_formatter);
                 } else {
                     subject = "Loading…".into();
                     author_name = "".into();
@@ -2812,12 +2822,13 @@ impl GitGraph {
             CommitDataState::Loading(_) => ("Loading…".into(), "".into(), None, "Loading…".into()),
         };
 
+        let timestamp_formatter = GitTimestampFormatter::new(GitDateSurface::GitGraph, cx);
         let date_string = commit_timestamp
             .and_then(|timestamp| {
-                format_local_timestamp(
+                format_git_graph_timestamp(
                     timestamp,
                     format_description!("[month repr:short] [day], [year]"),
-                    cx,
+                    &timestamp_formatter,
                 )
             })
             .unwrap_or_default();

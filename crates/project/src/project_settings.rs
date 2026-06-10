@@ -463,6 +463,10 @@ impl GitDateFormat {
             .map(|description| Self { description })
     }
 
+    fn parse_optional(format: &Option<String>) -> Option<Self> {
+        format.as_deref().and_then(Self::parse)
+    }
+
     pub fn format(&self, timestamp: OffsetDateTime, local_offset: UtcOffset) -> Option<String> {
         timestamp
             .to_offset(local_offset)
@@ -490,10 +494,14 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: InlineBlameSettings,
+    /// Default date display style for git UI.
+    pub date_style: settings::GitDateStyleSetting,
+    /// Default custom format for absolute git dates.
+    pub absolute_date_format: Option<GitDateFormat>,
     /// Git blame settings.
     pub blame: BlameSettings,
-    /// Custom date format used by git graph and git blame timestamps.
-    pub date_format: Option<GitDateFormat>,
+    /// Git graph settings.
+    pub git_graph: GitGraphSettings,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -574,15 +582,53 @@ pub struct InlineBlameSettings {
     pub show_commit_summary: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BlameSettings {
     /// Whether to show the avatar of the author of the commit.
     ///
     /// Default: true
     pub show_avatar: bool,
+    /// Date display style for git blame timestamps. Defaults to the global git date style.
+    pub date_style: Option<settings::GitDateStyleSetting>,
+    /// Custom format for absolute git blame dates. Defaults to the global absolute date format.
+    pub absolute_date_format: Option<GitDateFormat>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GitGraphSettings {
+    /// Date display style for git graph timestamps. Defaults to the global git date style.
+    pub date_style: Option<settings::GitDateStyleSetting>,
+    /// Custom format for absolute git graph dates. Defaults to the global absolute date format.
+    pub absolute_date_format: Option<GitDateFormat>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum GitDateSurface {
+    Default,
+    Blame,
+    GitGraph,
 }
 
 impl GitSettings {
+    pub fn date_style(&self, surface: GitDateSurface) -> settings::GitDateStyleSetting {
+        match surface {
+            GitDateSurface::Default => None,
+            GitDateSurface::Blame => self.blame.date_style,
+            GitDateSurface::GitGraph => self.git_graph.date_style,
+        }
+        .unwrap_or(self.date_style)
+    }
+
+    pub fn absolute_date_format(&self, surface: GitDateSurface) -> Option<&GitDateFormat> {
+        let default_format = self.absolute_date_format.as_ref();
+        match surface {
+            GitDateSurface::Default => None,
+            GitDateSurface::Blame => self.blame.absolute_date_format.as_ref(),
+            GitDateSurface::GitGraph => self.git_graph.absolute_date_format.as_ref(),
+        }
+        .or(default_format)
+    }
+
     pub fn inline_blame_delay(&self) -> Option<Duration> {
         if self.inline_blame.delay_ms.0 > 0 {
             Some(Duration::from_millis(self.inline_blame.delay_ms.0))
@@ -692,13 +738,27 @@ impl Settings for ProjectSettings {
                     show_commit_summary: inline.show_commit_summary.unwrap(),
                 }
             },
+            date_style: git.date_style.unwrap_or_default(),
+            absolute_date_format: GitDateFormat::parse_optional(&git.absolute_date_format),
             blame: {
-                let blame = git.blame.unwrap();
+                let blame = git.blame.as_ref().unwrap();
                 BlameSettings {
                     show_avatar: blame.show_avatar.unwrap(),
+                    date_style: blame.date_style,
+                    absolute_date_format: GitDateFormat::parse_optional(
+                        &blame.absolute_date_format,
+                    ),
                 }
             },
-            date_format: git.date_format.as_deref().and_then(GitDateFormat::parse),
+            git_graph: {
+                let git_graph = git.git_graph.as_ref().unwrap();
+                GitGraphSettings {
+                    date_style: git_graph.date_style,
+                    absolute_date_format: GitDateFormat::parse_optional(
+                        &git_graph.absolute_date_format,
+                    ),
+                }
+            },
             branch_picker: {
                 let branch_picker = git.branch_picker.unwrap();
                 BranchPickerSettings {
