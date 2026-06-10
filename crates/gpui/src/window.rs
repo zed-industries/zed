@@ -6175,6 +6175,9 @@ pub struct PaintQuad {
 #[derive(Clone, Copy, Debug)]
 pub struct BackdropBlurEffect {
     /// Approximate uniform backdrop blur radius in logical pixels.
+    ///
+    /// Non-positive values are treated as zero. Renderers may clamp large radii to a
+    /// fixed implementation limit.
     pub radius: Pixels,
     /// Tint color composited over the blurred backdrop.
     pub tint: Hsla,
@@ -6182,6 +6185,8 @@ pub struct BackdropBlurEffect {
 
 impl BackdropBlurEffect {
     /// Create a backdrop blur effect with a uniform CSS-like radius.
+    ///
+    /// Non-positive values disable blur while still allowing a tint to be painted.
     pub fn new(radius: Pixels) -> Self {
         Self {
             radius,
