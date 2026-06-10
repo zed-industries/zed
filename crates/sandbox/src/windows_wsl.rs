@@ -80,10 +80,20 @@ pub fn wrap_invocation(
         &["--exec", "sh", "-lc", "true"],
         "start a shell in WSL",
     )?;
-    check_wsl_command(
+    // Locate `bwrap` and, in the same round-trip, report whether the WSL
+    // interop socket directory exists so we know whether masking it is
+    // possible (see `build_bwrap_args`). `printf` on stdout is the success
+    // signal; a missing `bwrap` exits non-zero and surfaces the
+    // "not installed" error below.
+    let probe = check_wsl_command_capture(
         &wsl_exe,
         distro.as_deref(),
-        &["--exec", "sh", "-lc", "command -v bwrap >/dev/null"],
+        &[
+            "--exec",
+            "sh",
+            "-lc",
+            "command -v bwrap >/dev/null || exit 1; [ -d /run/WSL ] && printf interop",
+        ],
         "find Bubblewrap (`bwrap`) in WSL",
     )
     .with_context(|| {
@@ -92,6 +102,7 @@ pub fn wrap_invocation(
             wsl_distro_label(distro.as_deref())
         )
     })?;
+    let mask_interop_dir = probe.contains("interop");
     if let Some(cwd) = &cwd {
         check_wsl_path_exists(&wsl_exe, distro.as_deref(), cwd, "terminal cwd")?;
     }
@@ -111,6 +122,7 @@ pub fn wrap_invocation(
         &writable_paths,
         permissions,
         cwd.as_ref().map(|path| path.path.as_str()),
+        mask_interop_dir,
     ));
     wsl_args.push("--".to_string());
     wsl_args.push(program.to_string());
@@ -163,6 +175,35 @@ fn check_wsl_command(
         command_failure_details(output.status.code(), &output.stderr)
     );
     Ok(())
+}
+
+/// Like [`check_wsl_command`], but returns the command's stdout on success.
+///
+/// stdout is decoded as UTF-8 (lossily). This is only used for `--exec`'d
+/// programs whose output we control, not for `wsl.exe`'s own diagnostics
+/// (which are UTF-16LE).
+fn check_wsl_command_capture(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    args: &[&str],
+    description: &str,
+) -> Result<String> {
+    let mut command = Command::new(wsl_exe);
+    if let Some(distro) = distro {
+        command.args(["-d", distro]);
+    }
+    command.args(args).stdin(Stdio::null());
+
+    let output = smol::block_on(command.output()).with_context(|| {
+        format!("{WSL_SANDBOX_ERROR_PREFIX}: failed to invoke WSL while trying to {description}")
+    })?;
+    ensure!(
+        output.status.success(),
+        "{WSL_SANDBOX_ERROR_PREFIX}: failed to {description} in {}{}",
+        wsl_distro_label(distro),
+        command_failure_details(output.status.code(), &output.stderr)
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn check_wsl_path_exists(
@@ -230,6 +271,7 @@ fn build_bwrap_args(
     writable_paths: &[WslPath],
     permissions: SandboxPermissions,
     cwd: Option<&str>,
+    mask_interop_dir: bool,
 ) -> Vec<String> {
     let mut args = Vec::new();
 
@@ -241,6 +283,22 @@ fn build_bwrap_args(
         for path in writable_paths {
             push_bind(&mut args, "--bind", &path.path, &path.path);
         }
+    }
+
+    // Block WSL's Windows interop, regardless of the requested permissions.
+    // Without this, a sandboxed process can exec a Windows binary (e.g.
+    // /mnt/c/Windows/System32/cmd.exe), which the kernel's binfmt handler
+    // (`/init`) hands off to the Windows host over an AF_UNIX socket — running
+    // fully outside bwrap and defeating both the filesystem and the network
+    // restrictions. `/init` locates that socket via the $WSL_INTEROP
+    // environment variable, so we drop it; and we mask the socket directory
+    // (when it exists) so the value can't be rediscovered by listing
+    // /run/WSL and re-exporting it. Both steps are required: unsetting the
+    // variable alone is bypassable, and masking alone leaves the inherited
+    // variable usable.
+    args.extend(["--unsetenv".to_string(), "WSL_INTEROP".to_string()]);
+    if mask_interop_dir {
+        args.extend(["--tmpfs".to_string(), "/run/WSL".to_string()]);
     }
 
     args.extend([
@@ -425,6 +483,7 @@ mod tests {
             }],
             SandboxPermissions::default(),
             Some("/home/me/project"),
+            true,
         );
         assert!(args.iter().any(|arg| arg == "--unshare-net"));
         assert!(
@@ -442,6 +501,7 @@ mod tests {
                 allow_fs_write: false,
             },
             None,
+            true,
         );
         assert!(!args.iter().any(|arg| arg == "--unshare-net"));
     }
@@ -455,6 +515,7 @@ mod tests {
             }],
             SandboxPermissions::default(),
             None,
+            true,
         );
         assert!(args.windows(3).any(|window| window
             == [
@@ -462,6 +523,65 @@ mod tests {
                 "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md",
                 "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md"
             ]));
+    }
+
+    #[test]
+    fn bwrap_blocks_wsl_interop_by_default() {
+        let args = build_bwrap_args(
+            &[WslPath {
+                distro: Some("Ubuntu".to_string()),
+                path: "/home/me/project".to_string(),
+            }],
+            SandboxPermissions::default(),
+            Some("/home/me/project"),
+            true,
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--unsetenv", "WSL_INTEROP"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--tmpfs", "/run/WSL"])
+        );
+    }
+
+    #[test]
+    fn bwrap_blocks_wsl_interop_even_with_fs_write() {
+        let args = build_bwrap_args(
+            &[],
+            SandboxPermissions {
+                allow_network: true,
+                allow_fs_write: true,
+            },
+            None,
+            true,
+        );
+        // Interop is host code execution, not just a filesystem write, so it
+        // stays blocked even when the user has granted unrestricted writes
+        // and network.
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--unsetenv", "WSL_INTEROP"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--tmpfs", "/run/WSL"])
+        );
+    }
+
+    #[test]
+    fn bwrap_skips_interop_dir_mask_when_absent() {
+        // When the interop socket directory doesn't exist (interop disabled),
+        // there's nothing to mask and a `--tmpfs /run/WSL` would abort bwrap,
+        // so the mount must be omitted. Unsetting the variable is harmless and
+        // stays.
+        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false);
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--unsetenv", "WSL_INTEROP"])
+        );
+        assert!(!args.iter().any(|arg| arg == "/run/WSL"));
     }
 
     #[test]
