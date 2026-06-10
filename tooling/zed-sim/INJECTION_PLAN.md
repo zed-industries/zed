@@ -50,11 +50,20 @@ So injection = build one `GetAuthenticatedUserResponse` + set status to
    - Personal-plan states first: free signed-in, Pro, Trial active, Trial
      expired (= `ZedFree` + a past `trial_started_at`, which triggers the real
      end-of-trial upsell per `agent_panel.rs::should_render_trial_end_upsell`).
-2. **Apply entry** (NEXT increment, the sensitive part):
-   - Feature-gated `pub fn` on `UserStore` to call the private
-     `update_authenticated_user` with a synthesized response.
-   - Feature-gated way to set `Client` status to `Authenticated`.
-   - A single `apply_from_env(client, user_store, cx)` called once at startup.
+2. **Apply entry** — DONE (compiles):
+   - `UserStore::apply_sim_state` (feature-gated) feeds the synthesized response
+     through the private `update_authenticated_user` — sets plan, trial, usage,
+     account flags, organizations.
+   - `sim_state::apply_from_env(client, user_store, cx)` sets `Client` status to
+     `Authenticated` (no connect) and applies the response.
+   - Verified prod-safe: the `Authenticated`-status fetch in
+     `UserStore::_maintain_current_user` is gated on `client.user_id()`, which
+     stays `None` here, so no `get_authenticated_user` network call fires.
+   - FOLLOW-UP: the signed-in **identity/avatar** (`current_user`) is a
+     `postage::watch` receiver whose sender lives in an internal task. Setting it
+     needs a stored sender + an async send. Until then, plan/trial/upsell render
+     correctly but the account menu won't show a populated avatar. Low risk,
+     small change.
 3. **Startup hook** (NEXT) — in `crates/zed/src/main.rs` `authenticate()`,
    behind `#[cfg(feature = "staff-sim")]`: if `ZED_SIM_STATE` is set, apply it
    instead of the normal credential path.
