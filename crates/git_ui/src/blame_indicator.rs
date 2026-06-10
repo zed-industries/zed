@@ -39,10 +39,8 @@ impl BlameIndicator {
     }
 
     fn on_editor_changed(&mut self, _editor: Entity<Editor>, cx: &mut Context<Self>) {
-        // The editor notifies on every change (cursor movement, edits, blame
-        // data arriving, even cursor blink); debounce so a burst runs one
-        // blame lookup, and only re-render when the text actually changed.
-        // Replacing the task drops the previous timer.
+        // The editor notifies frequently (on every edit, cursor movement, even
+        // cursor blink); debounce so a burst runs one blame lookup.
         self.blame_update = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             this.update(cx, |this, cx| {
@@ -96,10 +94,12 @@ impl BlameIndicator {
             .status_bar_blame
             .show_commit_summary;
 
-        self.current_blame = entry.map(|entry| {
-            let relative = blame_entry_relative_timestamp(&entry);
-            Self::format_blame(&entry, &relative, show_summary)
-        });
+        self.current_blame = entry
+            .filter(|entry| !entry.sha.is_zero())
+            .map(|entry| {
+                let relative = blame_entry_relative_timestamp(&entry);
+                Self::format_blame(&entry, &relative, show_summary)
+            });
     }
 
     fn format_blame(entry: &BlameEntry, relative: &str, show_summary: bool) -> SharedString {
@@ -139,6 +139,9 @@ impl StatusItemView for BlameIndicator {
     ) {
         self.active_editor = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
+            // Multibuffer rows (project search, diffs) don't map directly to
+            // file rows; hide there rather than blaming the wrong line.
+            .filter(|editor| editor.read(cx).buffer().read(cx).is_singleton())
             .map(|editor| editor.downgrade());
         self.refresh(cx);
         cx.notify();
@@ -283,8 +286,7 @@ mod tests {
             )
         });
 
-        // Attach the indicator before any blame data exists; it should show
-        // nothing yet.
+        // Attach the indicator before any blame data exists.
         let indicator = cx.new(|cx| BlameIndicator::new(cx));
         indicator.update_in(cx, |indicator, window, cx| {
             indicator.set_active_pane_item(Some(&editor as &dyn ItemHandle), window, cx);
@@ -315,7 +317,6 @@ mod tests {
             })
             .expect("row 0 should have a blame entry");
 
-        // Anchor to the fixture so the comparison below can't pass vacuously.
         assert_eq!(expected.author.as_deref(), Some("Alice"));
 
         // The fixture commit is decades old, so the relative phrasing is stable.
@@ -328,7 +329,6 @@ mod tests {
             );
         });
 
-        // Disabling the setting clears the indicator via its settings observer.
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {

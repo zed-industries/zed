@@ -206,7 +206,8 @@ impl Oid {
         &self.bytes[..self.format.byte_len()]
     }
 
-    pub(crate) fn is_zero(&self) -> bool {
+    /// Whether this is the all-zero id git uses for uncommitted changes.
+    pub fn is_zero(&self) -> bool {
         self.as_bytes().iter().all(|byte| *byte == 0)
     }
 
