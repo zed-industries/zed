@@ -9887,12 +9887,7 @@ async fn compute_snapshot(
     };
     let head_commit_future = {
         let backend = backend.clone();
-        async move {
-            match backend.head_sha().await {
-                Some(head_sha) => backend.show(head_sha).await.log_err(),
-                None => None,
-            }
-        }
+        async move { backend.show("HEAD".to_string()).await.ok() }
     };
     let worktrees_future = {
         let backend = backend.clone();
