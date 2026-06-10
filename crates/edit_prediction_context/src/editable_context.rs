@@ -628,7 +628,8 @@ fn related_file_for_ranges(
     ))
     .into();
 
-    let ranges = resolved_context_ranges(ranges, &snapshot);
+    let mut ranges = resolved_context_ranges(ranges, &snapshot);
+    merge_overlapping_ranges(&mut ranges);
 
     let mut excerpts = ranges
         .into_iter()
@@ -674,7 +675,6 @@ fn resolved_context_ranges(
         .collect()
 }
 
-#[allow(dead_code)]
 fn merge_overlapping_ranges(ranges: &mut Vec<ResolvedEditableContextRange>) {
     ranges.sort_by_key(|range| (range.range.start, range.range.end));
     let mut merged: Vec<ResolvedEditableContextRange> = Vec::new();
@@ -717,5 +717,67 @@ fn context_source_order(context_source: ContextSource) -> usize {
         ContextSource::GitLog => 5,
         ContextSource::Bm25 => 6,
         ContextSource::OracleFile => 7,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resolved_range(
+        start_row: u32,
+        end_row: u32,
+        order: usize,
+        context_source: ContextSource,
+    ) -> ResolvedEditableContextRange {
+        ResolvedEditableContextRange {
+            range: Point::new(start_row, 0)..Point::new(end_row, 0),
+            order,
+            context_source,
+        }
+    }
+
+    #[test]
+    fn test_merge_overlapping_ranges() {
+        // A full-file current-file range plus edit-history windows inside it
+        // collapse into a single range with the lowest order and the
+        // highest-priority source.
+        let mut ranges = vec![
+            resolved_range(6, 46, 1, ContextSource::EditHistory),
+            resolved_range(0, 281, 0, ContextSource::CurrentFile),
+            resolved_range(17, 79, 2, ContextSource::EditHistory),
+            resolved_range(85, 125, 3, ContextSource::EditHistory),
+        ];
+        merge_overlapping_ranges(&mut ranges);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(281, 0));
+        assert_eq!(ranges[0].order, 0);
+        assert_eq!(ranges[0].context_source, ContextSource::CurrentFile);
+    }
+
+    #[test]
+    fn test_merge_overlapping_ranges_keeps_disjoint_ranges() {
+        let mut ranges = vec![
+            resolved_range(50, 60, 1, ContextSource::EditHistory),
+            resolved_range(0, 10, 0, ContextSource::CursorExcerpt),
+            resolved_range(5, 12, 2, ContextSource::EditHistory),
+        ];
+        merge_overlapping_ranges(&mut ranges);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(12, 0));
+        assert_eq!(ranges[0].order, 0);
+        assert_eq!(ranges[0].context_source, ContextSource::CursorExcerpt);
+        assert_eq!(ranges[1].range, Point::new(50, 0)..Point::new(60, 0));
+    }
+
+    #[test]
+    fn test_merge_overlapping_ranges_merges_adjacent_ranges() {
+        let mut ranges = vec![
+            resolved_range(0, 10, 0, ContextSource::EditHistory),
+            resolved_range(10, 20, 1, ContextSource::EditHistory),
+        ];
+        merge_overlapping_ranges(&mut ranges);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(20, 0));
     }
 }
