@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn timers_fire_in_real_time() {
         let dispatcher = Arc::new(BenchDispatcher::new());
-        let background = BackgroundExecutor::new(dispatcher.clone());
+        let background = BackgroundExecutor::new(dispatcher);
 
         let fired = Arc::new(AtomicBool::new(false));
         let timer = background.timer(Duration::from_millis(10));
