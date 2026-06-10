@@ -12,7 +12,7 @@ use crate::{
     ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
     head::Head,
     preview::state::{LayoutMode, StackedLayout, TelescopeLayout},
-    render::window_controls::{Bottom, DragPreview, Left, Right},
+    render::window_controls::{Bottom, DragPreview, Left, LeftCorner, Right, RightCorner},
 };
 
 pub mod window_controls;
@@ -179,7 +179,9 @@ impl<D: PickerDelegate> Picker<D> {
             })
             .child(self.render_width_resize::<Left>(window, cx))
             .child(self.render_width_resize::<Right>(window, cx))
-            .child(self.render_height_resize::<Bottom>(window, cx));
+            .child(self.render_height_resize::<Bottom>(window, cx))
+            .child(self.render_corner_resize::<LeftCorner>(window, cx))
+            .child(self.render_corner_resize::<RightCorner>(window, cx));
 
         let Some(aside) = aside else {
             return menu;
