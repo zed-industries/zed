@@ -359,22 +359,6 @@ pub struct MarkdownOptions {
     pub render_metadata_blocks: bool,
 }
 
-fn locate_metadata_span(
-    source: &str,
-    content_range: &Range<usize>,
-    cursor: &mut usize,
-    needle: &str,
-) -> Range<usize> {
-    if !needle.is_empty()
-        && let Some(offset) = source[*cursor..content_range.end].find(needle)
-    {
-        let start = *cursor + offset;
-        *cursor = start + needle.len();
-        return start..start + needle.len();
-    }
-    content_range.clone()
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CopyButtonVisibility {
     Hidden,
@@ -1487,18 +1471,28 @@ impl MarkdownElement {
         let mut cursor = content_range.start;
         for (row_index, row) in rows.iter().enumerate() {
             let key_range = locate_metadata_span(source, content_range, &mut cursor, &row.key);
-            self.push_metadata_cell(builder, content_range, markdown_end, row_index, true, cx, {
-                let key = row.key.clone();
-                move |builder| {
-                    builder.push_text_style(TextStyleRefinement {
-                        color: Some(cx.theme().colors().text_muted),
-                        font_weight: Some(FontWeight::SEMIBOLD),
-                        ..Default::default()
-                    });
-                    builder.push_text(&key, key_range);
-                    builder.pop_text_style();
-                }
-            });
+            self.push_metadata_cell(
+                builder,
+                content_range,
+                markdown_end,
+                MetadataCellStyle {
+                    row_index,
+                    is_key: true,
+                },
+                cx,
+                {
+                    let key = row.key.clone();
+                    move |builder| {
+                        builder.push_text_style(TextStyleRefinement {
+                            color: Some(cx.theme().colors().text_muted),
+                            font_weight: Some(FontWeight::SEMIBOLD),
+                            ..Default::default()
+                        });
+                        builder.push_text(&key, key_range);
+                        builder.pop_text_style();
+                    }
+                },
+            );
             let value_range = match &row.value {
                 MetadataValue::Scalar(text) | MetadataValue::Raw(text) => {
                     locate_metadata_span(source, content_range, &mut cursor, text)
@@ -1512,8 +1506,10 @@ impl MarkdownElement {
                 builder,
                 content_range,
                 markdown_end,
-                row_index,
-                false,
+                MetadataCellStyle {
+                    row_index,
+                    is_key: false,
+                },
                 cx,
                 {
                     let value = &row.value;
@@ -1543,14 +1539,12 @@ impl MarkdownElement {
         builder.pop_div();
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_metadata_cell(
         &self,
         builder: &mut MarkdownElementBuilder,
         block_range: &Range<usize>,
         markdown_end: usize,
-        row_index: usize,
-        is_key: bool,
+        cell_style: MetadataCellStyle,
         cx: &App,
         push_content: impl FnOnce(&mut MarkdownElementBuilder),
     ) {
@@ -1562,9 +1556,11 @@ impl MarkdownElement {
                 .px_2()
                 .py_1()
                 .border_color(cx.theme().colors().border)
-                .when(row_index > 0, |this| this.border_t_1())
-                .when(!is_key, |this| this.border_l_1())
-                .when(is_key, |this| this.bg(cx.theme().colors().panel_background)),
+                .when(cell_style.row_index > 0, |this| this.border_t_1())
+                .when(!cell_style.is_key, |this| this.border_l_1())
+                .when(cell_style.is_key, |this| {
+                    this.bg(cx.theme().colors().panel_background)
+                }),
             block_range,
             markdown_end,
         );
@@ -2958,6 +2954,27 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
     }
+}
+
+fn locate_metadata_span(
+    source: &str,
+    content_range: &Range<usize>,
+    cursor: &mut usize,
+    needle: &str,
+) -> Range<usize> {
+    if !needle.is_empty()
+        && let Some(offset) = source[*cursor..content_range.end].find(needle)
+    {
+        let start = *cursor + offset;
+        *cursor = start + needle.len();
+        return start..start + needle.len();
+    }
+    content_range.clone()
+}
+
+struct MetadataCellStyle {
+    row_index: usize,
+    is_key: bool,
 }
 
 struct MarkdownElementBuilder {

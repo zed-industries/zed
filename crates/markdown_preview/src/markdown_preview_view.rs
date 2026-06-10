@@ -47,13 +47,10 @@ pub struct MarkdownPreviewSettings {
 
 impl Settings for MarkdownPreviewSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
-        let render_frontmatter = content
-            .markdown
-            .as_ref()
-            .and_then(|markdown| markdown.preview.as_ref())
-            .and_then(|preview| preview.render_frontmatter)
-            .unwrap_or(true);
-        Self { render_frontmatter }
+        let preview = content.markdown.as_ref().unwrap().preview.as_ref().unwrap();
+        Self {
+            render_frontmatter: preview.render_frontmatter.unwrap(),
+        }
     }
 }
 
