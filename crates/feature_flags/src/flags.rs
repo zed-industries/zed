@@ -35,14 +35,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
-pub struct HandoffFeatureFlag;
-
-impl FeatureFlag for HandoffFeatureFlag {
-    const NAME: &'static str = "handoff";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(HandoffFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
