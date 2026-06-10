@@ -9,6 +9,7 @@
 //! not real server enforcement.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use cloud_api_client::{
@@ -16,6 +17,9 @@ use cloud_api_client::{
     SubscriptionPeriod, Timestamp,
 };
 use cloud_llm_client::{CurrentUsage, UsageData, UsageLimit};
+use gpui::{AsyncApp, Entity};
+
+use crate::{Client, Status, UserStore};
 
 /// The injectable signed-in states. Business member/admin are deferred until
 /// the personal-plan states are proven end to end (they need organizations
@@ -31,6 +35,35 @@ pub enum SimAuthState {
     /// Trial has ended: Free plan with a past trial start, which drives the
     /// real end-of-trial upsell.
     TrialExpired,
+}
+
+/// Applies the state requested via `ZED_SIM_STATE` (if any) to the running
+/// client and user store, with no network access:
+///
+/// - marks the client `Authenticated` **without connecting to collab**, and
+/// - feeds a synthesized authenticated-user response through the normal path.
+///
+/// Returns `Ok(true)` when a state was applied. A missing/unknown
+/// `ZED_SIM_STATE` is a no-op (`Ok(false)`).
+pub async fn apply_from_env(
+    client: &Arc<Client>,
+    user_store: &Entity<UserStore>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<bool> {
+    let Some(state) = SimAuthState::from_env() else {
+        return Ok(false);
+    };
+    let response = synthesize_response(state);
+
+    // Signed-in for the UI, but deliberately NOT connected: no websocket to the
+    // collab server, no outbound session. Purely local state.
+    client.set_status(Status::Authenticated, cx);
+    user_store.update(cx, |user_store, cx| {
+        user_store.apply_sim_state(response, cx);
+    });
+
+    log::info!("zed-sim: applied simulated state {state:?}");
+    Ok(true)
 }
 
 impl SimAuthState {

@@ -862,6 +862,18 @@ impl UserStore {
         self.edit_prediction_usage = None;
     }
 
+    /// Staff-only (Zed Sim): apply a synthesized authenticated-user response,
+    /// exactly as if the server had returned it. Used to render a simulated
+    /// signed-in state offline. See `crate::sim_state`.
+    #[cfg(feature = "staff-sim")]
+    pub(crate) fn apply_sim_state(
+        &mut self,
+        response: GetAuthenticatedUserResponse,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_authenticated_user(response, cx);
+    }
+
     fn update_authenticated_user(
         &mut self,
         response: GetAuthenticatedUserResponse,
