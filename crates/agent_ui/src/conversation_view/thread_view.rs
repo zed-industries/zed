@@ -23,10 +23,10 @@ use gpui::Stateful;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
-    FastModeConfirmation, LanguageModelEffortLevel, LanguageModelId, LanguageModelProviderId,
-    LanguageModelRegistry, Speed,
+    FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
+    LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
-use settings::update_settings_file;
+use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
     Tab,
@@ -35,6 +35,8 @@ use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::*;
+
+const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
 #[derive(Default)]
 struct ThreadFeedbackState {
@@ -1784,6 +1786,13 @@ impl ThreadView {
                     );
                     ("refusal", None, message.into())
                 }
+                ThreadError::DataRetentionConsentRequired => {
+                    let message = format!(
+                        "{} is not available with Zero Data Retention.",
+                        self.current_model_name(cx)
+                    );
+                    ("data_retention_consent_required", None, message.into())
+                }
                 ThreadError::AuthenticationRequired(message) => {
                     ("authentication_required", None, message.clone())
                 }
@@ -2691,8 +2700,27 @@ impl ThreadView {
         }
     }
 
-    pub fn render_thread_retry_status_callout(&self) -> Option<Callout> {
+    pub fn render_thread_retry_status_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
         let state = self.thread_retry_status.as_ref()?;
+
+        if let Some(fallback_model) = acp_thread::refusal_fallback_model_from_meta(&state.meta) {
+            return Some(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title(state.last_error.clone())
+                    .description(format!("Retrying with {fallback_model}"))
+                    .dismiss_action(
+                        IconButton::new("dismiss-refusal-fallback", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.thread_retry_status = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
 
         let next_attempt_in = state
             .duration
@@ -3598,98 +3626,99 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let is_compacting = compaction.status == acp_thread::ContextCompactionStatus::InProgress;
+        let is_compacting = compaction.is_in_progress();
         let summary = compaction.summary.clone();
         let is_expanded = self.expanded_compactions.contains(&entry_ix);
 
+        let id = format!("context-compaction-{entry_ix}");
+        let header_label = match compaction.status {
+            acp_thread::ContextCompactionStatus::InProgress => "Compacting Context…",
+            acp_thread::ContextCompactionStatus::Completed => "Context Compacted",
+            acp_thread::ContextCompactionStatus::Canceled => "Compaction Canceled",
+        };
+        let chevron_end = if is_expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
         let header = h_flex()
-            .id(("context-compaction", entry_ix))
-            .px_5()
-            .py_1()
-            .gap_2()
+            .gap_1()
             .w_full()
+            .child(Divider::horizontal())
             .child(
-                h_flex()
-                    .flex_none()
-                    .gap_1p5()
-                    .child(
-                        Icon::new(IconName::Scissors)
+                Button::new(id, header_label)
+                    .label_size(LabelSize::Small)
+                    .loading(is_compacting)
+                    .disabled(is_compacting)
+                    .start_icon(
+                        Icon::new(IconName::Compact)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .child(
-                        Label::new(match compaction.status {
-                            acp_thread::ContextCompactionStatus::InProgress => {
-                                "Compacting context…"
-                            }
-                            acp_thread::ContextCompactionStatus::Completed => "Context compacted",
-                            acp_thread::ContextCompactionStatus::Canceled => "Compaction cancelled",
-                        })
-                        .size(LabelSize::Custom(self.tool_name_font_size()))
-                        .color(Color::Muted),
-                    ),
+                    .when(!is_compacting, |this| {
+                        this.end_icon(
+                            Icon::new(chevron_end)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener(
+                            move |this, _event: &ClickEvent, _window, cx| {
+                                this.toggle_compaction_expansion(entry_ix, cx);
+                            },
+                        ))
+                    }),
             )
-            .child(if is_compacting {
-                div().flex_1().into_any_element()
-            } else {
-                Divider::horizontal().into_any_element()
-            })
-            .child(
-                Disclosure::new(("compaction-disclosure", entry_ix), is_expanded)
-                    .opened_icon(IconName::ChevronUp)
-                    .closed_icon(IconName::ChevronDown),
-            )
-            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                this.toggle_compaction_expansion(entry_ix, cx);
-            }));
+            .child(Divider::horizontal());
 
-        if let Some(summary) = summary
-            && is_expanded
-        {
-            v_flex()
-                .w_full()
-                .child(header)
-                .child(
-                    div()
-                        .id(("compaction-summary", entry_ix))
-                        .mx_5()
-                        .pl_3p5()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .child(self.render_markdown(
-                            summary,
-                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                            cx,
-                        )),
-                )
-                .child(
-                    div()
-                        .mx_5()
-                        .mb_1()
-                        .pl_3p5()
-                        .pt_2()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .child(
-                            IconButton::new(
-                                ("compaction-summary-collapse", entry_ix),
-                                IconName::ChevronUp,
+        div()
+            .px_5()
+            .w_full()
+            .child(
+                v_flex()
+                    .pt_1p5()
+                    .mb_1p5()
+                    .gap_1p5()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .rounded_sm()
+                    .child(header)
+                    .when_some(summary.filter(|_| is_expanded), |this, summary| {
+                        this.border_color(self.tool_card_border_color(cx))
+                            .bg(cx.theme().colors().editor_background.opacity(0.2))
+                            .child(
+                                div()
+                                    .id(("compaction-summary", entry_ix))
+                                    .p_2()
+                                    .text_ui(cx)
+                                    .child(self.render_markdown(
+                                        summary,
+                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                        cx,
+                                    )),
                             )
-                            .full_width()
-                            .style(ButtonStyle::Outlined)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(
-                                move |this, _event: &ClickEvent, _window, cx| {
-                                    this.expanded_compactions.remove(&entry_ix);
-                                    cx.notify();
-                                },
-                            )),
-                        ),
-                )
-                .into_any()
-        } else {
-            header.into_any()
-        }
+                            .child(
+                                h_flex()
+                                    .border_t_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                                    .child(
+                                        IconButton::new(
+                                            ("compaction-summary-collapse", entry_ix),
+                                            IconName::ChevronUp,
+                                        )
+                                        .full_width()
+                                        .on_click(
+                                            cx.listener(
+                                                move |this, _event: &ClickEvent, _window, cx| {
+                                                    this.expanded_compactions.remove(&entry_ix);
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        ),
+                                    ),
+                            )
+                    }),
+            )
+            .into_any()
     }
 
     fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
@@ -5629,6 +5658,28 @@ impl ThreadView {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => {
+                // A canceled tool call that produced visible output is still worth
+                // showing, but one that was canceled before producing anything just
+                // renders as a useless "Canceled" card — hide those entirely.
+                if matches!(tool_call.status, ToolCallStatus::Canceled) {
+                    let has_visible_content =
+                        tool_call.content.iter().any(|content| match content {
+                            ToolCallContent::ContentBlock(block) => match block {
+                                ContentBlock::Empty => false,
+                                ContentBlock::Markdown { markdown } => {
+                                    !markdown.read(cx).source().trim().is_empty()
+                                }
+                                ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => {
+                                    true
+                                }
+                            },
+                            ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => true,
+                        });
+                    if !has_visible_content {
+                        return Empty.into_any();
+                    }
+                }
+
                 let tool_call = self.render_any_tool_call(
                     self.thread.read(cx).session_id(),
                     entry_ix,
@@ -6193,7 +6244,10 @@ impl ThreadView {
 
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
-        let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
+        let thread = self.thread.read(cx);
+
+        let is_generating =
+            matches!(thread.status(), ThreadStatus::Generating) && !thread.is_compacting();
 
         if is_generating && !self.generating_indicator_in_list {
             let entries_count = self.thread.read(cx).entries().len();
@@ -9378,6 +9432,9 @@ impl ThreadView {
                 self.render_any_thread_error(message.clone(), window, cx)
             }
             ThreadError::Refusal => self.render_refusal_error(cx),
+            ThreadError::DataRetentionConsentRequired => {
+                self.render_data_retention_consent_error(cx)
+            }
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
@@ -10147,6 +10204,118 @@ impl ThreadView {
         )
     }
 
+    /// Returns the model to offer as a downgrade target when the current model
+    /// requires data retention consent (e.g. Opus 4.8 for Fable).
+    fn data_retention_fallback_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let thread = self.as_native_thread(cx)?;
+        let model = thread.read(cx).model()?.clone();
+        let fallback_id = model.refusal_fallback_model_id()?;
+        LanguageModelRegistry::read_global(cx)
+            .available_models(cx)
+            .find(|fallback| {
+                fallback.provider_id() == model.provider_id()
+                    && fallback.id().0.as_ref() == fallback_id
+            })
+    }
+
+    fn render_data_retention_consent_error(&self, cx: &mut Context<Self>) -> Callout {
+        let fallback_model = self.data_retention_fallback_model(cx);
+
+        Callout::new()
+            .severity(Severity::Warning)
+            .icon(IconName::Warning)
+            .title(format!(
+                "Note: {} cannot be offered with Zero Data Retention.",
+                self.current_model_name(cx)
+            ))
+            .description_slot(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Anthropic will retain inference logs.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Button::new("data-retention-learn-more", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .on_click(|_, _, cx| {
+                                cx.open_url(DATA_RETENTION_LEARN_MORE_URL);
+                            }),
+                    ),
+            )
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when_some(fallback_model, |this, fallback| {
+                        this.child(
+                            Button::new(
+                                "switch-data-retention-fallback",
+                                format!("Switch to {}", fallback.name().0),
+                            )
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.switch_to_data_retention_fallback_and_resend(cx);
+                            })),
+                        )
+                    })
+                    .child(
+                        Button::new("accept-data-retention", "Accept")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::Tinted(TintColor::Warning))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.accept_data_retention_and_resend(cx);
+                            })),
+                    ),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn accept_data_retention_and_resend(&mut self, cx: &mut Context<Self>) {
+        let fs = self.thread.read(cx).project().read(cx).fs().clone();
+        // Resume the failed turn only once the in-memory settings reflect
+        // consent, otherwise the resent request would be rejected again.
+        let completion = update_settings_file_with_completion(fs, cx, |settings, _| {
+            settings
+                .telemetry
+                .get_or_insert_default()
+                .anthropic_retention = Some(true);
+        });
+        cx.spawn(async move |this, cx| {
+            completion.await??;
+            this.update(cx, |this, cx| this.retry_generation(cx))?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn switch_to_data_retention_fallback_and_resend(&mut self, cx: &mut Context<Self>) {
+        let Some(fallback) = self.data_retention_fallback_model(cx) else {
+            return;
+        };
+        let model_id = acp_thread::AgentModelId::new(format!(
+            "{}/{}",
+            fallback.provider_id().0,
+            fallback.id().0
+        ));
+        let session_id = self.thread.read(cx).session_id().clone();
+        let Some(selector) = self
+            .thread
+            .read(cx)
+            .connection()
+            .model_selector(&session_id)
+        else {
+            return;
+        };
+        let select = selector.select_model(model_id, cx);
+        cx.spawn(async move |this, cx| {
+            select.await?;
+            this.update(cx, |this, cx| this.retry_generation(cx))?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn open_permission_dropdown(
         &mut self,
         _: &crate::OpenPermissionDropdown,
@@ -10506,7 +10675,7 @@ impl Render for ThreadView {
                 this.child(self.render_codex_windows_warning(cx))
             })
             .children(self.render_skill_loading_issues(cx))
-            .children(self.render_thread_retry_status_callout())
+            .children(self.render_thread_retry_status_callout(cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
                 match has_messages {
