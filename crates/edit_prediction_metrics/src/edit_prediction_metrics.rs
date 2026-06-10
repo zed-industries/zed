@@ -10,8 +10,8 @@ mod tokenize;
 mod tree_sitter;
 
 pub use jumps::{
-    EditableContextCoverage, Excerpt, PatchLocationMatch, editable_context_coverage,
-    patch_location_match,
+    EditableContextCoverage, Excerpt, LineFileClassification, PatchLocationMatch,
+    editable_context_coverage, patch_location_match,
 };
 pub use kept_rate::AnnotatedToken;
 pub use kept_rate::KeptRateResult;

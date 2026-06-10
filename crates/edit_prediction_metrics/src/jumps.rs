@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::patch::{Patch, PatchLine};
+use crate::patch_metrics::ClassificationMetrics;
 
 const LINE_RELEVANCE_WINDOW: u32 = 20;
 
@@ -14,8 +15,13 @@ pub struct Excerpt {
     pub content: String,
 }
 
+/// Line- and file-level precision/recall/F1 over TP/FP/FN counts.
+///
+/// Shared shape for two metrics with the same structure: how much expected
+/// edit context was retrieved (`EditableContextCoverage`) and how well
+/// predicted edit locations match expected ones (`PatchLocationMatch`).
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct EditableContextCoverage {
+pub struct LineFileClassification {
     pub lines_tp: usize,
     pub lines_fp: usize,
     pub lines_fn: usize,
@@ -31,7 +37,10 @@ pub struct EditableContextCoverage {
     pub files_f1: f64,
 }
 
-impl EditableContextCoverage {
+pub type EditableContextCoverage = LineFileClassification;
+pub type PatchLocationMatch = LineFileClassification;
+
+impl LineFileClassification {
     pub fn new(
         lines_tp: usize,
         lines_fp: usize,
@@ -55,47 +64,20 @@ impl EditableContextCoverage {
             files_f1: f1(files_tp, files_fp, files_fn),
         }
     }
-}
 
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct PatchLocationMatch {
-    pub lines_tp: usize,
-    pub lines_fp: usize,
-    pub lines_fn: usize,
-    pub lines_precision: f64,
-    pub lines_recall: f64,
-    pub lines_f1: f64,
+    pub fn lines_counts(&self) -> ClassificationMetrics {
+        ClassificationMetrics {
+            true_positives: self.lines_tp,
+            false_positives: self.lines_fp,
+            false_negatives: self.lines_fn,
+        }
+    }
 
-    pub files_tp: usize,
-    pub files_fp: usize,
-    pub files_fn: usize,
-    pub files_precision: f64,
-    pub files_recall: f64,
-    pub files_f1: f64,
-}
-
-impl PatchLocationMatch {
-    pub fn new(
-        lines_tp: usize,
-        lines_fp: usize,
-        lines_fn: usize,
-        files_tp: usize,
-        files_fp: usize,
-        files_fn: usize,
-    ) -> Self {
-        Self {
-            lines_tp,
-            lines_fp,
-            lines_fn,
-            lines_precision: precision(lines_tp, lines_fp, lines_fn),
-            lines_recall: recall(lines_tp, lines_fp, lines_fn),
-            lines_f1: f1(lines_tp, lines_fp, lines_fn),
-            files_tp,
-            files_fp,
-            files_fn,
-            files_precision: precision(files_tp, files_fp, files_fn),
-            files_recall: recall(files_tp, files_fp, files_fn),
-            files_f1: f1(files_tp, files_fp, files_fn),
+    pub fn files_counts(&self) -> ClassificationMetrics {
+        ClassificationMetrics {
+            true_positives: self.files_tp,
+            false_positives: self.files_fp,
+            false_negatives: self.files_fn,
         }
     }
 }
