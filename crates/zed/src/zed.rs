@@ -197,6 +197,7 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+
     // When Zed logs to stdout rather than the log file, avoid registering
     // handlers for both `OpenLog` and `RevealLogInFileManager`, as the log file
     // does not exist in that scenario and these actions would error.
@@ -210,6 +211,7 @@ pub fn init(cx: &mut App) {
             cx.reveal_path(paths::log_file().as_path());
         });
     }
+
     cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
