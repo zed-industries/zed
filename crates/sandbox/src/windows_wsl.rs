@@ -47,13 +47,13 @@ pub fn is_wsl_sandbox_error(error: &anyhow::Error) -> bool {
 /// the PTY) and the rest of the project environment. Variables whose Windows
 /// values are meaningless or harmful inside Linux are dropped (see
 /// [`is_forwardable_env_var`]).
-pub fn wrap_invocation(
+pub fn wrap_invocation<S: std::hash::BuildHasher>(
     program: &str,
     args: &[String],
     writable_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
-    env: &HashMap<String, String>,
+    env: &HashMap<String, String, S>,
 ) -> Result<(String, Vec<String>)> {
     let cwd = match cwd {
         Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
@@ -278,12 +278,12 @@ fn wsl_exe_path() -> PathBuf {
         .join("wsl.exe")
 }
 
-fn build_bwrap_args(
+fn build_bwrap_args<S: std::hash::BuildHasher>(
     writable_paths: &[WslPath],
     permissions: SandboxPermissions,
     cwd: Option<&str>,
     mask_interop_dir: bool,
-    env: &HashMap<String, String>,
+    env: &HashMap<String, String, S>,
 ) -> Vec<String> {
     let mut args = Vec::new();
 

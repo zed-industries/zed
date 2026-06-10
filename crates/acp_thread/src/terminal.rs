@@ -175,7 +175,7 @@ pub(crate) fn apply_windows_wsl_sandbox_wrap(
     args: &[String],
     cwd: Option<&std::path::Path>,
     sandbox_wrap: SandboxWrap,
-    env: &std::collections::HashMap<String, String>,
+    env: &collections::HashMap<String, String>,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
         .non_interactive()
