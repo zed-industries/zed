@@ -777,6 +777,10 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                PrimitiveBatch::BackdropBlurRects(_) => {
+                    // DirectX is the only renderer with backdrop blur support for now.
+                    true
+                }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
                     command_encoder.end_encoding();

@@ -1230,6 +1230,10 @@ impl WgpuRenderer {
                         PrimitiveBatch::Quads(range) => {
                             self.draw_quads(&scene.quads[range], &mut instance_offset, &mut pass)
                         }
+                        PrimitiveBatch::BackdropBlurRects(_) => {
+                            // DirectX is the only renderer with backdrop blur support for now.
+                            true
+                        }
                         PrimitiveBatch::Shadows(range) => self.draw_shadows(
                             &scene.shadows[range],
                             &mut instance_offset,

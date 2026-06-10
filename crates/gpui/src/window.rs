@@ -2,8 +2,8 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BlurRect, BorderStyle, Bounds, BoxShadow,
-    Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    AsyncWindowContext, AvailableSpace, BackdropBlurRect, Background, BorderStyle, Bounds,
+    BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
@@ -3680,25 +3680,39 @@ impl Window {
     ///
     /// The blur samples pixels already rendered behind `bounds`, so renderers may need to break the
     /// current pass when this primitive is encountered. Prefer one blur rect for a glass surface
-    /// rather than many small blur rects.
-    pub fn paint_blur_rect(
+    /// rather than many small blur rects. Renderers without backdrop blur support may ignore this
+    /// primitive entirely, including its tint.
+    pub fn paint_backdrop_blur_rect(
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
-        effect: BlurEffect,
+        effect: BackdropBlurEffect,
     ) {
         self.invalidator.debug_assert_paint();
 
         let opacity = self.element_opacity();
+        if opacity <= 0. {
+            return;
+        }
+
         let scale_factor = self.scale_factor();
-        self.next_frame.scene.insert_primitive(BlurRect {
+        let blur_radius = effect.radius.scale(scale_factor);
+        if blur_radius.0 <= 0. {
+            if effect.tint.opacity(opacity).a > 0. {
+                self.paint_quad(fill(bounds, effect.tint).corner_radii(corner_radii));
+            }
+            return;
+        }
+
+        self.next_frame.scene.insert_primitive(BackdropBlurRect {
             order: 0,
             pad: 0,
             bounds: self.snap_bounds(bounds),
             content_mask: self.snapped_content_mask(),
             corner_radii: corner_radii.scale(scale_factor),
-            blur_radius: effect.radius.scale(scale_factor),
-            tint: effect.tint.opacity(opacity),
+            blur_radius,
+            opacity,
+            tint: effect.tint,
         });
     }
 
@@ -6156,17 +6170,17 @@ pub struct PaintQuad {
     pub border_style: BorderStyle,
 }
 
-/// Options for [`Window::paint_blur_rect`].
+/// Options for [`Window::paint_backdrop_blur_rect`].
 #[derive(Clone, Copy, Debug)]
-pub struct BlurEffect {
-    /// Uniform CSS-like blur radius in logical pixels.
+pub struct BackdropBlurEffect {
+    /// Approximate uniform backdrop blur radius in logical pixels.
     pub radius: Pixels,
     /// Tint color composited over the blurred backdrop.
     pub tint: Hsla,
 }
 
-impl BlurEffect {
-    /// Create a blur effect with a uniform CSS-like radius.
+impl BackdropBlurEffect {
+    /// Create a backdrop blur effect with a uniform CSS-like radius.
     pub fn new(radius: Pixels) -> Self {
         Self {
             radius,
@@ -6181,7 +6195,7 @@ impl BlurEffect {
     }
 }
 
-impl Default for BlurEffect {
+impl Default for BackdropBlurEffect {
     fn default() -> Self {
         Self {
             radius: px(20.),

@@ -11,6 +11,8 @@ cbuffer GlobalParams: register(b0) {
 
 Texture2D<float4> t_sprite: register(t0);
 SamplerState s_sprite: register(s0);
+// Blur compositing keeps the unmodified backdrop in t2.
+Texture2D<float4> t_backdrop_original: register(t2);
 
 struct SubpixelSpriteFragmentOutput {
     float4 foreground : SV_Target0;
@@ -248,6 +250,17 @@ float4 over(float4 below, float4 above) {
     result.rgb = (above.rgb * above.a + below.rgb * below.a * (1.0 - above.a)) / alpha;
     result.a = alpha;
     return result;
+}
+
+float4 clamp_premultiplied(float4 color) {
+    color.a = saturate(color.a);
+    color.rgb = clamp(color.rgb, 0.0, float3(color.a, color.a, color.a));
+    return color;
+}
+
+float4 over_straight_on_premultiplied(float4 below, float4 above) {
+    above = float4(above.rgb * above.a, above.a);
+    return clamp_premultiplied(above + below * (1.0 - above.a));
 }
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile) {
@@ -845,8 +858,10 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 **
 **              Backdrop Blur
 **
+**  Dual-Kawase-style backdrop blur from a render-target snapshot.
 */
 
+// Keep in sync with Rust BackdropBlurRect.
 struct BlurRect {
     uint order;
     uint pad;
@@ -854,6 +869,8 @@ struct BlurRect {
     Bounds content_mask;
     Corners corner_radii;
     float blur_radius;
+    // Fades the backdrop replacement, not just the tint.
+    float opacity;
     Hsla tint;
 };
 
@@ -862,6 +879,7 @@ struct BlurPassVertexOutput {
     float2 texture_position: TEXCOORD0;
 };
 
+// Full-target triangle strip used by both blur passes.
 BlurPassVertexOutput blur_downsample_vertex(uint vertex_id: SV_VertexID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
 
@@ -871,6 +889,7 @@ BlurPassVertexOutput blur_downsample_vertex(uint vertex_id: SV_VertexID) {
     return output;
 }
 
+// Downsample with a cheap five-tap low-pass kernel.
 float4 blur_downsample_fragment(BlurPassVertexOutput input): SV_Target {
     uint texture_width;
     uint texture_height;
@@ -883,13 +902,15 @@ float4 blur_downsample_fragment(BlurPassVertexOutput input): SV_Target {
     color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0, -1.0)) * 0.125;
     color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0,  1.0)) * 0.125;
     color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0,  1.0)) * 0.125;
-    return color;
+    return clamp_premultiplied(color);
 }
 
+// Upsample into the next larger pyramid texture.
 BlurPassVertexOutput blur_upsample_vertex(uint vertex_id: SV_VertexID) {
     return blur_downsample_vertex(vertex_id);
 }
 
+// Spread the lower-resolution blur without a sharp center tap.
 float4 blur_upsample_fragment(BlurPassVertexOutput input): SV_Target {
     uint texture_width;
     uint texture_height;
@@ -906,7 +927,7 @@ float4 blur_upsample_fragment(BlurPassVertexOutput input): SV_Target {
     color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0, -1.0)) * 0.125;
     color += t_sprite.Sample(s_sprite, uv + texel * float2(-1.0,  1.0)) * 0.125;
     color += t_sprite.Sample(s_sprite, uv + texel * float2( 1.0,  1.0)) * 0.125;
-    return color;
+    return clamp_premultiplied(color);
 }
 
 struct BlurRectVertexOutput {
@@ -918,6 +939,7 @@ struct BlurRectVertexOutput {
 
 StructuredBuffer<BlurRect> blur_rects: register(t1);
 
+// One instance draws one backdrop blur rectangle.
 BlurRectVertexOutput blur_rect_vertex(uint vertex_id: SV_VertexID, uint blur_rect_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     BlurRect blur_rect = blur_rects[blur_rect_id];
@@ -931,19 +953,25 @@ BlurRectVertexOutput blur_rect_vertex(uint vertex_id: SV_VertexID, uint blur_rec
     return output;
 }
 
+// Composite the selected snapshot/blur texture through a rounded rect.
 float4 blur_rect_fragment(BlurRectVertexOutput input): SV_Target {
     BlurRect blur_rect = blur_rects[input.blur_rect_id];
     float2 position = input.position.xy;
 
+    // Match normal GPUI rounded-rect antialiasing.
     const float antialias_threshold = 0.5;
     float sdf = quad_sdf(position, blur_rect.bounds, blur_rect.corner_radii);
     float shape_alpha = saturate(antialias_threshold - sdf);
 
+    float4 original = t_backdrop_original.Sample(s_sprite, input.texture_position);
     float4 blurred = t_sprite.Sample(s_sprite, input.texture_position);
     float4 tint = hsla_to_rgba(blur_rect.tint);
-    float4 color = tint.a > 0.0 ? over(blurred, tint) : blurred;
-    color.a *= shape_alpha;
-    return color;
+    // Tint is straight alpha; DirectComposition uses premultiplied alpha.
+    float4 tinted = tint.a > 0.0
+        ? over_straight_on_premultiplied(blurred, tint)
+        : blurred;
+    float coverage = shape_alpha * saturate(blur_rect.opacity);
+    return clamp_premultiplied(lerp(original, tinted, coverage));
 }
 
 /*

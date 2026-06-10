@@ -27,16 +27,21 @@ pub type DrawOrder = u32;
 pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
-    layer_stack: Vec<DrawOrder>,
+    layer_stack: Vec<Layer>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
-    pub blur_rects: Vec<BlurRect>,
+    pub backdrop_blur_rects: Vec<BackdropBlurRect>,
     pub paths: Vec<Path<ScaledPixels>>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+}
+
+struct Layer {
+    order: DrawOrder,
+    bounds: Bounds<ScaledPixels>,
 }
 
 #[expect(missing_docs)]
@@ -48,7 +53,7 @@ impl Scene {
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
-        self.blur_rects.clear();
+        self.backdrop_blur_rects.clear();
         self.underlines.clear();
         self.monochrome_sprites.clear();
         self.subpixel_sprites.clear();
@@ -62,7 +67,7 @@ impl Scene {
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
-        self.layer_stack.push(order);
+        self.layer_stack.push(Layer { order, bounds });
         self.paint_operations
             .push(PaintOperation::StartLayer(bounds));
     }
@@ -82,11 +87,7 @@ impl Scene {
             return;
         }
 
-        let order = self
-            .layer_stack
-            .last()
-            .copied()
-            .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        let order = self.draw_order_for_primitive(&primitive, clipped_bounds);
         match &mut primitive {
             Primitive::Shadow(shadow) => {
                 shadow.order = order;
@@ -96,9 +97,9 @@ impl Scene {
                 quad.order = order;
                 self.quads.push(*quad);
             }
-            Primitive::BlurRect(blur_rect) => {
-                blur_rect.order = order;
-                self.blur_rects.push(*blur_rect);
+            Primitive::BackdropBlurRect(backdrop_blur_rect) => {
+                backdrop_blur_rect.order = order;
+                self.backdrop_blur_rects.push(*backdrop_blur_rect);
             }
             Primitive::Path(path) => {
                 path.order = order;
@@ -143,7 +144,8 @@ impl Scene {
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
-        self.blur_rects.sort_by_key(|blur_rect| blur_rect.order);
+        self.backdrop_blur_rects
+            .sort_by_key(|backdrop_blur_rect| backdrop_blur_rect.order);
         self.paths.sort_by_key(|path| path.order);
         self.underlines.sort_by_key(|underline| underline.order);
         self.monochrome_sprites
@@ -168,8 +170,8 @@ impl Scene {
             shadows_iter: self.shadows.iter().peekable(),
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
-            blur_rects_start: 0,
-            blur_rects_iter: self.blur_rects.iter().peekable(),
+            backdrop_blur_rects_start: 0,
+            backdrop_blur_rects_iter: self.backdrop_blur_rects.iter().peekable(),
             paths_start: 0,
             paths_iter: self.paths.iter().peekable(),
             underlines_start: 0,
@@ -183,6 +185,37 @@ impl Scene {
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
+    }
+
+    fn draw_order_for_primitive(
+        &mut self,
+        primitive: &Primitive,
+        clipped_bounds: Bounds<ScaledPixels>,
+    ) -> DrawOrder {
+        if matches!(primitive, Primitive::BackdropBlurRect(_))
+            && let Some(layer) = self.layer_stack.last()
+        {
+            let blur_order = layer.order.saturating_add(1);
+            self.primitive_bounds
+                .insert_with_order(clipped_bounds, blur_order);
+
+            // A backdrop blur samples the render target as it exists at its paint position.
+            // Force subsequent primitives in the same layer to draw after the blur without
+            // changing normal same-layer batching for non-blur primitives.
+            let next_layer_order = blur_order.saturating_add(1);
+            if let Some(layer) = self.layer_stack.last_mut() {
+                self.primitive_bounds
+                    .insert_with_order(layer.bounds, next_layer_order);
+                layer.order = next_layer_order;
+            }
+
+            return blur_order;
+        }
+
+        self.layer_stack
+            .last()
+            .map(|layer| layer.order)
+            .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds))
     }
 }
 
@@ -198,7 +231,7 @@ pub(crate) enum PrimitiveKind {
     Shadow,
     #[default]
     Quad,
-    BlurRect,
+    BackdropBlurRect,
     Path,
     Underline,
     MonochromeSprite,
@@ -218,7 +251,7 @@ pub(crate) enum PaintOperation {
 pub enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
-    BlurRect(BlurRect),
+    BackdropBlurRect(BackdropBlurRect),
     Path(Path<ScaledPixels>),
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
@@ -233,7 +266,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
             Primitive::Quad(quad) => &quad.bounds,
-            Primitive::BlurRect(blur_rect) => &blur_rect.bounds,
+            Primitive::BackdropBlurRect(backdrop_blur_rect) => &backdrop_blur_rect.bounds,
             Primitive::Path(path) => &path.bounds,
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
@@ -247,7 +280,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.content_mask,
             Primitive::Quad(quad) => &quad.content_mask,
-            Primitive::BlurRect(blur_rect) => &blur_rect.content_mask,
+            Primitive::BackdropBlurRect(backdrop_blur_rect) => &backdrop_blur_rect.content_mask,
             Primitive::Path(path) => &path.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
@@ -270,8 +303,8 @@ struct BatchIterator<'a> {
     shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
-    blur_rects_start: usize,
-    blur_rects_iter: Peekable<slice::Iter<'a, BlurRect>>,
+    backdrop_blur_rects_start: usize,
+    backdrop_blur_rects_iter: Peekable<slice::Iter<'a, BackdropBlurRect>>,
     paths_start: usize,
     paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
     underlines_start: usize,
@@ -297,8 +330,8 @@ impl<'a> Iterator for BatchIterator<'a> {
             ),
             (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
             (
-                self.blur_rects_iter.peek().map(|b| b.order),
-                PrimitiveKind::BlurRect,
+                self.backdrop_blur_rects_iter.peek().map(|b| b.order),
+                PrimitiveKind::BackdropBlurRect,
             ),
             (self.paths_iter.peek().map(|q| q.order), PrimitiveKind::Path),
             (
@@ -361,19 +394,23 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.quads_start = quads_end;
                 Some(PrimitiveBatch::Quads(quads_start..quads_end))
             }
-            PrimitiveKind::BlurRect => {
-                let blur_rects_start = self.blur_rects_start;
-                let mut blur_rects_end = blur_rects_start + 1;
-                self.blur_rects_iter.next();
+            PrimitiveKind::BackdropBlurRect => {
+                let backdrop_blur_rects_start = self.backdrop_blur_rects_start;
+                let mut backdrop_blur_rects_end = backdrop_blur_rects_start + 1;
+                self.backdrop_blur_rects_iter.next();
                 while self
-                    .blur_rects_iter
-                    .next_if(|blur_rect| (blur_rect.order, batch_kind) < max_order_and_kind)
+                    .backdrop_blur_rects_iter
+                    .next_if(|backdrop_blur_rect| {
+                        (backdrop_blur_rect.order, batch_kind) < max_order_and_kind
+                    })
                     .is_some()
                 {
-                    blur_rects_end += 1;
+                    backdrop_blur_rects_end += 1;
                 }
-                self.blur_rects_start = blur_rects_end;
-                Some(PrimitiveBatch::BlurRects(blur_rects_start..blur_rects_end))
+                self.backdrop_blur_rects_start = backdrop_blur_rects_end;
+                Some(PrimitiveBatch::BackdropBlurRects(
+                    backdrop_blur_rects_start..backdrop_blur_rects_end,
+                ))
             }
             PrimitiveKind::Path => {
                 let paths_start = self.paths_start;
@@ -496,7 +533,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
-    BlurRects(Range<usize>),
+    BackdropBlurRects(Range<usize>),
     Paths(Range<usize>),
     Underlines(Range<usize>),
     MonochromeSprites {
@@ -535,41 +572,57 @@ impl From<Quad> for Primitive {
     }
 }
 
-/// Maximum number of GPU blur downsample/upsample levels a blur rect may request.
-pub const MAX_BLUR_KERNEL_LEVELS: u32 = 5;
+/// Maximum number of GPU blur downsample/upsample levels a backdrop blur rect may request.
+pub const MAX_BACKDROP_BLUR_KERNEL_LEVELS: u32 = 5;
 
-const BLUR_RADIUS_PER_KERNEL_LEVEL: f32 = 5.;
+const BACKDROP_BLUR_RADIUS_PER_KERNEL_LEVEL: f32 = 5.;
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C)]
 #[expect(missing_docs)]
-pub struct BlurRect {
+pub struct BackdropBlurRect {
     pub order: DrawOrder,
     pub pad: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub blur_radius: ScaledPixels,
+    pub opacity: f32,
     pub tint: Hsla,
 }
 
-impl BlurRect {
+impl Default for BackdropBlurRect {
+    fn default() -> Self {
+        Self {
+            order: Default::default(),
+            pad: Default::default(),
+            bounds: Default::default(),
+            content_mask: Default::default(),
+            corner_radii: Default::default(),
+            blur_radius: Default::default(),
+            opacity: 1.,
+            tint: Default::default(),
+        }
+    }
+}
+
+impl BackdropBlurRect {
     /// Returns the clamped number of blur kernel levels required by this rect.
     pub fn effective_kernel_levels(&self) -> u32 {
         if self.blur_radius.0 <= 0. {
             0
         } else {
-            let radius_levels = (self.blur_radius.0 / BLUR_RADIUS_PER_KERNEL_LEVEL)
+            let radius_levels = (self.blur_radius.0 / BACKDROP_BLUR_RADIUS_PER_KERNEL_LEVEL)
                 .ceil()
                 .max(1.) as u32;
-            radius_levels.min(MAX_BLUR_KERNEL_LEVELS)
+            radius_levels.min(MAX_BACKDROP_BLUR_KERNEL_LEVELS)
         }
     }
 }
 
-impl From<BlurRect> for Primitive {
-    fn from(blur_rect: BlurRect) -> Self {
-        Primitive::BlurRect(blur_rect)
+impl From<BackdropBlurRect> for Primitive {
+    fn from(backdrop_blur_rect: BackdropBlurRect) -> Self {
+        Primitive::BackdropBlurRect(backdrop_blur_rect)
     }
 }
 
@@ -969,105 +1022,5 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_bounds(x: f32) -> Bounds<ScaledPixels> {
-        Bounds {
-            origin: point(ScaledPixels(x), ScaledPixels(0.)),
-            size: Size {
-                width: ScaledPixels(10.),
-                height: ScaledPixels(10.),
-            },
-        }
-    }
-
-    fn test_content_mask() -> ContentMask<ScaledPixels> {
-        ContentMask {
-            bounds: Bounds {
-                origin: point(ScaledPixels(-100.), ScaledPixels(-100.)),
-                size: Size {
-                    width: ScaledPixels(1000.),
-                    height: ScaledPixels(1000.),
-                },
-            },
-        }
-    }
-
-    fn test_quad(x: f32) -> Quad {
-        Quad {
-            bounds: test_bounds(x),
-            content_mask: test_content_mask(),
-            ..Default::default()
-        }
-    }
-
-    fn test_blur_rect(x: f32) -> BlurRect {
-        BlurRect {
-            bounds: test_bounds(x),
-            content_mask: test_content_mask(),
-            blur_radius: ScaledPixels(12.),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn blur_rects_interleave_with_quads() {
-        let mut scene = Scene::default();
-        scene.insert_primitive(test_quad(0.));
-        scene.insert_primitive(test_blur_rect(0.));
-        scene.insert_primitive(test_quad(0.));
-        scene.finish();
-
-        let batches = scene.batches().collect::<Vec<_>>();
-
-        assert!(matches!(batches[0], PrimitiveBatch::Quads(ref range) if range == &(0..1)));
-        assert!(matches!(batches[1], PrimitiveBatch::BlurRects(ref range) if range == &(0..1)));
-        assert!(matches!(batches[2], PrimitiveBatch::Quads(ref range) if range == &(1..2)));
-    }
-
-    #[test]
-    fn adjacent_blur_rects_coalesce() {
-        let mut scene = Scene::default();
-        scene.insert_primitive(test_blur_rect(0.));
-        scene.insert_primitive(test_blur_rect(0.));
-        scene.insert_primitive(test_quad(0.));
-        scene.finish();
-
-        let batches = scene.batches().collect::<Vec<_>>();
-
-        assert!(matches!(batches[0], PrimitiveBatch::BlurRects(ref range) if range == &(0..2)));
-        assert!(matches!(batches[1], PrimitiveBatch::Quads(ref range) if range == &(0..1)));
-    }
-
-    #[test]
-    fn blur_rect_radius_maps_to_kernel_levels() {
-        let mut blur_rect = test_blur_rect(0.);
-
-        blur_rect.blur_radius = ScaledPixels(2.);
-        assert_eq!(1, blur_rect.effective_kernel_levels());
-
-        blur_rect.blur_radius = ScaledPixels(18.);
-        assert_eq!(4, blur_rect.effective_kernel_levels());
-    }
-
-    #[test]
-    fn blur_rect_kernel_levels_are_clamped() {
-        let mut blur_rect = test_blur_rect(0.);
-        blur_rect.blur_radius = ScaledPixels(1000.);
-
-        assert_eq!(MAX_BLUR_KERNEL_LEVELS, blur_rect.effective_kernel_levels());
-    }
-
-    #[test]
-    fn zero_radius_blur_rect_has_no_effective_kernel_levels() {
-        let mut blur_rect = test_blur_rect(0.);
-        blur_rect.blur_radius = ScaledPixels(0.);
-
-        assert_eq!(0, blur_rect.effective_kernel_levels());
     }
 }

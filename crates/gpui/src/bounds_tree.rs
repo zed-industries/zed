@@ -122,6 +122,11 @@ where
         let max_intersecting = self.find_max_ordering(&new_bounds);
         let ordering = max_intersecting + 1;
 
+        self.insert_with_order(new_bounds, ordering)
+    }
+
+    /// Inserts bounds into the tree with an explicit ordering.
+    pub fn insert_with_order(&mut self, new_bounds: Bounds<U>, ordering: u32) -> u32 {
         // Insert the new leaf
         let new_leaf_idx = self.insert_leaf(new_bounds, ordering);
 
@@ -432,6 +437,23 @@ mod tests {
         assert_eq!(tree.insert(bounds4), 1); // bounds4 does not overlap with bounds1, bounds2, or bounds3
         assert_eq!(tree.insert(bounds5), 1); // bounds5 does not overlap with any other bounds
         assert_eq!(tree.insert(bounds6), 2); // bounds6 overlaps with bounds4, so it should have a different order
+
+        let explicit_bounds = Bounds {
+            origin: Point { x: 100.0, y: 100.0 },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+        };
+        let overlapping_explicit_bounds = Bounds {
+            origin: Point { x: 105.0, y: 105.0 },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+        };
+        assert_eq!(tree.insert_with_order(explicit_bounds, 50), 50);
+        assert_eq!(tree.insert(overlapping_explicit_bounds), 51);
     }
 
     #[test]
