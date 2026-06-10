@@ -39,6 +39,8 @@ pub(crate) struct DevContainerFeatureJson {
     pub(crate) privileged: Option<bool>,
     pub(crate) entrypoint: Option<String>,
     pub(crate) container_env: Option<HashMap<String, String>>,
+    pub(crate) cap_add: Option<Vec<String>>,
+    pub(crate) security_opt: Option<Vec<String>>,
 }
 
 /// A single option definition inside `devcontainer-feature.json`.
@@ -62,6 +64,7 @@ impl FeatureOptionDefinition {
 #[derive(Debug, Eq, PartialEq, Default)]
 pub(crate) struct FeatureManifest {
     consecutive_id: String,
+    user_feature_id: String,
     file_path: PathBuf,
     feature_json: DevContainerFeatureJson,
 }
@@ -69,11 +72,13 @@ pub(crate) struct FeatureManifest {
 impl FeatureManifest {
     pub(crate) fn new(
         consecutive_id: String,
+        user_feature_id: String,
         file_path: PathBuf,
         feature_json: DevContainerFeatureJson,
     ) -> Self {
         Self {
             consecutive_id,
+            user_feature_id,
             file_path,
             feature_json,
         }
@@ -196,8 +201,44 @@ RUN chmod -R 0755 {full_dest} \
         self.feature_json.entrypoint.clone()
     }
 
+    pub(crate) fn cap_add(&self) -> Vec<String> {
+        self.feature_json.cap_add.clone().unwrap_or_default()
+    }
+
+    pub(crate) fn security_opt(&self) -> Vec<String> {
+        self.feature_json.security_opt.clone().unwrap_or_default()
+    }
+
     pub(crate) fn file_path(&self) -> PathBuf {
         self.file_path.clone()
+    }
+
+    pub(crate) fn build_metadata_entry(&self) -> serde_json_lenient::Map<String, serde_json_lenient::Value> {
+        use serde_json_lenient::Value;
+        let mut entry = serde_json_lenient::Map::new();
+        entry.insert("id".to_string(), Value::String(self.user_feature_id.clone()));
+        if let Some(true) = self.feature_json.privileged {
+            entry.insert("privileged".to_string(), Value::Bool(true));
+        }
+        if let Some(caps) = &self.feature_json.cap_add {
+            if !caps.is_empty() {
+                entry.insert("capAdd".to_string(), Value::Array(caps.iter().map(|s| Value::String(s.clone())).collect()));
+            }
+        }
+        if let Some(opts) = &self.feature_json.security_opt {
+            if !opts.is_empty() {
+                entry.insert("securityOpt".to_string(), Value::Array(opts.iter().map(|s| Value::String(s.clone())).collect()));
+            }
+        }
+        if let Some(ep) = &self.feature_json.entrypoint {
+            entry.insert("entrypoint".to_string(), Value::String(ep.clone()));
+        }
+        if let Some(mounts) = &self.feature_json.mounts {
+            if !mounts.is_empty() {
+                entry.insert("mounts".to_string(), Value::Array(mounts.iter().map(|m| Value::String(m.to_string())).collect()));
+            }
+        }
+        entry
     }
 }
 
