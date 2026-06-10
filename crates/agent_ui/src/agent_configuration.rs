@@ -444,38 +444,24 @@ impl AgentConfiguration {
             .menu({
                 let workspace = self.workspace.clone();
                 move |window, cx| {
+                    let open_modal = |provider: LlmCompatibleProvider| {
+                        let workspace = workspace.clone();
+                        move |window: &mut Window, cx: &mut App| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    AddLlmProviderModal::toggle(provider, workspace, window, cx);
+                                })
+                                .log_err();
+                        }
+                    };
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.header("Compatible APIs")
-                            .entry("OpenAI", None, {
-                                let workspace = workspace.clone();
-                                move |window, cx| {
-                                    workspace
-                                        .update(cx, |workspace, cx| {
-                                            AddLlmProviderModal::toggle(
-                                                LlmCompatibleProvider::OpenAi,
-                                                workspace,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                }
-                            })
-                            .entry("Anthropic", None, {
-                                let workspace = workspace.clone();
-                                move |window, cx| {
-                                    workspace
-                                        .update(cx, |workspace, cx| {
-                                            AddLlmProviderModal::toggle(
-                                                LlmCompatibleProvider::Anthropic,
-                                                workspace,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                }
-                            })
+                            .entry("OpenAI", None, open_modal(LlmCompatibleProvider::OpenAi))
+                            .entry(
+                                "Anthropic",
+                                None,
+                                open_modal(LlmCompatibleProvider::Anthropic),
+                            )
                     }))
                 }
             })

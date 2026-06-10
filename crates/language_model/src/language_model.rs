@@ -309,9 +309,8 @@ impl LanguageModelCompletionError {
     }
 }
 
-impl From<AnthropicError> for LanguageModelCompletionError {
-    fn from(error: AnthropicError) -> Self {
-        let provider = ANTHROPIC_PROVIDER_NAME;
+impl LanguageModelCompletionError {
+    pub fn from_anthropic(error: AnthropicError, provider: LanguageModelProviderName) -> Self {
         match error {
             AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
             AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
@@ -336,15 +335,15 @@ impl From<AnthropicError> for LanguageModelCompletionError {
                 provider,
                 retry_after,
             },
-            AnthropicError::ApiError(api_error) => api_error.into(),
+            AnthropicError::ApiError(api_error) => Self::from_anthropic_api(api_error, provider),
         }
     }
-}
 
-impl From<anthropic::ApiError> for LanguageModelCompletionError {
-    fn from(error: anthropic::ApiError) -> Self {
+    pub fn from_anthropic_api(
+        error: anthropic::ApiError,
+        provider: LanguageModelProviderName,
+    ) -> Self {
         use anthropic::ApiErrorCode::*;
-        let provider = ANTHROPIC_PROVIDER_NAME;
         match error.code() {
             Some(code) => match code {
                 InvalidRequestError => Self::BadRequestFormat {
@@ -378,6 +377,18 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
             },
             None => Self::Other(error.into()),
         }
+    }
+}
+
+impl From<AnthropicError> for LanguageModelCompletionError {
+    fn from(error: AnthropicError) -> Self {
+        Self::from_anthropic(error, ANTHROPIC_PROVIDER_NAME)
+    }
+}
+
+impl From<anthropic::ApiError> for LanguageModelCompletionError {
+    fn from(error: anthropic::ApiError) -> Self {
+        Self::from_anthropic_api(error, ANTHROPIC_PROVIDER_NAME)
     }
 }
 

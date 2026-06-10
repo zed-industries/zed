@@ -38,7 +38,47 @@ pub struct AnthropicSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AnthropicCompatibleSettingsContent {
     pub api_url: String,
-    pub available_models: Vec<AnthropicAvailableModel>,
+    pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleAvailableModel {
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-latest
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
+    pub tool_override: Option<String>,
+    /// Configuration of the Anthropic-style prompt caching API.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
+    pub max_output_tokens: Option<u64>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+    #[serde(default)]
+    pub capabilities: AnthropicCompatibleModelCapabilities,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleModelCapabilities {
+    pub tools: bool,
+    pub images: bool,
+}
+
+impl Default for AnthropicCompatibleModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            images: false,
+        }
+    }
 }
 
 #[with_fallible_options]

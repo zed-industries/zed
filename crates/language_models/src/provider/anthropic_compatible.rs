@@ -20,10 +20,10 @@ use util::ResultExt;
 
 use crate::provider::anthropic::{
     AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
-    into_anthropic_count_tokens_request,
 };
 
-pub use settings::AnthropicAvailableModel as AvailableModel;
+pub use settings::AnthropicCompatibleAvailableModel as AvailableModel;
+pub use settings::AnthropicCompatibleModelCapabilities as ModelCapabilities;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicCompatibleSettings {
@@ -112,11 +112,12 @@ impl AnthropicCompatibleLanguageModelProvider {
     }
 
     fn create_language_model(&self, model: AvailableModel) -> Arc<dyn LanguageModel> {
+        let capabilities = model.capabilities.clone();
         let model = anthropic::Model::Custom {
-            name: model.name.clone(),
-            display_name: model.display_name.clone(),
+            name: model.name,
+            display_name: model.display_name,
             max_tokens: model.max_tokens,
-            tool_override: model.tool_override.clone(),
+            tool_override: model.tool_override,
             cache_configuration: model.cache_configuration.as_ref().map(|configuration| {
                 anthropic::AnthropicModelCacheConfiguration {
                     max_cache_anchors: configuration.max_cache_anchors,
@@ -126,7 +127,7 @@ impl AnthropicCompatibleLanguageModelProvider {
             }),
             max_output_tokens: model.max_output_tokens,
             default_temperature: model.default_temperature,
-            extra_beta_headers: model.extra_beta_headers.clone(),
+            extra_beta_headers: model.extra_beta_headers,
             mode: model.mode.unwrap_or_default().into(),
         };
 
@@ -135,6 +136,7 @@ impl AnthropicCompatibleLanguageModelProvider {
             provider_id: self.id.clone(),
             provider_name: self.name.clone(),
             model,
+            capabilities,
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
@@ -215,6 +217,7 @@ pub struct AnthropicCompatibleLanguageModel {
     provider_id: LanguageModelProviderId,
     provider_name: LanguageModelProviderName,
     model: anthropic::Model,
+    capabilities: ModelCapabilities,
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
@@ -257,7 +260,9 @@ impl AnthropicCompatibleLanguageModel {
                 beta_headers,
             );
 
-            request.await.map_err(Into::into)
+            request
+                .await
+                .map_err(|error| LanguageModelCompletionError::from_anthropic(error, provider_name))
         }
         .boxed()
     }
@@ -281,22 +286,21 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.capabilities.tools
     }
 
     fn supports_images(&self) -> bool {
-        true
+        self.capabilities.images
     }
 
     fn supports_streaming_tools(&self) -> bool {
-        true
+        self.capabilities.tools
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => self.capabilities.tools,
+            LanguageModelToolChoice::None => true,
         }
     }
 
@@ -321,39 +325,10 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
-        let http_client = self.http_client.clone();
-        let model_id = self.model.request_id().to_string();
-        let mode = self.model.mode();
-
-        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
-            let api_url = state.settings.api_url.clone();
-            (
-                state.api_key_state.key(&api_url).map(|key| key.to_string()),
-                api_url,
-            )
-        });
-
-        async move {
-            let Some(api_key) = api_key else {
-                return count_anthropic_tokens_with_tiktoken(request);
-            };
-
-            let count_request =
-                into_anthropic_count_tokens_request(request.clone(), model_id, mode);
-
-            match anthropic::count_tokens(http_client.as_ref(), &api_url, &api_key, count_request)
-                .await
-            {
-                Ok(response) => Ok(response.input_tokens),
-                Err(error) => {
-                    log::error!(
-                        "Anthropic-compatible count_tokens API failed, falling back to tiktoken: {error:?}"
-                    );
-                    count_anthropic_tokens_with_tiktoken(request)
-                }
-            }
-        }
-        .boxed()
+        // Unlike the first-party Anthropic provider, we don't call the count_tokens API here,
+        // since compatible providers may not implement it. Estimate locally instead.
+        cx.background_spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
+            .boxed()
     }
 
     fn stream_completion(
@@ -413,14 +388,13 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
-                    match task.await {
-                        Ok(()) | Err(AuthenticateError::CredentialsNotFound) => {}
-                        Err(error) => {
-                            log::error!(
-                                "Failed to load Anthropic-compatible provider API credentials: {error}"
-                            );
-                        }
+                let task = state.update(cx, |state, cx| state.authenticate(cx));
+                match task.await {
+                    Ok(()) | Err(AuthenticateError::CredentialsNotFound) => {}
+                    Err(error) => {
+                        log::error!(
+                            "Failed to load Anthropic-compatible provider API credentials: {error}"
+                        );
                     }
                 }
                 this.update(cx, |this, cx| {

@@ -23,6 +23,7 @@ Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
+- [Anthropic API Compatible](#anthropic-api-compatible)
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
 - [Google AI](#google-ai)
@@ -232,6 +233,54 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   }
 }
 ```
+
+### Anthropic API Compatible {#anthropic-api-compatible}
+
+Zed supports using Anthropic compatible APIs by specifying a custom `api_url` and `available_models` for the Anthropic provider.
+This is useful for connecting to other hosted services that implement Anthropic's [Messages API](https://docs.anthropic.com/en/api/messages) (`/v1/messages`).
+
+You can add a custom, Anthropic-compatible model either via the UI or by editing your settings file.
+
+To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
+Then, choose "Anthropic" and fill up the input fields available in the modal.
+
+To do it via your settings file ([how to edit](../configuring-zed.md#settings-files)), add the following snippet under `language_models`:
+
+```json [settings]
+{
+  "language_models": {
+    "anthropic_compatible": {
+      "Some Provider": {
+        "api_url": "https://api.someprovider.com",
+        "available_models": [
+          {
+            "name": "some-model",
+            "display_name": "Some Model",
+            "max_tokens": 200000,
+            "max_output_tokens": 32000,
+            "capabilities": {
+              "tools": true,
+              "images": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+By default, Anthropic-compatible models inherit the following capabilities:
+
+- `tools`: true (supports tool/function calling)
+- `images`: false (does not support image inputs)
+
+Models also support the optional `default_temperature`, `extra_beta_headers` (sent as `anthropic-beta` headers), `mode`, `cache_configuration`, and `tool_override` fields, which behave the same as in the [Anthropic provider's custom models](#anthropic-custom-models).
+
+Token counts for Anthropic-compatible models are estimated locally rather than fetched from the provider's API.
+
+Note that LLM API keys aren't stored in your settings file.
+So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `SOME_PROVIDER_API_KEY=<your api key>`.
 
 ### DeepSeek {#deepseek}
 
