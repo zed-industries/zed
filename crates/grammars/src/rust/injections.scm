@@ -39,11 +39,7 @@
 
 ; sqlx
 (macro_invocation
-  macro: [
-    (identifier) @_macro_name
-    (scoped_identifier
-      (identifier) @_macro_name .)
-  ]
+  macro: (scoped_identifier) @_macro_name
   [
     ; query, query_scalar
     (token_tree
@@ -67,7 +63,7 @@
       ])
   ]
   ; query macro must have a `sqlx::` prefix, to avoid false positives
-  (#match? @_macro_name "sqlx::query(_as|_scalar)?(_unchecked)?")
+  (#match? @_macro_name "^sqlx::query(_as|_scalar)?(_unchecked)?$")
   (#set! injection.language "sql"))
 
 (call_expression
@@ -92,7 +88,7 @@
       ])
   ]
   ; query function must have a `sqlx::` prefix, to avoid false positives
-  (#match? @_fn_path "sqlx::((query(_as|_scalar)?(_with)?)|raw_sql)")
+  (#match? @_fn_path "^sqlx::((query(_as|_scalar)?(_with)?)|raw_sql)$")
   (#set! injection.language "sql"))
 
 ; lazy_regex
