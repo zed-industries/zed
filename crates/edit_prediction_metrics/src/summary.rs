@@ -82,6 +82,30 @@ pub struct SummaryJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editable_context_files_fn: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_jump_location_lines_precision: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_jump_location_lines_recall: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_jump_location_lines_f1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_location_lines_tp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_location_lines_fp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_location_lines_fn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_jump_location_files_precision: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_jump_location_files_recall: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_jump_location_files_f1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_location_files_tp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_location_files_fp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_location_files_fn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub avg_retrieved_context_bytes: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_retrieved_context_bytes: Option<usize>,
@@ -135,6 +159,19 @@ pub fn compute_summary<'a>(
     let mut editable_context_files_tp: usize = 0;
     let mut editable_context_files_fp: usize = 0;
     let mut editable_context_files_fn: usize = 0;
+    let mut jump_location_lines_precision_sum: f64 = 0.0;
+    let mut jump_location_lines_recall_sum: f64 = 0.0;
+    let mut jump_location_lines_f1_sum: f64 = 0.0;
+    let mut jump_location_files_precision_sum: f64 = 0.0;
+    let mut jump_location_files_recall_sum: f64 = 0.0;
+    let mut jump_location_files_f1_sum: f64 = 0.0;
+    let mut jump_location_count: usize = 0;
+    let mut jump_location_lines_tp: usize = 0;
+    let mut jump_location_lines_fp: usize = 0;
+    let mut jump_location_lines_fn: usize = 0;
+    let mut jump_location_files_tp: usize = 0;
+    let mut jump_location_files_fp: usize = 0;
+    let mut jump_location_files_fn: usize = 0;
     let mut retrieved_context_bytes_total: usize = 0;
     let mut retrieved_context_bytes_count: usize = 0;
 
@@ -214,6 +251,22 @@ pub fn compute_summary<'a>(
             editable_context_files_tp += coverage.files_tp;
             editable_context_files_fp += coverage.files_fp;
             editable_context_files_fn += coverage.files_fn;
+        }
+
+        if let Some(location) = &score.jump_location {
+            jump_location_lines_precision_sum += location.lines_precision;
+            jump_location_lines_recall_sum += location.lines_recall;
+            jump_location_lines_f1_sum += location.lines_f1;
+            jump_location_files_precision_sum += location.files_precision;
+            jump_location_files_recall_sum += location.files_recall;
+            jump_location_files_f1_sum += location.files_f1;
+            jump_location_count += 1;
+            jump_location_lines_tp += location.lines_tp;
+            jump_location_lines_fp += location.lines_fp;
+            jump_location_lines_fn += location.lines_fn;
+            jump_location_files_tp += location.files_tp;
+            jump_location_files_fp += location.files_fp;
+            jump_location_files_fn += location.files_fn;
         }
 
         if let Some(exact_match) = score.cursor_exact_match {
@@ -378,6 +431,66 @@ pub fn compute_summary<'a>(
     } else {
         None
     };
+    let avg_jump_location_lines_precision = if jump_location_count > 0 {
+        Some(jump_location_lines_precision_sum / jump_location_count as f64)
+    } else {
+        None
+    };
+    let avg_jump_location_lines_recall = if jump_location_count > 0 {
+        Some(jump_location_lines_recall_sum / jump_location_count as f64)
+    } else {
+        None
+    };
+    let avg_jump_location_lines_f1 = if jump_location_count > 0 {
+        Some(jump_location_lines_f1_sum / jump_location_count as f64)
+    } else {
+        None
+    };
+    let jump_location_lines_tp = if jump_location_count > 0 {
+        Some(jump_location_lines_tp)
+    } else {
+        None
+    };
+    let jump_location_lines_fp = if jump_location_count > 0 {
+        Some(jump_location_lines_fp)
+    } else {
+        None
+    };
+    let jump_location_lines_fn = if jump_location_count > 0 {
+        Some(jump_location_lines_fn)
+    } else {
+        None
+    };
+    let avg_jump_location_files_precision = if jump_location_count > 0 {
+        Some(jump_location_files_precision_sum / jump_location_count as f64)
+    } else {
+        None
+    };
+    let avg_jump_location_files_recall = if jump_location_count > 0 {
+        Some(jump_location_files_recall_sum / jump_location_count as f64)
+    } else {
+        None
+    };
+    let avg_jump_location_files_f1 = if jump_location_count > 0 {
+        Some(jump_location_files_f1_sum / jump_location_count as f64)
+    } else {
+        None
+    };
+    let jump_location_files_tp = if jump_location_count > 0 {
+        Some(jump_location_files_tp)
+    } else {
+        None
+    };
+    let jump_location_files_fp = if jump_location_count > 0 {
+        Some(jump_location_files_fp)
+    } else {
+        None
+    };
+    let jump_location_files_fn = if jump_location_count > 0 {
+        Some(jump_location_files_fn)
+    } else {
+        None
+    };
     let avg_retrieved_context_bytes = if retrieved_context_bytes_count > 0 {
         Some(retrieved_context_bytes_total as f64 / retrieved_context_bytes_count as f64)
     } else {
@@ -443,6 +556,18 @@ pub fn compute_summary<'a>(
         editable_context_files_tp,
         editable_context_files_fp,
         editable_context_files_fn,
+        avg_jump_location_lines_precision,
+        avg_jump_location_lines_recall,
+        avg_jump_location_lines_f1,
+        jump_location_lines_tp,
+        jump_location_lines_fp,
+        jump_location_lines_fn,
+        avg_jump_location_files_precision,
+        avg_jump_location_files_recall,
+        avg_jump_location_files_f1,
+        jump_location_files_tp,
+        jump_location_files_fp,
+        jump_location_files_fn,
         avg_retrieved_context_bytes,
         total_retrieved_context_bytes,
         retrieved_context_examples,

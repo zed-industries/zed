@@ -538,7 +538,7 @@ impl TeacherJumpsPrompt {
             if actual_cursor.is_none() {
                 if let Some(cursor_offset) = cursor_in_new_text {
                     actual_cursor = Some(ActualCursor::from_editable_region(
-                        path,
+                        &path,
                         cursor_offset,
                         &new_text,
                         old_text,
@@ -578,15 +578,15 @@ impl TeacherJumpsPrompt {
         }
     }
 
-    fn snippet_path_and_start_row<'a>(
-        example: &'a Example,
-        prompt_inputs: &'a ZetaPromptInput,
+    fn snippet_path_and_start_row(
+        example: &Example,
+        prompt_inputs: &ZetaPromptInput,
         snippet: &SnippetMarkers,
-    ) -> Result<(&'a Path, u32)> {
+    ) -> Result<(std::path::PathBuf, u32)> {
         match snippet.source {
             // Scoring applies the cursor-file patch to `cursor_excerpt`, so
             // hunk rows stay excerpt-relative (row 0 = excerpt start).
-            SnippetSource::CursorFile => Ok((example.spec.cursor_path.as_ref(), 0)),
+            SnippetSource::CursorFile => Ok((example.spec.cursor_path.as_ref().to_path_buf(), 0)),
             SnippetSource::RelatedFile {
                 file_ix,
                 excerpt_ix,
@@ -602,8 +602,27 @@ impl TeacherJumpsPrompt {
                     .excerpts
                     .get(excerpt_ix)
                     .context("related excerpt index out of range")?;
-                Ok((file.path.as_ref(), excerpt.row_range.start))
+                Ok((
+                    Self::related_file_patch_path(
+                        example.spec.cursor_path.as_ref(),
+                        file.path.as_ref(),
+                    ),
+                    excerpt.row_range.start,
+                ))
             }
+        }
+    }
+
+    fn related_file_patch_path(cursor_path: &Path, related_path: &Path) -> std::path::PathBuf {
+        let cursor_first_component = cursor_path.components().next();
+        let related_first_component = related_path.components().next();
+        if related_first_component.is_some()
+            && cursor_first_component != related_first_component
+            && related_path.components().count() > 1
+        {
+            related_path.iter().skip(1).collect()
+        } else {
+            related_path.to_path_buf()
         }
     }
 
