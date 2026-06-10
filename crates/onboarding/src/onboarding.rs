@@ -213,6 +213,10 @@ struct Onboarding {
     user_store: Entity<UserStore>,
     scroll_handle: ScrollHandle,
     _settings_subscription: Subscription,
+    // Registered lazily on first render, since `new` has no `Window`. Fires when
+    // focus leaves onboarding for another surface (a dock panel, another tab,
+    // etc.), which we treat as leaving onboarding.
+    _focus_out_subscription: Option<Subscription>,
 }
 
 impl Onboarding {
@@ -270,6 +274,7 @@ impl Onboarding {
                 user_store: workspace.user_store().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                _focus_out_subscription: None,
             }
         })
     }
@@ -301,10 +306,26 @@ impl Onboarding {
     fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         crate::basics_page::render_basics_page(&self.user_store, cx).into_any_element()
     }
+
+    fn register_focus_out_subscription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self._focus_out_subscription.is_some() {
+            return;
+        }
+        self._focus_out_subscription =
+            Some(cx.on_focus_out(&self.focus_handle, window, |_, _, _, cx| {
+                // Focus moved away from onboarding to another surface (a dock
+                // panel, another tab, etc.). Treat that as leaving onboarding.
+                // Opening a modal from within onboarding (e.g. the base keymap
+                // picker) also fires this, but that case is filtered out via
+                // `has_active_modal` in `open_agent_panel_after_onboarding`.
+                open_agent_panel_after_onboarding(cx);
+            }));
+    }
 }
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.register_focus_out_subscription(window, cx);
         div()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
@@ -426,6 +447,7 @@ impl Item for Onboarding {
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            _focus_out_subscription: None,
         })))
     }
 
@@ -514,27 +536,37 @@ fn any_agent_configured(cx: &App) -> bool {
 ///
 /// The panel is revealed without taking keyboard focus, and the actual open is
 /// deferred (via `with_active_or_new_workspace`) so it runs after the current
-/// pane/item update has settled rather than re-entering the workspace.
+/// pane/item/focus update has settled rather than re-entering the workspace.
 fn open_agent_panel_after_onboarding(cx: &mut App) {
     if AgentPanelAutoOpened::dismissed(cx) {
         return;
     }
-
-    // Only "spend" the one-shot when there's actually an agent to reveal. If the
-    // user leaves onboarding without configuring anything, a later exit can
-    // still open the panel once they do.
     if !any_agent_configured(cx) {
         return;
     }
 
-    AgentPanelAutoOpened::set_dismissed(true, cx);
     with_active_or_new_workspace(cx, |workspace, window, cx| {
+        // Re-check inside the deferred closure: another exit may have already
+        // revealed the panel, and we only want to "spend" the one-shot when we
+        // actually reveal it.
+        if AgentPanelAutoOpened::dismissed(cx) {
+            return;
+        }
+        // A modal opened from onboarding (e.g. the base keymap picker) counts as
+        // still being in setup, so don't reveal the panel underneath it. A later
+        // exit can still open it.
+        if workspace.has_active_modal(window, cx) {
+            return;
+        }
         let panel_enabled = workspace
             .panel::<AgentPanel>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx));
-        if panel_enabled {
-            workspace.open_panel::<AgentPanel>(window, cx);
+        if !panel_enabled {
+            return;
         }
+
+        AgentPanelAutoOpened::set_dismissed(true, cx);
+        workspace.open_panel::<AgentPanel>(window, cx);
     });
 }
 
