@@ -69,7 +69,7 @@ pub fn build_marker_table(input: &ZetaPromptInput) -> Vec<SnippetMarkers> {
 }
 
 fn assign_tags(text: &str, used_ids: &mut HashSet<String>) -> Vec<(String, usize)> {
-    let offsets = multi_region::compute_marker_offsets_v0318(text);
+    let offsets = multi_region::compute_marker_offsets_v0618(text);
     offsets
         .iter()
         .enumerate()

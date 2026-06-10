@@ -7,6 +7,8 @@ const V0316_MIN_BLOCK_LINES: usize = 3;
 const V0316_MAX_BLOCK_LINES: usize = 8;
 const V0318_MIN_BLOCK_LINES: usize = 6;
 const V0318_MAX_BLOCK_LINES: usize = 16;
+const V0618_MIN_BLOCK_LINES: usize = 3;
+const V0618_MAX_BLOCK_LINES: usize = 32;
 const MAX_NUDGE_LINES: usize = 5;
 pub const V0316_END_MARKER: &str = "<[end▁of▁sentence]>";
 pub const V0317_END_MARKER: &str = "<[end▁of▁sentence]>";
@@ -142,6 +144,10 @@ pub fn compute_marker_offsets(editable_text: &str) -> Vec<usize> {
 
 pub fn compute_marker_offsets_v0318(editable_text: &str) -> Vec<usize> {
     compute_marker_offsets_with_limits(editable_text, V0318_MIN_BLOCK_LINES, V0318_MAX_BLOCK_LINES)
+}
+
+pub fn compute_marker_offsets_v0618(editable_text: &str) -> Vec<usize> {
+    compute_marker_offsets_with_limits(editable_text, V0618_MIN_BLOCK_LINES, V0618_MAX_BLOCK_LINES)
 }
 
 fn line_start_at_or_before(text: &str, offset: usize) -> usize {

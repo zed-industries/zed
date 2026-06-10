@@ -373,13 +373,7 @@ impl TeacherJumpsPrompt {
             .context("example is missing prompt inputs")?;
         let marker_table = hashed_regions::build_marker_table(prompt_inputs);
 
-        let edit_history = format_edit_history_within_budget(
-            &prompt_inputs.events,
-            "",
-            "",
-            Self::MAX_HISTORY_TOKENS,
-            max_edit_event_count_for_format(&ZetaFormat::V0327SingleFile),
-        );
+        let edit_history = Self::format_edit_history(&prompt_inputs);
         let context = Self::format_context(prompt_inputs, &marker_table, related_files_budget);
         let cursor_excerpt = Self::format_cursor_excerpt(example, prompt_inputs, &marker_table)?;
 
@@ -630,6 +624,16 @@ impl TeacherJumpsPrompt {
         } else {
             related_path.to_path_buf()
         }
+    }
+
+    fn format_edit_history(prompt_inputs: &ZetaPromptInput) -> String {
+        format_edit_history_within_budget(
+            &prompt_inputs.events,
+            "",
+            "",
+            Self::MAX_HISTORY_TOKENS,
+            max_edit_event_count_for_format(&ZetaFormat::V0327SingleFile),
+        )
     }
 
     /// Render related files with hashed region markers, within a token
