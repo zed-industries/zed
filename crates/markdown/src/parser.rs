@@ -45,9 +45,8 @@ pub(crate) struct ParsedMarkdownData {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ParsedMetadataBlock {
     pub content_range: Range<usize>,
-    /// Parsed key/value rows, or `None` when the block can't be rendered as a
-    /// table (invalid or unsupported frontmatter), in which case the raw
-    /// content is rendered as a code block.
+    /// `None` when the frontmatter is invalid or in an unsupported format, in
+    /// which case the raw content is rendered as a code block.
     pub rows: Option<Vec<MetadataRow>>,
 }
 
@@ -61,8 +60,7 @@ pub(crate) struct MetadataRow {
 pub(crate) enum MetadataValue {
     Scalar(String),
     List(Vec<String>),
-    /// Nested mappings and other structures we don't render specially, kept as
-    /// their re-serialized YAML text.
+    /// Structures with no special rendering, kept as re-serialized YAML text.
     Raw(String),
 }
 
@@ -180,8 +178,6 @@ fn build_heading_slugs(
     slugs
 }
 
-/// Dispatches on the block's delimiter format. `None` means the caller renders
-/// the raw content as a code block instead of a table.
 fn parse_metadata_rows(
     kind: MetadataBlockKind,
     source: &str,
@@ -194,9 +190,8 @@ fn parse_metadata_rows(
     }
 }
 
-/// `None` signals the block isn't a non-empty YAML mapping. Entries with a
-/// non-scalar or empty key are skipped, so one such entry doesn't discard the
-/// whole table.
+/// Entries with a non-scalar or empty key are skipped rather than discarding
+/// the whole table.
 fn parse_yaml_metadata_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
     let content = source.get(source_range)?;
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(content).ok()?;
@@ -1172,10 +1167,8 @@ mod tests {
 
     #[test]
     fn test_metadata_rows_pluses_format_unsupported() {
-        // A block is dispatched by its delimiter format, not its content: TOML
-        // (`+++`) frontmatter isn't parsed yet, so it yields no rows and falls
-        // back to a raw code block even when the content happens to be valid
-        // YAML that the YAML path would otherwise render as a table.
+        // Dispatch is on the delimiter, not the content: valid YAML inside a
+        // `+++` block still yields no rows.
         let source = "title: Post\n";
         assert!(
             parse_metadata_rows(MetadataBlockKind::YamlStyle, source, 0..source.len()).is_some()

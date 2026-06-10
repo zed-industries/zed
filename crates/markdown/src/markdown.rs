@@ -425,27 +425,10 @@ pub struct MarkdownOptions {
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
-    /// Recognize frontmatter so it is stripped from the document body even when
-    /// it isn't rendered. Whether it's drawn is controlled by
-    /// `render_metadata_blocks`.
+    /// Recognizes frontmatter so it is stripped from the body even when
+    /// `render_metadata_blocks` is off.
     pub parse_metadata_blocks: bool,
     pub render_metadata_blocks: bool,
-}
-
-fn locate_metadata_span(
-    source: &str,
-    content_range: &Range<usize>,
-    cursor: &mut usize,
-    needle: &str,
-) -> Range<usize> {
-    if !needle.is_empty()
-        && let Some(offset) = source[*cursor..content_range.end].find(needle)
-    {
-        let start = *cursor + offset;
-        *cursor = start + needle.len();
-        return start..start + needle.len();
-    }
-    content_range.clone()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1691,8 +1674,6 @@ impl MarkdownElement {
     ) {
         let content_range = &metadata_block.content_range;
         let Some(rows) = metadata_block.rows.as_deref() else {
-            // No table rows (invalid or unsupported frontmatter): render the
-            // raw content as a code block.
             let mut metadata_block = div().w_full().rounded_md();
             metadata_block.style().refine(&self.style.code_block);
             builder.push_text_style(self.style.code_block.text.to_owned());
@@ -1720,42 +1701,52 @@ impl MarkdownElement {
             markdown_end,
         );
 
-        // Recover precise source ranges for rendered text by scanning forward
-        // through the block, so selection and search highlights land on the
-        // right source offsets. Values the YAML parser normalizes away from
-        // their source text (block scalars, and numbers or quoted strings
-        // re-serialized to a different spelling) have no verbatim span and fall
-        // back to the whole block range.
+        // Scan forward for each rendered string so selection and search land on
+        // the right source offsets. Values the YAML parser normalizes (block
+        // scalars, re-spelled numbers and quoted strings) have no verbatim span
+        // and fall back to the whole block range.
         let mut cursor = content_range.start;
         for (row_index, row) in rows.iter().enumerate() {
             let key_range = locate_metadata_span(source, content_range, &mut cursor, &row.key);
-            self.push_metadata_cell(builder, content_range, markdown_end, row_index, true, cx, {
-                let key = row.key.clone();
-                move |builder| {
-                    builder.push_text_style(TextStyleRefinement {
-                        color: Some(cx.theme().colors().text_muted),
-                        font_weight: Some(FontWeight::SEMIBOLD),
-                        ..Default::default()
-                    });
-                    builder.push_text(&key, key_range);
-                    builder.pop_text_style();
-                }
-            });
+            self.push_metadata_cell(
+                builder,
+                content_range,
+                markdown_end,
+                MetadataCellStyle {
+                    row_index,
+                    is_key: true,
+                },
+                cx,
+                {
+                    let key = row.key.clone();
+                    move |builder| {
+                        builder.push_text_style(TextStyleRefinement {
+                            color: Some(cx.theme().colors().text_muted),
+                            font_weight: Some(FontWeight::SEMIBOLD),
+                            ..Default::default()
+                        });
+                        builder.push_text(&key, key_range);
+                        builder.pop_text_style();
+                    }
+                },
+            );
             let value_range = match &row.value {
                 MetadataValue::Scalar(text) | MetadataValue::Raw(text) => {
                     locate_metadata_span(source, content_range, &mut cursor, text)
                 }
-                // Unused: list items render as chips, not text. The cursor isn't
-                // advanced past them because scanning for a normalized item
-                // (`TRUE` stored as `true`) can overshoot into a later key.
+                // Unused: chips aren't text. The cursor stays put because a
+                // normalized item (`TRUE` stored as `true`) can't be located and
+                // scanning for it would overshoot into a later key.
                 MetadataValue::List(_) => content_range.clone(),
             };
             self.push_metadata_cell(
                 builder,
                 content_range,
                 markdown_end,
-                row_index,
-                false,
+                MetadataCellStyle {
+                    row_index,
+                    is_key: false,
+                },
                 cx,
                 {
                     let value = &row.value;
@@ -1785,14 +1776,12 @@ impl MarkdownElement {
         builder.pop_div();
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_metadata_cell(
         &self,
         builder: &mut MarkdownElementBuilder,
         block_range: &Range<usize>,
         markdown_end: usize,
-        row_index: usize,
-        is_key: bool,
+        cell_style: MetadataCellStyle,
         cx: &App,
         push_content: impl FnOnce(&mut MarkdownElementBuilder),
     ) {
@@ -1804,9 +1793,11 @@ impl MarkdownElement {
                 .px_2()
                 .py_1()
                 .border_color(cx.theme().colors().border)
-                .when(row_index > 0, |this| this.border_t_1())
-                .when(!is_key, |this| this.border_l_1())
-                .when(is_key, |this| this.bg(cx.theme().colors().panel_background)),
+                .when(cell_style.row_index > 0, |this| this.border_t_1())
+                .when(!cell_style.is_key, |this| this.border_l_1())
+                .when(cell_style.is_key, |this| {
+                    this.bg(cx.theme().colors().panel_background)
+                }),
             block_range,
             markdown_end,
         );
@@ -2613,8 +2604,8 @@ impl Element for MarkdownElement {
                                         cx,
                                     );
                                 }
-                                // Consume the block's inner events regardless, so the
-                                // raw frontmatter never leaks into the document body.
+                                // Set even when not rendering, so the block's inner
+                                // events are consumed rather than leaking into the body.
                                 rendered_metadata_block = true;
                             }
                         }
@@ -3268,6 +3259,27 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
     }
+}
+
+fn locate_metadata_span(
+    source: &str,
+    content_range: &Range<usize>,
+    cursor: &mut usize,
+    needle: &str,
+) -> Range<usize> {
+    if !needle.is_empty()
+        && let Some(offset) = source[*cursor..content_range.end].find(needle)
+    {
+        let start = *cursor + offset;
+        *cursor = start + needle.len();
+        return start..start + needle.len();
+    }
+    content_range.clone()
+}
+
+struct MetadataCellStyle {
+    row_index: usize,
+    is_key: bool,
 }
 
 struct MarkdownElementBuilder {
@@ -4570,8 +4582,7 @@ mod tests {
             },
             cx,
         );
-        // The key and body render as text; list items become chips (which are
-        // not part of the selectable text), and the raw YAML never leaks.
+        // List items become chips, which aren't part of the selectable text.
         assert_eq!(rendered.text_for_range(0..26), "tags\nBody");
     }
 
@@ -4601,8 +4612,7 @@ mod tests {
             },
             cx,
         );
-        // Frontmatter that isn't a valid YAML mapping renders verbatim as a code
-        // block rather than a table, with the body still following it.
+        // Invalid YAML renders verbatim as a code block instead of a table.
         assert_eq!(rendered.text_for_range(0..31), "key: [unterminated\nBody");
     }
 
@@ -4617,8 +4627,7 @@ mod tests {
             },
             cx,
         );
-        // A nested mapping keeps its YAML text in the value cell so the structure
-        // stays readable instead of collapsing to one line.
+        // A nested mapping keeps its YAML text instead of collapsing to one line.
         assert_eq!(rendered.text_for_range(0..33), "meta\nnested: true\nBody");
     }
 

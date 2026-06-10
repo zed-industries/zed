@@ -55,8 +55,6 @@ fn markdown_preview_options(cx: &App) -> MarkdownOptions {
         parse_html: true,
         render_mermaid_diagrams: true,
         parse_heading_slugs: true,
-        // Always recognize frontmatter so it's stripped from the body; whether
-        // it's drawn is controlled by the `render_frontmatter` setting.
         parse_metadata_blocks: true,
         render_metadata_blocks: MarkdownPreviewSettings::get_global(cx).render_frontmatter,
         ..Default::default()
