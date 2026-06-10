@@ -102,6 +102,7 @@ impl AgentDiffPane {
             );
             diff_display_editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
+            diff_display_editor.set_render_diff_hunks_as_unstaged(cx);
             diff_display_editor.update_editors(cx, |editor, _cx| {
                 editor.register_addon(AgentDiffAddon);
             });
@@ -1572,6 +1573,7 @@ impl AgentDiff {
                             diff_hunk_controls(&thread, workspace.clone()),
                             cx,
                         );
+                        editor.set_render_diff_hunks_as_unstaged(true, cx);
                         editor.set_expand_all_diff_hunks(cx);
                         editor.register_addon(EditorAgentDiffAddon);
                     });

@@ -82,7 +82,7 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Item, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
@@ -673,6 +673,8 @@ pub struct GitPanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
     show_placeholders: bool,
+    // Only read to compute collaborative co-authors, which requires the `call` feature.
+    #[cfg_attr(not(feature = "call"), allow(dead_code))]
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
     commit_template: Option<GitCommitTemplate>,
@@ -824,7 +826,7 @@ impl GitPanel {
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                workspace.show_error(error, cx);
+                                workspace.show_error(format!("{error}"), cx);
                             })
                             .ok();
                     }
@@ -1467,6 +1469,44 @@ impl GitPanel {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
                             show_error_toast(workspace, "add to .gitignore", e, cx);
+                        });
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
+    fn add_to_git_info_exclude(
+        &mut self,
+        _: &git::AddToGitInfoExclude,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let list_entry = self.entries.get(self.selected_entry?)?.clone();
+            let entry = list_entry.status_entry()?.to_owned();
+
+            if !entry.status.is_created() {
+                return Some(());
+            }
+
+            let active_repository = self.active_repository.clone()?;
+            let workspace = self.workspace.clone();
+            let repo_path = entry.repo_path;
+
+            let receiver = active_repository.update(cx, |repo, _| {
+                repo.add_path_to_git_info_exclude(&repo_path, false)
+            });
+
+            cx.spawn(async move |_, cx| {
+                if let Err(e) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            show_error_toast(workspace, "add to .git/info/exclude", e, cx);
                         });
                     }
                 }
@@ -2273,7 +2313,7 @@ impl GitPanel {
             return;
         };
         let error_spawn = |message, window: &mut Window, cx: &mut App| {
-            let prompt = window.prompt(PromptLevel::Warning, message, None, &["Ok"], cx);
+            let prompt = window.prompt(PromptLevel::Warning, message, None, &["OK"], cx);
             cx.spawn(async move |_| {
                 prompt.await.ok();
             })
@@ -2950,7 +2990,7 @@ impl GitPanel {
                 PromptLevel::Warning,
                 "Unable to initialize a git repository",
                 Some("Open a directory first"),
-                &["Ok"],
+                &["OK"],
                 cx,
             );
             cx.background_executor()
@@ -3172,7 +3212,7 @@ impl GitPanel {
     /// worktree to the `safe.directory` config, ensuring that, even if the user
     /// that's running the application is not the owner of `.git/`, it can still
     /// read the repository's contents.
-    fn add_safe_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_safe_directory(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repository) = &self.active_repository else {
             return;
         };
@@ -3190,12 +3230,10 @@ impl GitPanel {
                 path_arg,
             ];
 
-            cx.spawn_in(window, async move |git_panel, cx| {
-                git_panel.update(cx, |git_panel, cx| {
-                    git_panel.project.read(cx).git_config(path, args, cx)
-                })
-            })
-            .detach();
+            self.project
+                .read(cx)
+                .git_config(path, args, cx)
+                .detach_and_log_err(cx);
         }
     }
 
@@ -3347,6 +3385,12 @@ impl GitPanel {
         }
     }
 
+    #[cfg(not(feature = "call"))]
+    fn potential_co_authors(&self, _cx: &App) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "call")]
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
@@ -3388,6 +3432,7 @@ impl GitPanel {
         new_co_authors
     }
 
+    #[cfg(feature = "call")]
     fn local_committer(&self, room: &call::Room, cx: &App) -> Option<(String, String)> {
         let user = room.local_participant_user(cx)?;
         let committer = self.local_committer.as_ref()?;
@@ -4073,16 +4118,7 @@ impl GitPanel {
     {
         if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
             let _ = workspace.update(cx, |workspace, cx| {
-                struct CommitMessageError;
-                let notification_id = NotificationId::unique::<CommitMessageError>();
-                workspace.show_notification(notification_id, cx, |cx| {
-                    cx.new(|cx| {
-                        ErrorMessagePrompt::new(
-                            format!("Failed to generate commit message: {err}"),
-                            cx,
-                        )
-                    })
-                });
+                workspace.show_error(format!("Failed to generate commit message: {err}"), cx);
             });
         }
     }
@@ -5948,10 +5984,16 @@ impl GitPanel {
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .separator()
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
                     git::AddToGitignore.boxed_clone(),
+                )
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .git/info/exclude",
+                    git::AddToGitInfoExclude.boxed_clone(),
                 )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
@@ -6233,7 +6275,7 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    if event.click_count() > 1 || event.modifiers().secondary() {
+                    if event.modifiers().secondary() {
                         this.open_solo_diff(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
@@ -6269,7 +6311,7 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // TODO: Have not yet plugin the self.marked_entries. Not sure when and why we need that
+        // TODO: Have not yet plugged in self.marked_entries. Not sure when and why we need that
         let selected = self.selected_entry == Some(ix);
         let label_color = Color::Muted;
 
@@ -6636,19 +6678,24 @@ impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
         let has_entries = !self.entries.is_empty();
-        let room = self.workspace.upgrade().and_then(|_workspace| {
-            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
-        });
-
         let has_write_access = self.has_write_access(cx);
 
-        let has_co_authors = room.is_some_and(|room| {
-            self.load_local_committer(cx);
-            let room = room.read(cx);
-            room.remote_participants()
-                .values()
-                .any(|remote_participant| remote_participant.can_write())
-        });
+        #[cfg(feature = "call")]
+        let has_co_authors = self
+            .workspace
+            .upgrade()
+            .and_then(|_workspace| {
+                call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
+            })
+            .is_some_and(|room| {
+                self.load_local_committer(cx);
+                let room = room.read(cx);
+                room.remote_participants()
+                    .values()
+                    .any(|remote_participant| remote_participant.can_write())
+            });
+        #[cfg(not(feature = "call"))]
+        let has_co_authors = false;
 
         v_flex()
             .id("git_panel")
@@ -6667,6 +6714,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::restore_tracked_files))
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::add_to_gitignore))
+                    .on_action(cx.listener(Self::add_to_git_info_exclude))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))

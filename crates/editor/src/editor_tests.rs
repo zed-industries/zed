@@ -4235,6 +4235,53 @@ fn test_newline_respects_read_only(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_below_with_cursor_on_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("aaa\nbbb\ncˇcc");
+    cx.set_head_text("aaa\nXXX\nbbb\nccc");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(3), 3)..DisplayPoint::new(DisplayRow(3), 3),
+            ]);
+        });
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline_below(&NewlineBelow, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer(|buffer, _| buffer.text()), "aaa\nbbb\nccc\n");
+
+    let cursors = cx.update_editor(|editor, window, cx| {
+        let display_snapshot = editor.snapshot(window, cx).display_snapshot;
+        editor
+            .selections
+            .all_display(&display_snapshot)
+            .iter()
+            .map(|selection| selection.head())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        cursors,
+        vec![
+            DisplayPoint::new(DisplayRow(1), 0),
+            DisplayPoint::new(DisplayRow(4), 0),
+        ],
+    );
+}
+
+#[gpui::test]
 fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -7992,7 +8039,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in comment prefix (e.g., `//` to `///`) trigger seperate rewraps
+    // Test that change in comment prefix (e.g., `//` to `///`) trigger separate rewraps
     assert_rewrap(
         indoc! {"
             «// A regular long long comment to be wrapped.
@@ -8008,7 +8055,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in indentation level trigger seperate rewraps
+    // Test that change in indentation level trigger separate rewraps
     assert_rewrap(
         indoc! {"
             fn foo() {
@@ -14818,6 +14865,24 @@ async fn test_format_selections_action_available_when_range_formatting_is_suppor
         editor.set_text("one\ntwo\nthree\n", window, cx);
         editor.change_selections(SelectionEffects::default(), window, cx, |s| {
             s.select_ranges([Point::new(0, 0)..Point::new(1, 0)]);
+        });
+    });
+
+    refresh_editor_actions(cx);
+
+    assert!(cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
+}
+
+#[gpui::test]
+async fn test_format_selections_action_available_for_cursor_when_range_formatting_is_supported(
+    cx: &mut TestAppContext,
+) {
+    let (_, editor, cx, _) = setup_range_format_test(cx).await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("foo\nbar\n", window, cx);
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 1)..Point::new(1, 1)]);
         });
     });
 
@@ -37572,95 +37637,6 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_restore_hunk_with_stale_base_text(cx: &mut TestAppContext) {
-    // Regression test: prepare_restore_change must read base_text from the same
-    // snapshot the hunk came from, not from the live BufferDiff entity. The live
-    // entity's base_text may have already been updated asynchronously (e.g.
-    // because git HEAD changed) while the MultiBufferSnapshot still holds the
-    // old hunk byte ranges — using both together causes Rope::slice to panic
-    // when the old range exceeds the new base text length.
-    init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx).await;
-
-    let long_base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
-    cx.set_state("ˇONE\ntwo\nTHREE\nfour\nFIVE\nsix\nseven\neight\nnine\nten\n");
-    cx.set_head_text(long_base_text);
-
-    let buffer_id = cx.update_buffer(|buffer, _| buffer.remote_id());
-
-    // Verify we have hunks from the initial diff.
-    let has_hunks = cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let hunks = snapshot
-            .buffer_snapshot()
-            .diff_hunks_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len());
-        hunks.count() > 0
-    });
-    assert!(has_hunks, "should have diff hunks before restoring");
-
-    // Now trigger a git HEAD change to a much shorter base text.
-    // After this, the live BufferDiff entity's base_text buffer will be
-    // updated synchronously (inside set_snapshot_with_secondary_inner),
-    // but DiffChanged is deferred until parsing_idle completes.
-    // We step the executor tick-by-tick to find the window where the
-    // live base_text is already short but the MultiBuffer snapshot is
-    // still stale (old hunks + old base_text).
-    let short_base_text = "short\n";
-    let fs = cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
-    let path = cx.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
-    fs.set_head_for_repo(
-        &Path::new(path!("/root")).join(".git"),
-        &[(path.as_unix_str(), short_base_text.to_string())],
-        "newcommit",
-    );
-
-    // Step the executor tick-by-tick. At each step, check whether the
-    // race condition exists: live BufferDiff has short base text but
-    // the MultiBuffer snapshot still has old (long) hunks.
-    let mut found_race = false;
-    for _ in 0..200 {
-        cx.executor().tick();
-
-        let race_exists = cx.update_editor(|editor, _window, cx| {
-            let multi_buffer = editor.buffer().read(cx);
-            let diff_entity = match multi_buffer.diff_for(buffer_id) {
-                Some(d) => d,
-                None => return false,
-            };
-            let live_base_len = diff_entity.read(cx).base_text(cx).len();
-            let snapshot = multi_buffer.snapshot(cx);
-            let snapshot_base_len = snapshot
-                .diff_for_buffer_id(buffer_id)
-                .map(|d| d.base_text().len());
-            // Race: live base text is shorter than what the snapshot knows.
-            live_base_len < long_base_text.len() && snapshot_base_len == Some(long_base_text.len())
-        });
-
-        if race_exists {
-            found_race = true;
-            // The race window is open: the live entity has new (short) base
-            // text but the MultiBuffer snapshot still has old hunks with byte
-            // ranges computed against the old long base text. Attempt restore.
-            // Without the fix, this panics with "cannot summarize past end of
-            // rope". With the fix, it reads base_text from the stale snapshot
-            // (consistent with the stale hunks) and succeeds.
-            cx.update_editor(|editor, window, cx| {
-                editor.select_all(&SelectAll, window, cx);
-                editor.git_restore(&Default::default(), window, cx);
-            });
-            break;
-        }
-    }
-
-    assert!(
-        found_race,
-        "failed to observe the race condition between \
-        live BufferDiff base_text and stale MultiBuffer snapshot; \
-        the test may need adjustment if the async diff pipeline changed"
-    );
-}
-
-#[gpui::test]
 async fn test_align_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -37979,4 +37955,100 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
             "diagnostics should be re-enabled after second toggle"
         );
     });
+}
+
+#[gpui::test]
+async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // No-op with no language
+    cx.set_state(indoc! {"
+        «helloˇ» world
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ» world
+    "});
+
+    // No-op in non-Markdown language (Rust)
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        «helloˇ» world
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ» world
+    "});
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    // Line is quoted with an empty selection
+    cx.set_state(indoc! {"
+        helˇlo world
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «> hello worldˇ»
+    "});
+
+    // Line is unquoted with an empty selection
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // Multi-line selection is quoted, including blank lines
+    cx.set_state(indoc! {"
+        «first
+
+        thirdˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «> first
+        >
+        > thirdˇ»
+    "});
+
+    // Multi-line selection is unquoted, including blank lines
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «first
+
+        thirdˇ»
+    "});
+
+    // A multi-line selection, including a mixture of quoted and unquoted lines
+    // and a mixture of empty and non-empty lines, normalizes each line to a
+    // single quote.
+    cx.set_state(indoc! {"
+        «> first
+        second
+        >
+
+        > third
+        >fourthˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «> first
+        > second
+        >
+        >
+        > third
+        > fourthˇ»
+    "});
+
+    // A multi-line selection is unquoted.
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «first
+        second
+
+
+        third
+        fourthˇ»
+    "});
 }

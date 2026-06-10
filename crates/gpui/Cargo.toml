@@ -40,6 +40,7 @@ screen-capture = [
 ]
 windows-manifest = ["dep:embed-resource"]
 input-latency-histogram = ["dep:hdrhistogram"]
+profiler = []
 
 [lib]
 path = "src/gpui.rs"

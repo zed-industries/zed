@@ -4,7 +4,7 @@ mod image_viewer_settings;
 use std::path::Path;
 
 use anyhow::Context as _;
-use editor::{EditorSettings, items::entry_git_aware_label_color};
+use editor::{EditorSettings, RevealInFileManager, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
@@ -169,6 +169,18 @@ impl ImageView {
         self.zoom_level = 1.0;
         self.pan_offset = Point::default();
         cx.notify();
+    }
+
+    fn reveal_in_file_manager(
+        &mut self,
+        _: &RevealInFileManager,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.image_item.read(cx).abs_path(cx) {
+            self.project
+                .update(cx, |project, cx| project.reveal_path(&path, cx));
+        }
     }
 
     fn set_zoom(
@@ -678,6 +690,7 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::reset_zoom))
             .on_action(cx.listener(Self::fit_to_view))
             .on_action(cx.listener(Self::zoom_to_actual_size))
+            .on_action(cx.listener(Self::reveal_in_file_manager))
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
