@@ -63,8 +63,8 @@ use gpui::{Action, Context, DragMoveEvent, Focusable, MouseButton, Point, Styled
 use ui::{Tooltip, prelude::*};
 
 use crate::{
-    AbsolutePositionAndShape, Picker, PickerDelegate, Preview, Shape, ToggleLayout,
-    preview::{render::do_nothing, state::LayoutMode},
+    Picker, PickerDelegate, PositionAndShape, Preview, Shape, ToggleLayout,
+    preview::{PreviewLayout, render::do_nothing},
 };
 
 pub struct DragPreview;
@@ -77,21 +77,21 @@ impl Render for DragPreview {
 
 #[derive(Clone, Copy)]
 struct VerticalResizeDrag<S> {
-    shape_before: AbsolutePositionAndShape,
+    shape_before: PositionAndShape,
     phantom_data: PhantomData<S>,
     mouse_pos_before: Point<Pixels>,
 }
 
 #[derive(Clone, Copy)]
 struct CornerResizeDrag<C> {
-    shape_before: AbsolutePositionAndShape,
+    shape_before: PositionAndShape,
     phantom_data: PhantomData<C>,
     mouse_pos_before: Point<Pixels>,
 }
 
 #[derive(Clone, Copy)]
 struct HorizontalResizeDrag<S> {
-    shape_before: AbsolutePositionAndShape,
+    shape_before: PositionAndShape,
     phantom_data: PhantomData<S>,
     mouse_pos_before: Point<Pixels>,
 }
@@ -118,9 +118,10 @@ pub(crate) trait Side {
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div>;
     fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div>;
     fn current_position_and_shape(
-        shape_before: AbsolutePositionAndShape,
+        shape_before: PositionAndShape,
+        preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
-    ) -> AbsolutePositionAndShape;
+    ) -> PositionAndShape;
 }
 
 pub(crate) struct Left;
@@ -132,9 +133,10 @@ impl Side for Left {
         div.left(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
-        mut shape_before: AbsolutePositionAndShape,
+        mut shape_before: PositionAndShape,
+        _: PreviewLayout,
         mouse_movement: Point<Pixels>,
-    ) -> AbsolutePositionAndShape {
+    ) -> PositionAndShape {
         shape_before.left += mouse_movement.x;
         shape_before
     }
@@ -148,9 +150,13 @@ impl Side for Right {
         div.right(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
-        mut shape_before: AbsolutePositionAndShape,
+        mut shape_before: PositionAndShape,
+        preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
-    ) -> AbsolutePositionAndShape {
+    ) -> PositionAndShape {
+        if let PreviewLayout::Right(_) = preview {
+            shape_before.preview += mouse_movement.x;
+        }
         shape_before.right += mouse_movement.x;
         shape_before
     }
@@ -164,9 +170,13 @@ impl Side for Bottom {
         div.bottom(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
-        mut shape_before: AbsolutePositionAndShape,
+        mut shape_before: PositionAndShape,
+        preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
-    ) -> AbsolutePositionAndShape {
+    ) -> PositionAndShape {
+        if let PreviewLayout::Below(_) = preview {
+            shape_before.preview += mouse_movement.y;
+        }
         shape_before.bottom += mouse_movement.y;
         shape_before
     }
@@ -181,9 +191,15 @@ impl Side for LeftCorner {
             .bottom(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
-        mut shape_before: AbsolutePositionAndShape,
+        mut shape_before: PositionAndShape,
+        preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
-    ) -> AbsolutePositionAndShape {
+    ) -> PositionAndShape {
+        match preview {
+            PreviewLayout::Hidden => (),
+            PreviewLayout::Below(_) => shape_before.preview += mouse_movement.y,
+            PreviewLayout::Right(_) => shape_before.preview += mouse_movement.x,
+        }
         shape_before.left += mouse_movement.x;
         shape_before.bottom += mouse_movement.y;
         shape_before
@@ -199,9 +215,15 @@ impl Side for RightCorner {
             .bottom(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
-        mut shape_before: AbsolutePositionAndShape,
+        mut shape_before: PositionAndShape,
+        preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
-    ) -> AbsolutePositionAndShape {
+    ) -> PositionAndShape {
+        match preview {
+            PreviewLayout::Hidden => (),
+            PreviewLayout::Below(_) => shape_before.preview += mouse_movement.y,
+            PreviewLayout::Right(_) => shape_before.preview += mouse_movement.x,
+        }
         shape_before.right += mouse_movement.x;
         shape_before.bottom += mouse_movement.y;
         shape_before
@@ -212,7 +234,7 @@ impl<S: Side> HorizontalResizeDrag<S> {
     fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
         Self {
             mouse_pos_before: window.mouse_position(),
-            shape_before: shape.absolute_position_and_size(preview, window),
+            shape_before: shape.picker_position_and_size(window),
             phantom_data: PhantomData,
         }
     }
@@ -222,7 +244,7 @@ impl<S: Side> VerticalResizeDrag<S> {
     fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
         Self {
             mouse_pos_before: window.mouse_position(),
-            shape_before: shape.absolute_position_and_size(preview, window),
+            shape_before: shape.picker_position_and_size(window),
             phantom_data: PhantomData,
         }
     }
@@ -232,7 +254,7 @@ impl<S: Side> CornerResizeDrag<S> {
     fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
         Self {
             mouse_pos_before: window.mouse_position(),
-            shape_before: shape.absolute_position_and_size(preview, window),
+            shape_before: shape.picker_position_and_size(window),
             phantom_data: PhantomData,
         }
     }
@@ -265,10 +287,14 @@ impl<D: PickerDelegate> Picker<D> {
                     let drag = event.drag(cx);
                     let delta = event.event.position - drag.mouse_pos_before;
                     let shape_before = drag.shape_before;
-                    this.shape =
-                        Shape::Resizing(S::current_position_and_shape(shape_before, delta));
-                    // The transient `Resizing` shape is converted back to the resting,
-                    // serializable form in `Picker::render` once the drag ends.
+                    this.shape = Shape::Resizing(S::current_position_and_shape(
+                        shape_before,
+                        this.preview
+                            .as_ref()
+                            .map(|p| p.layout)
+                            .unwrap_or(PreviewLayout::Hidden),
+                        delta,
+                    ));
                     cx.notify();
                 },
             ))
@@ -299,10 +325,14 @@ impl<D: PickerDelegate> Picker<D> {
                     let drag = event.drag(cx);
                     let delta = event.event.position - drag.mouse_pos_before;
                     let shape_before = drag.shape_before;
-                    this.shape =
-                        Shape::Resizing(S::current_position_and_shape(shape_before, delta));
-                    // The transient `Resizing` shape is converted back to the resting,
-                    // serializable form in `Picker::render` once the drag ends.
+                    this.shape = Shape::Resizing(S::current_position_and_shape(
+                        shape_before,
+                        this.preview
+                            .as_ref()
+                            .map(|p| p.layout)
+                            .unwrap_or(PreviewLayout::Hidden),
+                        delta,
+                    ));
                     cx.notify();
                 },
             ))
@@ -332,10 +362,14 @@ impl<D: PickerDelegate> Picker<D> {
                     let drag = event.drag(cx);
                     let delta = event.event.position - drag.mouse_pos_before;
                     let shape_before = drag.shape_before;
-                    this.shape =
-                        Shape::Resizing(S::current_position_and_shape(shape_before, delta));
-                    // The transient `Resizing` shape is converted back to the resting,
-                    // serializable form in `Picker::render` once the drag ends.
+                    this.shape = Shape::Resizing(S::current_position_and_shape(
+                        shape_before,
+                        this.preview
+                            .as_ref()
+                            .map(|p| p.layout)
+                            .unwrap_or(PreviewLayout::Hidden),
+                        delta,
+                    ));
                     cx.notify();
                 },
             ))
@@ -351,9 +385,9 @@ impl<D: PickerDelegate> Picker<D> {
         Some(h_flex().gap_1().items_center().child({
             let focus_handle = self.focus_handle(cx);
             let (icon, tooltip_text) = match preview.layout {
-                LayoutMode::Hidden => (IconName::Split, "Show preview to the right"),
-                LayoutMode::Telescope(_) => (IconName::ListTree, "Show preview below"),
-                LayoutMode::Stacked(_) => (IconName::ListCollapse, "Hide Preview"),
+                PreviewLayout::Hidden => (IconName::Split, "Show preview to the right"),
+                PreviewLayout::Right(_) => (IconName::ListTree, "Show preview below"),
+                PreviewLayout::Below(_) => (IconName::ListCollapse, "Hide Preview"),
             };
             IconButton::new("layout-cycle", icon)
                 .size(ButtonSize::Compact)

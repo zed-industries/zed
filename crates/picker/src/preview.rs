@@ -11,10 +11,7 @@ use project::Project;
 use ui::{ActiveTheme, IntoElement};
 use util::rel_path::RelPath;
 
-use crate::preview::state::LayoutMode;
-
 pub mod render;
-pub mod state;
 
 /// The preview window of a [`Picker`](crate::Picker).
 ///
@@ -24,14 +21,29 @@ pub mod state;
 /// showing any condition (if any) and how many times the breakpoint got hit.
 pub struct Preview {
     content: Entity<EditorPreview>,
-    pub(crate) layout: LayoutMode,
+    pub(crate) layout: PreviewLayout,
+}
+
+use crate::{ViewPortHeight, ViewPortWidth};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviewLayout {
+    Hidden,
+    Below(ViewPortHeight), // TODO!(yara): height/width: remove, no longer used
+    Right(ViewPortWidth),
+}
+
+impl Default for PreviewLayout {
+    fn default() -> Self {
+        Self::Hidden
+    }
 }
 
 impl Preview {
     pub fn new_editor(project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         Preview {
             content: cx.new(|cx| EditorPreview::new(project, window, cx)),
-            layout: LayoutMode::default(),
+            layout: PreviewLayout::default(),
         }
     }
 

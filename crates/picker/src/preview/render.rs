@@ -4,30 +4,28 @@ use ui::{
     Styled, Window, div, v_flex,
 };
 
-use crate::ToMultiBuffer;
+use crate::{ToMultiBuffer, ViewPortHeight, ViewPortWidth};
 
 use crate::preview::{
-    EditorPreview,
-    state::{StackedLayout, TelescopeLayout},
+    EditorPreview, PreviewLayout,
 };
 
-use super::state::LayoutMode;
 
 impl EditorPreview {
     pub(crate) fn render(
         &self,
-        layout: LayoutMode,
+        layout: PreviewLayout,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
         match layout {
-            LayoutMode::Stacked(stacked) => self
-                .render_stacked_preview(stacked, window, cx)
+            PreviewLayout::Below(size) => self
+                .render_stacked_preview(size, window, cx)
                 .into_any_element(),
-            LayoutMode::Telescope(telescope) => self
-                .render_telescope_preview(telescope, window, cx)
+            PreviewLayout::Right(size) => self
+                .render_telescope_preview(size, window, cx)
                 .into_any_element(),
-            LayoutMode::Hidden => gpui::Empty.into_any_element(),
+            PreviewLayout::Hidden => gpui::Empty.into_any_element(),
         }
     }
 }
@@ -35,7 +33,7 @@ impl EditorPreview {
 impl EditorPreview {
     pub(crate) fn render_telescope_preview(
         &self,
-        _layout: TelescopeLayout,
+        _preview_size: ViewPortWidth,
         _window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
@@ -53,13 +51,13 @@ impl EditorPreview {
 
     fn render_stacked_preview(
         &self,
-        layout: StackedLayout,
+        preview_size: ViewPortHeight,
         window: &mut Window,
         _cx: &mut App,
     ) -> impl IntoElement {
         v_flex().child(
             div()
-                .h(layout.preview_size.as_pixels(window))
+                .h(preview_size.as_pixels(window))
                 .overflow_hidden()
                 .child(self.editor_as_giant_button()),
         )

@@ -9,9 +9,10 @@ use ui::{
 };
 
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape, ViewPortHeight,
+    ViewPortWidth,
     head::Head,
-    preview::state::{LayoutMode, StackedLayout, TelescopeLayout},
+    preview::PreviewLayout,
     render::window_controls::{Bottom, Left, LeftCorner, Right, RightCorner},
 };
 
@@ -28,22 +29,22 @@ impl<D: PickerDelegate> Render for Picker<D> {
         let content = match &self.preview {
             Some(
                 preview @ Preview {
-                    layout: LayoutMode::Stacked(stacked),
+                    layout: PreviewLayout::Below(height),
                     ..
                 },
             ) => self
-                .render_stacked_content(preview, *stacked, window, cx)
+                .render_with_preview_below(preview, *height, window, cx)
                 .into_any_element(),
             Some(
                 preview @ Preview {
-                    layout: LayoutMode::Telescope(telescope),
+                    layout: PreviewLayout::Right(width),
                     ..
                 },
             ) => self
-                .render_telescope_content(preview, *telescope, window, cx)
+                .render_with_preview_right(preview, *width, window, cx)
                 .into_any_element(),
             Some(Preview {
-                layout: LayoutMode::Hidden,
+                layout: PreviewLayout::Hidden,
                 ..
             })
             | None => self.render_results(window, cx).into_any_element(),
@@ -55,14 +56,19 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .snap_to_window()
             .child(
                 div()
-                     // Below the picker there is a layer that dismisses the
-                     // picker modal on click. Do not propegate clicks to that
-                     // if the clicks are on the picker
+                    // Below the picker there is a layer that dismisses the
+                    // picker modal on click. Do not propegate clicks to that
+                    // if the clicks are on the picker
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
                     .child(content),
             )
+            .child(self.render_width_resize::<Left>(window, cx))
+            .child(self.render_width_resize::<Right>(window, cx))
+            .child(self.render_height_resize::<Bottom>(window, cx))
+            .child(self.render_corner_resize::<LeftCorner>(window, cx))
+            .child(self.render_corner_resize::<RightCorner>(window, cx))
     }
 }
 
@@ -80,7 +86,7 @@ impl<D: PickerDelegate> Picker<D> {
         let menu = v_flex()
             .key_context("Picker")
             .relative()
-            .map(|this| self.shape.apply_size(this, window))
+            .map(|this| self.shape.apply_picker_size(&self.preview, this, window))
             .child(
                 canvas(
                     move |bounds, _window, _cx| {
@@ -185,12 +191,7 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                 }
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
-            })
-            .child(self.render_width_resize::<Left>(window, cx))
-            .child(self.render_width_resize::<Right>(window, cx))
-            .child(self.render_height_resize::<Bottom>(window, cx))
-            .child(self.render_corner_resize::<LeftCorner>(window, cx))
-            .child(self.render_corner_resize::<RightCorner>(window, cx));
+            });
 
         let Some(aside) = aside else {
             return menu;
@@ -254,29 +255,33 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
-    fn render_stacked_content(
+    fn render_with_preview_below(
         &self,
         preview: &Preview,
-        _layout: StackedLayout,
+        preview_height: ViewPortHeight,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         v_flex()
             .child(
                 div()
-                    // .h(layout.results_height(self.shape, window))
+                    .h(self.shape.height(window) - preview_height.as_pixels(window))
                     .overflow_hidden()
                     .child(self.render_results(window, cx)),
             )
             // .child(self.render_results_resize(window, cx))
-            .child(preview.render(window, cx))
+            .child(
+                div()
+                    .h(preview_height.as_pixels(window))
+                    .child(preview.render(window, cx)),
+            )
         // .child(self.render_vertical_resize(ResizeSide::End, window, cx))
     }
 
-    pub(crate) fn render_telescope_content(
+    pub(crate) fn render_with_preview_right(
         &self,
         preview: &Preview,
-        layout: TelescopeLayout,
+        preview_width: ViewPortWidth,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -293,7 +298,7 @@ impl<D: PickerDelegate> Picker<D> {
                 // .child(self.render_telescope_preview_resize(window, cx))
                 .child(
                     div()
-                        .w(layout.preview_size.as_pixels(window))
+                        .w(preview_width.as_pixels(window))
                         .map(|this| self.shape.apply_height(this, window))
                         .overflow_hidden()
                         .child(preview.render(window, cx)),

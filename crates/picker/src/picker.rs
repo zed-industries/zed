@@ -4,7 +4,6 @@ pub use preview::Preview;
 pub use preview::PreviewHighlight;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
-use preview::state::{LayoutMode, StackedLayout, TelescopeLayout};
 
 pub mod highlighted_match_with_paths;
 pub mod popover_menu;
@@ -29,6 +28,8 @@ use ui::{Divider, DocumentationAside, prelude::*, v_flex};
 use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::ModalView;
 use zed_actions::editor::{MoveDown, MoveUp};
+
+use crate::preview::PreviewLayout;
 
 mod render;
 
@@ -72,6 +73,11 @@ struct PendingUpdateMatches {
 
 /// Size relative to viewport, between 0.0 and 1.0
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ViewPortLength(f32);
+impl Eq for ViewPortLength {}
+
+/// Size relative to viewport, between 0.0 and 1.0
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ViewPortHeight(f32);
 impl Eq for ViewPortHeight {}
 
@@ -79,6 +85,23 @@ impl Eq for ViewPortHeight {}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ViewPortWidth(f32);
 impl Eq for ViewPortWidth {}
+
+impl ViewPortLength {
+    fn as_pixels(&self, window: &Window) -> Pixels {
+        window.viewport_size().height * self.0
+    }
+    fn from_pixels(height: Pixels, window: &Window) -> Self {
+        Self(height / window.viewport_size().height)
+    }
+}
+
+impl ops::Add for ViewPortLength {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
 
 impl ViewPortHeight {
     fn as_pixels(&self, window: &Window) -> Pixels {
@@ -133,7 +156,7 @@ impl ops::Div<f32> for ViewPortWidth {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct AbsolutePositionAndShape {
+pub(crate) struct PositionAndShape {
     /// Absolute position of left most side of the picker
     left: Pixels,
     /// Absolute position of right most side of the picker
@@ -142,35 +165,37 @@ pub(crate) struct AbsolutePositionAndShape {
     top: Pixels,
     /// Absolute position of bottom most side of the picker
     bottom: Pixels,
-    /// Absolute position of divide between results and preview,
-    /// either a height or a width depends on previews layoutmode
-    preview_size: Option<Pixels>,
+    /// Relative position of divide between results and preview,
+    /// either a height or a width depends on previews layoutmode.
+    /// Should be zero when preview is disabled or hidden
+    preview: Pixels,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Shape {
     /// Non centered while user is extending a side
-    Resizing(AbsolutePositionAndShape),
+    Resizing(PositionAndShape),
     /// This is also what is serialized
     HorizontallyCentered {
         width: ViewPortWidth,
         height: ViewPortHeight,
+        preview_size: ViewPortLength,
     },
 }
 
 impl Shape {
     const TOP: ViewPortHeight = ViewPortHeight(0.10);
-    fn absolute_position_and_size(
-        &self,
-        preview: Option<&Preview>,
-        window: &Window,
-    ) -> AbsolutePositionAndShape {
-        let (width, height) = match self {
+    fn picker_position_and_size(&self, window: &Window) -> PositionAndShape {
+        let (width, height, preview_size) = match self {
             Shape::Resizing(res) => return *res,
-            Shape::HorizontallyCentered { width, height } => (width, height),
+            Shape::HorizontallyCentered {
+                width,
+                height,
+                preview_size,
+            } => (width, height, preview_size),
         };
 
-        let mut res = AbsolutePositionAndShape {
+        PositionAndShape {
             //        W              V: full width     xxxxx: picker modal
             // -----xxxxx------      left = (V - W) / 2
             //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
@@ -178,44 +203,73 @@ impl Shape {
             right: (ViewPortWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
             top: Self::TOP.as_pixels(window),
             bottom: (Self::TOP + *height).as_pixels(window),
-            preview_size: None,
-        };
-
-        match preview.as_ref().map(|p| p.layout) {
-            Some(LayoutMode::Stacked(s)) => {
-                res.preview_size = Some(res.bottom + s.preview_size.as_pixels(window))
-            }
-            Some(LayoutMode::Telescope(s)) => {
-                res.preview_size = Some(res.right - s.preview_size.as_pixels(window))
-            }
-            Some(LayoutMode::Hidden) | None => (),
+            preview: preview_size.as_pixels(window),
         }
-        res
+    }
+
+    fn preview_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
+        let mut picker = self.picker_position_and_size(window);
+
+        match preview.layout {
+            PreviewLayout::Below(s) => {
+                //  picker.
+                // res.preview_size = res.bottom + s.as_pixels(window)
+                todo!()
+            }
+            PreviewLayout::Right(s) => {
+                todo!()
+            }
+            PreviewLayout::Hidden => todo!(),
+        }
+    }
+
+    fn results_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
+        let mut picker = self.picker_position_and_size(window);
+
+        match preview.layout {
+            PreviewLayout::Below(height) => {
+                picker.bottom -= height.as_pixels(window);
+            }
+            PreviewLayout::Right(width) => {
+                picker.right -= width.as_pixels(window);
+            }
+            PreviewLayout::Hidden => (),
+        }
+        picker
     }
 
     /// The top-left corner of the picker in window coordinates.
     pub(crate) fn origin(&self, window: &Window) -> Point<Pixels> {
-        let pos = self.absolute_position_and_size(None, window);
+        let pos = self.picker_position_and_size(window);
         point(pos.left, Self::TOP.as_pixels(window))
     }
 
     /// Sets the picker's width and height from the shape.
-    fn apply_size(&self, div: Div, window: &Window) -> Div {
-        let pos = self.absolute_position_and_size(None, window);
+    fn apply_picker_size(&self, preview: &Option<Preview>, div: Div, window: &Window) -> Div {
+        let pos = if let Some(preview) = preview {
+            self.results_position_and_size(preview, window)
+        } else {
+            self.picker_position_and_size(window)
+        };
         div.w(pos.right - pos.left).h(pos.bottom - pos.top)
     }
 
-    fn apply_height(&self, div: Div, window: &mut Window) -> Div {
-        let pos = self.absolute_position_and_size(None, window);
-        div.h(pos.bottom - pos.top)
+    fn height(&self, window: &Window) -> Pixels {
+        let pos = self.picker_position_and_size(window);
+        pos.bottom - pos.top
+    }
+
+    fn apply_height(&self, div: Div, window: &Window) -> Div {
+        div.h(self.height(window))
     }
 
     /// Resizing done, re-center the picker and use relative sizes instead of
     /// pixels again
-    pub(crate) fn centered_and_relative(pos: AbsolutePositionAndShape, window: &Window) -> Self {
+    pub(crate) fn centered_and_relative(pos: PositionAndShape, window: &Window) -> Self {
         Shape::HorizontallyCentered {
             width: ViewPortWidth::from_pixels(pos.right - pos.left, window),
             height: ViewPortHeight::from_pixels(pos.bottom - pos.top, window),
+            preview_size: ViewPortLength::from_pixels(pos.preview, window),
         }
     }
 }
@@ -225,6 +279,7 @@ impl Default for Shape {
         Self::HorizontallyCentered {
             width: ViewPortWidth(0.6),
             height: ViewPortHeight(0.6),
+            preview_size: ViewPortLength(0.3),
         }
     }
 }
@@ -853,12 +908,12 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         preview.layout = match preview.layout {
-            LayoutMode::Hidden => LayoutMode::Telescope(TelescopeLayout::default()),
-            LayoutMode::Telescope(_) => LayoutMode::Stacked(StackedLayout::default()),
-            LayoutMode::Stacked(_) => LayoutMode::Hidden,
+            PreviewLayout::Hidden => PreviewLayout::Right(ViewPortWidth(0.3)),
+            PreviewLayout::Right(_) => PreviewLayout::Below(ViewPortHeight(0.3)),
+            PreviewLayout::Below(_) => PreviewLayout::Hidden,
         };
         self.delegate
-            .preview_layout_changed(matches!(preview.layout, LayoutMode::Telescope(_)));
+            .preview_layout_changed(matches!(preview.layout, PreviewLayout::Right(_)));
         cx.notify();
     }
 
