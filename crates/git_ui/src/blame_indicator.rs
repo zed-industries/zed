@@ -14,6 +14,8 @@ use workspace::{HideStatusItem, StatusItemView, item::ItemHandle};
 
 use crate::commit_tooltip::blame_entry_relative_timestamp;
 
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
 pub struct BlameIndicator {
     active_editor: Option<WeakEntity<Editor>>,
     current_blame: Option<SharedString>,
@@ -36,26 +38,22 @@ impl BlameIndicator {
         }
     }
 
-    fn on_editor_event(
-        &mut self,
-        _editor: Entity<Editor>,
-        event: &editor::EditorEvent,
-        cx: &mut Context<Self>,
-    ) {
-        if let editor::EditorEvent::SelectionsChanged { .. } = event {
-            // Debounce so rapid cursor movement doesn't run a blame lookup per
-            // keystroke; replacing the task drops the previous timer.
-            self.blame_update = cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(50))
-                    .await;
-                this.update(cx, |this, cx| {
-                    this.update_blame(cx);
+    fn on_editor_changed(&mut self, _editor: Entity<Editor>, cx: &mut Context<Self>) {
+        // The editor notifies on every change (cursor movement, edits, blame
+        // data arriving, even cursor blink); debounce so a burst runs one
+        // blame lookup, and only re-render when the text actually changed.
+        // Replacing the task drops the previous timer.
+        self.blame_update = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            this.update(cx, |this, cx| {
+                let previous_blame = this.current_blame.clone();
+                this.update_blame(cx);
+                if this.current_blame != previous_blame {
                     cx.notify();
-                })
-                .ok();
-            });
-        }
+                }
+            })
+            .ok();
+        });
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -66,7 +64,7 @@ impl BlameIndicator {
             .and_then(|editor| editor.upgrade());
 
         if let Some(editor) = editor.filter(|_| enabled) {
-            self._observe_active_editor = Some(cx.subscribe(&editor, Self::on_editor_event));
+            self._observe_active_editor = Some(cx.observe(&editor, Self::on_editor_changed));
             self.update_blame(cx);
         } else {
             self._observe_active_editor = None;
@@ -285,8 +283,17 @@ mod tests {
             )
         });
 
-        // `GitBlame` defers entry generation until the editor is focused, and
-        // focus listeners only fire on a draw of an active window — neither of
+        // Attach the indicator before any blame data exists; it should show
+        // nothing yet.
+        let indicator = cx.new(|cx| BlameIndicator::new(cx));
+        indicator.update_in(cx, |indicator, window, cx| {
+            indicator.set_active_pane_item(Some(&editor as &dyn ItemHandle), window, cx);
+        });
+        indicator.read_with(cx, |indicator, _| {
+            assert_eq!(indicator.current_blame, None);
+        });
+
+        // Focus listeners only fire on a draw of an active window — neither of
         // which test windows do on their own.
         editor.update_in(cx, |editor, window, cx| {
             window.activate_window();
@@ -298,7 +305,9 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let indicator = cx.new(|cx| BlameIndicator::new(cx));
+        // The indicator's lookup sits behind a debounce timer, and test time
+        // is virtual — advance it explicitly.
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
 
         let expected = editor
             .update(cx, |editor, cx| {
@@ -308,10 +317,6 @@ mod tests {
 
         // Anchor to the fixture so the comparison below can't pass vacuously.
         assert_eq!(expected.author.as_deref(), Some("Alice"));
-
-        indicator.update_in(cx, |indicator, window, cx| {
-            indicator.set_active_pane_item(Some(&editor as &dyn ItemHandle), window, cx);
-        });
 
         // The fixture commit is decades old, so the relative phrasing is stable.
         let relative = blame_entry_relative_timestamp(&expected);
