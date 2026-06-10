@@ -3,24 +3,55 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, App, BackdropBlurEffect, Bounds, Context, Corners, Hsla,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Window,
-    WindowBounds, WindowOptions, canvas, div, hsla, point, prelude::*, pulsating_between, px, rgb,
-    rgba, size, white,
+    Animation, AnimationExt as _, App, BackdropBlurEffect, Bounds, Context, Corners, CursorStyle,
+    Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, Point,
+    Render, ScrollWheelEvent, Size, Window, WindowBounds, WindowOptions, canvas, div, hsla, point,
+    prelude::*, pulsating_between, px, rgb, rgba, size, white,
 };
 use gpui_platform::application;
 
-const CARD_WIDTH: f32 = 258.;
-const CARD_HEIGHT: f32 = 172.;
+const INITIAL_CARD_WIDTH: f32 = 258.;
+const INITIAL_CARD_HEIGHT: f32 = 172.;
+const MIN_CARD_WIDTH: f32 = 210.;
+const MIN_CARD_HEIGHT: f32 = 136.;
+const RESIZE_HANDLE_SIZE: f32 = 24.;
+const MIN_ZOOM: f32 = 0.7;
+const MAX_ZOOM: f32 = 1.6;
+const ZOOM_STEP: f32 = 0.1;
 
 struct BackdropBlurDemo {
     card_positions: [Point<Pixels>; 5],
-    dragging: Option<CardDrag>,
+    card_sizes: [Size<Pixels>; 5],
+    zoom: f32,
+    interaction: Option<CardInteraction>,
 }
 
+#[derive(Clone, Copy)]
+enum CardInteraction {
+    Drag(CardDrag),
+    Resize(CardResize),
+}
+
+impl CardInteraction {
+    fn sample_ix(&self) -> usize {
+        match self {
+            Self::Drag(drag) => drag.sample_ix,
+            Self::Resize(resize) => resize.sample_ix,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct CardDrag {
     sample_ix: usize,
     pointer_offset: Point<Pixels>,
+}
+
+#[derive(Clone, Copy)]
+struct CardResize {
+    sample_ix: usize,
+    pointer_start: Point<Pixels>,
+    initial_size: Size<Pixels>,
 }
 
 #[derive(Clone, Copy)]
@@ -70,72 +101,162 @@ impl BackdropBlurDemo {
                 point(px(96.), px(382.)),
                 point(px(504.), px(370.)),
             ],
-            dragging: None,
+            card_sizes: [size(px(INITIAL_CARD_WIDTH), px(INITIAL_CARD_HEIGHT)); 5],
+            zoom: 1.,
+            interaction: None,
         }
     }
 
-    fn start_drag(
+    fn start_interaction(
         &mut self,
         sample_ix: usize,
         event: &MouseDownEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.dragging = Some(CardDrag {
-            sample_ix,
-            pointer_offset: event.position - self.card_positions[sample_ix],
-        });
+        let pointer = self.screen_to_scene(event.position);
+        self.interaction = if self.in_resize_handle(sample_ix, event.position) {
+            Some(CardInteraction::Resize(CardResize {
+                sample_ix,
+                pointer_start: pointer,
+                initial_size: self.card_sizes[sample_ix],
+            }))
+        } else {
+            Some(CardInteraction::Drag(CardDrag {
+                sample_ix,
+                pointer_offset: pointer - self.card_positions[sample_ix],
+            }))
+        };
         cx.notify();
     }
 
-    fn drag_card(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(drag) = &self.dragging else {
+    fn handle_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(interaction) = self.interaction else {
             return;
         };
 
         if !event.dragging() {
-            self.dragging = None;
+            self.interaction = None;
             cx.notify();
             return;
         }
 
-        self.card_positions[drag.sample_ix] = event.position - drag.pointer_offset;
+        let pointer = self.screen_to_scene(event.position);
+        match interaction {
+            CardInteraction::Drag(drag) => {
+                self.card_positions[drag.sample_ix] = pointer - drag.pointer_offset;
+            }
+            CardInteraction::Resize(resize) => {
+                let delta = pointer - resize.pointer_start;
+                self.card_sizes[resize.sample_ix] = size(
+                    clamp_dimension(resize.initial_size.width + delta.x, px(MIN_CARD_WIDTH)),
+                    clamp_dimension(resize.initial_size.height + delta.y, px(MIN_CARD_HEIGHT)),
+                );
+            }
+        }
         cx.notify();
     }
 
-    fn stop_drag(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.dragging.take().is_some() {
+    fn stop_interaction(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.interaction.take().is_some() {
             cx.notify();
         }
+    }
+
+    fn zoom_from_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let delta = event.delta.pixel_delta(px(16.)).y.as_f32();
+        if delta != 0. {
+            self.adjust_zoom(delta / 480., cx);
+        }
+    }
+
+    fn zoom_from_pinch(
+        &mut self,
+        event: &PinchEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_zoom(event.delta, cx);
+    }
+
+    fn adjust_zoom(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.set_zoom(self.zoom + delta, cx);
+    }
+
+    fn set_zoom(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        if (self.zoom - zoom).abs() > f32::EPSILON {
+            self.zoom = zoom;
+            cx.notify();
+        }
+    }
+
+    fn screen_to_scene(&self, position: Point<Pixels>) -> Point<Pixels> {
+        point(
+            px(position.x.as_f32() / self.zoom),
+            px(position.y.as_f32() / self.zoom),
+        )
+    }
+
+    fn scaled_point(&self, position: Point<Pixels>) -> Point<Pixels> {
+        point(position.x * self.zoom, position.y * self.zoom)
+    }
+
+    fn scaled_size(&self, dimensions: Size<Pixels>) -> Size<Pixels> {
+        size(dimensions.width * self.zoom, dimensions.height * self.zoom)
+    }
+
+    fn in_resize_handle(&self, sample_ix: usize, position: Point<Pixels>) -> bool {
+        let card_position = self.scaled_point(self.card_positions[sample_ix]);
+        let card_size = self.scaled_size(self.card_sizes[sample_ix]);
+        let handle_size = px(RESIZE_HANDLE_SIZE);
+
+        position.x >= card_position.x + card_size.width - handle_size
+            && position.y >= card_position.y + card_size.height - handle_size
+            && position.x <= card_position.x + card_size.width
+            && position.y <= card_position.y + card_size.height
     }
 }
 
 impl Render for BackdropBlurDemo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let samples = samples();
-        let dragging_ix = self.dragging.as_ref().map(|drag| drag.sample_ix);
+        let interacting_ix = self.interaction.as_ref().map(CardInteraction::sample_ix);
         let mut overlay = div().absolute().inset_0();
 
         for sample_ix in 0..samples.len() {
-            if dragging_ix == Some(sample_ix) {
+            if interacting_ix == Some(sample_ix) {
                 continue;
             }
 
             overlay = overlay.child(self.render_sample_card(sample_ix, samples[sample_ix], cx));
         }
 
-        if let Some(sample_ix) = dragging_ix {
+        if let Some(sample_ix) = interacting_ix {
             overlay = overlay.child(self.render_sample_card(sample_ix, samples[sample_ix], cx));
         }
 
         div()
             .size_full()
             .bg(rgb(0x111827))
-            .on_mouse_move(cx.listener(Self::drag_card))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_drag))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::stop_drag))
+            .on_scroll_wheel(cx.listener(Self::zoom_from_wheel))
+            .on_pinch(cx.listener(Self::zoom_from_pinch))
+            .on_mouse_move(cx.listener(Self::handle_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_interaction))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::stop_interaction))
             .child(background_pattern())
             .child(overlay)
+            .child(self.render_zoom_controls(cx))
     }
 }
 
@@ -149,13 +270,93 @@ impl BackdropBlurDemo {
         sample_card(
             sample_ix,
             sample,
-            self.card_positions[sample_ix],
-            self.dragging
+            self.scaled_point(self.card_positions[sample_ix]),
+            self.scaled_size(self.card_sizes[sample_ix]),
+            self.interaction
                 .as_ref()
-                .map(|drag| drag.sample_ix == sample_ix)
+                .map(|interaction| interaction.sample_ix() == sample_ix)
                 .unwrap_or(false),
+            self.zoom,
             cx,
         )
+    }
+
+    fn render_zoom_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let zoom_label = format!("{:.0}%", self.zoom * 100.);
+
+        div()
+            .absolute()
+            .top(px(20.))
+            .right(px(20.))
+            .p_1()
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(white().opacity(0.24))
+            .bg(hsla(0., 0., 0., 0.28))
+            .text_color(white())
+            .font_family(".ZedMono")
+            .child(
+                div()
+                    .id("zoom-out")
+                    .w(px(30.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.))
+                    .cursor_pointer()
+                    .hover(|this| this.bg(white().opacity(0.14)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.adjust_zoom(-ZOOM_STEP, cx);
+                    }))
+                    .child("-"),
+            )
+            .child(
+                div()
+                    .w(px(58.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .child(zoom_label),
+            )
+            .child(
+                div()
+                    .id("zoom-in")
+                    .w(px(30.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.))
+                    .cursor_pointer()
+                    .hover(|this| this.bg(white().opacity(0.14)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.adjust_zoom(ZOOM_STEP, cx);
+                    }))
+                    .child("+"),
+            )
+            .child(
+                div()
+                    .id("zoom-reset")
+                    .w(px(48.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(7.))
+                    .text_xs()
+                    .cursor_pointer()
+                    .hover(|this| this.bg(white().opacity(0.14)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.set_zoom(1., cx);
+                    }))
+                    .child("1x"),
+            )
     }
 }
 
@@ -239,11 +440,13 @@ fn sample_card(
     sample_ix: usize,
     sample: BlurSample,
     position: Point<Pixels>,
-    is_dragging: bool,
+    dimensions: Size<Pixels>,
+    is_interacting: bool,
+    zoom: f32,
     cx: &mut Context<BackdropBlurDemo>,
 ) -> impl IntoElement {
     let radius = px(sample.radius);
-    let corner_radii = Corners::all(px(18.));
+    let corner_radii = Corners::all(px(18. * zoom));
     let effect = sample.tint.map_or_else(
         || BackdropBlurEffect::new(radius),
         |tint| BackdropBlurEffect::new(radius).tint(tint),
@@ -254,11 +457,11 @@ fn sample_card(
         .left(position.x)
         .top(position.y)
         .overflow_hidden()
-        .w(px(CARD_WIDTH))
-        .h(px(CARD_HEIGHT))
-        .rounded(px(18.))
+        .w(dimensions.width)
+        .h(dimensions.height)
+        .rounded(px(18. * zoom))
         .border_1()
-        .border_color(if is_dragging {
+        .border_color(if is_interacting {
             hsla(0., 0., 1., 0.72)
         } else {
             hsla(0., 0., 1., 0.38)
@@ -267,7 +470,7 @@ fn sample_card(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event, window, cx| {
-                this.start_drag(sample_ix, event, window, cx);
+                this.start_interaction(sample_ix, event, window, cx);
             }),
         )
         .child(
@@ -284,7 +487,7 @@ fn sample_card(
             div()
                 .absolute()
                 .size_full()
-                .p_5()
+                .p(px(20. * zoom))
                 .flex()
                 .flex_col()
                 .text_color(white())
@@ -294,12 +497,47 @@ fn sample_card(
                         .flex_col()
                         .gap_1()
                         .font_family(".ZedMono")
-                        .text_sm()
-                        .line_height(px(18.))
+                        .text_size(px(14. * zoom))
+                        .line_height(px(18. * zoom))
                         .text_color(hsla(0., 0., 1., 0.86))
                         .children(sample.code.lines().map(|line| div().child(line))),
                 ),
         )
+        .child(resize_handle(zoom))
+}
+
+fn resize_handle(zoom: f32) -> impl IntoElement {
+    let handle_size = px(RESIZE_HANDLE_SIZE);
+    let line_color = white().opacity(0.72);
+
+    div()
+        .absolute()
+        .right_0()
+        .bottom_0()
+        .size(handle_size)
+        .cursor(CursorStyle::ResizeUpLeftDownRight)
+        .child(
+            div()
+                .absolute()
+                .right(px(5. * zoom))
+                .bottom(px(7. * zoom))
+                .w(px(12. * zoom))
+                .h(px(1.))
+                .bg(line_color),
+        )
+        .child(
+            div()
+                .absolute()
+                .right(px(5. * zoom))
+                .bottom(px(12. * zoom))
+                .w(px(7. * zoom))
+                .h(px(1.))
+                .bg(line_color),
+        )
+}
+
+fn clamp_dimension(value: Pixels, min: Pixels) -> Pixels {
+    if value < min { min } else { value }
 }
 
 fn run_example() {
