@@ -9,7 +9,7 @@ pub(crate) enum LayoutMode {
 
 impl Default for LayoutMode {
     fn default() -> Self {
-        Self::Stacked(StackedLayout::default())
+        Self::Hidden
     }
 }
 

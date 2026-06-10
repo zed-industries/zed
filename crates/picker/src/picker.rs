@@ -14,8 +14,8 @@ use anyhow::Result;
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    Point, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list,
+    point, prelude::*, uniform_list,
 };
 use head::Head;
 use project::Project;
@@ -93,6 +93,14 @@ impl ViewPortWidth {
     }
 }
 
+impl ops::Add for ViewPortWidth {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
 impl ops::Sub for ViewPortWidth {
     type Output = Self;
 
@@ -148,8 +156,11 @@ impl Shape {
         };
 
         let mut res = AbsolutePositionAndShape {
+            //        W              V: full width     xxxxx: picker modal
+            // -----xxxxx------      left = (V - W) / 2
+            //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
             left: ((ViewPortWidth::FULL - *width) / 2.0).as_pixels(window),
-            right: ((ViewPortWidth::FULL - *width) / 2.0).as_pixels(window),
+            right: (ViewPortWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
             top: top.as_pixels(window),
             bottom: bottom.as_pixels(window),
             preview_size: None,
@@ -167,65 +178,43 @@ impl Shape {
         res
     }
 
+    /// The top-left corner of the picker in window coordinates.
+    pub(crate) fn origin(&self, window: &Window) -> Point<Pixels> {
+        let pos = self.absolute_position_and_size(None, window);
+        point(pos.left, pos.top)
+    }
+
+    /// Sets the picker's width and height from the shape.
     fn apply_size(&self, div: Div, window: &Window) -> Div {
-        match self {
-            Shape::Resizing(pos) => div
-                .left(pos.left)
-                .right(pos.right)
-                .top(pos.top)
-                .bottom(pos.bottom),
-            Shape::HorizontallyCentered { width, top, bottom } => div
-                .w(width.as_pixels(window))
-                .top(top.as_pixels(window))
-                .bottom(bottom.as_pixels(window)),
-        }
+        let pos = self.absolute_position_and_size(None, window);
+        div.w(pos.right - pos.left).h(pos.bottom - pos.top)
     }
 
     fn apply_height(&self, div: Div, window: &mut Window) -> Div {
-        match self {
-            Shape::Resizing(pos) => div.top(pos.top).bottom(pos.bottom),
-            Shape::HorizontallyCentered { top, bottom, .. } => div
-                .top(top.as_pixels(window))
-                .bottom(bottom.as_pixels(window)),
+        let pos = self.absolute_position_and_size(None, window);
+        div.h(pos.bottom - pos.top)
+    }
+
+    /// Converts a transient [`Shape::Resizing`] (absolute pixels, produced while dragging) back into
+    /// the centered, viewport-relative form that is the resting/serialized state. No-op for shapes
+    /// that are already in that form.
+    pub(crate) fn finalize(&self, window: &Window) -> Self {
+        let Shape::Resizing(pos) = self else {
+            return *self;
+        };
+        let viewport = window.viewport_size();
+        Shape::HorizontallyCentered {
+            width: ViewPortWidth((pos.right - pos.left) / viewport.width),
+            top: ViewPortHeight(pos.top / viewport.height),
+            bottom: ViewPortHeight(pos.bottom / viewport.height),
         }
     }
 }
 
-// impl Shape {
-//     fn min_width(&self, window: &Window) -> Pixels {
-//         self.min_width.to_pixels(window.rem_size())
-//     }
-//     fn max_width(&self, window: &Window) -> Pixels {
-//         window.viewport_size().width * 0.9
-//     }
-//     fn left_extend(&self, window: &Window) -> Pixels {
-//         self.left_extend.to_pixels(window.rem_size())
-//     }
-//     fn right_extend(&self, window: &Window) -> Pixels {
-//         self.right_extend.to_pixels(window.rem_size())
-//     }
-//     fn top_extend(&self, window: &Window) -> Pixels {
-//         self.top_extend.to_pixels(window.rem_size())
-//     }
-//     fn bottom_extend(&self, window: &Window) -> Pixels {
-//         self.bottom_extend.to_pixels(window.rem_size())
-//     }
-//     fn min_height(&self, window: &mut Window) -> Pixels {
-//         self.min_height.to_pixels(window.rem_size())
-//     }
-//     fn max_height(&self, window: &mut Window) -> Pixels {
-//         let max_based_on_viewport = window.viewport_size().height * 0.8;
-//         self.max_height
-//             .map(|h| h.to_pixels(window.rem_size()))
-//             .unwrap_or(max_based_on_viewport)
-//             .min(max_based_on_viewport)
-//     }
-// }
-
 impl Default for Shape {
     fn default() -> Self {
         Self::HorizontallyCentered {
-            width: ViewPortWidth(0.3),
+            width: ViewPortWidth(0.6),
             top: ViewPortHeight(0.2),
             bottom: ViewPortHeight(0.8),
         }
@@ -1079,7 +1068,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sizing_behavior = ListSizingBehavior::Auto;
+        let sizing_behavior = ListSizingBehavior::Infer;
         // let sizing_behavior = if self.shape.max_height.is_some() {
         //     ListSizingBehavior::Infer
         // } else {

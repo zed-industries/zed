@@ -131,11 +131,19 @@ pub(crate) trait Side {
     fn id() -> &'static str {
         type_name::<Self>()
     }
+    /// The thickness of the grab strip along the picker's edge.
+    ///
+    /// Expressed in rems so it scales with the user's UI font size.
     fn handle_width(window: &Window) -> Pixels {
-        12.0 * window.rem_size()
+        rems(0.375).to_pixels(window.rem_size())
     }
     fn handle_offset(window: &Window) -> Pixels {
         Self::handle_width(window) / 2.0
+    }
+    /// How far the grab strip is inset from the top and bottom corners so it doesn't overlap the
+    /// corner resize handles.
+    fn corner_clearance(window: &Window) -> Pixels {
+        rems(1.125).to_pixels(window.rem_size())
     }
     fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div>;
     fn current_position_and_shape(
@@ -166,7 +174,7 @@ impl Side for Right {
         mut shape_before: AbsolutePositionAndShape,
         mouse_movement: Pixels,
     ) -> AbsolutePositionAndShape {
-        shape_before.left += mouse_movement;
+        shape_before.right += mouse_movement;
         shape_before
     }
 }
@@ -192,8 +200,8 @@ impl<D: PickerDelegate> Picker<D> {
         div()
             .id(S::id())
             .absolute()
-            .top(S::handle_width(window))
-            .bottom(S::handle_width(window))
+            .top(S::corner_clearance(window))
+            .bottom(S::corner_clearance(window))
             .w(S::handle_width(window))
             .cursor_col_resize()
             .map(|this| S::position(this, window))
@@ -210,7 +218,8 @@ impl<D: PickerDelegate> Picker<D> {
                     let shape_before = drag.shape_before;
                     this.shape =
                         Shape::Resizing(S::current_position_and_shape(shape_before, delta));
-                    // TODO!(yara) actual size if mouse button lifted
+                    // The transient `Resizing` shape is converted back to the resting,
+                    // serializable form in `Picker::render` once the drag ends.
                     cx.notify();
                 },
             ))

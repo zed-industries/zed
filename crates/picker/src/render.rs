@@ -1,4 +1,4 @@
-use gpui::{AppContext, canvas};
+use gpui::{AppContext, anchored, canvas};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -9,7 +9,7 @@ use ui::{
 };
 
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
     head::Head,
     preview::state::{LayoutMode, StackedLayout, TelescopeLayout},
     render::window_controls::{DragPreview, Left, Right},
@@ -19,7 +19,15 @@ pub mod window_controls;
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match &self.preview {
+        // A `Resizing` shape is transient state that only exists while a resize handle is being
+        // dragged. GPUI clears the active drag and forces a re-render on mouse-up, so the first
+        // frame where we are still `Resizing` without an active drag is when the drag just ended.
+        // Convert back to the serializable, viewport-relative resting shape at that point.
+        if matches!(self.shape, Shape::Resizing(_)) && !cx.has_active_drag() {
+            self.shape = self.shape.finalize(window);
+        }
+
+        let content = match &self.preview {
             Some(
                 preview @ Preview {
                     layout: LayoutMode::Stacked(stacked),
@@ -41,7 +49,13 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 ..
             })
             | None => self.render_results(window, cx).into_any_element(),
-        }
+        };
+
+        // Position relative to the window so shape fully controls placement
+        anchored()
+            .position(self.shape.origin(window))
+            .snap_to_window()
+            .child(content)
     }
 }
 
@@ -59,7 +73,6 @@ impl<D: PickerDelegate> Picker<D> {
         let menu = v_flex()
             .key_context("Picker")
             .relative()
-            .h_full()
             .map(|this| self.shape.apply_size(this, window))
             .child(
                 canvas(
@@ -97,7 +110,6 @@ impl<D: PickerDelegate> Picker<D> {
                         Some(
                             h_flex()
                                 .w_full()
-                                .items_center()
                                 .child(div().flex_1().child(self.delegate.render_editor(
                                     &editor.clone(),
                                     window,
@@ -120,7 +132,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .id("element-container")
                         .relative()
                         .flex_grow()
-                        // .when_some(self.shape.max_height, |div, max_h| div.max_h(max_h))
+                        .min_h_0()
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
