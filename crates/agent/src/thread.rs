@@ -1140,11 +1140,6 @@ pub struct Thread {
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
     /// the start of each request.
     current_request_token_usage: TokenUsage,
-    /// Telemetry captured when a context compaction starts but not yet emitted.
-    /// On success we defer emission until the next completion request reports
-    /// usage, so we can record an accurate post-compaction context size; on
-    /// failure or cancellation it is emitted immediately. See
-    /// [`CompactionTelemetry`].
     pending_compaction_telemetry: Option<CompactionTelemetry>,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -2437,11 +2432,6 @@ impl Thread {
                         let error_message = error.to_string();
                         match error.downcast::<LanguageModelCompletionError>() {
                             Ok(error) => {
-                                // Count this attempt before retrying, mirroring
-                                // the normal completion path below. The retry
-                                // logic relies on `attempt` starting at 1 to
-                                // bound the number of retries (and to avoid
-                                // underflow when computing the backoff delay).
                                 attempt += 1;
                                 match Self::retry_completion_error(
                                     this,
@@ -3880,7 +3870,7 @@ impl Thread {
             max_tokens,
             tokens_before,
             auto_compact_enabled: auto_compact.enabled,
-            auto_compact_threshold: auto_compact_threshold_display(auto_compact.threshold),
+            auto_compact_threshold: auto_compact.threshold.to_string(),
             auto_compact_threshold_tokens: auto_compact_threshold_token_count(
                 auto_compact.threshold,
                 max_tokens,
@@ -4169,25 +4159,8 @@ fn auto_compact_threshold_token_count(
     }
 }
 
-/// Renders the configured auto-compaction threshold back into the same string
-/// form a user would enter in settings (e.g. `"90%"`, `"120000"`, `"-20000"`),
-/// for use in telemetry.
-fn auto_compact_threshold_display(threshold: AutoCompactThreshold) -> String {
-    match threshold {
-        AutoCompactThreshold::Percentage(percent) => format!("{}%", percent * 100.0),
-        AutoCompactThreshold::TokensUsed(tokens) => tokens.to_string(),
-        AutoCompactThreshold::TokensRemaining(tokens) => format!("-{tokens}"),
-    }
-}
-
 /// Snapshot of the data needed to report an `"Agent Compaction Completed"`
 /// telemetry event, captured when a compaction starts.
-///
-/// The event is emitted once per logical compaction (retries are counted in
-/// `retries` rather than producing separate events). On success the event is
-/// deferred until the next completion request reports usage so that
-/// `tokens_after` reflects the real post-compaction context size; on failure or
-/// cancellation the event is emitted immediately with no `tokens_after`.
 struct CompactionTelemetry {
     /// `"auto"` for threshold-triggered compaction, `"manual"` for `/compact`.
     trigger: &'static str,
@@ -4197,7 +4170,6 @@ struct CompactionTelemetry {
     model: String,
     model_provider: String,
     thinking_effort: Option<String>,
-    /// The model's context window size.
     max_tokens: u64,
     /// Tokens in the context window immediately before compaction.
     tokens_before: Option<u64>,
