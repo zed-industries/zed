@@ -980,6 +980,17 @@ impl GitPanel {
             (repo_path, section)
         };
 
+        let selected_matching_key = self
+            .selected_entry
+            .and_then(|ix| self.entries.get(ix))
+            .and_then(|entry| entry.status_row())
+            .filter(|row| row.entry.repo_path == repo_path)
+            .map(|row| row.key());
+        let section = selected_matching_key
+            .as_ref()
+            .map(|key| key.section)
+            .or(section);
+
         let mut needs_rebuild = false;
         if let (Some(section), Some(tree_state)) = (section, self.view_mode.tree_state_mut()) {
             let mut current_dir = repo_path.parent();
@@ -1002,7 +1013,11 @@ impl GitPanel {
             self.update_visible_entries(window, cx);
         }
 
-        let Some(ix) = self.entry_by_path(&repo_path) else {
+        let Some(ix) = selected_matching_key
+            .as_ref()
+            .and_then(|key| self.entry_by_key(key))
+            .or_else(|| self.entry_by_path(&repo_path))
+        else {
             return;
         };
 
@@ -8224,7 +8239,7 @@ mod tests {
                 (Some(Section::Unstaged), None, None, None),
                 (
                     Some(Section::Unstaged),
-                    Some(partial_path),
+                    Some(partial_path.clone()),
                     Some(StageStatus::PartiallyStaged),
                     Some(FileStatus::Tracked(git::status::TrackedStatus {
                         index_status: StatusCode::Modified,
@@ -8240,6 +8255,20 @@ mod tests {
                 ),
             ],
         );
+
+        let worktree_id =
+            cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+        let project_path = ProjectPath {
+            worktree_id,
+            path: RelPath::unix("partial.rs").unwrap().into_arc(),
+        };
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(1);
+            panel.select_entry_by_path(project_path, window, cx);
+            let selected_row = panel.get_selected_entry().unwrap().status_row().unwrap();
+            assert_eq!(selected_row.entry.repo_path, partial_path);
+            assert_eq!(selected_row.section, Section::Staged);
+        });
     }
 
     #[test]
