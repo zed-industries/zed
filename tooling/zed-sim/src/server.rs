@@ -108,9 +108,11 @@ fn handle_launch(request: &mut Request, zed_binary: &Path, config: &AppConfig) -
         }
     };
 
-    // A request is either a static state or an impersonation by username.
+    // A request is a static state, an injected sim state, or an impersonation.
     let result = if let Some(username) = payload.get("impersonate").and_then(Value::as_str) {
         launch_impersonation(username, zed_binary, config)
+    } else if let Some(sim_state) = payload.get("sim_state").and_then(Value::as_str) {
+        launch_sim_state(sim_state, zed_binary)
     } else if let Some(state_id) = payload.get("state").and_then(Value::as_str) {
         match SimState::from_id(state_id) {
             Some(state) => launch_static(state, zed_binary),
@@ -152,6 +154,33 @@ fn launch_static(state: SimState, zed_binary: &Path) -> Result<String> {
     profile.write_settings(settings)?;
 
     profile.launch(zed_binary, &[])?;
+    Ok(profile.dir.display().to_string())
+}
+
+/// Launches an injected signed-in plan state (staff build only). Writes
+/// telemetry off so simulated sessions never reach production analytics, and
+/// passes the state via `ZED_SIM_STATE`. Fully offline — no backend, no token.
+fn launch_sim_state(state_id: &str, zed_binary: &Path) -> Result<String> {
+    const STATES: &[&str] = &["free", "pro", "trial", "trial_expired"];
+    anyhow::ensure!(
+        STATES.contains(&state_id),
+        "unknown sim state: {state_id:?}",
+    );
+
+    let profile = Profile::create()?;
+    let mut settings = Map::new();
+    settings.insert(
+        "credentials_url".to_string(),
+        Value::String(format!("zed-sim://{}", profile.id)),
+    );
+    // Suppress telemetry so injected sessions never pollute production analytics.
+    settings.insert(
+        "telemetry".to_string(),
+        serde_json::json!({ "diagnostics": false, "metrics": false }),
+    );
+    profile.write_settings(settings)?;
+
+    profile.launch(zed_binary, &[("ZED_SIM_STATE", state_id.to_string())])?;
     Ok(profile.dir.display().to_string())
 }
 

@@ -106,28 +106,36 @@
         <div class="soon">Loading…</div>
       </div>
 
-      <div class="group-label">Coming soon (Phase 2)</div>
+      <div class="group-label">Injected states (staff build only)</div>
 
-      <div class="card disabled">
+      <div class="card">
         <div>
           <div class="name">Pro</div>
-          <div class="desc">The Pro experience.</div>
+          <div class="desc">Signed in on Pro. Offline — no backend, no token.</div>
         </div>
-        <span class="soon">Soon</span>
+        <button onclick="simState('pro', this)">Launch</button>
       </div>
 
-      <div class="card disabled">
+      <div class="card">
         <div>
-          <div class="name">Pro Trial — active / expired</div>
-          <div class="desc">Mid-trial UX and the end-of-trial upsell flow.</div>
+          <div class="name">Pro Trial — active</div>
+          <div class="desc">Mid-trial UX.</div>
         </div>
-        <span class="soon">Soon</span>
+        <button onclick="simState('trial', this)">Launch</button>
+      </div>
+
+      <div class="card">
+        <div>
+          <div class="name">Pro Trial — expired</div>
+          <div class="desc">The end-of-trial upsell flow.</div>
+        </div>
+        <button onclick="simState('trial_expired', this)">Launch</button>
       </div>
 
       <div class="card disabled">
         <div>
           <div class="name">Business — member / admin</div>
-          <div class="desc">Business as a team member and with admin controls.</div>
+          <div class="desc">Needs organization modelling — deferred.</div>
         </div>
         <span class="soon">Soon</span>
       </div>
@@ -164,6 +172,19 @@
         try {
           const data = await post("/launch", { state });
           setStatus("Launched. Profile: " + data.profile, "ok");
+        } catch (err) {
+          setStatus("Failed: " + err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      async function simState(state, btn) {
+        btn.disabled = true;
+        setStatus("Launching " + state + "…");
+        try {
+          const data = await post("/launch", { sim_state: state });
+          setStatus("Launched " + state + ". Profile: " + data.profile, "ok");
         } catch (err) {
           setStatus("Failed: " + err.message, "err");
         } finally {
