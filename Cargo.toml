@@ -20,6 +20,7 @@ members = [
     "crates/auto_update_ui",
     "crates/aws_http_client",
     "crates/bedrock",
+    "crates/benchmarks",
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",

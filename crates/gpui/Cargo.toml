@@ -26,6 +26,7 @@ test-support = [
     "x11",
     "proptest",
 ]
+bench = ["test-support", "dep:criterion", "dep:hdrhistogram"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = [
@@ -53,6 +54,7 @@ backtrace = { workspace = true, optional = true }
 bitflags = { workspace = true, optional = true }
 
 collections.workspace = true
+criterion = { workspace = true, optional = true }
 ctor.workspace = true
 derive_more.workspace = true
 etagere = "0.2"
