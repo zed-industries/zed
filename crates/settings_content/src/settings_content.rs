@@ -709,7 +709,7 @@ pub struct GitPanelSettingsContent {
     /// Maximum length of the commit message title before a warning is shown.
     /// Set to 0 to disable.
     ///
-    /// Default: 72
+    /// Default: 0
     pub commit_title_max_length: Option<usize>,
 }
 

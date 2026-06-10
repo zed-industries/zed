@@ -243,7 +243,6 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "context_server",
- "criterion",
  "ctor",
  "db",
  "editor",
@@ -2122,6 +2121,37 @@ name = "beef"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
+
+[[package]]
+name = "benchmarks"
+version = "0.1.0"
+dependencies = [
+ "action_log",
+ "agent",
+ "agent_settings",
+ "assets",
+ "criterion",
+ "editor",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_platform",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "lsp",
+ "multi_buffer",
+ "project",
+ "prompt_store",
+ "rand 0.9.4",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "zed_actions",
+]
 
 [[package]]
 name = "bigdecimal"
@@ -5682,7 +5712,6 @@ dependencies = [
  "clock",
  "collections",
  "convert_case 0.11.0",
- "criterion",
  "ctor",
  "dap",
  "db",
@@ -7706,6 +7735,7 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-text",
  "core-video",
+ "criterion",
  "ctor",
  "derive_more",
  "embed-resource",
@@ -11470,8 +11500,7 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "9.0.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b44b771d4dd781ef14c84078693e67495da6b47f609f72e8a4da8420a861240e"
+source = "git+https://github.com/zed-industries/notify?rev=faecbc33db4f59313e5225ef766bfd9e54a54cfd#faecbc33db4f59313e5225ef766bfd9e54a54cfd"
 dependencies = [
  "bitflags 2.10.0",
  "inotify 0.11.0",
@@ -11501,8 +11530,7 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
+source = "git+https://github.com/zed-industries/notify?rev=faecbc33db4f59313e5225ef766bfd9e54a54cfd#faecbc33db4f59313e5225ef766bfd9e54a54cfd"
 dependencies = [
  "bitflags 2.10.0",
 ]
@@ -22803,7 +22831,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.7.0"
+version = "1.8.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

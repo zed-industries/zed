@@ -8039,7 +8039,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in comment prefix (e.g., `//` to `///`) trigger seperate rewraps
+    // Test that change in comment prefix (e.g., `//` to `///`) trigger separate rewraps
     assert_rewrap(
         indoc! {"
             «// A regular long long comment to be wrapped.
@@ -8055,7 +8055,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in indentation level trigger seperate rewraps
+    // Test that change in indentation level trigger separate rewraps
     assert_rewrap(
         indoc! {"
             fn foo() {
