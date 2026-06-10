@@ -13,9 +13,10 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use zeta_prompt::{
-    ZetaFormat, ZetaPromptInput, format_expected_output, format_zeta_prompt,
+    ZetaFormat, ZetaPromptInput, format_edit_history_within_budget, format_expected_output,
+    format_zeta_prompt,
     hashed_regions::{self, SnippetMarkers, SnippetSource},
-    resolve_cursor_region,
+    max_edit_event_count_for_format, resolve_cursor_region,
 };
 
 fn resolved_excerpt_ranges_for_format(
@@ -361,8 +362,7 @@ impl TeacherJumpsPrompt {
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
     pub(crate) const NO_EDITS: &str = "NO_EDITS";
 
-    /// Truncate edit history to this number of last lines
-    const MAX_HISTORY_LINES: usize = 128;
+    const MAX_HISTORY_TOKENS: usize = 4000;
 
     pub const DEFAULT_RELATED_FILES_BUDGET: usize = 8192;
 
@@ -373,7 +373,13 @@ impl TeacherJumpsPrompt {
             .context("example is missing prompt inputs")?;
         let marker_table = hashed_regions::build_marker_table(prompt_inputs);
 
-        let edit_history = Self::format_edit_history(&example.spec.edit_history);
+        let edit_history = format_edit_history_within_budget(
+            &prompt_inputs.events,
+            "",
+            "",
+            Self::MAX_HISTORY_TOKENS,
+            max_edit_event_count_for_format(&ZetaFormat::V0327SingleFile),
+        );
         let context = Self::format_context(prompt_inputs, &marker_table, related_files_budget);
         let cursor_excerpt = Self::format_cursor_excerpt(example, prompt_inputs, &marker_table)?;
 
@@ -623,21 +629,6 @@ impl TeacherJumpsPrompt {
             related_path.iter().skip(1).collect()
         } else {
             related_path.to_path_buf()
-        }
-    }
-
-    fn format_edit_history(edit_history: &str) -> String {
-        let lines: Vec<&str> = edit_history.lines().collect();
-
-        if lines.is_empty() {
-            return "(No edit history)".to_string();
-        }
-
-        if lines.len() > Self::MAX_HISTORY_LINES {
-            let truncated = lines[lines.len() - Self::MAX_HISTORY_LINES..].join("\n");
-            format!("{truncated}\n[...truncated...]")
-        } else {
-            lines.join("\n")
         }
     }
 
