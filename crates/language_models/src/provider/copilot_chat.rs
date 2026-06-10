@@ -1062,7 +1062,8 @@ fn into_copilot_chat(
                         | MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
-                        | MessageContent::Image(_) => None,
+                        | MessageContent::Image(_)
+                        | MessageContent::Compaction { .. } => None,
                     }) {
                         buffer.push_str(string);
                     }
@@ -1189,6 +1190,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        compact_at_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

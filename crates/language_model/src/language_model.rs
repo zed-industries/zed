@@ -195,6 +195,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..
                                 }) => None,
+                                Ok(LanguageModelCompletionEvent::Compaction { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None

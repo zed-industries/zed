@@ -12,9 +12,10 @@ use std::str::FromStr;
 
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
-    CacheTtl, ContentDelta, Event, ImageSource, Message, RequestContent, ResponseContent,
-    StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
-    completion_error_from_anthropic, completion_error_from_anthropic_api,
+    CacheTtl, CompactionTrigger, ContentDelta, ContextManagement, ContextManagementEdit, Event,
+    ImageSource, Message, RequestContent, ResponseContent, StringOrContents, Thinking, Tool,
+    ToolChoice, ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
+    completion_error_from_anthropic_api,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -45,6 +46,10 @@ fn set_cache_control(content: &mut RequestContent, cache_control: Option<CacheCo
             ..
         }
         | RequestContent::ToolResult {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::Compaction {
             cache_control: target,
             ..
         } => {
@@ -148,6 +153,10 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
                 cache_control: None,
             })
         }
+        MessageContent::Compaction { content } => Some(RequestContent::Compaction {
+            content,
+            cache_control: None,
+        }),
     }
 }
 
@@ -317,6 +326,11 @@ pub fn into_anthropic(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        context_management: request.compact_at_tokens.map(|value| ContextManagement {
+            edits: vec![ContextManagementEdit::Compact {
+                trigger: Some(CompactionTrigger::InputTokens { value }),
+            }],
+        }),
     }
 }
 
@@ -385,6 +399,9 @@ impl AnthropicEventMapper {
                     );
                     Vec::new()
                 }
+                ResponseContent::Compaction { content } => {
+                    vec![Ok(LanguageModelCompletionEvent::Compaction { content })]
+                }
             },
             Event::ContentBlockDelta { index, delta } => match delta {
                 ContentDelta::TextDelta { text } => {
@@ -401,6 +418,9 @@ impl AnthropicEventMapper {
                         text: "".to_string(),
                         signature: Some(signature),
                     })]
+                }
+                ContentDelta::CompactionDelta { content } => {
+                    vec![Ok(LanguageModelCompletionEvent::Compaction { content })]
                 }
                 ContentDelta::InputJsonDelta { partial_json } => {
                     if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
@@ -534,7 +554,7 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AnthropicModelMode;
+    use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
     use language_model_core::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 
     #[test]
@@ -573,6 +593,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -593,7 +614,8 @@ mod tests {
                 | RequestContent::Thinking { cache_control, .. }
                 | RequestContent::Image { cache_control, .. }
                 | RequestContent::ToolUse { cache_control, .. }
-                | RequestContent::ToolResult { cache_control, .. } => *cache_control,
+                | RequestContent::ToolResult { cache_control, .. }
+                | RequestContent::Compaction { cache_control, .. } => *cache_control,
                 RequestContent::RedactedThinking { .. } => None,
             };
             assert!(
@@ -677,6 +699,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -734,6 +757,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("xhigh".into()),
             speed: None,
+            compact_at_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -785,6 +809,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -822,6 +847,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             speed: None,
+            compact_at_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,
@@ -915,5 +941,144 @@ mod tests {
             "An assistant message whose only content was an unsigned thinking block \
              should be omitted entirely"
         );
+    }
+
+    #[test]
+    fn test_compact_at_tokens_maps_to_context_management() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Disabled,
+        );
+
+        assert_eq!(
+            serde_json::to_value(&anthropic_request.context_management).unwrap(),
+            serde_json::json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": { "type": "input_tokens", "value": 100_000 }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_no_context_management_without_compact_at_tokens() {
+        let result =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
+
+        assert!(result.context_management.is_none());
+    }
+
+    #[test]
+    fn test_compaction_content_replayed_as_compaction_block() {
+        let result = request_with_assistant_content(vec![
+            MessageContent::Compaction {
+                content: Some("Summary of the conversation so far.".to_string()),
+            },
+            MessageContent::Text("Response".to_string()),
+        ]);
+
+        let assistant_message = result
+            .messages
+            .iter()
+            .find(|m| m.role == crate::Role::Assistant)
+            .expect("assistant message should exist");
+
+        assert_eq!(
+            serde_json::to_value(&assistant_message.content[0]).unwrap(),
+            serde_json::json!({
+                "type": "compaction",
+                "content": "Summary of the conversation so far."
+            })
+        );
+    }
+
+    #[test]
+    fn test_event_mapper_maps_compaction_block_and_deltas() {
+        let mut mapper = AnthropicEventMapper::new();
+
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "compaction", "content": null }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "compaction_delta", "content": "Summary chunk" }
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        let events = events
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all events should map successfully");
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::Compaction { content: None },
+                LanguageModelCompletionEvent::Compaction {
+                    content: Some("Summary chunk".to_string())
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_usage_iterations_parsed_from_message_delta() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 39,
+                "iterations": [
+                    { "type": "compaction", "input_tokens": 180000, "output_tokens": 1200 },
+                    { "type": "message", "input_tokens": 100, "output_tokens": 39 }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let Event::MessageDelta { usage, .. } = event else {
+            panic!("expected message_delta event");
+        };
+        let iterations = usage.iterations.as_deref().expect("iterations expected");
+        assert!(matches!(
+            iterations[0],
+            UsageIteration {
+                iteration_type: UsageIterationType::Compaction,
+                input_tokens: Some(180000),
+                ..
+            }
+        ));
+        assert!(matches!(
+            iterations[1],
+            UsageIteration {
+                iteration_type: UsageIterationType::Message,
+                input_tokens: Some(100),
+                ..
+            }
+        ));
     }
 }

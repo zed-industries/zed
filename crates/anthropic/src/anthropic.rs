@@ -23,6 +23,9 @@ const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum AnthropicModelMode {
@@ -619,6 +622,12 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "compaction")]
+    Compaction {
+        content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -650,6 +659,8 @@ pub enum ResponseContent {
         name: String,
         input: serde_json::Value,
     },
+    #[serde(rename = "compaction")]
+    Compaction { content: Option<String> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -728,6 +739,32 @@ pub enum StringOrContents {
     Content(Vec<RequestContent>),
 }
 
+/// Server-side context management configuration.
+///
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextManagement {
+    pub edits: Vec<ContextManagementEdit>,
+}
+
+/// A context management edit strategy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContextManagementEdit {
+    #[serde(rename = "compact_20260112")]
+    Compact {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<CompactionTrigger>,
+    },
+}
+
+/// When to trigger server-side compaction.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CompactionTrigger {
+    InputTokens { value: u64 },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
@@ -747,6 +784,8 @@ pub struct Request {
     /// we don't have to micromanage per-block breakpoints ourselves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<ContextManagement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -793,6 +832,34 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
+    /// Only populated when a new compaction is triggered during the request.
+    /// The top-level token fields exclude compaction iterations, so total
+    /// billable usage is the sum across all iterations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<UsageIteration>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UsageIteration {
+    #[serde(rename = "type")]
+    pub iteration_type: UsageIterationType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageIterationType {
+    Compaction,
+    Message,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -845,6 +912,8 @@ pub enum ContentDelta {
     SignatureDelta { signature: String },
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
+    #[serde(rename = "compaction_delta")]
+    CompactionDelta { content: Option<String> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
