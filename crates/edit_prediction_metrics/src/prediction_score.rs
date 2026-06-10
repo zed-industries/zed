@@ -123,26 +123,6 @@ impl PredictionScore {
             false_negatives: self.exact_lines_fn,
         }
     }
-
-    pub fn jump_location_lines_counts(&self) -> Option<ClassificationMetrics> {
-        self.jump_location
-            .as_ref()
-            .map(|location| ClassificationMetrics {
-                true_positives: location.lines_tp,
-                false_positives: location.lines_fp,
-                false_negatives: location.lines_fn,
-            })
-    }
-
-    pub fn jump_location_files_counts(&self) -> Option<ClassificationMetrics> {
-        self.jump_location
-            .as_ref()
-            .map(|location| ClassificationMetrics {
-                true_positives: location.files_tp,
-                false_positives: location.files_fp,
-                false_negatives: location.files_fn,
-            })
-    }
 }
 
 impl Default for PredictionScore {
