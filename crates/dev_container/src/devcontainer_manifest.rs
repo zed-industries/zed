@@ -2141,7 +2141,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         let devcontainer_up = self.run_dev_container(build_resources).await?;
 
-        self.run_remote_scripts(&devcontainer_up, true).await?;
+        self.run_remote_scripts(&devcontainer_up, true, true).await?;
 
         Ok(devcontainer_up)
     }
@@ -2150,6 +2150,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         &self,
         devcontainer_up: &DevContainerUp,
         new_container: bool,
+        container_started: bool,
     ) -> Result<(), DevContainerError> {
         let ConfigStatus::VariableParsed(config) = &self.config else {
             log::error!("Config not yet parsed, cannot proceed with remote scripts");
@@ -2202,18 +2203,20 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 }
             }
         }
-        if let Some(post_start_command) = &config.post_start_command {
-            for (command_name, command) in post_start_command.script_commands() {
-                log::debug!("Running post start command {command_name}");
-                self.docker_client
-                    .run_docker_exec(
-                        &devcontainer_up.container_id,
-                        &remote_folder,
-                        &devcontainer_up.remote_user,
-                        &devcontainer_up.remote_env,
-                        command,
-                    )
-                    .await?;
+        if container_started {
+            if let Some(post_start_command) = &config.post_start_command {
+                for (command_name, command) in post_start_command.script_commands() {
+                    log::debug!("Running post start command {command_name}");
+                    self.docker_client
+                        .run_docker_exec(
+                            &devcontainer_up.container_id,
+                            &remote_folder,
+                            &devcontainer_up.remote_user,
+                            &devcontainer_up.remote_env,
+                            command,
+                        )
+                        .await?;
+                }
             }
         }
         if let Some(post_attach_command) = &config.post_attach_command {
@@ -2259,7 +2262,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
             let docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
 
-            if !docker_inspect.is_running() {
+            let container_started = !docker_inspect.is_running();
+            if container_started {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
 
                 match self.dev_container().build_type() {
@@ -2286,7 +2290,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 remote_env,
             };
 
-            self.run_remote_scripts(&dev_container_up, false).await?;
+            self.run_remote_scripts(&dev_container_up, false, container_started).await?;
 
             Ok(Some(dev_container_up))
         } else {
