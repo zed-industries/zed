@@ -124,6 +124,9 @@ impl Render for BlameIndicator {
 
         h_flex()
             .min_w_0()
+            // The status bar's right cluster never shrinks, so truncation
+            // only works against an explicit cap.
+            .max_w_96()
             .overflow_x_hidden()
             .child(Label::new(text).size(LabelSize::Small).truncate())
             .into_any_element()
