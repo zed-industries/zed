@@ -800,6 +800,8 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
+    // This cfg must match the `bench_dispatcher` module's, which implements
+    // this method whenever it compiles.
     #[cfg(any(test, feature = "bench"))]
     fn as_bench(&self) -> Option<&BenchDispatcher> {
         None

@@ -15,11 +15,6 @@ use std::{
     sync::{self, Arc},
 };
 
-/// The backing scale factor every test window reports, mirroring a retina
-/// display. Scene primitives are produced in pixels scaled by this factor, so
-/// rendering must use the same value to size its target.
-const TEST_WINDOW_SCALE_FACTOR: f32 = 2.0;
-
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) handle: AnyWindowHandle,
@@ -153,7 +148,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        TEST_WINDOW_SCALE_FACTOR
+        2.0
     }
 
     fn appearance(&self) -> WindowAppearance {
@@ -298,11 +293,9 @@ impl PlatformWindow for TestWindow {
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn draw(&self, scene: &Scene) {
+        let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
-        // Use the constant directly: calling `self.scale_factor()` here would
-        // re-lock the (non reentrant) state mutex and deadlock.
-        let device_size: Size<DevicePixels> =
-            state.bounds.size.to_device_pixels(TEST_WINDOW_SCALE_FACTOR);
+        let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
         if let Some(renderer) = &mut state.renderer {
             renderer.render_scene(scene, device_size).warn_on_err();
         }
@@ -314,10 +307,11 @@ impl PlatformWindow for TestWindow {
 
     #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
+        let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
         let size = state.bounds.size;
         if let Some(renderer) = &mut state.renderer {
-            let device_size: Size<DevicePixels> = size.to_device_pixels(TEST_WINDOW_SCALE_FACTOR);
+            let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
             renderer.render_scene_to_image(scene, device_size)
         } else {
             anyhow::bail!("render_to_image not available: no HeadlessRenderer configured")
