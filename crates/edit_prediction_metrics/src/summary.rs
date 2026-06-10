@@ -13,6 +13,7 @@ pub struct QaSummaryData {
 pub struct PredictionSummaryInput<'a> {
     pub score: &'a PredictionScore,
     pub qa: Option<QaSummaryData>,
+    pub retrieved_context_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -80,6 +81,12 @@ pub struct SummaryJson {
     pub editable_context_files_fp: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editable_context_files_fn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_retrieved_context_bytes: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_retrieved_context_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieved_context_examples: Option<usize>,
 }
 
 pub fn compute_summary<'a>(
@@ -128,6 +135,8 @@ pub fn compute_summary<'a>(
     let mut editable_context_files_tp: usize = 0;
     let mut editable_context_files_fp: usize = 0;
     let mut editable_context_files_fn: usize = 0;
+    let mut retrieved_context_bytes_total: usize = 0;
+    let mut retrieved_context_bytes_count: usize = 0;
 
     for prediction in predictions {
         let score = prediction.score;
@@ -186,6 +195,11 @@ pub fn compute_summary<'a>(
             recall_rate_sum += recall_rate;
             recall_rate_count += 1;
         }
+        if let Some(retrieved_context_bytes) = prediction.retrieved_context_bytes {
+            retrieved_context_bytes_total += retrieved_context_bytes;
+            retrieved_context_bytes_count += 1;
+        }
+
         if let Some(coverage) = &score.editable_context_coverage {
             editable_context_lines_precision_sum += coverage.lines_precision;
             editable_context_lines_recall_sum += coverage.lines_recall;
@@ -364,6 +378,21 @@ pub fn compute_summary<'a>(
     } else {
         None
     };
+    let avg_retrieved_context_bytes = if retrieved_context_bytes_count > 0 {
+        Some(retrieved_context_bytes_total as f64 / retrieved_context_bytes_count as f64)
+    } else {
+        None
+    };
+    let total_retrieved_context_bytes = if retrieved_context_bytes_count > 0 {
+        Some(retrieved_context_bytes_total)
+    } else {
+        None
+    };
+    let retrieved_context_examples = if retrieved_context_bytes_count > 0 {
+        Some(retrieved_context_bytes_count)
+    } else {
+        None
+    };
 
     SummaryJson {
         total_examples: total_scores,
@@ -414,5 +443,8 @@ pub fn compute_summary<'a>(
         editable_context_files_tp,
         editable_context_files_fp,
         editable_context_files_fn,
+        avg_retrieved_context_bytes,
+        total_retrieved_context_bytes,
+        retrieved_context_examples,
     }
 }

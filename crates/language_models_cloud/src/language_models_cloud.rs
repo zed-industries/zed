@@ -55,6 +55,11 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
     fn cached_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
     fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+
+    /// Whether the user has consented to upstream providers retaining
+    /// inference logs for models that require it (see
+    /// [`LanguageModel::requires_data_retention`]).
+    fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool;
 }
 
 /// Sends an authenticated request to the Zed LLM service, retrying once with
@@ -298,6 +303,27 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.is_latest
     }
 
+    fn requires_data_retention(&self) -> bool {
+        // Anthropic cannot offer Fable models with Zero Data Retention
+        self.id
+            .0
+            .as_ref()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+    }
+
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self
+            .id
+            .0
+            .as_ref()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+        {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
     fn supports_tools(&self) -> bool {
         self.model.supports_tools
     }
@@ -379,6 +405,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             LanguageModelCompletionError,
         >,
     > {
+        if self.requires_data_retention() && !self.token_provider.has_data_retention_consent(cx) {
+            let model_name = self.model.display_name.clone();
+            return async move {
+                Err(LanguageModelCompletionError::DataRetentionConsentRequired { model_name })
+            }
+            .boxed();
+        }
+
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();

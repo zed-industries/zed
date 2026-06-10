@@ -11,9 +11,10 @@ use project::{DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
+use std::cell::Cell;
 use std::future::Future;
-
 use std::path::PathBuf;
+use std::rc::Rc;
 use ui::prelude::*;
 use util::ResultExt;
 use util::path_list::PathList;
@@ -288,6 +289,13 @@ pub struct MultiWorkspace {
     retained_workspaces: Vec<Entity<Workspace>>,
     project_groups: Vec<ProjectGroupState>,
     active_workspace: Entity<Workspace>,
+    /// Source of truth for which workspace is presented in this window, shared
+    /// with each member `Workspace` so they can tell whether they own the
+    /// platform window's title and edited indicator. This only exists to prevent
+    /// Workspaces from having to read their parent MultiWorkspace to check
+    /// chrome ownership, as that might cause a double lease. Kept in sync with
+    /// `active_workspace`.
+    active_workspace_id: Rc<Cell<EntityId>>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
@@ -337,14 +345,16 @@ impl MultiWorkspace {
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
         let weak_self = cx.weak_entity();
+        let active_workspace_id = Rc::new(Cell::new(workspace.entity_id()));
         workspace.update(cx, |workspace, cx| {
-            workspace.set_multi_workspace(weak_self, cx);
+            workspace.set_multi_workspace(weak_self, active_workspace_id.clone(), cx);
         });
         Self {
             window_id: window.window_handle().window_id(),
             retained_workspaces: Vec::new(),
             project_groups: Vec::new(),
             active_workspace: workspace,
+            active_workspace_id,
             sidebar: None,
             sidebar_open: false,
             sidebar_overlay: None,
@@ -745,8 +755,9 @@ impl MultiWorkspace {
     ) {
         Self::subscribe_to_workspace(workspace, window, cx);
         let weak_self = cx.weak_entity();
+        let active_workspace_id = self.active_workspace_id.clone();
         workspace.update(cx, |workspace, cx| {
-            workspace.set_multi_workspace(weak_self, cx);
+            workspace.set_multi_workspace(weak_self, active_workspace_id, cx);
         });
 
         let entity = cx.entity();
@@ -1488,6 +1499,10 @@ impl MultiWorkspace {
         }
 
         self.active_workspace = workspace;
+        // Publish the new active workspace before anyone reads the shared cell
+        // to decide who owns the window chrome.
+        self.active_workspace_id
+            .set(self.active_workspace.entity_id());
 
         let active_key = self.active_workspace.read(cx).project_group_key(cx);
         if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == active_key) {
@@ -1497,6 +1512,14 @@ impl MultiWorkspace {
         if !should_retain_workspaces && !old_active_was_retained {
             self.detach_workspace(&old_active_workspace, cx);
         }
+
+        // The platform window is shared across all workspaces in this window.
+        // The previously-active workspace left the title and edited indicator
+        // reflecting its own state, so re-apply them from the newly-active
+        // workspace (which is now the chrome owner per `owns_window_chrome`).
+        self.active_workspace.update(cx, |workspace, cx| {
+            workspace.refresh_window_state(window, cx);
+        });
 
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace });
         self.serialize(cx);

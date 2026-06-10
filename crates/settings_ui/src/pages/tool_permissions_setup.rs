@@ -1422,12 +1422,6 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
-            // update_plan updates UI-visible planning state but does not use
-            // tool permission rules.
-            "update_plan",
-            // update_title updates UI-visible session metadata but
-            // does not use tool permission rules.
-            "update_title",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

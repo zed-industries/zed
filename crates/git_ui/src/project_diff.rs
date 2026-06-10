@@ -1,6 +1,5 @@
 use crate::{
-    branch_picker,
-    conflict_view::ConflictAddon,
+    branch_picker, conflict_view,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
 };
@@ -28,7 +27,7 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
+    ConflictSet, Project, ProjectPath,
     git_store::{
         Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
@@ -36,6 +35,7 @@ use project::{
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -71,25 +71,25 @@ actions!(
     ]
 );
 
+struct BufferSubscriptions {
+    _diff: Entity<BufferDiff>,
+    _diff_subscription: Subscription,
+    _conflict_set: Entity<ConflictSet>,
+    _conflict_set_subscription: Subscription,
+}
+
 pub struct ProjectDiff {
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<SplittableEditor>,
-    buffer_diff_subscriptions: HashMap<Arc<RelPath>, (Entity<BufferDiff>, Subscription)>,
+    buffer_subscriptions: HashMap<Arc<RelPath>, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
     review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RefreshReason {
-    DiffChanged,
-    StatusesChanged,
-    EditorSaved,
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
@@ -562,14 +562,14 @@ impl ProjectDiff {
                 BranchDiffEvent::FileListChanged => {
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        async |cx| Self::refresh(this, cx).await
                     })
                 }
                 BranchDiffEvent::DiffBaseChanged => {
                     this.pending_scroll.take();
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        async |cx| Self::refresh(this, cx).await
                     })
                 }
             },
@@ -588,7 +588,7 @@ impl ProjectDiff {
                 this._task = {
                     window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        async |cx| Self::refresh(this, cx).await
                     })
                 }
             }
@@ -599,7 +599,7 @@ impl ProjectDiff {
 
         let task = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+            async |cx| Self::refresh(this, cx).await
         });
 
         Self {
@@ -609,7 +609,7 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
-            buffer_diff_subscriptions: Default::default(),
+            buffer_subscriptions: Default::default(),
             pending_scroll: None,
             review_comment_count: 0,
             _task: task,
@@ -795,9 +795,8 @@ impl ProjectDiff {
                     .ok();
             }
             EditorEvent::Saved => {
-                self._task = cx.spawn_in(window, async move |this, cx| {
-                    Self::refresh(this, RefreshReason::EditorSaved, cx).await
-                });
+                self._task =
+                    cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
             }
             _ => {}
         }
@@ -815,26 +814,57 @@ impl ProjectDiff {
         file_status: FileStatus,
         buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
+        conflict_set: Entity<ConflictSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<BufferId> {
-        let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
-            this._task = window.spawn(cx, {
-                let this = cx.weak_entity();
-                async |cx| Self::refresh(this, RefreshReason::DiffChanged, cx).await
-            })
+        let diff_subscription = cx.subscribe_in(&diff, window, {
+            let path_key = path_key.clone();
+            let buffer = buffer.clone();
+            let diff = diff.clone();
+            let conflict_set = conflict_set.clone();
+            move |this, _, event, window, cx| match event {
+                buffer_diff::BufferDiffEvent::DiffChanged(_) => {
+                    this.buffer_ranges_changed(
+                        path_key.clone(),
+                        file_status,
+                        buffer.clone(),
+                        diff.clone(),
+                        conflict_set.clone(),
+                        window,
+                        cx,
+                    );
+                }
+                buffer_diff::BufferDiffEvent::BaseTextChanged
+                | buffer_diff::BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+            }
         });
-        self.buffer_diff_subscriptions
-            .insert(path_key.path.clone(), (diff.clone(), subscription));
-
-        // TODO(split-diff) we shouldn't have a conflict addon when split
-        let conflict_addon = self
-            .editor
-            .read(cx)
-            .rhs_editor()
-            .read(cx)
-            .addon::<ConflictAddon>()
-            .expect("project diff editor should have a conflict addon");
+        let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
+            let path_key = path_key.clone();
+            let buffer = buffer.clone();
+            let diff = diff.clone();
+            let conflict_set = conflict_set.clone();
+            move |this, _, _, window, cx| {
+                this.buffer_ranges_changed(
+                    path_key.clone(),
+                    file_status,
+                    buffer.clone(),
+                    diff.clone(),
+                    conflict_set.clone(),
+                    window,
+                    cx,
+                )
+            }
+        });
+        self.buffer_subscriptions.insert(
+            path_key.path.clone(),
+            BufferSubscriptions {
+                _diff: diff.clone(),
+                _diff_subscription: diff_subscription,
+                _conflict_set: conflict_set.clone(),
+                _conflict_set_subscription: conflict_set_subscription,
+            },
+        );
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_snapshot = diff.read(cx).snapshot(cx);
@@ -846,11 +876,9 @@ impl ProjectDiff {
                     &snapshot,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
-            let conflicts = conflict_addon
-                .conflict_set(snapshot.remote_id())
-                .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
-                .unwrap_or_default();
+            let conflicts = conflict_set.read(cx).snapshot();
             let mut conflicts = conflicts
+                .conflicts
                 .iter()
                 .map(|conflict| conflict.range.to_point(&snapshot))
                 .peekable();
@@ -874,6 +902,9 @@ impl ProjectDiff {
                 diff,
                 cx,
             );
+            editor.rhs_editor().update(cx, |editor, cx| {
+                conflict_view::buffer_ranges_updated(editor, conflict_set, cx);
+            });
             (was_empty, is_newly_added)
         });
 
@@ -921,19 +952,38 @@ impl ProjectDiff {
         needs_fold
     }
 
+    fn buffer_ranges_changed(
+        &mut self,
+        path_key: PathKey,
+        file_status: FileStatus,
+        buffer: Entity<Buffer>,
+        diff: Entity<BufferDiff>,
+        conflict_set: Entity<ConflictSet>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if buffer.read(cx).is_dirty() {
+            return;
+        }
+        self.register_buffer(
+            path_key,
+            file_status,
+            buffer,
+            diff,
+            conflict_set,
+            window,
+            cx,
+        );
+    }
+
     #[instrument(skip(this, cx))]
-    pub async fn refresh(
-        this: WeakEntity<Self>,
-        reason: RefreshReason,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let mut path_keys = Vec::new();
-        let buffers_to_load = this.update(cx, |this, cx| {
+    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+        let entries = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-            let mut previous_buffers = this
+            let mut previous_paths = this
                 .multibuffer
                 .read(cx)
                 .snapshot(cx)
@@ -941,73 +991,56 @@ impl ProjectDiff {
                 .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
                 .collect::<HashMap<_, _>>();
 
+            let mut entries = BTreeMap::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
 
-                path_keys = Vec::with_capacity(buffers_to_load.len());
-                for entry in buffers_to_load.iter() {
-                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                    let path_key =
-                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
-                    previous_buffers.remove(&path_key);
-                    path_keys.push(path_key)
+                for diff_buffer in buffers_to_load {
+                    let sort_prefix =
+                        sort_prefix(&repo, &diff_buffer.repo_path, diff_buffer.file_status, cx);
+                    let path_key = PathKey::with_sort_prefix(
+                        sort_prefix,
+                        diff_buffer.repo_path.as_ref().clone(),
+                    );
+                    previous_paths.remove(&path_key);
+                    entries.insert(path_key, diff_buffer);
                 }
             }
 
             this.editor.update(cx, |editor, cx| {
-                for (path, buffer_id) in previous_buffers {
-                    if let Some(buffer) = this.multibuffer.read(cx).buffer(buffer_id) {
-                        let skip = match reason {
-                            RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
-                                buffer.read(cx).is_dirty()
-                            }
-                            RefreshReason::StatusesChanged => false,
-                        };
-                        if skip {
-                            continue;
-                        }
-                    }
-
-                    this.buffer_diff_subscriptions.remove(&path.path);
+                for (path, buffer_id) in previous_paths {
+                    this.buffer_subscriptions.remove(&path.path);
+                    editor.rhs_editor().update(cx, |editor, cx| {
+                        conflict_view::buffers_removed(editor, &[buffer_id], cx);
+                    });
                     let _span = ztracing::info_span!("remove_excerpts_for_path");
                     _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
                 }
             });
-            buffers_to_load
+
+            entries
         })?;
 
         let mut buffers_to_fold = Vec::new();
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys) {
-            if let Some((buffer, diff)) = entry.load.await.log_err() {
+        for (path_key, entry) in entries {
+            if let Some((buffer, diff, conflict_set)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        let multibuffer = this.multibuffer.read(cx);
-                        let skip = multibuffer.buffer(buffer.read(cx).remote_id()).is_some()
-                            && multibuffer
-                                .diff_for(buffer.read(cx).remote_id())
-                                .is_some_and(|prev_diff| prev_diff.entity_id() == diff.entity_id())
-                            && match reason {
-                                RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
-                                    buffer.read(cx).is_dirty()
-                                }
-                                RefreshReason::StatusesChanged => false,
-                            };
-                        if !skip {
-                            if let Some(buffer_id) = this.register_buffer(
-                                path_key,
-                                entry.file_status,
-                                buffer,
-                                diff,
-                                window,
-                                cx,
-                            ) {
-                                buffers_to_fold.push(buffer_id);
-                            }
+                        if let Some(buffer_id) = this.register_buffer(
+                            path_key,
+                            entry.file_status,
+                            buffer,
+                            diff,
+                            conflict_set,
+                            window,
+                            cx,
+                        ) {
+                            buffers_to_fold.push(buffer_id);
                         }
                     })
                     .ok();
@@ -2242,10 +2275,7 @@ mod tests {
         );
     }
 
-    use crate::{
-        conflict_view::resolve_conflict,
-        project_diff::{self, ProjectDiff},
-    };
+    use crate::project_diff::{self, ProjectDiff};
 
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
@@ -2294,14 +2324,13 @@ mod tests {
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
-        cx.assert_excerpts_with_selections(indoc!(
+        cx.set_selections_state(indoc!(
             "
-            [EXCERPT]
             before
             really changed
-            [EXCERPT]
-            [FOLDED]
-            [EXCERPT]
+
+            deleted
+
             ˇcreated
         "
         ));
@@ -2417,89 +2446,6 @@ mod tests {
         cx.dispatch_action(editor::actions::MoveToBeginning);
 
         cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
-    }
-
-    #[gpui::test]
-    async fn test_saving_resolved_conflicts(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "foo": "<<<<<<< x\nours\n=======\ntheirs\n>>>>>>> y\n",
-            }),
-        )
-        .await;
-        fs.set_status_for_repo(
-            Path::new(path!("/project/.git")),
-            &[(
-                "foo",
-                UnmergedStatus {
-                    first_head: UnmergedStatusCode::Updated,
-                    second_head: UnmergedStatusCode::Updated,
-                }
-                .into(),
-            )],
-        );
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
-        cx.run_until_parked();
-
-        cx.update(|window, cx| {
-            let editor = diff.read(cx).editor.read(cx).rhs_editor().clone();
-            let excerpts = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .excerpts()
-                .collect::<Vec<_>>();
-            assert_eq!(excerpts.len(), 1);
-            let buffer = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .next()
-                .unwrap();
-            let buffer_id = buffer.read(cx).remote_id();
-            let conflict_set = diff
-                .read(cx)
-                .editor
-                .read(cx)
-                .rhs_editor()
-                .read(cx)
-                .addon::<ConflictAddon>()
-                .unwrap()
-                .conflict_set(buffer_id)
-                .unwrap();
-            assert!(conflict_set.read(cx).has_conflict);
-            let snapshot = conflict_set.read(cx).snapshot();
-            assert_eq!(snapshot.conflicts.len(), 1);
-
-            let ours_range = snapshot.conflicts[0].ours.clone();
-
-            resolve_conflict(
-                editor.downgrade(),
-                snapshot.conflicts[0].clone(),
-                vec![ours_range],
-                window,
-                cx,
-            )
-        })
-        .await;
-
-        let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
-        let contents = String::from_utf8(contents).unwrap();
-        assert_eq!(contents, "ours\n");
     }
 
     #[gpui::test(iterations = 50)]

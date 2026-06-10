@@ -271,7 +271,7 @@ impl RenderOnce for ThreadItem {
         let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
             .width(px(64.0))
             .right(px(-10.0))
-            .gradient_stop(0.75)
+            .gradient_stop(0.7)
             .group_name("thread-item");
 
         let separator_color = Color::Custom(color.text_muted.opacity(0.4));
@@ -453,20 +453,20 @@ impl RenderOnce for ThreadItem {
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
                             let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
-                                .width(px(80.0))
+                                .width(px(120.0))
                                 .right(px(8.))
-                                .gradient_stop(0.80)
+                                .gradient_stop(0.90)
                                 .group_name("thread-item");
 
                             this.child(
                                 h_flex()
                                     .relative()
                                     .pr_1p5()
+                                    .child(overlay)
+                                    .child(slot)
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
-                                    })
-                                    .child(overlay)
-                                    .child(slot),
+                                    }),
                             )
                         })
                     }),
@@ -482,7 +482,6 @@ impl RenderOnce for ThreadItem {
                                     Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)),
                                 ),
                             )
-                            // .child(dot_separator())
                         })
                         .when(
                             has_project_name || has_project_paths || has_worktree,
