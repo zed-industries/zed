@@ -351,13 +351,22 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
 
 /// Whether an environment variable should be forwarded into the Linux sandbox.
 ///
-/// Most variables are safe to carry across, but a few hold Windows-specific
-/// values that would be meaningless or actively break the command inside WSL:
-/// `PATH` would shadow WSL's own `PATH` and stop the shell from finding Linux
-/// executables, and the temp-dir variables point at Windows paths that don't
-/// exist in WSL (bwrap provides a fresh tmpfs `/tmp` instead). Matched
-/// case-insensitively because Windows environment variable names are.
+/// `bwrap --setenv` calls `setenv(3)`, which rejects names that are empty or
+/// contain `=`. Windows process environments include such entries — most
+/// notably the per-drive current-directory pseudo-variables (`=C:`, `=D:`,
+/// ...) Windows keeps in the environment block — so they must be skipped or
+/// bwrap aborts with "setenv failed".
+///
+/// Beyond that, a few variables hold Windows-specific values that would be
+/// meaningless or actively break the command inside WSL: `PATH` would shadow
+/// WSL's own `PATH` and stop the shell from finding Linux executables, and the
+/// temp-dir variables point at Windows paths that don't exist in WSL (bwrap
+/// provides a fresh tmpfs `/tmp` instead). Matched case-insensitively because
+/// Windows environment variable names are.
 fn is_forwardable_env_var(name: &str) -> bool {
+    if name.is_empty() || name.contains('=') {
+        return false;
+    }
     const BLOCKED: [&str; 4] = ["PATH", "TMPDIR", "TMP", "TEMP"];
     !BLOCKED
         .iter()
@@ -667,6 +676,25 @@ mod tests {
         ]);
         let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
         assert!(!args.iter().any(|arg| arg == "--setenv"));
+    }
+
+    #[test]
+    fn bwrap_skips_env_names_setenv_would_reject() {
+        // bwrap's `--setenv` calls `setenv(3)`, which rejects empty names and
+        // names containing `=`. Windows environments include the per-drive
+        // current-directory pseudo-variables (`=C:`, ...); forwarding them
+        // would abort bwrap with "setenv failed".
+        let env = HashMap::from([
+            ("=C:".to_string(), r"C:\Users\me".to_string()),
+            (String::new(), "value".to_string()),
+            ("OK".to_string(), "value".to_string()),
+        ]);
+        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "OK", "value"])
+        );
+        assert_eq!(args.iter().filter(|arg| *arg == "--setenv").count(), 1);
     }
 
     #[test]
