@@ -2442,7 +2442,7 @@ impl Sidebar {
                     }
                 }),
             )
-            .occlude();
+            .block_mouse_except_scroll();
 
         if !is_collapsed && !has_threads {
             v_flex()
