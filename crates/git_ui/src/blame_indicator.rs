@@ -252,15 +252,14 @@ mod tests {
             )],
         );
 
-        // The feature is off by default; turn it on before opening the editor.
+        // Inline blame is disabled to prove the status bar setting starts
+        // blame on its own.
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    let blame = settings
-                        .git
-                        .get_or_insert_default()
-                        .status_bar_blame
-                        .get_or_insert_default();
+                    let git = settings.git.get_or_insert_default();
+                    git.inline_blame.get_or_insert_default().enabled = Some(false);
+                    let blame = git.status_bar_blame.get_or_insert_default();
                     blame.enabled = Some(true);
                     blame.show_commit_summary = Some(true);
                 });
@@ -286,11 +285,16 @@ mod tests {
             )
         });
 
-        // Populate the editor's blame through the public toggle, then let it load.
-        // The editor must be focused: `GitBlame` defers entry generation while blurred.
+        // `GitBlame` defers entry generation until the editor is focused, and
+        // focus listeners only fire on a draw of an active window — neither of
+        // which test windows do on their own.
         editor.update_in(cx, |editor, window, cx| {
+            window.activate_window();
             window.focus(&editor.focus_handle(cx), cx);
-            editor.toggle_git_blame(&git::Blame, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
         });
         cx.run_until_parked();
 
@@ -302,16 +306,14 @@ mod tests {
             })
             .expect("row 0 should have a blame entry");
 
-        // Anchor to the fixture so the comparison below can't pass vacuously if
-        // the lookup returns a wrong-but-consistent entry.
+        // Anchor to the fixture so the comparison below can't pass vacuously.
         assert_eq!(expected.author.as_deref(), Some("Alice"));
 
         indicator.update_in(cx, |indicator, window, cx| {
             indicator.set_active_pane_item(Some(&editor as &dyn ItemHandle), window, cx);
         });
 
-        // The fixture commit is years old, so its relative phrasing is stable between
-        // the indicator's render and this assertion.
+        // The fixture commit is decades old, so the relative phrasing is stable.
         let relative = blame_entry_relative_timestamp(&expected);
 
         indicator.read_with(cx, |indicator, _| {

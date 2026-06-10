@@ -2487,6 +2487,8 @@ impl Editor {
 
             if editor.git_blame_inline_enabled {
                 editor.start_git_blame_inline(false, window, cx);
+            } else {
+                editor.ensure_git_blame_for_status_bar(window, cx);
             }
 
             editor.go_to_active_debug_line(window, cx);
@@ -9616,6 +9618,8 @@ impl Editor {
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
             }
+
+            self.ensure_git_blame_for_status_bar(window, cx);
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
             if self.minimap_visibility != MinimapVisibility::Disabled {
