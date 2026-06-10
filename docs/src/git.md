@@ -38,6 +38,10 @@ The Git Panel shows a flat list of changed files by default. To see files organi
 
 Zed shows Git blame information on the current line. To turn this off or add a delay before it appears, go to **Version Control > Inline Git Blame**.
 
+#### Status Bar Blame
+
+Zed can also show blame information for the current line in the status bar. This is off by default. To turn it on, go to **Version Control > Status Bar Git Blame**.
+
 #### Hiding the Gutter Indicators
 
 The colored bars in the gutter that show added, modified, and deleted lines can be hidden. Go to **Version Control > Git Gutter** and set **Visibility** to "Hide".
