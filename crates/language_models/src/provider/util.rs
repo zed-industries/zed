@@ -2,8 +2,10 @@ use std::{str::FromStr, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::Result;
-use gpui::{Context, Entity, SharedString, Task, Window};
+use convert_case::{Case, Casing};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, Window};
 use language_model::{ApiKeyState, AuthenticateError, EnvVar};
+use settings::SettingsStore;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 
@@ -30,12 +32,32 @@ pub struct ApiCompatibleProviderState<S: ApiCompatibleProviderSettings> {
 }
 
 impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
-    pub fn new(id: Arc<str>, settings: S, api_key_env_var: EnvVar) -> Self {
-        Self {
-            id,
-            api_key_state: ApiKeyState::new(SharedString::new(settings.api_url()), api_key_env_var),
-            settings,
-        }
+    pub fn new(
+        id: Arc<str>,
+        resolve_settings: for<'a> fn(&'a str, &'a App) -> Option<&'a S>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let api_key_env_var_name: SharedString =
+            format!("{}_API_KEY", id).to_case(Case::UpperSnake).into();
+        cx.new(|cx| {
+            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
+                let Some(settings) = resolve_settings(&this.id, cx).cloned() else {
+                    return;
+                };
+                this.update_settings(settings, cx);
+            })
+            .detach();
+
+            let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
+            Self {
+                id,
+                api_key_state: ApiKeyState::new(
+                    SharedString::new(settings.api_url()),
+                    EnvVar::new(api_key_env_var_name),
+                ),
+                settings,
+            }
+        })
     }
 
     pub fn is_authenticated(&self) -> bool {

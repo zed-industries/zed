@@ -1,16 +1,15 @@
 use anthropic::{AnthropicError, AnthropicModelMode};
 use anyhow::Result;
-use convert_case::{Case, Casing};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AppContext, AsyncApp, Entity, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
 };
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 
@@ -48,28 +47,15 @@ pub type State = ApiCompatibleProviderState<AnthropicCompatibleSettings>;
 
 impl AnthropicCompatibleLanguageModelProvider {
     pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
-        fn resolve_settings<'a>(
-            id: &'a str,
-            cx: &'a App,
-        ) -> Option<&'a AnthropicCompatibleSettings> {
-            crate::AllLanguageModelSettings::get_global(cx)
-                .anthropic_compatible
-                .get(id)
-        }
-
-        let api_key_env_var_name = format!("{}_API_KEY", id).to_case(Case::UpperSnake).into();
-        let state = cx.new(|cx| {
-            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let Some(settings) = resolve_settings(&this.id, cx).cloned() else {
-                    return;
-                };
-                this.update_settings(settings, cx);
-            })
-            .detach();
-
-            let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
-            State::new(id.clone(), settings, EnvVar::new(api_key_env_var_name))
-        });
+        let state = State::new(
+            id.clone(),
+            |id, cx| {
+                crate::AllLanguageModelSettings::get_global(cx)
+                    .anthropic_compatible
+                    .get(id)
+            },
+            cx,
+        );
 
         Self {
             id: id.clone().into(),
@@ -130,7 +116,7 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiAnthropic)
+        IconOrSvg::Icon(IconName::AiAnthropicCompat)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

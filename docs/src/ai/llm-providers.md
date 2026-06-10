@@ -236,10 +236,9 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 
 ### Anthropic API Compatible {#anthropic-api-compatible}
 
-Zed supports using Anthropic compatible APIs by specifying a custom `api_url` and `available_models` for the Anthropic provider.
-This is useful for connecting to other hosted services that implement Anthropic's [Messages API](https://docs.anthropic.com/en/api/messages) (`/v1/messages`).
+Zed supports connecting to other services that implement Anthropic's [Messages API](https://docs.anthropic.com/en/api/messages) (`/v1/messages`) by adding a custom provider with its own `api_url` and `available_models`.
 
-You can add a custom, Anthropic-compatible model either via the UI or by editing your settings file.
+You can add an Anthropic-compatible provider either via the UI or by editing your settings file.
 
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, choose "Anthropic" and fill up the input fields available in the modal.
@@ -280,7 +279,8 @@ Models also support the optional `default_temperature`, `extra_beta_headers` (se
 Token counts for Anthropic-compatible models are estimated locally rather than fetched from the provider's API.
 
 Note that LLM API keys aren't stored in your settings file.
-So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `SOME_PROVIDER_API_KEY=<your api key>`.
+The API key entered when adding the provider, or in the provider's section of the Agent Panel settings, is saved in your keychain.
+Zed will also use the `<PROVIDER_NAME>_API_KEY` environment variable if it's defined. In the example above, it would be `SOME_PROVIDER_API_KEY=<your api key>`.
 
 ### DeepSeek {#deepseek}
 
