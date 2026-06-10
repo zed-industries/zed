@@ -798,7 +798,11 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
-    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>>;
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let name = name.to_string();
+        let fut = self.remote_urls();
+        async move { fut.await.remove(&name) }.boxed()
+    }
 
     /// Returns the URL of all remotes.
     fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>>;
@@ -1686,30 +1690,6 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(())
-            })
-            .boxed()
-    }
-
-    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
-        let git = self.git_binary();
-        let name = name.to_owned();
-        self.executor
-            .spawn(async move {
-                let output = git
-                    .build_command(&["remote", "get-url", &name])
-                    .output()
-                    .await
-                    .log_err()?;
-                if !output.status.success() {
-                    return None;
-                }
-                let url = String::from_utf8(output.stdout).ok()?;
-                let url = url.trim();
-                if url.is_empty() {
-                    None
-                } else {
-                    Some(url.to_string())
-                }
             })
             .boxed()
     }
