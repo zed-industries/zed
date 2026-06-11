@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ThreadHistoryDensity,
+    ToolPermissionMode, update_settings_file, update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -237,6 +237,7 @@ pub struct AgentSettings {
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
+    pub thread_history_density: ThreadHistoryDensity,
     pub tool_permissions: ToolPermissions,
     pub sandbox_permissions: SandboxPermissions,
 }
@@ -768,6 +769,7 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
+            thread_history_density: agent.thread_history_density.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
@@ -1519,6 +1521,34 @@ mod tests {
         };
         assert_eq!(user_layout.agent_dock, Some(DockPosition::Left));
         assert_eq!(user_layout.project_panel_dock, Some(DockSide::Left));
+    }
+
+    #[gpui::test]
+    fn test_thread_history_density(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        // Defaults to comfortable when the user hasn't set it.
+        assert_eq!(
+            AgentSettings::get_global(cx).thread_history_density,
+            ThreadHistoryDensity::Comfortable
+        );
+
+        // Parses an explicit "compact" value.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "thread_history_density": "compact" } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx).thread_history_density,
+            ThreadHistoryDensity::Compact
+        );
     }
 
     #[gpui::test]

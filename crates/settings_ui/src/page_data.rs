@@ -8144,6 +8144,29 @@ fn ai_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Thread History Density",
+                description: "The display density of the agent panel's thread history. 'Comfortable' shows the timestamp in each thread's metadata row. 'Compact' renders each thread on a single line: the timestamp is hidden until hovered (then shown to the left of the thread's actions) and diff stats are pinned to the right of the title.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.thread_history_density"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .thread_history_density
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .thread_history_density = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]);
 
         items.extend([

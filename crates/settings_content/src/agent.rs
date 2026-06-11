@@ -188,6 +188,31 @@ pub struct AutoCompactSettingsContent {
     pub threshold: Option<AutoCompactThreshold>,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadHistoryDensity {
+    /// Show the timestamp in each thread's metadata row.
+    #[default]
+    Comfortable,
+    /// Render each thread on a single line: the timestamp is hidden until the
+    /// thread is hovered (then shown to the left of its actions) and diff stats
+    /// are pinned to the right of the title.
+    Compact,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -324,6 +349,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
+    /// The display density of the agent panel's thread history. In `compact`
+    /// mode, thread timestamps are only shown on hover (to the left of the
+    /// thread's actions) instead of in each thread's metadata row.
+    ///
+    /// Default: comfortable
+    pub thread_history_density: Option<ThreadHistoryDensity>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
