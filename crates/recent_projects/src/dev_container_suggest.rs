@@ -50,9 +50,12 @@ fn dismiss_path_for_worktree(
             let repo = repo.read(cx);
             let work_dir = repo.work_directory_abs_path.clone();
             // The folder opened in Zed isn't necessarily the repo root; it may be
-            // a subdirectory of it (e.g. only `myrepo/backend` is open). Match any
-            // repo whose work directory contains the folder, then let `max_by_key`
-            // pick the innermost one in case repos are nested (e.g. submodules).
+            // a subdirectory of it, e.g. opening `~/code/myrepo/backend` when the
+            // repo lives at `~/code/myrepo`. So match any repo whose work directory
+            // contains the folder. Nested repos can produce multiple matches, e.g.
+            // opening `~/code/myrepo/vendor/lib` where `vendor/lib` is a submodule
+            // matches both `myrepo` and the submodule; `max_by_key` then picks the
+            // innermost match (the submodule), which the folder actually belongs to.
             worktree_abs_path
                 .starts_with(work_dir.as_ref())
                 .then(|| (work_dir.as_os_str().len(), repo.common_dir_abs_path.clone()))
