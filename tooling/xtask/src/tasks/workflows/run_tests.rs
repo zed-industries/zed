@@ -776,6 +776,18 @@ pub(crate) fn check_scripts() -> NamedJob {
         named::bash("./script/shellcheck-scripts error")
     }
 
+    fn run_zizmor() -> Step<Use> {
+        named::uses(
+            "zizmorcore",
+            "zizmor-action",
+            "5f14fd08f7cf1cb1609c1e344975f152c7ee938d", // v0.5.6
+        )
+        // Print findings to the console and fail the job on findings instead of
+        // uploading them to GitHub Advanced Security.
+        .add_with(("advanced-security", false))
+        .add_with(("persona", "pedantic"))
+    }
+
     fn check_xtask_workflows() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             cargo xtask workflows
@@ -794,6 +806,7 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
+            .add_step(run_zizmor())
             .add_step(cache_rust_dependencies_namespace())
             .add_step(check_xtask_workflows()),
     )
