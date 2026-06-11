@@ -12,9 +12,6 @@ function finalize {
   # after packages install (curl, etc), get the rust toolchain
   which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   cat <<EOF
-Note: It's recommended to install and configure Wild or Mold for faster builds.
-      Run script/install-wild or script/install-mold.
-
 Finished installing Linux dependencies with script/linux
 EOF
 }
@@ -55,11 +52,11 @@ if [[ -n $apt ]]; then
   )
   if (grep -qP 'PRETTY_NAME="(Debian|Raspbian).+13' /etc/os-release); then
       # libstdc++-14-dev is in build-essential
-      deps+=( mold )
+      true
   elif (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
-    deps+=( mold libstdc++-14-dev )
+    deps+=( libstdc++-14-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
-    deps+=( mold libstdc++-12-dev )
+    deps+=( libstdc++-12-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|Linux Mint 20|.+20\.04)' /etc/os-release); then
     # Ubuntu 20.04 ships clang-10 and libstdc++-10 which lack adequate C++20
     # support for building webrtc-sys (requires -std=c++20, lambdas in
@@ -125,7 +122,6 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
       perl-IPC-Cmd
       perl-File-Compare
       perl-File-Copy
-      mold
     )
   elif grep -qP '^ID="?(rhel|rocky|alma|centos|ol)' /etc/os-release; then
     deps+=( perl-interpreter )
@@ -183,7 +179,6 @@ if [[ -n $zyp ]]; then
     libxkbcommon-x11-devel
     libzstd-devel
     make
-    mold
     openssl-devel
     sqlite3-devel
     tar
@@ -217,7 +212,6 @@ if [[ -n $pacman ]]; then
     openssl
     zstd
     pkgconf
-    mold
     sqlite
     pipewire
     xdg-desktop-portal
@@ -250,7 +244,6 @@ if [[ -n $xbps ]]; then
     openssl-devel
     wayland-devel
     vulkan-loader
-    mold
     sqlite-devel
     pipewire
     xdg-desktop-portal
@@ -277,7 +270,6 @@ if [[ -n $emerge ]]; then
     media-libs/vulkan-loader
     x11-libs/libxcb
     x11-libs/libxkbcommon
-    sys-devel/mold
     dev-db/sqlite
     media-video/pipewire
     sys-apps/xdg-desktop-portal

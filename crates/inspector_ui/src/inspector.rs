@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
+use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, TaskExt, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*, utils::platform_title_bar_height};
 use util::{ResultExt as _, command::new_command};
@@ -57,7 +57,7 @@ fn render_inspector(
     window: &mut Window,
     cx: &mut Context<Inspector>,
 ) -> AnyElement {
-    let ui_font = theme::setup_ui_font(window, cx);
+    let ui_font = theme_settings::setup_ui_font(window, cx);
     let colors = cx.theme().colors();
     let inspector_id = inspector.active_element_id();
     let toolbar_height = platform_title_bar_height(window);

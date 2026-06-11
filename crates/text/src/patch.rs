@@ -56,7 +56,10 @@ where
         if edit.is_empty() {
             return;
         }
+        self.push_maybe_empty(edit);
+    }
 
+    pub fn push_maybe_empty(&mut self, edit: Edit<T>) {
         if let Some(last) = self.0.last_mut() {
             if last.old.end >= edit.old.start {
                 last.old.end = edit.old.end;

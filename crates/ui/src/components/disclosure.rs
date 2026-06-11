@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{ClickEvent, CursorStyle, SharedString};
+use gpui::{AnyView, ClickEvent, CursorStyle, SharedString};
 
-use crate::{Color, IconButton, IconButtonShape, IconName, IconSize, prelude::*};
+use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct Disclosure {
@@ -15,6 +15,7 @@ pub struct Disclosure {
     opened_icon: IconName,
     closed_icon: IconName,
     visible_on_hover: Option<SharedString>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl Disclosure {
@@ -29,7 +30,13 @@ impl Disclosure {
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
             visible_on_hover: None,
+            tooltip: None,
         }
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
+        self
     }
 
     pub fn on_toggle_expanded(
@@ -91,7 +98,6 @@ impl RenderOnce for Disclosure {
                 false => self.closed_icon,
             },
         )
-        .shape(IconButtonShape::Square)
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
         .disabled(self.disabled)
@@ -99,6 +105,7 @@ impl RenderOnce for Disclosure {
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
             this.visible_on_hover(group_name)
         })
+        .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
         .when_some(self.on_toggle_expanded, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
@@ -110,43 +117,37 @@ impl Component for Disclosure {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "An interactive element used to show or hide content, typically used in expandable sections or tree-like structures.",
-        )
+    fn description() -> &'static str {
+        "An interactive element used to show or hide content, \
+            typically used in expandable sections or tree-like structures."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Disclosure States",
-                        vec![
-                            single_example(
-                                "Closed",
-                                Disclosure::new("closed", false).into_any_element(),
-                            ),
-                            single_example(
-                                "Open",
-                                Disclosure::new("open", true).into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Interactive Example",
-                        vec![single_example(
-                            "Toggleable",
-                            v_flex()
-                                .gap_2()
-                                .child(Disclosure::new("interactive", false).into_any_element())
-                                .child(Label::new("Click to toggle"))
-                                .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Disclosure States",
+                    vec![
+                        single_example(
+                            "Closed",
+                            Disclosure::new("closed", false).into_any_element(),
+                        ),
+                        single_example("Open", Disclosure::new("open", true).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Interactive Example",
+                    vec![single_example(
+                        "Toggleable",
+                        v_flex()
+                            .gap_2()
+                            .child(Disclosure::new("interactive", false).into_any_element())
+                            .child(Label::new("Click to toggle"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

@@ -1,4 +1,6 @@
-use super::*;
+use super::table_row::TableRow;
+use crate::{RedistributableColumnsState, ResizableColumnsState, TableResizeBehavior};
+use gpui::{AbsoluteLength, px};
 
 fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
@@ -82,7 +84,7 @@ mod reset_column_size {
         let cols = initial_sizes.len();
         let resize_behavior_vec = parse_resize_behavior(resize_behavior, total_1, cols);
         let resize_behavior = TableRow::from_vec(resize_behavior_vec, cols);
-        let result = TableColumnWidths::reset_to_initial_size(
+        let result = RedistributableColumnsState::reset_to_initial_size(
             column_index,
             TableRow::from_vec(widths, cols),
             TableRow::from_vec(initial_sizes, cols),
@@ -259,7 +261,7 @@ mod drag_handle {
         let distance = distance as f32 / total_1;
 
         let mut widths_table_row = TableRow::from_vec(widths, cols);
-        TableColumnWidths::drag_column_handle(
+        RedistributableColumnsState::drag_column_handle(
             distance,
             column_index,
             &mut widths_table_row,
@@ -315,4 +317,98 @@ mod drag_handle {
         expected: "*|*|*|***|*****",
         minimums: "X|*|*|*|*",
     );
+}
+
+mod resizable_drag {
+    use super::*;
+
+    const REM: f32 = 16.;
+
+    fn state(widths_px: &[f32], behavior: Vec<TableResizeBehavior>) -> ResizableColumnsState {
+        let widths: Vec<AbsoluteLength> = widths_px
+            .iter()
+            .map(|w| AbsoluteLength::Pixels(px(*w)))
+            .collect();
+        ResizableColumnsState::new(widths.len(), widths, behavior)
+    }
+
+    fn widths_px(state: &ResizableColumnsState) -> Vec<f32> {
+        state
+            .widths
+            .as_slice()
+            .iter()
+            .map(|w| f32::from(w.to_pixels(px(REM))))
+            .collect()
+    }
+
+    #[test]
+    fn drag_first_column_right() {
+        let mut s = state(&[100., 100., 100.], vec![TableResizeBehavior::None; 3]);
+        s.drag_to(0, px(150.), px(REM));
+        assert_eq!(widths_px(&s), vec![150., 100., 100.]);
+    }
+
+    #[test]
+    fn drag_middle_column_right() {
+        let mut s = state(&[100., 100., 100.], vec![TableResizeBehavior::None; 3]);
+        s.drag_to(1, px(250.), px(REM));
+        assert_eq!(widths_px(&s), vec![100., 150., 100.]);
+    }
+
+    #[test]
+    fn drag_does_not_affect_other_columns() {
+        let mut s = state(&[100., 100., 100.], vec![TableResizeBehavior::None; 3]);
+        s.drag_to(1, px(280.), px(REM));
+        let w = widths_px(&s);
+        assert_eq!(w[0], 100.);
+        assert_eq!(w[2], 100.);
+    }
+
+    #[test]
+    fn drag_below_min_clamps_to_min_size() {
+        // MinSize(2.0) with rem=16 → min_px = 32
+        let mut s = state(
+            &[100., 100.],
+            vec![TableResizeBehavior::MinSize(2.0), TableResizeBehavior::None],
+        );
+        s.drag_to(0, px(5.), px(REM));
+        assert_eq!(widths_px(&s), vec![32., 100.]);
+    }
+
+    #[test]
+    fn drag_x_below_left_edge_clamps_via_min() {
+        // drag_x < left_edge would yield negative width; min clamping must catch it.
+        let mut s = state(
+            &[100., 100.],
+            vec![TableResizeBehavior::MinSize(1.0), TableResizeBehavior::None],
+        );
+        s.drag_to(0, px(-50.), px(REM));
+        assert_eq!(widths_px(&s), vec![16., 100.]);
+    }
+}
+
+mod pin_layout {
+    use super::super::is_pinned_layout;
+
+    #[test]
+    fn zero_pinned_falls_back_to_single_section() {
+        assert!(!is_pinned_layout(0, 5));
+    }
+
+    #[test]
+    fn all_pinned_falls_back_to_single_section() {
+        assert!(!is_pinned_layout(5, 5));
+    }
+
+    #[test]
+    fn more_than_total_falls_back_to_single_section() {
+        assert!(!is_pinned_layout(6, 5));
+    }
+
+    #[test]
+    fn partial_pinning_uses_split_layout() {
+        assert!(is_pinned_layout(1, 5));
+        assert!(is_pinned_layout(2, 5));
+        assert!(is_pinned_layout(4, 5));
+    }
 }

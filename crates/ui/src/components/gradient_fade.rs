@@ -49,10 +49,14 @@ impl GradientFade {
 }
 
 impl RenderOnce for GradientFade {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let stop = self.gradient_stop;
-        let hover_bg = self.hover_bg;
-        let active_bg = self.active_bg;
+
+        // Best-effort to flatten potentially-transparent colors to opaque ones.
+        let app_bg = cx.theme().colors().background;
+        let base_bg = app_bg.blend(self.base_bg);
+        let hover_bg = app_bg.blend(self.hover_bg);
+        let active_bg = app_bg.blend(self.active_bg);
 
         div()
             .id("gradient_fade")
@@ -63,8 +67,8 @@ impl RenderOnce for GradientFade {
             .h_full()
             .bg(linear_gradient(
                 90.,
-                linear_color_stop(self.base_bg, stop),
-                linear_color_stop(self.base_bg.opacity(0.0), 0.),
+                linear_color_stop(base_bg, stop),
+                linear_color_stop(base_bg.opacity(0.0), 0.),
             ))
             .when_some(self.group_name.clone(), |element, group_name| {
                 element.group_hover(group_name, move |s| {

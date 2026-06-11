@@ -1,8 +1,9 @@
 use anyhow::Result;
 use collections::HashMap;
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::HttpClient;
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt};
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -21,18 +22,20 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
 
 const API_KEY_ENV_VAR_NAME: &str = "OPENROUTER_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["HTTP-Referer", "X-Title"];
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -42,6 +45,7 @@ pub struct OpenRouterLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
@@ -53,16 +57,33 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        let task = self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await?;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            Ok(result)
+        })
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -78,20 +99,18 @@ impl State {
     ) -> Task<Result<(), LanguageModelCompletionError>> {
         let http_client = self.http_client.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
+        let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
         let Some(api_key) = self.api_key_state.key(&api_url) else {
             return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
                 provider: PROVIDER_NAME,
             }));
         };
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url, &api_key)
+            let models = list_models(http_client.as_ref(), &api_url, &api_key, &extra_headers)
                 .await
-                .map_err(|e| {
-                    LanguageModelCompletionError::Other(anyhow::anyhow!(
-                        "OpenRouter error: {:?}",
-                        e
-                    ))
-                })?;
+                .map_err(LanguageModelCompletionError::from)?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
@@ -108,13 +127,17 @@ impl State {
             let task = self.fetch_models(cx);
             self.fetch_models_task.replace(task);
         } else {
-            self.available_models = Vec::new();
+            self.available_models.clear();
         }
     }
 }
 
 impl OpenRouterLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>({
                 let mut last_settings = OpenRouterLanguageModelProvider::settings(cx).clone();
@@ -131,6 +154,7 @@ impl OpenRouterLanguageModelProvider {
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
@@ -274,9 +298,12 @@ impl OpenRouterLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         async move {
@@ -285,8 +312,13 @@ impl OpenRouterLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request =
-                open_router::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = open_router::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
             request.await.map_err(Into::into)
         }
         .boxed()
@@ -353,14 +385,6 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn supports_images(&self) -> bool {
         self.model.supports_images.unwrap_or(false)
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_open_router_tokens(request, self.model.clone(), cx)
     }
 
     fn stream_completion(
@@ -456,18 +480,22 @@ pub fn into_open_router(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![open_router::MessagePart::Text {
-                                text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![open_router::MessagePart::Image {
-                                image_url: image.to_base64_url(),
-                            }]
-                        }
-                    };
+                    let content: Vec<open_router::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                open_router::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                open_router::MessagePart::Image {
+                                    image_url: image.to_base64_url(),
+                                }
+                            }
+                        })
+                        .collect();
 
                     messages.push(open_router::RequestMessage::Tool {
                         content: content.into(),
@@ -527,7 +555,7 @@ fn add_message_content_part(
     new_part: open_router::MessagePart,
     role: Role,
     messages: &mut Vec<open_router::RequestMessage>,
-    reasoning_details: Option<serde_json::Value>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_router::RequestMessage::User { content }))
@@ -722,32 +750,6 @@ struct RawToolCall {
     name: String,
     arguments: String,
     thought_signature: Option<String>,
-}
-
-pub fn count_open_router_tokens(
-    request: LanguageModelRequest,
-    _model: open_router::Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {

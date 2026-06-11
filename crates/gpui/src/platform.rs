@@ -6,6 +6,9 @@ mod keystroke;
 #[expect(missing_docs)]
 pub mod layer_shell;
 
+#[cfg(any(test, feature = "bench"))]
+mod bench_dispatcher;
+
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -31,12 +34,14 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use anyhow::bail;
 use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -74,6 +79,9 @@ pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(any(test, feature = "bench"))]
+pub use bench_dispatcher::BenchDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -156,6 +164,11 @@ pub trait Platform: 'static {
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
 
+    /// Returns the window button layout configuration when supported.
+    fn button_layout(&self) -> Option<WindowButtonLayout> {
+        None
+    }
+
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
@@ -205,6 +218,14 @@ pub trait Platform: 'static {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+
+    /// Hides the mouse cursor until the user moves the mouse over one of
+    /// this application's windows.
+    fn hide_cursor_until_mouse_moves(&self);
+
+    /// Returns whether the mouse cursor is currently visible.
+    fn is_cursor_visible(&self) -> bool;
+
     fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -311,22 +332,22 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
-pub struct DisplayId(pub(crate) u32);
+pub struct DisplayId(pub(crate) u64);
 
 impl DisplayId {
     /// Create a new `DisplayId` from a raw platform display identifier.
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<u32> for DisplayId {
-    fn from(id: u32) -> Self {
+impl From<u64> for DisplayId {
+    fn from(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<DisplayId> for u32 {
+impl From<DisplayId> for u64 {
     fn from(id: DisplayId) -> Self {
         id.0
     }
@@ -407,6 +428,145 @@ impl Default for WindowControls {
     }
 }
 
+/// A window control button type used in [`WindowButtonLayout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WindowButton {
+    /// The minimize button
+    Minimize,
+    /// The maximize button
+    Maximize,
+    /// The close button
+    Close,
+}
+
+impl WindowButton {
+    /// Returns a stable element ID for rendering this button.
+    pub fn id(&self) -> &'static str {
+        match self {
+            WindowButton::Minimize => "minimize",
+            WindowButton::Maximize => "maximize",
+            WindowButton::Close => "close",
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn index(&self) -> usize {
+        match self {
+            WindowButton::Minimize => 0,
+            WindowButton::Maximize => 1,
+            WindowButton::Close => 2,
+        }
+    }
+}
+
+/// Maximum number of [`WindowButton`]s per side in the titlebar.
+pub const MAX_BUTTONS_PER_SIDE: usize = 3;
+
+/// Describes which [`WindowButton`]s appear on each side of the titlebar.
+///
+/// On Linux, this is read from the desktop environment's configuration
+/// (e.g. GNOME's `gtk-decoration-layout` gsetting) via [`WindowButtonLayout::parse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowButtonLayout {
+    /// Buttons on the left side of the titlebar.
+    pub left: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+    /// Buttons on the right side of the titlebar.
+    pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+impl WindowButtonLayout {
+    /// Returns Zed's built-in fallback button layout for Linux titlebars.
+    pub fn linux_default() -> Self {
+        Self {
+            left: [None; MAX_BUTTONS_PER_SIDE],
+            right: [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close),
+            ],
+        }
+    }
+
+    /// Parses a GNOME-style `button-layout` string (e.g. `"close,minimize:maximize"`).
+    pub fn parse(layout_string: &str) -> Result<Self> {
+        fn parse_side(
+            s: &str,
+            seen_buttons: &mut [bool; MAX_BUTTONS_PER_SIDE],
+            unrecognized: &mut Vec<String>,
+        ) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
+            let mut result = [None; MAX_BUTTONS_PER_SIDE];
+            let mut i = 0;
+            for name in s.split(',') {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let button = match trimmed {
+                    "minimize" => Some(WindowButton::Minimize),
+                    "maximize" => Some(WindowButton::Maximize),
+                    "close" => Some(WindowButton::Close),
+                    other => {
+                        unrecognized.push(other.to_string());
+                        None
+                    }
+                };
+                if let Some(button) = button {
+                    if seen_buttons[button.index()] {
+                        continue;
+                    }
+                    if let Some(slot) = result.get_mut(i) {
+                        *slot = Some(button);
+                        seen_buttons[button.index()] = true;
+                        i += 1;
+                    }
+                }
+            }
+            result
+        }
+
+        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
+        let mut unrecognized = Vec::new();
+        let mut seen_buttons = [false; MAX_BUTTONS_PER_SIDE];
+        let layout = Self {
+            left: parse_side(left_str, &mut seen_buttons, &mut unrecognized),
+            right: parse_side(right_str, &mut seen_buttons, &mut unrecognized),
+        };
+
+        if !unrecognized.is_empty()
+            && layout.left.iter().all(Option::is_none)
+            && layout.right.iter().all(Option::is_none)
+        {
+            bail!(
+                "button layout string {:?} contains no valid buttons (unrecognized: {})",
+                layout_string,
+                unrecognized.join(", ")
+            );
+        }
+
+        Ok(layout)
+    }
+
+    /// Formats the layout back into a GNOME-style `button-layout` string.
+    #[cfg(test)]
+    pub fn format(&self) -> String {
+        fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
+            buttons
+                .iter()
+                .flatten()
+                .map(|button| match button {
+                    WindowButton::Minimize => "minimize",
+                    WindowButton::Maximize => "maximize",
+                    WindowButton::Close => "close",
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+
+        format!("{}:{}", format_side(&self.left), format_side(&self.right))
+    }
+}
+
 /// A type to describe which sides of the window are currently tiled in some way
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct Tiling {
@@ -435,6 +595,16 @@ impl Tiling {
     pub fn is_tiled(&self) -> bool {
         self.top || self.left || self.right || self.bottom
     }
+}
+
+/// Callbacks for the accessibility adapter.
+pub struct A11yCallbacks {
+    /// Called when the adapter is activated (a screen reader connects).
+    pub activation: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    /// Called when an action is requested by the screen reader.
+    pub action: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
+    /// Called when the adapter is deactivated (screen reader disconnects).
+    pub deactivation: Box<dyn Fn() + Send + 'static>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
@@ -488,6 +658,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
+    fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -504,6 +675,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     fn set_edited(&mut self, _edited: bool) {}
+    fn set_document_path(&self, _path: Option<&std::path::Path>) {}
+    #[cfg(target_os = "macos")]
+    fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -542,6 +716,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
+    fn play_system_bell(&self) {}
+
+    /// Initialize the accessibility adapter with callbacks.
+    fn a11y_init(&self, _callbacks: A11yCallbacks) {}
+
+    /// Provide a TreeUpdate to the accessibility adapter.
+    fn a11y_tree_update(&self, _tree_update: accesskit::TreeUpdate) {}
+
+    /// Inform the adapter of updated window bounds.
+    fn a11y_update_window_bounds(&self) {}
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
@@ -566,6 +751,13 @@ pub trait PlatformHeadlessRenderer {
         size: Size<DevicePixels>,
     ) -> Result<RgbaImage>;
 
+    /// Render a scene to an offscreen target without reading the result back.
+    ///
+    /// This is the headless analogue of presenting a frame: it performs the
+    /// same CPU-side scene encoding and GPU submission as drawing to a real
+    /// window, but doesn't block on GPU completion or copy pixels back.
+    fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()>;
+
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
@@ -578,12 +770,16 @@ pub type RunnableVariant = Runnable<RunnableMeta>;
 #[doc(hidden)]
 pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
+#[doc(hidden)]
+pub enum TasksIncluded {
+    OnlyCompleted,
+    CompletedAndRunning,
+}
+
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
@@ -601,6 +797,13 @@ pub trait PlatformDispatcher: Send + Sync {
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {
+        None
+    }
+
+    // This cfg must match the `bench_dispatcher` module's, which implements
+    // this method whenever it compiles.
+    #[cfg(any(test, feature = "bench"))]
+    fn as_bench(&self) -> Option<&BenchDispatcher> {
         None
     }
 }
@@ -633,6 +836,10 @@ pub trait PlatformTextSystem: Send + Sync {
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
+    /// Returns the dilation level to use for a glyph painted in the given color.
+    fn glyph_dilation_for_color(&self, _color: Hsla) -> u8 {
+        0
+    }
 }
 
 #[expect(missing_docs)]
@@ -899,7 +1106,7 @@ impl<T> AtlasTextureList<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct AtlasTile {
@@ -1063,17 +1270,55 @@ impl PlatformInputHandler {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 
-    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let selection = self.handler.selected_text_range(true, window, cx)?;
-        self.handler.bounds_for_range(
-            if selection.reversed {
-                selection.range.start..selection.range.start
+    pub fn compute_ime_candidate_bounds(
+        marked_range: Option<Range<usize>>,
+        selection: &UTF16Selection,
+        mut bounds_for_range: impl FnMut(Range<usize>) -> Option<Bounds<Pixels>>,
+    ) -> Option<Bounds<Pixels>> {
+        if let Some(marked_range) = marked_range {
+            // Default to the start of the marked (composing) range.
+            let mut line_start = marked_range.start;
+
+            // Walk backward from the caret looking for a line break. A change in
+            // the Y coordinate means we crossed into the previous visual line, so
+            // the line start is one position after the break point.
+            let caret = selection.range.end;
+            if let Some(caret_bounds) = bounds_for_range(caret..caret) {
+                for i in (marked_range.start..caret).rev() {
+                    if let Some(b) = bounds_for_range(i..i) {
+                        if (b.origin.y - caret_bounds.origin.y).abs() > px(0.1) {
+                            line_start = i + 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            bounds_for_range(line_start..line_start)
+        } else {
+            // No active composition — use the selection endpoint.
+            let offset = if selection.reversed {
+                selection.range.start
             } else {
-                selection.range.end..selection.range.end
-            },
-            window,
-            cx,
-        )
+                selection.range.end
+            };
+            bounds_for_range(offset..offset)
+        }
+    }
+
+    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        let marked_range = self.handler.marked_text_range(window, cx);
+        let selection = self.handler.selected_text_range(true, window, cx)?;
+        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            self.handler.bounds_for_range(range, window, cx)
+        })
+    }
+
+    pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        let marked_range = self.marked_text_range();
+        let selection = self.selected_text_range(true)?;
+        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            self.bounds_for_range(range)
+        })
     }
 
     #[allow(unused)]
@@ -1094,6 +1339,13 @@ impl PlatformInputHandler {
         self.cx
             .update(|window, cx| self.handler.accepts_text_input(window, cx))
             .unwrap_or(true)
+    }
+
+    #[allow(dead_code)]
+    pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .unwrap_or(false)
     }
 }
 
@@ -1208,6 +1460,18 @@ pub trait InputHandler: 'static {
     fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
     }
+
+    /// Returns whether printable keys should be routed to the IME before keybinding
+    /// matching when a non-ASCII input source (e.g. Japanese, Korean, Chinese IME)
+    /// is active. This prevents multi-stroke keybindings like `jj` from intercepting
+    /// keys that the IME should compose.
+    ///
+    /// Defaults to `false`. The editor overrides this based on whether it expects
+    /// character input (e.g. Vim insert mode returns `true`, normal mode returns `false`).
+    /// The terminal keeps the default `false` so that raw keys reach the terminal process.
+    fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
+        false
+    }
 }
 
 /// The variables that can be configured when creating a new window
@@ -1256,6 +1520,9 @@ pub struct WindowOptions {
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
 
+    /// Icon image (X11 only)
+    pub icon: Option<Arc<image::RgbaImage>>,
+
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
 }
@@ -1301,6 +1568,10 @@ pub struct WindowParams {
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
+
+    /// An image to set as the window icon (x11 only)
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub icon: Option<Arc<image::RgbaImage>>,
 
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
@@ -1362,6 +1633,7 @@ impl Default for WindowOptions {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
+            icon: None,
             app_id: None,
             window_min_size: None,
             window_decorations: None,
@@ -1544,7 +1816,7 @@ impl PromptButton {
 impl From<&str> for PromptButton {
     fn from(value: &str) -> Self {
         match value.to_lowercase().as_str() {
-            "ok" => PromptButton::Ok("Ok".into()),
+            "ok" => PromptButton::Ok("OK".into()),
             "cancel" => PromptButton::Cancel("Cancel".into()),
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }
@@ -1637,9 +1909,6 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
-
-    /// Hide the cursor
-    None,
 }
 
 /// A clipboard item that should be copied to the clipboard
@@ -1805,6 +2074,8 @@ pub enum ImageFormat {
     Tiff,
     /// .ico
     Ico,
+    /// Netpbm image formats (.pbm, .ppm, .pgm).
+    Pnm,
 }
 
 impl ImageFormat {
@@ -1819,20 +2090,25 @@ impl ImageFormat {
             ImageFormat::Bmp => "image/bmp",
             ImageFormat::Tiff => "image/tiff",
             ImageFormat::Ico => "image/ico",
+            ImageFormat::Pnm => "image/x-portable-anymap",
         }
     }
 
-    /// Returns the ImageFormat for the given mime type
+    /// Returns the ImageFormat for the given mime type, including known aliases.
     pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|format| format.mime_type() == mime_type)
+            .or_else(|| Self::from_mime_type_alias(mime_type))
+    }
+
+    /// Non-canonical mime types that some producers use in the wild.
+    /// Unlike `mime_type()` which returns the single canonical form,
+    /// these are legacy or shortened variants we still need to recognize.
+    fn from_mime_type_alias(mime_type: &str) -> Option<Self> {
         match mime_type {
-            "image/png" => Some(Self::Png),
-            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
-            "image/webp" => Some(Self::Webp),
-            "image/gif" => Some(Self::Gif),
-            "image/svg+xml" => Some(Self::Svg),
-            "image/bmp" => Some(Self::Bmp),
-            "image/tiff" | "image/tif" => Some(Self::Tiff),
-            "image/ico" => Some(Self::Ico),
+            "image/jpg" => Some(Self::Jpeg),
+            "image/tif" => Some(Self::Tiff),
             _ => None,
         }
     }
@@ -1924,12 +2200,22 @@ impl Image {
                 let mut frames = SmallVec::new();
 
                 for frame in decoder.into_frames() {
-                    let mut frame = frame?;
-                    // Convert from RGBA to BGRA.
-                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                        pixel.swap(0, 2);
+                    match frame {
+                        Ok(mut frame) => {
+                            // Convert from RGBA to BGRA.
+                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+                            frames.push(frame);
+                        }
+                        Err(err) => {
+                            log::debug!("Skipping GIF frame due to decode error: {err}");
+                        }
                     }
-                    frames.push(frame);
+                }
+
+                if frames.is_empty() {
+                    anyhow::bail!("GIF could not be decoded: all frames failed");
                 }
 
                 frames
@@ -1942,9 +2228,10 @@ impl Image {
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 return svg_renderer
-                    .render_single_frame(&self.bytes, 1.0, false)
+                    .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
+            ImageFormat::Pnm => frames_for_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
 
         Ok(Arc::new(RenderImage::new(frames)))
@@ -2021,5 +2308,211 @@ impl From<String> for ClipboardString {
             text: value,
             metadata: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_svg_image_to_image_data_converts_to_bgra() {
+        let image = Image::from_bytes(
+            ImageFormat::Svg,
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">
+<rect width="1" height="1" fill="#38BDF8"/>
+</svg>"##
+                .to_vec(),
+        );
+
+        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+        let bytes = render_image.as_bytes(0).unwrap();
+
+        for pixel in bytes.chunks_exact(4) {
+            assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
+        }
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_window_button_layout_parse_standard() {
+        let layout = WindowButtonLayout::parse("close,minimize:maximize").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_right_only() {
+        let layout = WindowButtonLayout::parse("minimize,maximize,close").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_left_only() {
+        let layout = WindowButtonLayout::parse("close,minimize,maximize:").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize)
+            ]
+        );
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_with_whitespace() {
+        let layout = WindowButtonLayout::parse(" close , minimize : maximize ").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_empty() {
+        let layout = WindowButtonLayout::parse("").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_intentionally_empty() {
+        let layout = WindowButtonLayout::parse(":").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_invalid_buttons() {
+        let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_deduplicates_same_side_buttons() {
+        let layout = WindowButtonLayout::parse("close,close,minimize").unwrap();
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.format(), ":close,minimize");
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_deduplicates_buttons_across_sides() {
+        let layout = WindowButtonLayout::parse("close:maximize,close,minimize").unwrap();
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+
+        let button_ids: Vec<_> = layout
+            .left
+            .iter()
+            .chain(layout.right.iter())
+            .flatten()
+            .map(WindowButton::id)
+            .collect();
+        let unique_button_ids = button_ids.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(unique_button_ids.len(), button_ids.len());
+        assert_eq!(layout.format(), "close:maximize,minimize");
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_gnome_style() {
+        let layout = WindowButtonLayout::parse("close").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Close), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_elementary_style() {
+        let layout = WindowButtonLayout::parse("close:maximize").unwrap();
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_round_trip() {
+        let cases = [
+            "close:minimize,maximize",
+            "minimize,maximize,close:",
+            ":close",
+            "close:",
+            "close:maximize",
+            ":",
+        ];
+
+        for case in cases {
+            let layout = WindowButtonLayout::parse(case).unwrap();
+            assert_eq!(layout.format(), case, "Round-trip failed for: {}", case);
+        }
+    }
+
+    #[test]
+    fn test_window_button_layout_linux_default() {
+        let layout = WindowButtonLayout::linux_default();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
+            ]
+        );
+
+        let round_tripped = WindowButtonLayout::parse(&layout.format()).unwrap();
+        assert_eq!(round_tripped, layout);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_all_invalid() {
+        assert!(WindowButtonLayout::parse("asdfghjkl").is_err());
     }
 }

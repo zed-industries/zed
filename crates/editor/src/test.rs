@@ -23,7 +23,7 @@ use ui::{App, BorrowAppContext, IntoElement, px};
 use util::test::{generate_marked_text, marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -245,7 +245,7 @@ pub fn editor_content_with_blocks_and_size(
                     format!(
                         "§ {}",
                         first_excerpt
-                            .buffer
+                            .buffer(snapshot.buffer_snapshot())
                             .file()
                             .map(|file| file.file_name(cx))
                             .unwrap_or("<no file>")
@@ -274,7 +274,7 @@ pub fn editor_content_with_blocks_and_size(
                     format!(
                         "§ {}",
                         excerpt
-                            .buffer
+                            .buffer(snapshot.buffer_snapshot())
                             .file()
                             .map(|file| file.file_name(cx))
                             .unwrap_or("<no file>")

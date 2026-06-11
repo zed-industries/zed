@@ -344,7 +344,7 @@ mod test {
                                 PRAGMA case_sensitive_like=TRUE;
                             "});
 
-                let _ = smol::block_on(builder.build()).unwrap().deref();
+                let _ = pollster::block_on(builder.build()).unwrap().deref();
             }));
         }
 
