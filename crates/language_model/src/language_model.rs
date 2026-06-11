@@ -307,6 +307,32 @@ pub trait LanguageModelProvider: 'static {
     ) -> AnyView;
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 
+    /// Copy shown when this provider rejects a request as unauthenticated
+    /// (HTTP 401). The default assumes API-key authentication; providers using
+    /// other mechanisms (account or subscription based auth) should override
+    /// this so users aren't told to check an API key they don't have.
+    fn authentication_error_message(&self) -> SharedString {
+        format!(
+            "The API key for {} is invalid or has expired. \
+            Update your key via the Agent Panel settings to continue.",
+            self.name().0
+        )
+        .into()
+    }
+
+    /// Copy shown when a request fails because no credentials are configured
+    /// for this provider. The default assumes API-key authentication;
+    /// providers using other mechanisms (account or subscription based auth)
+    /// should override this.
+    fn missing_credentials_error_message(&self) -> SharedString {
+        format!(
+            "No API key is configured for {}. \
+            Add your key via the Agent Panel settings to continue.",
+            self.name().0
+        )
+        .into()
+    }
+
     /// Copy shown the first time a user enables fast mode for a model from
     /// this provider. Returning `None` skips the confirmation prompt and lets
     /// the toggle apply silently.

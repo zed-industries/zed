@@ -24,7 +24,7 @@ use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
-    LanguageModelProviderId, LanguageModelRegistry, Speed,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
@@ -1818,28 +1818,30 @@ impl ThreadView {
                     None,
                     "Context too large for the model's context window.".into(),
                 ),
-                ThreadError::NoApiKey { provider } => (
+                ThreadError::NoCredentials { provider } => (
                     "no_api_key",
                     None,
-                    format!("No API key configured for {provider}.").into(),
+                    format!("No credentials configured for {provider}.").into(),
                 ),
                 ThreadError::StreamError { provider } => (
                     "stream_error",
                     None,
                     format!("Connection to {provider}'s API was interrupted.").into(),
                 ),
-                ThreadError::InvalidApiKey { provider } => (
+                ThreadError::AuthenticationFailed { provider } => (
                     "invalid_api_key",
                     None,
-                    format!("Invalid or expired API key for {provider}.").into(),
+                    format!("Authentication with {provider} failed.").into(),
                 ),
-                ThreadError::PermissionDenied { provider } => (
+                ThreadError::PermissionDenied { provider, message } => (
                     "permission_denied",
                     None,
-                    format!(
-                        "{provider}'s API rejected the request due to insufficient permissions."
-                    )
-                    .into(),
+                    message.clone().unwrap_or_else(|| {
+                        format!(
+                            "{provider}'s API rejected the request due to insufficient permissions."
+                        )
+                        .into()
+                    }),
                 ),
                 ThreadError::RequestFailed => (
                     "request_failed",
@@ -9510,6 +9512,13 @@ impl ThreadView {
         rems_from_px(13.)
     }
 
+    fn provider_by_name(name: &SharedString, cx: &App) -> Option<Arc<dyn LanguageModelProvider>> {
+        LanguageModelRegistry::read_global(cx)
+            .providers()
+            .into_iter()
+            .find(|provider| provider.name().0 == *name)
+    }
+
     pub(crate) fn render_thread_error(
         &mut self,
         window: &mut Window,
@@ -9550,17 +9559,14 @@ impl ThreadView {
                 cx,
             ),
             ThreadError::PromptTooLarge => self.render_prompt_too_large_error(cx),
-            ThreadError::NoApiKey { provider } => self.render_error_callout(
-                "API Key Missing",
-                format!(
-                    "No API key is configured for {provider}. \
-                    Add your key via the Agent Panel settings to continue."
-                )
-                .into(),
-                false,
-                true,
-                cx,
-            ),
+            ThreadError::NoCredentials { provider } => {
+                let message = Self::provider_by_name(provider, cx)
+                    .map(|provider| provider.missing_credentials_error_message())
+                    .unwrap_or_else(|| {
+                        format!("No credentials are configured for {provider}.").into()
+                    });
+                self.render_error_callout("Credentials Missing", message, false, true, cx)
+            }
             ThreadError::StreamError { provider } => self.render_error_callout(
                 "Connection Interrupted",
                 format!(
@@ -9572,28 +9578,20 @@ impl ThreadView {
                 true,
                 cx,
             ),
-            ThreadError::InvalidApiKey { provider } => self.render_error_callout(
-                "Invalid API Key",
-                format!(
-                    "The API key for {provider} is invalid or has expired. \
-                    Update your key via the Agent Panel settings to continue."
-                )
-                .into(),
-                false,
-                false,
-                cx,
-            ),
-            ThreadError::PermissionDenied { provider } => self.render_error_callout(
-                "Permission Denied",
-                format!(
-                    "{provider}'s API rejected the request due to insufficient permissions. \
-                    Check that your API key has access to this model."
-                )
-                .into(),
-                false,
-                false,
-                cx,
-            ),
+            ThreadError::AuthenticationFailed { provider } => {
+                let message = Self::provider_by_name(provider, cx)
+                    .map(|provider| provider.authentication_error_message())
+                    .unwrap_or_else(|| format!("Could not authenticate with {provider}.").into());
+                self.render_error_callout("Authentication Failed", message, false, false, cx)
+            }
+            ThreadError::PermissionDenied { provider, message } => {
+                let message: SharedString = message.clone().unwrap_or_else(|| {
+                    format!("{provider} rejected the request due to insufficient permissions.")
+                        .into()
+                });
+
+                self.render_error_callout("Permission Denied", message, false, false, cx)
+            }
             ThreadError::RequestFailed => self.render_error_callout(
                 "Request Failed",
                 "The request could not be completed after multiple attempts. \
