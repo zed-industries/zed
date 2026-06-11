@@ -740,7 +740,11 @@ impl GitStore {
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
-                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+                // The folder opened in Zed isn't necessarily the repo root; it may be
+                // a subdirectory of it (e.g. only `myrepo/backend` is open). Match any
+                // repo whose work directory contains the folder, then let `max_by_key`
+                // pick the innermost one in case repos are nested (e.g. submodules).
+                worktree_abs_path.starts_with(repo_path.as_ref())
             })
             .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
             .map(|repo| repo.read(cx).id)
