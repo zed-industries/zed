@@ -39,6 +39,7 @@ pub mod profiler;
     test,
     target_os = "windows",
     target_os = "linux",
+    target_os = "android",
     target_family = "wasm",
     feature = "bench"
 ))]
@@ -137,7 +138,12 @@ pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[cfg(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "android",
+    target_family = "wasm"
+))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;

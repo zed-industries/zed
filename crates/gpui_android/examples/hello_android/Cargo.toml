@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "hello_android"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "hello_android"
+crate-type = ["cdylib"]
+path = "main.rs"
+
+[dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+gpui = { path = "../../../gpui" }
+gpui_platform = { path = "../../../gpui_platform" }
+log = "0.4"
