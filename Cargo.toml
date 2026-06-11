@@ -884,6 +884,7 @@ features = [
 ]
 
 [patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "052ec1bba1ceeccbf1e0a57a94f3a3b32f37b44f" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
