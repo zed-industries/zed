@@ -428,6 +428,9 @@ You can also configure the provider in your settings file:
     "anthropic_compatible": {
       "Some Provider": {
         "api_url": "https://api.someprovider.com",
+        "custom_headers": {
+          "X-Some-Header": "some-value"
+        },
         "available_models": [
           {
             "name": "some-model",
@@ -436,7 +439,8 @@ You can also configure the provider in your settings file:
             "max_output_tokens": 32000,
             "capabilities": {
               "tools": true,
-              "images": false
+              "images": false,
+              "prompt_caching": false
             }
           }
         ]
@@ -450,10 +454,13 @@ By default, Anthropic-compatible models inherit these capabilities:
 
 - `tools`: `true`
 - `images`: `false`
+- `prompt_caching`: `false`
 
-Models also support the optional `default_temperature`, `extra_beta_headers` (sent as `anthropic-beta` headers), `mode`, `cache_configuration`, and `tool_override` fields, which behave the same as in [Custom Anthropic Models](#anthropic-custom-models).
+Enable `prompt_caching` to send explicit `cache_control` breakpoints for [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching); leave it disabled if the provider rejects requests containing them.
 
-Token counts for Anthropic-compatible models are estimated locally rather than fetched from the provider's API.
+The optional `custom_headers` map adds extra headers to every request, which some providers require. Headers managed by Zed (such as `X-Api-Key` and `Anthropic-Version`) cannot be overridden.
+
+Models also support the optional `default_temperature`, `extra_beta_headers` (sent as `anthropic-beta` headers), `mode`, and `tool_override` fields, which behave the same as in [Custom Anthropic Models](#anthropic-custom-models).
 
 Enter the API key in the provider settings UI or set the generated environment variable (`<PROVIDER_NAME>_API_KEY`; in the example above, `SOME_PROVIDER_API_KEY`). Do not put API keys in `settings.json`.
 

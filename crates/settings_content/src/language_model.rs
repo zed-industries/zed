@@ -41,6 +41,7 @@ pub struct AnthropicSettingsContent {
 pub struct AnthropicCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -54,8 +55,6 @@ pub struct AnthropicCompatibleAvailableModel {
     pub max_tokens: u64,
     /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
     pub tool_override: Option<String>,
-    /// Configuration of the Anthropic-style prompt caching API.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u64>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_temperature: Option<f32>,
@@ -72,6 +71,9 @@ pub struct AnthropicCompatibleAvailableModel {
 pub struct AnthropicCompatibleModelCapabilities {
     pub tools: bool,
     pub images: bool,
+    /// Whether to send explicit `cache_control` breakpoints for prompt caching.
+    /// Leave disabled if the provider rejects requests containing them.
+    pub prompt_caching: bool,
 }
 
 impl Default for AnthropicCompatibleModelCapabilities {
@@ -79,6 +81,7 @@ impl Default for AnthropicCompatibleModelCapabilities {
         Self {
             tools: true,
             images: false,
+            prompt_caching: false,
         }
     }
 }

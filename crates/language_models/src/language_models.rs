@@ -189,6 +189,12 @@ struct CompatibleProviders {
     anthropic: HashSet<Arc<str>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompatibleProviderKind {
+    OpenAi,
+    Anthropic,
+}
+
 impl CompatibleProviders {
     fn from_settings(cx: &App) -> Self {
         let settings = AllLanguageModelSettings::get_global(cx);
@@ -198,8 +204,17 @@ impl CompatibleProviders {
         }
     }
 
-    fn contains(&self, provider_id: &Arc<str>) -> bool {
-        self.openai.contains(provider_id) || self.anthropic.contains(provider_id)
+    // When the same id is configured in both maps, the OpenAI-compatible entry
+    // wins, so that adding an `anthropic_compatible` entry can never replace an
+    // existing working `openai_compatible` endpoint with the same name.
+    fn kind(&self, provider_id: &str) -> Option<CompatibleProviderKind> {
+        if self.openai.contains(provider_id) {
+            Some(CompatibleProviderKind::OpenAi)
+        } else if self.anthropic.contains(provider_id) {
+            Some(CompatibleProviderKind::Anthropic)
+        } else {
+            None
+        }
     }
 }
 
@@ -212,13 +227,13 @@ fn register_compatible_providers(
     cx: &mut Context<LanguageModelRegistry>,
 ) {
     for provider_id in old.openai.iter().chain(&old.anthropic) {
-        if !new.contains(provider_id) {
+        if new.kind(provider_id) != old.kind(provider_id) {
             registry.unregister_provider(LanguageModelProviderId::from(provider_id.clone()), cx);
         }
     }
 
     for provider_id in &new.openai {
-        if !old.openai.contains(provider_id) {
+        if old.kind(provider_id) != Some(CompatibleProviderKind::OpenAi) {
             registry.register_provider(
                 Arc::new(OpenAiCompatibleLanguageModelProvider::new(
                     provider_id.clone(),
@@ -232,7 +247,9 @@ fn register_compatible_providers(
     }
 
     for provider_id in &new.anthropic {
-        if !old.anthropic.contains(provider_id) {
+        if new.kind(provider_id) == Some(CompatibleProviderKind::Anthropic)
+            && old.kind(provider_id) != Some(CompatibleProviderKind::Anthropic)
+        {
             registry.register_provider(
                 Arc::new(AnthropicCompatibleLanguageModelProvider::new(
                     provider_id.clone(),

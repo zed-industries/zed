@@ -27,6 +27,7 @@ pub use settings::AnthropicCompatibleModelCapabilities as ModelCapabilities;
 pub struct AnthropicCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct AnthropicCompatibleLanguageModelProvider {
@@ -103,8 +104,8 @@ impl AnthropicCompatibleLanguageModelProvider {
         let capabilities = model.capabilities.clone();
         // Compatible providers may not support Anthropic's automatic prompt
         // caching; only request explicit (legacy) cache breakpoints when the
-        // user has opted in via `cache_configuration`.
-        let cache_mode = if model.cache_configuration.is_some() {
+        // user has opted in via the `prompt_caching` capability.
+        let cache_mode = if capabilities.prompt_caching {
             AnthropicPromptCacheMode::Legacy
         } else {
             AnthropicPromptCacheMode::Disabled
@@ -228,9 +229,13 @@ impl AnthropicCompatibleLanguageModel {
         let http_client = self.http_client.clone();
         let provider_name = self.provider_name.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, _cx| {
             let api_url = state.settings.api_url.clone();
-            (state.api_key_state.key(&api_url), api_url)
+            (
+                state.api_key_state.key(&api_url),
+                api_url,
+                state.settings.custom_headers.clone(),
+            )
         });
 
         let beta_headers = self.model.beta_headers();
@@ -242,7 +247,6 @@ impl AnthropicCompatibleLanguageModel {
                 });
             };
 
-            let extra_headers = CustomHeaders::default();
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,

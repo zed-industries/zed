@@ -75,11 +75,17 @@ impl settings::Settings for AllLanguageModelSettings {
             anthropic_compatible: anthropic_compatible
                 .into_iter()
                 .map(|(key, value)| {
+                    let provider_label = format!("Anthropic Compatible ({key})");
                     (
                         key,
                         AnthropicCompatibleSettings {
                             api_url: value.api_url,
                             available_models: value.available_models,
+                            custom_headers: custom_headers_from(
+                                &provider_label,
+                                value.custom_headers,
+                                anthropic::RESERVED_HEADER_NAMES,
+                            ),
                         },
                     )
                 })

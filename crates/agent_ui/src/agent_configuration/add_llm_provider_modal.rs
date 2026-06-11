@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use collections::HashSet;
 use fs::Fs;
 use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task, TaskExt,
 };
+use itertools::Itertools as _;
 use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{
     AvailableModel as OpenAiCompatibleAvailableModel,
@@ -257,7 +257,6 @@ impl ModelInput {
             display_name: None,
             max_tokens: self.parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
             tool_override: None,
-            cache_configuration: None,
             max_output_tokens: Some(self.parse_u64_field(
                 &self.max_output_tokens,
                 "Max Output Tokens",
@@ -269,6 +268,7 @@ impl ModelInput {
             capabilities: AnthropicCompatibleModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
                 images: self.capabilities.supports_images.selected(),
+                prompt_caching: false,
             },
         })
     }
@@ -277,6 +277,19 @@ impl ModelInput {
 enum ParsedModels {
     OpenAi(Vec<OpenAiCompatibleAvailableModel>),
     Anthropic(Vec<AnthropicCompatibleAvailableModel>),
+}
+
+impl ParsedModels {
+    fn model_names(&self) -> impl Iterator<Item = &str> {
+        match self {
+            ParsedModels::OpenAi(models) => {
+                itertools::Either::Left(models.iter().map(|model| model.name.as_str()))
+            }
+            ParsedModels::Anthropic(models) => {
+                itertools::Either::Right(models.iter().map(|model| model.name.as_str()))
+            }
+        }
+    }
 }
 
 fn save_provider_to_settings(
@@ -312,17 +325,6 @@ fn save_provider_to_settings(
         return Task::ready(Err("API Key cannot be empty".into()));
     }
 
-    let mut model_names: HashSet<String> = HashSet::default();
-    for model in &input.models {
-        let name = match model.parse_name(cx) {
-            Ok(name) => name,
-            Err(error) => return Task::ready(Err(error)),
-        };
-        if !model_names.insert(name) {
-            return Task::ready(Err("Model Names must be unique".into()));
-        }
-    }
-
     let models = match provider {
         LlmCompatibleProvider::OpenAi => input
             .models
@@ -341,6 +343,10 @@ fn save_provider_to_settings(
         Ok(models) => models,
         Err(error) => return Task::ready(Err(error)),
     };
+
+    if !models.model_names().all_unique() {
+        return Task::ready(Err("Model Names must be unique".into()));
+    }
 
     let fs = <dyn Fs>::global(cx);
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
@@ -373,6 +379,7 @@ fn save_provider_to_settings(
                                 AnthropicCompatibleSettingsContent {
                                     api_url,
                                     available_models,
+                                    custom_headers: None,
                                 },
                             );
                     }
