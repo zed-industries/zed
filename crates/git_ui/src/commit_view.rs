@@ -368,7 +368,14 @@ impl CommitView {
                 let buffer_diff = if is_binary {
                     cx.update(|_, cx| {
                         let snapshot = buffer.read(cx).snapshot();
-                        cx.new(|cx| BufferDiff::new_unchanged(&snapshot, cx))
+                        cx.new(|cx| {
+                            BufferDiff::new_unchanged(
+                                &snapshot,
+                                snapshot.language().cloned(),
+                                Some(language_registry.clone()),
+                                cx,
+                            )
+                        })
                     })?
                 } else {
                     build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
@@ -996,23 +1003,15 @@ async fn build_buffer_diff(
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.text.clone(),
-                old_text.map(|old_text| Arc::from(old_text.as_str())),
-                Some(true),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
+    let diff =
+        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_base_text(
+            old_text.map(|old_text| Arc::from(old_text.as_str())),
+            buffer.text.clone(),
+            cx,
+        )
     })
     .await;
 

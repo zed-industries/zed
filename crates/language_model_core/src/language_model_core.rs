@@ -174,6 +174,8 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    #[error("payment required to use this language model; please upgrade your account")]
+    PaymentRequired,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }

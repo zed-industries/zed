@@ -2017,13 +2017,10 @@ impl Editor {
                     .gap_1()
                     // Workaround: For some reason, there's a gap if we don't do this
                     .ml(-BORDER_WIDTH)
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(0.05),
-                        offset: point(px(1.), px(1.)),
-                        blur_radius: px(2.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .shadow(vec![
+                        gpui::BoxShadow::new(px(1.), px(1.), gpui::black().opacity(0.05))
+                            .blur_radius(px(2.)),
+                    ])
                     .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                     .border(BORDER_WIDTH)
                     .border_color(cx.theme().colors().border)

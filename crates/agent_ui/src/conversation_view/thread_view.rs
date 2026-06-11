@@ -1454,8 +1454,9 @@ impl ThreadView {
             }
         }
 
-        // A built-in command (e.g. `/compact`) with trailing text: send the bare
-        // command and queue the rest, so the extra text isn't silently dropped.
+        // A built-in command (e.g. `/compact`): run the bare command without
+        // echoing it as a user message, and queue any trailing text the user
+        // typed so it isn't silently dropped.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {
@@ -1519,6 +1520,7 @@ impl ThreadView {
                 }
                 this.send_content(
                     Task::ready(Ok(Some((vec![command_block], Vec::new())))),
+                    true,
                     window,
                     cx,
                 );
@@ -1564,12 +1566,13 @@ impl ThreadView {
             Ok(Some((contents, tracked_buffers)))
         });
 
-        self.send_content(contents_task, window, cx);
+        self.send_content(contents_task, false, window, cx);
     }
 
     pub fn send_content(
         &mut self,
         contents_task: Task<anyhow::Result<Option<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>>,
+        is_native_command: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1664,7 +1667,11 @@ impl ThreadView {
                     side = side
                 );
 
-                thread.send(contents, cx)
+                if is_native_command {
+                    thread.send_command(contents, cx)
+                } else {
+                    thread.send(contents, cx)
+                }
             })?;
 
             let _ = this.update(cx, |this, cx| {
@@ -1935,12 +1942,19 @@ impl ThreadView {
             //
             // If editing the prompt that generated the edits, they are auto-rejected
             // through the `rewind` function in the `acp_thread`.
+            //
+            // Subagent edits never show up as diffs in the parent thread's entries (they
+            // are only forwarded to the parent's action log), so treat any earlier
+            // subagent tool call as potentially having edits. Keeping all edits is a
+            // no-op when the subagent didn't make any.
             let has_earlier_edits = thread.read_with(cx, |thread, _| {
-                thread
-                    .entries()
-                    .iter()
-                    .take(entry_ix)
-                    .any(|entry| entry.diffs().next().is_some())
+                thread.entries().iter().take(entry_ix).any(|entry| {
+                    entry.diffs().next().is_some()
+                        || matches!(
+                            entry,
+                            AgentThreadEntry::ToolCall(tool_call) if tool_call.is_subagent()
+                        )
+                })
             });
 
             if has_earlier_edits {
@@ -2055,6 +2069,21 @@ impl ThreadView {
         let content = queued.content;
         let tracked_buffers = queued.tracked_buffers;
 
+        // A queued message can itself be a built-in command (e.g. the user typed
+        // `/compact` while a turn was generating). Detect that so we run it as a
+        // command turn without echoing it as a user message, matching the
+        // non-queued path.
+        let is_native_command = content
+            .first()
+            .and_then(|block| match block {
+                acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .and_then(|text| {
+                leading_native_command(text, self.session_capabilities.read().available_commands())
+            })
+            .is_some();
+
         // Only increment skip count for "Send Now" operations (out-of-order sends)
         // Normal auto-processing from the Stopped handler doesn't need to skip.
         // We only skip the Stopped event from the cancelled generation, NOT the
@@ -2083,7 +2112,7 @@ impl ThreadView {
             Ok(Some((content, tracked_buffers)))
         });
 
-        self.send_content(contents_task, window, cx);
+        self.send_content(contents_task, is_native_command, window, cx);
     }
 
     pub fn move_queued_message_to_main_editor(
@@ -2802,6 +2831,10 @@ impl ThreadView {
         let queue_expanded = self.queue_expanded;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        // Drop shadows have no opaque surface to blend into on a transparent
+        // window, so they render as a dark halo; only apply them when opaque.
+        let opaque_window =
+            cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
         h_flex()
             .w_full()
@@ -2819,13 +2852,12 @@ impl ThreadView {
                     .border_b_0()
                     .border_color(cx.theme().colors().border)
                     .rounded_t_md()
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(0.12),
-                        offset: point(px(1.), px(-1.)),
-                        blur_radius: px(2.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .when(opaque_window, |this| {
+                        this.shadow(vec![
+                            gpui::BoxShadow::new(px(1.), px(-1.), gpui::black().opacity(0.12))
+                                .blur_radius(px(2.)),
+                        ])
+                    })
                     .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
                         has_awaiting_permission
@@ -4629,6 +4661,24 @@ impl ThreadView {
             return None;
         }
 
+        // A toggle would be dishonest for models that always think: only
+        // offer the effort selector.
+        if !model.supports_disabling_thinking() {
+            let effort_levels = model.supported_effort_levels();
+            if effort_levels.is_empty() {
+                return None;
+            }
+            return Some(
+                self.render_effort_selector(
+                    effort_levels,
+                    thread.thinking_effort().cloned(),
+                    true,
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+
         let thinking = thread.thinking_enabled();
 
         let (tooltip_label, icon, color) = if thinking {
@@ -4693,6 +4743,7 @@ impl ThreadView {
         let right_btn = self.render_effort_selector(
             model.supported_effort_levels(),
             thread.thinking_effort().cloned(),
+            false,
             cx,
         );
 
@@ -4707,6 +4758,7 @@ impl ThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
+        standalone: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak_self = cx.weak_entity();
@@ -4772,12 +4824,27 @@ impl ThreadView {
             }
         });
 
-        PopoverMenu::new("effort-selector")
-            .trigger_with_tooltip(
-                ButtonLike::new_rounded_right("effort-selector-trigger")
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        let trigger = if standalone {
+            ButtonLike::new("effort-selector-trigger").child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::ThinkingMode)
+                            .size(IconSize::Small)
+                            .color(label_color),
+                    )
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+            )
+        } else {
+            ButtonLike::new_rounded_right("effort-selector-trigger")
+                .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+        };
+
+        PopoverMenu::new("effort-selector")
+            .trigger_with_tooltip(
+                trigger.selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 tooltip,
             )
             .menu(move |window, cx| {
@@ -5424,6 +5491,9 @@ impl ThreadView {
                 let editing = self.editing_message == Some(entry_ix);
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
+                // Drop shadows render as a dark halo on transparent windows.
+                let opaque_window = cx.theme().window_background_appearance()
+                    == gpui::WindowBackgroundAppearance::Opaque;
 
                 let has_checkpoint_button = message
                     .checkpoint
@@ -5482,7 +5552,9 @@ impl ThreadView {
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
                                     .when(is_indented, |this| {
-                                        this.py_2().px_2().shadow_sm()
+                                        this.py_2().px_2().when(opaque_window, |this| {
+                                            this.shadow_sm()
+                                        })
                                     })
                                     .border_color(cx.theme().colors().border)
                                     .map(|this| {
@@ -5498,9 +5570,10 @@ impl ThreadView {
                                         if editing && !editor_focus {
                                             return this.border_dashed()
                                         }
-                                        this.shadow_md().hover(|s| {
-                                            s.border_color(focus_border.opacity(0.8))
-                                        })
+                                        this.when(opaque_window, |this| this.shadow_md())
+                                            .hover(|s| {
+                                                s.border_color(focus_border.opacity(0.8))
+                                            })
                                     })
                                     .text_xs()
                                     .child(editor.clone().into_any_element())
@@ -10150,14 +10223,12 @@ impl ThreadView {
 
         let token_usage = self.thread.read(cx).token_usage()?;
 
-        // When auto-compaction is available (the handoff feature flag is enabled
-        // and the model's context window is large enough), the thread is
-        // compacted automatically before it reaches the limit, so there's no
-        // need to warn the user. Models with a context window that's too small
-        // can't be auto-compacted, so we fall back to the normal warning.
-        if cx.has_flag::<HandoffFeatureFlag>()
-            && token_usage.max_tokens >= agent::MIN_COMPACTION_CONTEXT_WINDOW
-        {
+        // When auto-compaction is available (the model's context window is large
+        // enough), the thread is compacted automatically before it reaches the
+        // limit, so there's no need to warn the user. Models with a context
+        // window that's too small can't be auto-compacted, so we fall back to
+        // the normal warning.
+        if token_usage.max_tokens >= agent::MIN_COMPACTION_CONTEXT_WINDOW {
             return None;
         }
 
@@ -10512,7 +10583,12 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        let model_allows_disabling = thread
+                            .model()
+                            .is_none_or(|model| model.supports_disabling_thinking());
+                        if model_allows_disabling {
+                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        }
                     });
                 }
             }))
@@ -10797,22 +10873,23 @@ pub(crate) fn open_link(
     }
 }
 
-/// If `text` is a built-in (native-category) slash command followed by extra
-/// text — e.g. `/compact summarize the API work` — returns the command name.
-/// Built-in commands ignore trailing arguments, so the caller sends the bare
-/// command and queues the remainder rather than discarding it. Commands from
-/// MCP servers and ACP agents are excluded: their trailing text is a real
-/// argument the agent consumes.
+/// Returns the name of the leading built-in (native-category) slash command —
+/// e.g. `compact` for `/compact` or `/compact summarize the API work` — whether
+/// or not the user typed any trailing text after it. Built-in commands ignore
+/// trailing arguments, so the caller sends the bare command and queues any
+/// remainder rather than discarding it. Commands from MCP servers and ACP
+/// agents are excluded: their trailing text is a real argument the agent
+/// consumes.
+///
+/// Native commands run a turn that produces its own thread entry, so the typed
+/// command is never echoed as a user message (see `send_command_queueing_remainder`).
 fn leading_native_command(
     text: &str,
     available_commands: &[acp::AvailableCommand],
 ) -> Option<String> {
     let rest = text.trim_start().strip_prefix('/')?;
-    let name_end = rest.find(char::is_whitespace)?;
+    let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let name = &rest[..name_end];
-    if rest[name_end..].trim().is_empty() {
-        return None;
-    }
     let is_native = available_commands.iter().any(|command| {
         command.name == name
             && acp_thread::command_category_from_meta(&command.meta)
@@ -10853,10 +10930,10 @@ mod tests {
     }
 
     #[test]
-    fn test_leading_native_command_only_splits_native_with_remainder() {
+    fn test_leading_native_command_matches_bare_and_with_remainder() {
         let commands = [native_command("compact"), mcp_command("deploy")];
 
-        // Native command with trailing text -> split.
+        // Native command with trailing text.
         assert_eq!(
             leading_native_command("/compact summarize the API work", &commands),
             Some("compact".to_string())
@@ -10867,12 +10944,22 @@ mod tests {
             Some("compact".to_string())
         );
 
-        // Bare native command (no remainder) -> no split; it sends normally.
-        assert_eq!(leading_native_command("/compact", &commands), None);
-        assert_eq!(leading_native_command("/compact   ", &commands), None);
+        // Bare native command (no remainder) is still recognized, so it runs as
+        // a command turn (without echoing a user message) rather than being sent
+        // to the model as a normal prompt.
+        assert_eq!(
+            leading_native_command("/compact", &commands),
+            Some("compact".to_string())
+        );
+        assert_eq!(
+            leading_native_command("/compact   ", &commands),
+            Some("compact".to_string())
+        );
 
-        // MCP/ACP commands consume their trailing text as an argument.
+        // MCP/ACP commands are not native: their trailing text is a real
+        // argument the agent consumes, and they echo as normal user messages.
         assert_eq!(leading_native_command("/deploy prod", &commands), None);
+        assert_eq!(leading_native_command("/deploy", &commands), None);
 
         // Unknown command, or not a slash command at all.
         assert_eq!(leading_native_command("/unknown foo", &commands), None);
