@@ -686,7 +686,7 @@ fn identifiers_for_position(
         }
     }
 
-    ranges.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+    ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     ranges.dedup_by(|a, b| {
         if a.start <= b.end {
             b.start = b.start.min(a.start);
