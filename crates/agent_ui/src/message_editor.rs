@@ -3,7 +3,7 @@ use crate::SendImmediately;
 use crate::{
     ChatWithFollow,
     completion_provider::{
-        AgentContextSelection, AvailableCommand, AvailableSkill, PromptCompletionProvider,
+        AgentContextSelections, AvailableCommand, AvailableSkill, PromptCompletionProvider,
         PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
         SlashCommandCompletion,
     },
@@ -1574,7 +1574,7 @@ impl MessageEditor {
 
     pub(crate) fn insert_selections(
         &mut self,
-        selection: AgentContextSelection,
+        selections: AgentContextSelections,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1594,7 +1594,7 @@ impl MessageEditor {
                 anchor..anchor,
                 self.editor.downgrade(),
                 self.mention_set.downgrade(),
-                Some(selection),
+                selections,
             )
         else {
             return;
@@ -4238,7 +4238,7 @@ mod tests {
         });
 
         message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.insert_selections(text_editor_selection, window, cx);
+            message_editor.insert_selections(text_editor_selection.into(), window, cx);
         });
 
         cx.run_until_parked();
