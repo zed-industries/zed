@@ -58,6 +58,14 @@ pub fn web_init() {
     gpui_web::init_logging();
 }
 
+/// Initializes logging and stores the [`gpui_android::AndroidApp`] for the platform.
+/// Call this at the start of `android_main`, before running the application.
+#[cfg(target_os = "android")]
+pub fn android_init(app: gpui_android::AndroidApp) {
+    gpui_android::init_logging();
+    gpui_android::init(app);
+}
+
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     cfg_select! {
@@ -71,6 +79,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
             any(target_os = "linux", target_os = "freebsd"),
             not(target_env = "ohos")
         ) => gpui_linux::current_platform(headless),
+        target_os = "android" => Rc::new(gpui_android::AndroidPlatform::new(headless)),
         target_family = "wasm" => {
             let _ = headless;
             Rc::new(gpui_web::WebPlatform::new_with_backend(
