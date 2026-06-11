@@ -62,6 +62,17 @@ impl CellControlType {
             CellControlType::ExpandCell => IconName::ChevronRight,
         }
     }
+    fn id(&self) -> &'static str {
+        match self {
+            CellControlType::RunCell => "CellControlType::RunCell",
+            CellControlType::RerunCell => "CellControlType::RerunCell",
+            CellControlType::StopCell => "CellControlType::StopCell",
+            CellControlType::ClearCell => "CellControlType::ClearCell",
+            CellControlType::CellOptions => "CellControlType::CellOptions",
+            CellControlType::CollapseCell => "CellControlType::CollapseCelln",
+            CellControlType::ExpandCell => "CellControlType::ExpandCell",
+        }
+    }
 }
 
 pub struct CellControl {
@@ -962,24 +973,17 @@ impl RenderableCell for CodeCell {
             CellControlType::RunCell
         };
 
-        let cell_control = CellControl::new(
-            match control_type {
-                CellControlType::StopCell => "stop-cell",
-                CellControlType::RerunCell => "rerun-cell",
-                CellControlType::RunCell => "run-cell",
-                _ => "run-cell",
-            },
-            control_type,
+        Some(
+            CellControl::new(control_type.id(), control_type).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    if this.is_executing {
+                        window.dispatch_action(Box::new(InterruptKernel), cx);
+                    } else {
+                        this.run(window, cx);
+                    }
+                },
+            )),
         )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            if this.is_executing {
-                window.dispatch_action(Box::new(InterruptKernel), cx);
-            } else {
-                this.run(window, cx);
-            }
-        }));
-
-        Some(cell_control)
     }
 
     fn selected(&self) -> bool {
