@@ -57,6 +57,13 @@ fn collect_line_info(text: &str) -> Vec<LineInfo> {
     lines
 }
 
+/// Whether a trimmed line is a model-friendly place to start a block: it has
+/// content and isn't a structural tail. Exposed for reuse by context
+/// retrieval when snapping excerpt boundaries to block boundaries.
+pub fn is_good_block_start(trimmed_line: &str) -> bool {
+    !trimmed_line.is_empty() && !is_structural_tail(trimmed_line)
+}
+
 fn is_structural_tail(trimmed_line: &str) -> bool {
     if trimmed_line.starts_with(&['}', ']', ')']) {
         return true;
