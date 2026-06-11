@@ -271,7 +271,7 @@ fn flatten_document_symbols(
             depth,
             range,
             source_range_for_text,
-            text,
+            text: text.into(),
             highlight_ranges: Vec::new(),
             name_ranges,
             body_range: None,

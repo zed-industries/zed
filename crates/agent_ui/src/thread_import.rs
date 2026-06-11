@@ -1,15 +1,18 @@
+use std::time::Duration;
+
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use chrono::Utc;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use db::kvp::Dismissable;
 use db::sqlez;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
-    Render, SharedString, Task, TaskExt, WeakEntity, Window,
+    Animation, AnimationExt as _, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, MouseDownEvent, Render, SharedString, Task, TaskExt, WeakEntity, Window,
+    pulsating_between,
 };
 use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
@@ -17,8 +20,8 @@ use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use ui::{
-    Checkbox, KeyBinding, ListItem, ListItemSpacing, Modal, ModalFooter, ModalHeader, Section,
-    prelude::*,
+    Checkbox, CommonAnimationExt, KeyBinding, ListItem, ListItemSpacing, Modal, ModalFooter,
+    ModalHeader, Section, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::{ModalView, MultiWorkspace, Workspace};
@@ -60,24 +63,37 @@ impl Dismissable for CrossChannelImportOnboarding {
     const KEY: &'static str = "dismissed-cross-channel-thread-import";
 }
 
-/// Returns the list of non-Dev, non-current release channels that have
-/// at least one thread in their database.  The result is suitable for
-/// building a user-facing message ("from Zed Preview and Nightly").
-pub fn channels_with_threads(cx: &App) -> Vec<ReleaseChannel> {
+pub fn channels_with_threads(cx: &App) -> Task<Vec<SharedString>> {
     let Some(current_channel) = ReleaseChannel::try_global(cx) else {
-        return Vec::new();
+        return Task::ready(Vec::new());
     };
     let database_dir = paths::database_dir();
 
-    ReleaseChannel::ALL
-        .iter()
-        .copied()
-        .filter(|channel| {
-            *channel != current_channel
-                && *channel != ReleaseChannel::Dev
-                && channel_has_threads(database_dir, *channel)
-        })
-        .collect()
+    let channel_has_threads = |database_dir: &std::path::Path, channel: ReleaseChannel| {
+        let db_path = db::db_path(database_dir, channel);
+        if !db_path.exists() {
+            return false;
+        }
+        let connection = sqlez::connection::Connection::open_file(&db_path.to_string_lossy());
+        connection
+            .select_row::<bool>("SELECT 1 FROM sidebar_threads LIMIT 1")
+            .ok()
+            .and_then(|mut query| query().ok().flatten())
+            .unwrap_or(false)
+    };
+
+    cx.background_spawn(async move {
+        ReleaseChannel::ALL
+            .iter()
+            .copied()
+            .filter(|channel| {
+                *channel != current_channel
+                    && *channel != ReleaseChannel::Dev
+                    && channel_has_threads(database_dir, *channel)
+            })
+            .map(|channel| SharedString::new_static(channel.display_name()))
+            .collect()
+    })
 }
 
 #[derive(Clone)]
@@ -87,13 +103,39 @@ struct AgentEntry {
     icon_path: Option<SharedString>,
 }
 
+#[derive(Clone)]
+enum AgentImportStatus {
+    Loading,
+    Ready { importable_count: usize },
+    Unsupported,
+    Error(SharedString),
+}
+
+impl AgentImportStatus {
+    fn is_selectable(&self) -> bool {
+        matches!(self, Self::Ready { importable_count } if *importable_count > 0)
+    }
+
+    fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            Self::Loading => Some("Fetching Sessions…".into()),
+            Self::Ready { .. } => None,
+            Self::Unsupported => Some("Importing threads from this agent is not possible as it doesn't support ACP's session/list capability.".into()),
+            Self::Error(error) => Some(format!("Failed to fetch sessions: {error}").into()),
+        }
+    }
+}
+
 pub struct ThreadImportModal {
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
     multi_workspace: WeakEntity<MultiWorkspace>,
     agent_entries: Vec<AgentEntry>,
     unchecked_agents: HashSet<AgentId>,
+    agent_import_statuses: HashMap<AgentId, AgentImportStatus>,
+    sessions_by_agent: Vec<SessionByAgent>,
     selected_index: Option<usize>,
+    is_fetching_sessions: bool,
     is_importing: bool,
     last_error: Option<SharedString>,
 }
@@ -142,16 +184,22 @@ impl ThreadImportModal {
             .sorted_unstable_by_key(|entry| entry.display_name.to_lowercase())
             .collect::<Vec<_>>();
 
-        Self {
+        let this = Self {
             focus_handle: cx.focus_handle(),
             workspace,
             multi_workspace,
             agent_entries,
             unchecked_agents: HashSet::default(),
+            agent_import_statuses: HashMap::default(),
+            sessions_by_agent: Vec::new(),
             selected_index: None,
+            is_fetching_sessions: false,
             is_importing: false,
             last_error: None,
-        }
+        };
+        cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.fetch_sessions(cx)))
+            .detach_and_log_err(cx);
+        this
     }
 
     fn agent_ids(&self) -> Vec<AgentId> {
@@ -161,7 +209,97 @@ impl ThreadImportModal {
             .collect()
     }
 
+    fn fetch_sessions(&mut self, cx: &mut Context<Self>) {
+        if self.agent_entries.is_empty() {
+            return;
+        }
+
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            self.mark_all_agents_failed("Could not find workspace to import from.");
+            return;
+        };
+
+        let stores = resolve_agent_connection_stores(&multi_workspace, cx);
+        if stores.is_empty() {
+            log::error!("Did not find any workspaces to import from");
+            self.mark_all_agents_failed("Did not find any workspaces to import from.");
+            return;
+        }
+
+        self.is_fetching_sessions = true;
+        self.last_error = None;
+        self.sessions_by_agent.clear();
+        self.agent_import_statuses = self
+            .agent_ids()
+            .into_iter()
+            .map(|agent_id| (agent_id, AgentImportStatus::Loading))
+            .collect();
+
+        let existing_sessions: HashSet<acp::SessionId> = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .filter_map(|metadata| metadata.session_id.clone())
+            .collect();
+
+        for agent_id in self.agent_ids() {
+            let task =
+                fetch_sessions_for_agent(agent_id, existing_sessions.clone(), stores.clone(), cx);
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| {
+                    let AgentSessionFetchResult {
+                        agent_id,
+                        sessions_by_agent,
+                        status,
+                    } = result;
+                    this.sessions_by_agent
+                        .retain(|sessions| sessions.agent_id != agent_id);
+                    this.sessions_by_agent.extend(sessions_by_agent);
+                    this.agent_import_statuses.insert(agent_id, status);
+                    this.is_fetching_sessions = this.has_loading_agents();
+                    cx.notify();
+                })
+            })
+            .detach_and_log_err(cx);
+        }
+    }
+
+    fn mark_all_agents_failed(&mut self, message: impl Into<SharedString>) {
+        let message = message.into();
+        self.is_fetching_sessions = false;
+        self.sessions_by_agent.clear();
+        self.last_error = Some(message.clone());
+        self.agent_import_statuses = self
+            .agent_ids()
+            .into_iter()
+            .map(|agent_id| (agent_id, AgentImportStatus::Error(message.clone())))
+            .collect();
+    }
+
+    fn agent_is_selectable(&self, agent_id: &AgentId) -> bool {
+        self.agent_import_statuses
+            .get(agent_id)
+            .map_or(false, AgentImportStatus::is_selectable)
+    }
+
+    fn has_checked_selectable_agent(&self) -> bool {
+        self.agent_entries.iter().any(|entry| {
+            self.agent_is_selectable(&entry.agent_id)
+                && !self.unchecked_agents.contains(&entry.agent_id)
+        })
+    }
+
+    fn has_loading_agents(&self) -> bool {
+        self.agent_import_statuses
+            .values()
+            .any(|status| matches!(status, AgentImportStatus::Loading))
+    }
+
     fn toggle_agent_checked(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
+        if self.is_importing || !self.agent_is_selectable(&agent_id) {
+            return;
+        }
+
         if self.unchecked_agents.contains(&agent_id) {
             self.unchecked_agents.remove(&agent_id);
         } else {
@@ -217,61 +355,36 @@ impl ThreadImportModal {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_importing {
-            return;
-        }
-
-        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-            self.is_importing = false;
-            cx.notify();
-            return;
-        };
-
-        let stores = resolve_agent_connection_stores(&multi_workspace, cx);
-        if stores.is_empty() {
-            log::error!("Did not find any workspaces to import from");
-            self.is_importing = false;
-            cx.notify();
+        if self.is_importing || !self.has_checked_selectable_agent() {
             return;
         }
 
         self.is_importing = true;
         self.last_error = None;
-        cx.notify();
-
-        let agent_ids = self
-            .agent_ids()
-            .into_iter()
-            .filter(|agent_id| !self.unchecked_agents.contains(agent_id))
-            .collect::<Vec<_>>();
 
         let existing_sessions: HashSet<acp::SessionId> = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter_map(|m| m.session_id.clone())
+            .filter_map(|metadata| metadata.session_id.clone())
             .collect();
 
-        let task = find_threads_to_import(agent_ids, existing_sessions, stores, cx);
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| match result {
-                Ok(threads) => {
-                    let imported_count = threads.len();
-                    ThreadMetadataStore::global(cx)
-                        .update(cx, |store, cx| store.save_all(threads, cx));
-                    this.is_importing = false;
-                    this.last_error = None;
-                    this.show_imported_threads_toast(imported_count, cx);
-                    cx.emit(DismissEvent);
-                }
-                Err(error) => {
-                    this.is_importing = false;
-                    this.last_error = Some(error.to_string().into());
-                    cx.notify();
-                }
+        let selected_sessions_by_agent = self
+            .sessions_by_agent
+            .iter()
+            .filter(|sessions| {
+                self.agent_is_selectable(&sessions.agent_id)
+                    && !self.unchecked_agents.contains(&sessions.agent_id)
             })
-        })
-        .detach_and_log_err(cx);
+            .cloned()
+            .collect::<Vec<_>>();
+        let threads = collect_importable_threads(selected_sessions_by_agent, existing_sessions);
+        let imported_count = threads.len();
+
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_all(threads, cx));
+
+        self.is_importing = false;
+        self.show_imported_threads_toast(imported_count, cx);
+        cx.emit(DismissEvent);
     }
 
     fn show_imported_threads_toast(&self, imported_count: usize, cx: &mut App) {
@@ -321,47 +434,114 @@ impl ModalView for ThreadImportModal {}
 impl Render for ThreadImportModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_agents = !self.agent_entries.is_empty();
-        let disabled_import_thread = self.is_importing
-            || !has_agents
-            || self.unchecked_agents.len() == self.agent_entries.len();
+        let disabled_import_thread =
+            self.is_importing || !has_agents || !self.has_checked_selectable_agent();
 
         let agent_rows = self
             .agent_entries
             .iter()
             .enumerate()
             .map(|(ix, entry)| {
-                let is_checked = !self.unchecked_agents.contains(&entry.agent_id);
+                let status = self
+                    .agent_import_statuses
+                    .get(&entry.agent_id)
+                    .cloned()
+                    .unwrap_or(AgentImportStatus::Loading);
+                let is_selectable = status.is_selectable();
+                let is_checked = is_selectable && !self.unchecked_agents.contains(&entry.agent_id);
                 let is_focused = self.selected_index == Some(ix);
+                let row_disabled = self.is_importing || !is_selectable;
+                let checkbox_state = if is_checked {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                };
+                let end_slot = match &status {
+                    AgentImportStatus::Loading
+                    | AgentImportStatus::Unsupported
+                    | AgentImportStatus::Error(_) => {
+                        Checkbox::new(("thread-import-agent-checkbox", ix), checkbox_state)
+                            .disabled(true)
+                            .into_any_element()
+                    }
+                    AgentImportStatus::Ready { .. } => {
+                        Checkbox::new(("thread-import-agent-checkbox", ix), checkbox_state)
+                            .disabled(row_disabled)
+                            .into_any_element()
+                    }
+                };
+
+                let is_loading = matches!(status, AgentImportStatus::Loading);
+
+                let icon_color = if is_checked {
+                    Color::Muted
+                } else {
+                    Color::Disabled
+                };
+
+                let item = h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(if let Some(icon_path) = entry.icon_path.clone() {
+                        Icon::from_external_svg(icon_path)
+                            .color(icon_color)
+                            .size(IconSize::Small)
+                    } else {
+                        Icon::new(IconName::Sparkle)
+                            .color(icon_color)
+                            .size(IconSize::Small)
+                    })
+                    .child(
+                        Label::new(entry.display_name.clone())
+                            .when(!is_checked, |s| s.color(Color::Disabled)),
+                    )
+                    .map(|this| match status {
+                        AgentImportStatus::Loading => this,
+                        AgentImportStatus::Ready {
+                            importable_count: count,
+                        } => {
+                            let label: SharedString = if count == 0 {
+                                "No threads".into()
+                            } else {
+                                format!("{} threads", count).into()
+                            };
+                            this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                        }
+                        AgentImportStatus::Unsupported => this.child(
+                            Icon::new(IconName::Warning)
+                                .color(Color::Warning)
+                                .size(IconSize::Small),
+                        ),
+                        AgentImportStatus::Error(_) => this.child(
+                            Icon::new(IconName::XCircle)
+                                .color(Color::Error)
+                                .size(IconSize::Small),
+                        ),
+                    });
+
+                let item = if is_loading {
+                    item.with_animation(
+                        "pulsating-icon",
+                        Animation::new(Duration::from_secs(1))
+                            .repeat()
+                            .with_easing(pulsating_between(0.2, 0.6)),
+                        |icon, delta| icon.opacity(delta),
+                    )
+                    .into_any_element()
+                } else {
+                    item.into_any_element()
+                };
 
                 ListItem::new(("thread-import-agent", ix))
                     .rounded()
                     .spacing(ListItemSpacing::Sparse)
                     .focused(is_focused)
-                    .disabled(self.is_importing)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .when(!is_checked, |this| this.opacity(0.6))
-                            .child(if let Some(icon_path) = entry.icon_path.clone() {
-                                Icon::from_external_svg(icon_path)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small)
-                            } else {
-                                Icon::new(IconName::Sparkle)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small)
-                            })
-                            .child(Label::new(entry.display_name.clone())),
-                    )
-                    .end_slot(Checkbox::new(
-                        ("thread-import-agent-checkbox", ix),
-                        if is_checked {
-                            ToggleState::Selected
-                        } else {
-                            ToggleState::Unselected
-                        },
-                    ))
+                    .disabled(row_disabled)
+                    .child(item)
+                    .end_slot(end_slot)
+                    .when_some(status.tooltip_text(), |this, tooltip| {
+                        this.tooltip(Tooltip::text(tooltip))
+                    })
                     .on_click({
                         let agent_id = entry.agent_id.clone();
                         cx.listener(move |this, _event, _window, cx| {
@@ -408,7 +588,7 @@ impl Render for ThreadImportModal {
                                 .when(has_agents, |this| this.children(agent_rows))
                                 .when(!has_agents, |this| {
                                     this.child(
-                                        Label::new("No ACP agents available.")
+                                        Label::new("No external agents available.")
                                             .color(Color::Muted)
                                             .size(LabelSize::Small),
                                     )
@@ -417,6 +597,22 @@ impl Render for ThreadImportModal {
                     )
                     .footer(
                         ModalFooter::new()
+                            .when(self.is_fetching_sessions, |this| {
+                                this.start_slot(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::LoadCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted)
+                                                .with_rotate_animation(3),
+                                        )
+                                        .child(Label::new("Fetching Agent Threads…")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted))
+
+                                )
+                            })
                             .when_some(self.last_error.clone(), |this, error| {
                                 this.start_slot(
                                     Label::new(error)
@@ -476,12 +672,26 @@ fn resolve_agent_connection_stores(
     stores
 }
 
-fn find_threads_to_import(
-    agent_ids: Vec<AgentId>,
+struct AgentSessionFetchResult {
+    agent_id: AgentId,
+    sessions_by_agent: Vec<SessionByAgent>,
+    status: AgentImportStatus,
+}
+
+#[derive(Default)]
+struct AgentSessionFetchStats {
+    supported_attempt_count: usize,
+    successful_attempt_count: usize,
+    unsupported_attempt_count: usize,
+    errors: Vec<SharedString>,
+}
+
+fn fetch_sessions_for_agent(
+    agent_id: AgentId,
     existing_sessions: HashSet<acp::SessionId>,
     stores: Vec<Entity<AgentConnectionStore>>,
     cx: &mut App,
-) -> Task<anyhow::Result<Vec<ThreadMetadata>>> {
+) -> Task<AgentSessionFetchResult> {
     let mut wait_for_connection_tasks = Vec::new();
 
     for store in stores {
@@ -490,46 +700,94 @@ fn find_threads_to_import(
             .project()
             .read(cx)
             .remote_connection_options(cx);
+        let agent = Agent::from(agent_id.clone());
+        let server = agent.server(<dyn Fs>::global(cx), ThreadStore::global(cx));
+        let entry = store.update(cx, |store, cx| store.request_connection(agent, server, cx));
 
-        for agent_id in agent_ids.clone() {
-            let agent = Agent::from(agent_id.clone());
-            let server = agent.server(<dyn Fs>::global(cx), ThreadStore::global(cx));
-            let entry = store.update(cx, |store, cx| store.request_connection(agent, server, cx));
-
-            wait_for_connection_tasks.push(entry.read(cx).wait_for_connection().map({
-                let remote_connection = remote_connection.clone();
-                move |state| (agent_id, remote_connection, state)
-            }));
-        }
+        wait_for_connection_tasks.push(entry.read(cx).wait_for_connection().map({
+            let agent_id = agent_id.clone();
+            let remote_connection = remote_connection.clone();
+            move |result| (agent_id, remote_connection, result)
+        }));
     }
 
     cx.spawn(async move |cx| {
+        let mut stats = AgentSessionFetchStats::default();
         let results = futures::future::join_all(wait_for_connection_tasks).await;
 
         let mut page_tasks = Vec::new();
         for (agent_id, remote_connection, result) in results {
-            let Some(state) = result.log_err() else {
-                continue;
+            let state = match result {
+                Ok(state) => state,
+                Err(error) => {
+                    log::warn!("Failed to connect to {agent_id} to list sessions: {error}");
+                    stats.errors.push(error.to_string().into());
+                    continue;
+                }
             };
+
             let Some(list) = cx.update(|cx| state.connection.session_list(cx)) else {
+                stats.unsupported_attempt_count += 1;
                 continue;
             };
+
+            stats.supported_attempt_count += 1;
             page_tasks.push(cx.spawn({
                 let list = list.clone();
-                async move |cx| collect_all_sessions(agent_id, remote_connection, list, cx).await
+                let agent_id_for_error = agent_id.clone();
+                async move |cx| {
+                    (
+                        agent_id_for_error,
+                        collect_all_sessions(agent_id, remote_connection, list, cx).await,
+                    )
+                }
             }));
         }
 
-        let sessions_by_agent = futures::future::join_all(page_tasks)
-            .await
-            .into_iter()
-            .filter_map(|result| result.log_err())
-            .collect();
+        let mut sessions_by_agent = Vec::new();
+        for (agent_id, result) in futures::future::join_all(page_tasks).await {
+            match result {
+                Ok(sessions) => {
+                    stats.successful_attempt_count += 1;
+                    sessions_by_agent.push(sessions);
+                }
+                Err(error) => {
+                    log::warn!("Failed to list sessions for {agent_id}: {error}");
+                    stats.errors.push(error.to_string().into());
+                }
+            }
+        }
 
-        Ok(collect_importable_threads(
+        let importable_counts_by_agent =
+            count_importable_threads_by_agent(&sessions_by_agent, &existing_sessions);
+        let status = if stats.successful_attempt_count > 0 {
+            AgentImportStatus::Ready {
+                importable_count: importable_counts_by_agent
+                    .get(&agent_id)
+                    .copied()
+                    .unwrap_or(0),
+            }
+        } else if stats.supported_attempt_count > 0 {
+            AgentImportStatus::Error(
+                stats
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "Failed to list sessions.".into()),
+            )
+        } else if stats.unsupported_attempt_count > 0 {
+            AgentImportStatus::Unsupported
+        } else if let Some(error) = stats.errors.first().cloned() {
+            AgentImportStatus::Error(error)
+        } else {
+            AgentImportStatus::Unsupported
+        };
+
+        AgentSessionFetchResult {
+            agent_id,
             sessions_by_agent,
-            existing_sessions,
-        ))
+            status,
+        }
     })
 }
 
@@ -561,10 +819,37 @@ async fn collect_all_sessions(
     })
 }
 
+#[derive(Clone)]
 struct SessionByAgent {
     agent_id: AgentId,
     remote_connection: Option<RemoteConnectionOptions>,
     sessions: Vec<acp_thread::AgentSessionInfo>,
+}
+
+fn count_importable_threads_by_agent(
+    sessions_by_agent: &[SessionByAgent],
+    existing_sessions: &HashSet<acp::SessionId>,
+) -> HashMap<AgentId, usize> {
+    let mut counts_by_agent = HashMap::default();
+    let mut seen_sessions_by_agent = HashMap::<AgentId, HashSet<acp::SessionId>>::default();
+
+    for sessions_for_agent in sessions_by_agent {
+        let seen_sessions = seen_sessions_by_agent
+            .entry(sessions_for_agent.agent_id.clone())
+            .or_insert_with(|| existing_sessions.clone());
+        for session in &sessions_for_agent.sessions {
+            if !seen_sessions.insert(session.session_id.clone()) {
+                continue;
+            }
+            if session.work_dirs.is_some() {
+                *counts_by_agent
+                    .entry(sessions_for_agent.agent_id.clone())
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+
+    counts_by_agent
 }
 
 fn collect_importable_threads(
@@ -656,19 +941,6 @@ fn import_threads_from_other_channels_in(
         })
     })
     .detach();
-}
-
-fn channel_has_threads(database_dir: &std::path::Path, channel: ReleaseChannel) -> bool {
-    let db_path = db::db_path(database_dir, channel);
-    if !db_path.exists() {
-        return false;
-    }
-    let connection = sqlez::connection::Connection::open_file(&db_path.to_string_lossy());
-    connection
-        .select_row::<bool>("SELECT 1 FROM sidebar_threads LIMIT 1")
-        .ok()
-        .and_then(|mut query| query().ok().flatten())
-        .unwrap_or(false)
 }
 
 fn read_threads_from_channel(
@@ -908,6 +1180,45 @@ mod tests {
 
         let result = collect_importable_threads(sessions_by_agent, existing);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_count_importable_threads_by_agent_counts_each_agent_independently() {
+        let existing = HashSet::from_iter(vec![acp::SessionId::new("existing")]);
+        let paths = PathList::new(&[Path::new("/project")]);
+        let sessions_by_agent = vec![
+            SessionByAgent {
+                agent_id: AgentId::new("agent-a"),
+                remote_connection: None,
+                sessions: vec![
+                    make_session(
+                        "existing",
+                        Some("Existing"),
+                        Some(paths.clone()),
+                        None,
+                        None,
+                    ),
+                    make_session("shared", Some("Shared A"), Some(paths.clone()), None, None),
+                    make_session("no-dirs", Some("No Dirs"), None, None, None),
+                ],
+            },
+            SessionByAgent {
+                agent_id: AgentId::new("agent-b"),
+                remote_connection: None,
+                sessions: vec![make_session(
+                    "shared",
+                    Some("Shared B"),
+                    Some(paths),
+                    None,
+                    None,
+                )],
+            },
+        ];
+
+        let counts = count_importable_threads_by_agent(&sessions_by_agent, &existing);
+
+        assert_eq!(counts.get(&AgentId::new("agent-a")), Some(&1));
+        assert_eq!(counts.get(&AgentId::new("agent-b")), Some(&1));
     }
 
     fn create_channel_db(
