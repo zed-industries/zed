@@ -428,9 +428,23 @@ fn spawn_posix_spawn(
         cvt_nz(libc::posix_spawnattr_init(&mut attr))?;
         cvt_nz(libc::posix_spawn_file_actions_init(&mut file_actions))?;
 
+        // The Rust runtime sets SIGPIPE to SIG_IGN before `main`, and ignored
+        // dispositions survive exec, so without this children would never die
+        // from writing to a closed pipe. Reset it to SIG_DFL, like std does
+        // (rust-lang/rust#101077). Like std, we don't touch the signal mask,
+        // so deliberately blocked signals (e.g. via `nohup`) stay blocked.
+        let mut default_set: libc::sigset_t = std::mem::zeroed();
+        if libc::sigemptyset(&mut default_set) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::sigaddset(&mut default_set, libc::SIGPIPE) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        cvt_nz(libc::posix_spawnattr_setsigdefault(&mut attr, &default_set))?;
+
         cvt_nz(libc::posix_spawnattr_setflags(
             &mut attr,
-            libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short,
+            (libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF) as libc::c_short,
         ))?;
 
         cvt_nz(posix_spawnattr_setexceptionports_np(
@@ -446,12 +460,18 @@ fn spawn_posix_spawn(
             current_dir_cstr.as_ptr(),
         ))?;
 
+        // With POSIX_SPAWN_CLOEXEC_DEFAULT, any fd without a file action is
+        // closed in the child, so inheriting a stdio fd requires an explicit
+        // addinherit_np action; without one the child's fd 0/1/2 would start
+        // out closed and could be silently reused by its first open().
         if let Some(fd) = &stdin_read {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
                 fd.as_raw_fd(),
                 libc::STDIN_FILENO,
             ))?;
+        }
+        if stdin_read.is_some() || stdin_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDIN_FILENO,
@@ -464,6 +484,8 @@ fn spawn_posix_spawn(
                 fd.as_raw_fd(),
                 libc::STDOUT_FILENO,
             ))?;
+        }
+        if stdout_write.is_some() || stdout_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDOUT_FILENO,
@@ -476,6 +498,8 @@ fn spawn_posix_spawn(
                 fd.as_raw_fd(),
                 libc::STDERR_FILENO,
             ))?;
+        }
+        if stderr_write.is_some() || stderr_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDERR_FILENO,
@@ -890,6 +914,59 @@ mod tests {
             assert!(output.status.success());
             assert_eq!(output.stdout, b"piped input");
         });
+    }
+
+    #[test]
+    fn test_stdio_inherit_keeps_stdio_open() {
+        smol::block_on(async {
+            let status = Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "[ -e /dev/fd/0 ] && [ -e /dev/fd/1 ] && [ -e /dev/fd/2 ]",
+                ])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .await
+                .expect("failed to run command");
+
+            assert!(
+                status.success(),
+                "stdio fds should be open in the child when using Stdio::inherit()"
+            );
+        });
+    }
+
+    #[test]
+    fn test_child_sigpipe_disposition_matches_std() {
+        const SCRIPT: &str = "kill -s PIPE $$; echo survived";
+
+        #[allow(clippy::disallowed_methods)]
+        let std_output = std::process::Command::new("/bin/sh")
+            .args(["-c", SCRIPT])
+            .output()
+            .expect("failed to run std command");
+
+        let our_output = smol::block_on(async {
+            Command::new("/bin/sh")
+                .args(["-c", SCRIPT])
+                .output()
+                .await
+                .expect("failed to run command")
+        });
+
+        assert_eq!(
+            std_output.status.signal(),
+            Some(libc::SIGPIPE),
+            "expected std to reset SIGPIPE to SIG_DFL in children; did its default change?"
+        );
+        assert_eq!(
+            our_output.status.signal(),
+            std_output.status.signal(),
+            "child SIGPIPE disposition diverges from std::process::Command"
+        );
+        assert_eq!(our_output.stdout, std_output.stdout);
     }
 
     #[test]
