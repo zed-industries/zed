@@ -14,13 +14,13 @@ use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::io::BufReader;
-use futures::{AsyncBufReadExt as _, Future, FutureExt as _, StreamExt as _};
+use futures::{AsyncBufReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, StreamExt as _};
 use project::agent_server_store::{
     AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
 };
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::SettingsStore;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
@@ -41,7 +41,7 @@ use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
-use crate::GEMINI_ID;
+use crate::{CODEX_ID, GEMINI_ID};
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
@@ -425,6 +425,7 @@ pub struct AcpConnection {
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
     defaults: AcpConnectionDefaults,
+    command: AgentServerCommand,
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_log: AcpDebugLog,
@@ -439,6 +440,62 @@ pub struct AcpConnection {
 struct AcpConnectionDefaults {
     mode: Rc<RefCell<Option<acp::SessionModeId>>>,
     config_options: Rc<RefCell<HashMap<String, String>>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexAppServerThread {
+    id: String,
+    session_id: Option<String>,
+    path: PathBuf,
+    cwd: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexAppServerThreadResponse {
+    thread: CodexAppServerThread,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexAppServerError {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexAppServerResponse {
+    id: Option<u64>,
+    result: Option<serde_json::Value>,
+    error: Option<CodexAppServerError>,
+}
+
+struct KillChildOnDrop {
+    child: Option<Child>,
+}
+
+impl KillChildOnDrop {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn child_mut(&mut self) -> Option<&mut Child> {
+        self.child.as_mut()
+    }
+
+    fn kill(&mut self) -> Result<()> {
+        if let Some(child) = self.child.as_mut() {
+            child.kill()?;
+        }
+        self.child.take();
+        Ok(())
+    }
+}
+
+impl Drop for KillChildOnDrop {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            child.kill().log_err();
+        }
+    }
 }
 
 impl AcpConnectionDefaults {
@@ -1049,7 +1106,7 @@ impl AcpConnection {
                 "label": "gemini /auth",
                 "command": original_command.path.to_string_lossy(),
                 "args": gemini_args,
-                "env": original_command.env.unwrap_or_default(),
+                "env": original_command.env.clone().unwrap_or_default(),
             });
             let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
             vec![acp::AuthMethod::Agent(
@@ -1078,6 +1135,7 @@ impl AcpConnection {
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
             defaults,
+            command: original_command,
             session_list,
             debug_log,
             _settings_subscription: settings_subscription,
@@ -1118,6 +1176,11 @@ impl AcpConnection {
             agent_server_store,
             agent_capabilities,
             defaults,
+            command: AgentServerCommand {
+                path: PathBuf::from("test-agent"),
+                args: Vec::new(),
+                env: None,
+            },
             child: None,
             session_list: None,
             debug_log: AcpDebugLog::default(),
@@ -1135,6 +1198,157 @@ impl AcpConnection {
     ) -> Result<SessionDirectories> {
         let supports_additional_directories = self.supports_session_additional_directories();
         session_directories_from_work_dirs(work_dirs, supports_additional_directories)
+    }
+
+    async fn create_codex_interactive_session(
+        &self,
+        project: Entity<Project>,
+        directories: SessionDirectories,
+        cx: &mut AsyncApp,
+    ) -> Result<acp::SessionId> {
+        let command_env = self.command.env.clone().unwrap_or_default();
+        let (version, fs, command) = project.read_with(cx, |project, cx| {
+            let version = release_channel::AppVersion::global(cx).to_string();
+            let fs = project.fs().clone();
+            let command = project
+                .remote_client()
+                .and_then(|client| {
+                    client
+                        .read(cx)
+                        .build_command(
+                            Some("codex".to_string()),
+                            &["app-server".to_string()],
+                            &command_env,
+                            Some(directories.cwd.display().to_string()),
+                            None,
+                            Interactive::No,
+                        )
+                        .log_err()
+                })
+                .map(|template| (template.program, template.args, template.env))
+                .unwrap_or_else(|| {
+                    (
+                        "codex".to_string(),
+                        vec!["app-server".to_string()],
+                        command_env,
+                    )
+                });
+            (version, fs, command)
+        });
+        let (path, args, env) = command;
+
+        let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
+        let mut child_command = builder.build_std_command(Some(path.clone()), &args);
+        child_command.envs(env);
+        if project.read_with(cx, |project, _cx| project.is_local()) {
+            child_command.current_dir(&directories.cwd);
+        }
+
+        let child = Child::spawn(
+            child_command,
+            Stdio::piped(),
+            Stdio::piped(),
+            Stdio::piped(),
+        )
+        .with_context(|| format!("spawning Codex app-server: {path:?}, {args:?}"))?;
+        let mut child = KillChildOnDrop::new(child);
+        let mut stdin = child
+            .child_mut()
+            .context("Codex app-server process already exited")?
+            .stdin
+            .take()
+            .context("Failed to take app-server stdin")?;
+        let stdout = child
+            .child_mut()
+            .context("Codex app-server process already exited")?
+            .stdout
+            .take()
+            .context("Failed to take app-server stdout")?;
+        let stderr = child
+            .child_mut()
+            .context("Codex app-server process already exited")?
+            .stderr
+            .take()
+            .context("Failed to take app-server stderr")?;
+
+        let stderr_task = cx.background_spawn(async move {
+            let mut stderr = BufReader::new(stderr);
+            let mut line = String::new();
+            while let Ok(n) = stderr.read_line(&mut line).await
+                && n > 0
+            {
+                log::warn!("Codex app-server stderr: {}", line.trim_end());
+                line.clear();
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+
+        let mut stdout = BufReader::new(stdout).lines();
+        let _: serde_json::Value = send_codex_app_server_request(
+            &mut stdin,
+            &mut stdout,
+            0,
+            "initialize",
+            serde_json::json!({
+                "clientInfo": {
+                    "name": "zed",
+                    "title": "Zed",
+                    "version": version,
+                }
+            }),
+        )
+        .await?;
+        send_codex_app_server_notification(&mut stdin, "initialized", serde_json::json!({}))
+            .await?;
+
+        let response: CodexAppServerThreadResponse = send_codex_app_server_request(
+            &mut stdin,
+            &mut stdout,
+            1,
+            "thread/start",
+            serde_json::json!({
+                "cwd": directories.cwd,
+                "serviceName": "zed",
+                "threadSource": "user",
+            }),
+        )
+        .await?;
+
+        drop(stdin);
+        child.kill().log_err();
+        stderr_task.await.log_err();
+
+        let session_id = response
+            .thread
+            .session_id
+            .unwrap_or_else(|| response.thread.id.clone());
+        let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let session_meta = serde_json::json!({
+            "timestamp": timestamp,
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "timestamp": timestamp,
+                "cwd": response.thread.cwd,
+                "originator": "codex-tui",
+                "cli_version": version,
+                "source": "vscode",
+                "thread_source": "user",
+                "model_provider": "openai",
+            }
+        });
+        let mut line = serde_json::to_vec(&session_meta)?;
+        line.push(b'\n');
+        fs.write(&response.thread.path, &line)
+            .await
+            .with_context(|| {
+                format!(
+                    "writing Codex app-server rollout metadata to {}",
+                    response.thread.path.display()
+                )
+            })?;
+
+        Ok(acp::SessionId::new(session_id))
     }
 
     fn open_or_create_session(
@@ -1402,6 +1616,72 @@ impl SessionDirectories {
     }
 }
 
+async fn send_codex_app_server_request<T>(
+    stdin: &mut (impl futures::AsyncWrite + Unpin),
+    stdout: &mut (impl futures::Stream<Item = std::io::Result<String>> + Unpin),
+    id: u64,
+    method: &str,
+    params: impl Serialize,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let request = serde_json::json!({
+        "method": method,
+        "id": id,
+        "params": params,
+    });
+    let mut bytes = serde_json::to_vec(&request)?;
+    bytes.push(b'\n');
+    stdin.write_all(&bytes).await?;
+    stdin.flush().await?;
+
+    while let Some(line) = stdout.next().await {
+        let line = line?;
+        let response = match serde_json::from_str::<CodexAppServerResponse>(&line) {
+            Ok(response) => response,
+            Err(error) => {
+                log::warn!("Skipping malformed Codex app-server message: {error}");
+                continue;
+            }
+        };
+
+        if response.id != Some(id) {
+            continue;
+        }
+
+        if let Some(error) = response.error {
+            anyhow::bail!(
+                "Codex app-server request `{method}` failed: {}",
+                error.message
+            );
+        }
+
+        let result = response
+            .result
+            .ok_or_else(|| anyhow!("Codex app-server response for `{method}` had no result"))?;
+        return serde_json::from_value(result).map_err(Into::into);
+    }
+
+    anyhow::bail!("Codex app-server exited before responding to `{method}`")
+}
+
+async fn send_codex_app_server_notification(
+    stdin: &mut (impl futures::AsyncWrite + Unpin),
+    method: &str,
+    params: impl Serialize,
+) -> Result<()> {
+    let notification = serde_json::json!({
+        "method": method,
+        "params": params,
+    });
+    let mut bytes = serde_json::to_vec(&notification)?;
+    bytes.push(b'\n');
+    stdin.write_all(&bytes).await?;
+    stdin.flush().await?;
+    Ok(())
+}
+
 fn session_directories_from_work_dirs(
     work_dirs: &PathList,
     supports_additional_directories: bool,
@@ -1541,6 +1821,28 @@ impl AgentConnection for AcpConnection {
             Err(error) => return Task::ready(Err(error)),
         };
         let name = self.id.0.clone();
+
+        if self.id.as_ref() == CODEX_ID && self.supports_load_session() {
+            let this = self;
+            return cx.spawn(async move |cx| {
+                let timeout = cx
+                    .background_executor()
+                    .timer(Duration::from_secs(30))
+                    .boxed_local();
+                let create_session = this
+                    .create_codex_interactive_session(project.clone(), directories, cx)
+                    .boxed_local();
+                let session_id = match futures::future::select(create_session, timeout).await {
+                    futures::future::Either::Left((session_id, _timeout)) => session_id?,
+                    futures::future::Either::Right((_timeout, _create_session)) => {
+                        anyhow::bail!("Timed out waiting for Codex app-server to create a thread")
+                    }
+                };
+                cx.update(|cx| this.load_session(session_id, project, work_dirs, None, cx))
+                    .await
+            });
+        }
+
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
@@ -2629,6 +2931,104 @@ mod tests {
         assert_eq!(
             debug_log.trailing_stderr().as_deref(),
             Some("recent stderr")
+        );
+    }
+
+    #[gpui::test]
+    async fn codex_app_server_request_skips_unrelated_messages() {
+        let mut stdin = futures::io::Cursor::new(Vec::new());
+        let stdout = [
+            "not json",
+            r#"{"id":7,"result":{"ignored":true}}"#,
+            r#"{"method":"progress","params":{"message":"working"}}"#,
+            r#"{"id":42,"result":{"ok":true}}"#,
+        ]
+        .join("\n");
+        let mut stdout = BufReader::new(futures::io::Cursor::new(format!("{stdout}\n"))).lines();
+
+        let result: serde_json::Value = send_codex_app_server_request(
+            &mut stdin,
+            &mut stdout,
+            42,
+            "thread/start",
+            serde_json::json!({
+                "cwd": "/project",
+            }),
+        )
+        .await
+        .expect("request should receive matching response");
+
+        assert_eq!(result, serde_json::json!({ "ok": true }));
+
+        let request = String::from_utf8(stdin.into_inner()).expect("request should be utf8");
+        let request: serde_json::Value =
+            serde_json::from_str(request.trim_end()).expect("request should be valid json");
+        assert_eq!(
+            request,
+            serde_json::json!({
+                "method": "thread/start",
+                "id": 42,
+                "params": {
+                    "cwd": "/project",
+                },
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn codex_app_server_request_surfaces_server_error() {
+        let mut stdin = futures::io::Cursor::new(Vec::new());
+        let mut stdout = BufReader::new(futures::io::Cursor::new(
+            r#"{"id":1,"error":{"message":"workspace unavailable"}}"#,
+        ))
+        .lines();
+
+        let error = send_codex_app_server_request::<serde_json::Value>(
+            &mut stdin,
+            &mut stdout,
+            1,
+            "thread/start",
+            serde_json::json!({}),
+        )
+        .await
+        .expect_err("request should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Codex app-server request `thread/start` failed: workspace unavailable"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn codex_app_server_notification_writes_json_line() {
+        let mut stdin = futures::io::Cursor::new(Vec::new());
+
+        send_codex_app_server_notification(
+            &mut stdin,
+            "initialized",
+            serde_json::json!({ "ready": true }),
+        )
+        .await
+        .expect("notification should write");
+
+        let notification =
+            String::from_utf8(stdin.into_inner()).expect("notification should be utf8");
+        assert!(
+            notification.ends_with('\n'),
+            "notification should be newline-delimited"
+        );
+        let notification: serde_json::Value = serde_json::from_str(notification.trim_end())
+            .expect("notification should be valid json");
+        assert_eq!(
+            notification,
+            serde_json::json!({
+                "method": "initialized",
+                "params": {
+                    "ready": true,
+                },
+            })
         );
     }
 
