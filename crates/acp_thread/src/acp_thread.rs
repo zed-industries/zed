@@ -16,9 +16,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
-use language::{
-    Anchor, Buffer, BufferEditSource, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff,
-};
+use language::{Anchor, Buffer, BufferEditSource, LanguageRegistry, Point, ToPoint, text_diff};
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
@@ -1378,7 +1376,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
     update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
-    shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
+    shared_buffers: HashMap<Entity<Buffer>, text::BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
@@ -2475,8 +2473,9 @@ impl AcpThread {
                 let project = this.project.clone();
 
                 for location in resolved_locations.iter().flatten() {
+                    let snapshot = location.buffer.read(cx).text_snapshot();
                     this.shared_buffers
-                        .insert(location.buffer.clone(), location.buffer.read(cx).snapshot());
+                        .insert(location.buffer.clone(), snapshot);
                 }
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
@@ -3170,7 +3169,6 @@ impl AcpThread {
         path: PathBuf,
         line: Option<u32>,
         limit: Option<u32>,
-        reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String, acp::Error>> {
         // Args are 1-based, move to 0-based
@@ -3191,29 +3189,14 @@ impl AcpThread {
 
             let buffer = load.await?;
 
-            let snapshot = if reuse_shared_snapshot {
-                this.read_with(cx, |this, _| {
-                    this.shared_buffers.get(&buffer.clone()).cloned()
-                })
-                .log_err()
-                .flatten()
-            } else {
-                None
-            };
+            action_log.update(cx, |action_log, cx| {
+                action_log.buffer_read(buffer.clone(), cx);
+            });
 
-            let snapshot = if let Some(snapshot) = snapshot {
-                snapshot
-            } else {
-                action_log.update(cx, |action_log, cx| {
-                    action_log.buffer_read(buffer.clone(), cx);
-                });
-
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-                this.update(cx, |this, _| {
-                    this.shared_buffers.insert(buffer.clone(), snapshot.clone());
-                })?;
-                snapshot
-            };
+            let snapshot = buffer.update(cx, |buffer, _| buffer.text_snapshot());
+            this.update(cx, |this, _| {
+                this.shared_buffers.insert(buffer.clone(), snapshot.clone());
+            })?;
 
             let max_point = snapshot.max_point();
             let start_position = Point::new(line, 0);
@@ -3266,7 +3249,7 @@ impl AcpThread {
                 this.shared_buffers
                     .get(&buffer)
                     .cloned()
-                    .unwrap_or_else(|| buffer.read(cx).snapshot())
+                    .unwrap_or_else(|| buffer.read(cx).text_snapshot())
             })?;
             let edits = cx
                 .background_executor()
@@ -4254,7 +4237,7 @@ mod tests {
                 async move {
                     let content = thread
                         .update(&mut cx, |thread, cx| {
-                            thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+                            thread.read_text_file(path!("/tmp/foo").into(), None, None, cx)
                         })
                         .unwrap()
                         .await
@@ -4344,7 +4327,7 @@ mod tests {
         // Whole file
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, cx)
             })
             .await
             .unwrap();
@@ -4354,7 +4337,7 @@ mod tests {
         // Only start line
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(3), None, false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(3), None, cx)
             })
             .await
             .unwrap();
@@ -4364,7 +4347,7 @@ mod tests {
         // Only limit
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), cx)
             })
             .await
             .unwrap();
@@ -4374,7 +4357,7 @@ mod tests {
         // Range
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(2), Some(2), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(2), Some(2), cx)
             })
             .await
             .unwrap();
@@ -4384,7 +4367,7 @@ mod tests {
         // Invalid
         let err = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(6), Some(2), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(6), Some(2), cx)
             })
             .await
             .unwrap_err();
@@ -4421,7 +4404,7 @@ mod tests {
         // Whole file
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, cx)
             })
             .await
             .unwrap();
@@ -4431,7 +4414,7 @@ mod tests {
         // Only start line
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(1), None, false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(1), None, cx)
             })
             .await
             .unwrap();
@@ -4441,7 +4424,7 @@ mod tests {
         // Only limit
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), cx)
             })
             .await
             .unwrap();
@@ -4451,7 +4434,7 @@ mod tests {
         // Range
         let content = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(1), Some(1), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(1), Some(1), cx)
             })
             .await
             .unwrap();
@@ -4461,7 +4444,7 @@ mod tests {
         // Invalid
         let err = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(5), Some(2), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(5), Some(2), cx)
             })
             .await
             .unwrap_err();
@@ -4497,7 +4480,7 @@ mod tests {
         // Out of project file
         let err = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/foo").into(), None, None, false, cx)
+                thread.read_text_file(path!("/foo").into(), None, None, cx)
             })
             .await
             .unwrap_err();

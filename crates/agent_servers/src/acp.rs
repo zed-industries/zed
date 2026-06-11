@@ -3899,7 +3899,7 @@ fn handle_read_text_file(
         let result: Result<_, acp::Error> = async {
             thread
                 .update(cx, |thread, cx| {
-                    thread.read_text_file(args.path, args.line, args.limit, false, cx)
+                    thread.read_text_file(args.path, args.line, args.limit, cx)
                 })
                 .map_err(acp::Error::from)?
                 .await
