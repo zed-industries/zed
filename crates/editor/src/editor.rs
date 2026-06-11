@@ -1252,7 +1252,6 @@ pub struct GutterDimensions {
     pub width: Pixels,
     pub margin: Pixels,
     pub git_blame_entries_width: Option<Pixels>,
-    pub diff_hunk_signs_width: Pixels,
 }
 
 impl GutterDimensions {
@@ -11641,12 +11640,6 @@ impl EditorSnapshot {
 
             let shows_folds = is_singleton && gutter_settings.folds;
 
-            let diff_hunk_signs_gutter_width = if show_diff_hunk_signs_gutter {
-                ch_width * 2.0 + px(2.0)
-            } else {
-                px(0.)
-            };
-
             let right_padding = if shows_folds && show_line_numbers {
                 ch_width * 4.0
             } else if shows_folds || (!is_singleton && show_line_numbers) {
@@ -11660,13 +11653,9 @@ impl EditorSnapshot {
             GutterDimensions {
                 left_padding,
                 right_padding,
-                width: line_gutter_width
-                    + diff_hunk_signs_gutter_width
-                    + left_padding
-                    + right_padding,
+                width: line_gutter_width + left_padding + right_padding,
                 margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
                 git_blame_entries_width,
-                diff_hunk_signs_width: diff_hunk_signs_gutter_width,
             }
         } else if self.offset_content {
             GutterDimensions::default_with_margin(font_id, font_size, cx)
