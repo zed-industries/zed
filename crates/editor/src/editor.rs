@@ -8000,7 +8000,57 @@ impl Editor {
         }
         let project = self.project.clone()?;
         let kind = CodeActionKind::from(action.kind.clone());
-        Some(self.perform_code_action_kind(project, kind, window, cx))
+        match action.apply {
+            ApplyMode::First => self.apply_first_code_action(project, kind, window, cx),
+            // TODO: IfSingle and Never temporarily behave as All until the
+            // kind-filtered picker lands.
+            ApplyMode::IfSingle | ApplyMode::Never | ApplyMode::All => {
+                Some(self.perform_code_action_kind(project, kind, window, cx))
+            }
+        }
+    }
+
+    fn apply_first_code_action(
+        &mut self,
+        project: Entity<Project>,
+        kind: CodeActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let display_snapshot = self.display_snapshot(cx);
+        let selection = self.selections.newest_adjusted(&display_snapshot);
+        let multi_buffer = self.buffer.read(cx);
+        let (buffer, start) = multi_buffer.text_anchor_for_position(selection.start, cx)?;
+        let (end_buffer, end) = multi_buffer.text_anchor_for_position(selection.end, cx)?;
+        if buffer != end_buffer {
+            return None;
+        }
+
+        // Per the LSP spec, source.* kinds apply to the whole file; other
+        // kinds target the cursor or selection.
+        let range = if kind.as_str().starts_with("source.") {
+            let snapshot = buffer.read(cx);
+            snapshot.anchor_before(0)..snapshot.anchor_before(snapshot.len())
+        } else {
+            start..end
+        };
+
+        let actions = project.update(cx, |project, cx| {
+            project.code_actions(&buffer, range, Some(vec![kind]), cx)
+        });
+        let workspace = self.workspace()?.downgrade();
+
+        Some(cx.spawn_in(window, async move |editor, cx| {
+            let Some(action) = actions.await?.unwrap_or_default().into_iter().next() else {
+                return Ok(());
+            };
+            let title = action.lsp_action.title().to_owned();
+            let apply = project.update(cx, |project, cx| {
+                project.apply_code_action(buffer, action, true, cx)
+            });
+            let transaction = apply.await?;
+            Self::open_project_transaction(&editor, workspace, transaction, title, cx).await
+        }))
     }
 
     fn perform_code_action_kind(
