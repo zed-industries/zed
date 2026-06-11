@@ -332,6 +332,12 @@ fn map_open_ai_error(error: open_ai::RequestError) -> LanguageModelCompletionErr
                 retry_after,
             )
         }
+        open_ai::RequestError::StreamIdleTimeout { timeout, .. } => {
+            LanguageModelCompletionError::HttpSend {
+                provider: PROVIDER_NAME,
+                error: anyhow::anyhow!("no data received within {timeout:?}"),
+            }
+        }
         open_ai::RequestError::Other(error) => LanguageModelCompletionError::Other(error),
     }
 }

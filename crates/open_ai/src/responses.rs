@@ -1,12 +1,106 @@
 use anyhow::{Result, anyhow};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{
+    AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, io::BufReader,
+    stream::BoxStream,
+};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
+
+/// Activity-based timeout for `stream_response_with_idle_timeout`, mirroring
+/// the `stream_idle_timeout` behavior of OpenAI's Codex CLI: the timer covers
+/// the window from sending the request until response headers arrive, and is
+/// then reset every time a stream event arrives. If no activity occurs within
+/// `duration`, the request fails with [`RequestError::StreamIdleTimeout`].
+pub struct StreamIdleTimeout {
+    pub duration: Duration,
+    /// Creates a future that resolves after the given duration. Callers
+    /// provide this so that this crate doesn't depend on a specific executor
+    /// (e.g. GPUI's `BackgroundExecutor::timer`, which is also controllable
+    /// from tests).
+    pub make_timer: Arc<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>,
+}
+
+impl StreamIdleTimeout {
+    fn timer(&self) -> BoxFuture<'static, ()> {
+        (self.make_timer)(self.duration)
+    }
+
+    fn error(&self, provider_name: &str) -> RequestError {
+        RequestError::StreamIdleTimeout {
+            provider: provider_name.to_owned(),
+            timeout: self.duration,
+        }
+    }
+}
+
+/// Wraps a stream of SSE events, failing it with
+/// [`RequestError::StreamIdleTimeout`] if no event arrives within the
+/// configured duration. The timer is reset every time an event arrives.
+struct IdleTimeoutStream {
+    provider_name: String,
+    inner: BoxStream<'static, Result<StreamEvent>>,
+    idle_timeout: StreamIdleTimeout,
+    timer: BoxFuture<'static, ()>,
+    timed_out: bool,
+}
+
+impl IdleTimeoutStream {
+    fn new(
+        provider_name: String,
+        inner: BoxStream<'static, Result<StreamEvent>>,
+        idle_timeout: StreamIdleTimeout,
+    ) -> Self {
+        let timer = idle_timeout.timer();
+        Self {
+            provider_name,
+            inner,
+            idle_timeout,
+            timer,
+            timed_out: false,
+        }
+    }
+}
+
+impl Stream for IdleTimeoutStream {
+    type Item = Result<StreamEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.timed_out {
+            return Poll::Ready(None);
+        }
+        match this.inner.poll_next_unpin(cx) {
+            Poll::Ready(item) => {
+                this.timer = this.idle_timeout.timer();
+                Poll::Ready(item)
+            }
+            Poll::Pending => match this.timer.poll_unpin(cx) {
+                Poll::Ready(()) => {
+                    this.timed_out = true;
+                    log::error!(
+                        "No data received from {}'s API within {:?}; treating the stream as dead",
+                        this.provider_name,
+                        this.idle_timeout.duration,
+                    );
+                    let error = this.idle_timeout.error(&this.provider_name);
+                    Poll::Ready(Some(Err(anyhow::Error::new(error))))
+                }
+                Poll::Pending => Poll::Pending,
+            },
+        }
+    }
+}
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -443,6 +537,27 @@ pub async fn stream_response(
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
+    stream_response_with_idle_timeout(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        request,
+        extra_headers,
+        None,
+    )
+    .await
+}
+
+pub async fn stream_response_with_idle_timeout(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    extra_headers: &CustomHeaders,
+    idle_timeout: Option<StreamIdleTimeout>,
+) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
     let is_streaming = request.stream;
     let request = HttpRequest::builder()
@@ -456,11 +571,25 @@ pub async fn stream_response(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    // The Codex backend doesn't send response headers until the model starts
+    // producing output, so this window can legitimately last as long as the
+    // model thinks. The idle timeout must therefore be generous (see the
+    // 10-second header timeout regression in #57891/#58035).
+    let mut response = match &idle_timeout {
+        Some(idle_timeout) => {
+            let mut send = std::pin::pin!(client.send(request).fuse());
+            let mut timer = std::pin::pin!(idle_timeout.timer().fuse());
+            futures::select_biased! {
+                response = send => response?,
+                _ = timer => return Err(idle_timeout.error(provider_name)),
+            }
+        }
+        None => client.send(request).await?,
+    };
     if response.status().is_success() {
         if is_streaming {
             let reader = BufReader::new(response.into_body());
-            Ok(reader
+            let events = reader
                 .lines()
                 .filter_map(|line| async move {
                     match line {
@@ -487,14 +616,27 @@ pub async fn stream_response(
                         Err(error) => Some(Err(anyhow!(error))),
                     }
                 })
-                .boxed())
+                .boxed();
+            Ok(match idle_timeout {
+                Some(idle_timeout) => {
+                    IdleTimeoutStream::new(provider_name.to_owned(), events, idle_timeout).boxed()
+                }
+                None => events,
+            })
         } else {
             let mut body = String::new();
-            response
-                .body_mut()
-                .read_to_string(&mut body)
-                .await
-                .map_err(|e| RequestError::Other(e.into()))?;
+            let read = response.body_mut().read_to_string(&mut body);
+            match &idle_timeout {
+                Some(idle_timeout) => {
+                    let mut read = std::pin::pin!(read.fuse());
+                    let mut timer = std::pin::pin!(idle_timeout.timer().fuse());
+                    futures::select_biased! {
+                        result = read => result.map_err(|e| RequestError::Other(e.into()))?,
+                        _ = timer => return Err(idle_timeout.error(provider_name)),
+                    }
+                }
+                None => read.await.map_err(|e| RequestError::Other(e.into()))?,
+            };
 
             match serde_json::from_str::<ResponseSummary>(&body) {
                 Ok(response_summary) => {
@@ -606,5 +748,180 @@ pub async fn stream_response(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_client::FakeHttpClient;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Returns a timer factory whose timers never fire for the first
+    /// `fire_from_call` calls and fire immediately afterwards. Useful for
+    /// deterministically controlling when the idle timeout elapses.
+    fn timer_factory(
+        fire_from_call: usize,
+    ) -> Arc<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        Arc::new(move |_duration| {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            if call >= fire_from_call {
+                futures::future::ready(()).boxed()
+            } else {
+                futures::future::pending().boxed()
+            }
+        })
+    }
+
+    fn idle_timeout(
+        make_timer: Arc<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>,
+    ) -> StreamIdleTimeout {
+        StreamIdleTimeout {
+            duration: Duration::from_secs(300),
+            make_timer,
+        }
+    }
+
+    fn test_request() -> Request {
+        Request {
+            model: "gpt-test".into(),
+            instructions: None,
+            input: Vec::new(),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: None,
+            service_tier: None,
+        }
+    }
+
+    fn assert_idle_timeout_error(error: &anyhow::Error) {
+        match error.downcast_ref::<RequestError>() {
+            Some(RequestError::StreamIdleTimeout { .. }) => {}
+            other => panic!("expected StreamIdleTimeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn idle_timeout_stream_fails_when_stream_stalls() {
+        futures::executor::block_on(async {
+            // One event arrives, then the stream stalls forever. The initial
+            // timer (call 0) never fires; the reset timer (call 1) fires
+            // immediately, simulating the idle window elapsing after the
+            // first event.
+            let inner = futures::stream::iter(vec![Ok(StreamEvent::Unknown)])
+                .chain(futures::stream::pending())
+                .boxed();
+            let mut stream = IdleTimeoutStream::new(
+                "test-provider".to_owned(),
+                inner,
+                idle_timeout(timer_factory(1)),
+            );
+
+            assert!(matches!(stream.next().await, Some(Ok(_))));
+            let error = stream
+                .next()
+                .await
+                .expect("expected an error item")
+                .expect_err("expected the stream to fail");
+            assert_idle_timeout_error(&error);
+            assert!(
+                stream.next().await.is_none(),
+                "stream should end after timing out"
+            );
+        });
+    }
+
+    #[test]
+    fn idle_timeout_stream_prefers_data_over_timer() {
+        futures::executor::block_on(async {
+            // Even with timers that fire immediately, available events are
+            // always delivered first.
+            let inner = futures::stream::iter(vec![
+                Ok(StreamEvent::Unknown),
+                Ok(StreamEvent::Unknown),
+                Ok(StreamEvent::Unknown),
+            ])
+            .boxed();
+            let mut stream = IdleTimeoutStream::new(
+                "test-provider".to_owned(),
+                inner,
+                idle_timeout(timer_factory(0)),
+            );
+
+            for _ in 0..3 {
+                assert!(matches!(stream.next().await, Some(Ok(_))));
+            }
+            assert!(stream.next().await.is_none());
+        });
+    }
+
+    #[test]
+    fn stream_response_times_out_when_no_response_headers_arrive() {
+        futures::executor::block_on(async {
+            // The server accepts the request but never sends response headers.
+            let client = FakeHttpClient::create(move |_request| async move {
+                std::future::pending::<()>().await;
+                Err(anyhow!("unreachable"))
+            });
+
+            let result = stream_response_with_idle_timeout(
+                &*client,
+                "test-provider",
+                "https://test.example",
+                "test-key",
+                test_request(),
+                &CustomHeaders::default(),
+                Some(idle_timeout(timer_factory(0))),
+            )
+            .await;
+
+            match result {
+                Err(RequestError::StreamIdleTimeout { .. }) => {}
+                other => panic!("expected StreamIdleTimeout, got {:?}", other.map(|_| ())),
+            }
+        });
+    }
+
+    #[test]
+    fn stream_response_succeeds_when_headers_arrive_before_timeout() {
+        futures::executor::block_on(async {
+            let client = FakeHttpClient::create(move |_request| async move {
+                let body = concat!(
+                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n",
+                    "\n",
+                    "data: [DONE]\n",
+                );
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(body))?)
+            });
+
+            let stream = stream_response_with_idle_timeout(
+                &*client,
+                "test-provider",
+                "https://test.example",
+                "test-key",
+                test_request(),
+                &CustomHeaders::default(),
+                // The initial timer never fires; timers created after events
+                // arrive fire immediately, but events are always preferred.
+                Some(idle_timeout(timer_factory(1))),
+            )
+            .await
+            .expect("request should succeed");
+
+            let events = stream.collect::<Vec<_>>().await;
+            assert_eq!(events.len(), 1);
+            assert!(matches!(events[0], Ok(StreamEvent::Completed { .. })));
+        });
     }
 }

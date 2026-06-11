@@ -718,7 +718,13 @@ impl OpenAiResponseEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                // Preserve typed `RequestError`s (e.g. stream idle timeouts)
+                // so they're classified correctly for retry purposes instead
+                // of falling into the generic `Other` bucket.
+                Err(error) => vec![Err(match error.downcast::<crate::RequestError>() {
+                    Ok(request_error) => LanguageModelCompletionError::from(request_error),
+                    Err(error) => LanguageModelCompletionError::from(error),
+                })],
             })
         })
     }
