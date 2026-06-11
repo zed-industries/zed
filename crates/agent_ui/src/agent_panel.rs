@@ -91,7 +91,7 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::OffsetRangeExt;
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, GradientFade, IconButton, KeyBinding, PopoverMenu,
+    ContextMenu, ContextMenuEntry, GradientFade, IconButton, KeyBinding, PopoverMenu,
     PopoverMenuHandle, ProjectEmptyState, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
@@ -1178,6 +1178,7 @@ pub struct AgentPanel {
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _active_draft_reclaim_observation: Option<Subscription>,
+    _empty_thread_title_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
     last_context_source: Option<AgentContextSource>,
 
@@ -1585,6 +1586,7 @@ impl AgentPanel {
             _base_view_observation: None,
             _draft_editor_observation: None,
             _active_draft_reclaim_observation: None,
+            _empty_thread_title_observation: None,
             _thread_metadata_store_subscription,
             last_context_source: None,
             is_active: false,
@@ -3013,6 +3015,28 @@ impl AgentPanel {
             }));
     }
 
+    /// Re-renders the toolbar as the user types so the empty-thread
+    /// placeholder title tracks the message editor's content.
+    fn observe_message_editor_for_toolbar_title(
+        &mut self,
+        conversation_view: &Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = conversation_view
+            .read(cx)
+            .root_thread_view()
+            .map(|tv| tv.read(cx).message_editor.clone())
+        else {
+            self._empty_thread_title_observation = None;
+            return;
+        };
+        self._empty_thread_title_observation = Some(cx.observe(&editor, |this, _editor, cx| {
+            if !this.active_thread_has_messages(cx) {
+                cx.notify();
+            }
+        }));
+    }
+
     fn try_make_empty_draft_ephemeral(
         &mut self,
         conversation_view: Entity<ConversationView>,
@@ -4223,10 +4247,12 @@ impl AgentPanel {
                     }));
                 let cv = conversation_view.clone();
                 self.observe_active_draft_for_empty_editor(&cv, cx);
+                self.observe_message_editor_for_toolbar_title(&cv, cx);
                 Some(cx.observe_in(&cv, window, |this, server_view, window, cx| {
                     this._thread_view_subscription =
                         Self::subscribe_to_active_thread_view(&server_view, window, cx);
                     this.observe_active_draft_for_empty_editor(&server_view, cx);
+                    this.observe_message_editor_for_toolbar_title(&server_view, cx);
                     cx.emit(AgentPanelEvent::ActiveViewChanged);
                     this.serialize(cx);
                     cx.notify();
@@ -4234,6 +4260,7 @@ impl AgentPanel {
             }
             BaseView::Terminal { terminal_id } => {
                 self._thread_view_subscription = None;
+                self._empty_thread_title_observation = None;
                 if let Some(terminal) = self.terminals.get(terminal_id) {
                     let terminal_id = *terminal_id;
                     let focus_handle = terminal.view.focus_handle(cx);
@@ -4255,6 +4282,7 @@ impl AgentPanel {
             BaseView::Uninitialized => {
                 self._thread_view_subscription = None;
                 self._active_thread_focus_subscription = None;
+                self._empty_thread_title_observation = None;
                 None
             }
         };
@@ -5463,6 +5491,10 @@ impl AgentPanel {
             .width(px(64.0))
             .right(px(0.0))
             .gradient_stop(0.75);
+        // The fade gradient renders as a visible patch on transparent windows
+        // (the title already truncates).
+        let opaque_window =
+            cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
         h_flex()
             .key_context("TitleEditor")
@@ -5474,19 +5506,20 @@ impl AgentPanel {
             .overflow_x_hidden()
             .child(content)
             .when(self.should_show_title_edit(window, cx), |this| {
-                this.child(gradient_overlay).child(
-                    h_flex()
-                        .visible_on_hover("title_editor")
-                        .absolute()
-                        .right_0()
-                        .h_full()
-                        .bg(cx.theme().colors().tab_bar_background)
-                        .child(
-                            IconButton::new("edit_tile", IconName::Pencil)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Edit Thread Title")),
-                        ),
-                )
+                this.when(opaque_window, |this| this.child(gradient_overlay))
+                    .child(
+                        h_flex()
+                            .visible_on_hover("title_editor")
+                            .absolute()
+                            .right_0()
+                            .h_full()
+                            .bg(cx.theme().colors().tab_bar_background)
+                            .child(
+                                IconButton::new("edit_tile", IconName::Pencil)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Edit Thread Title")),
+                            ),
+                    )
             })
             .into_any()
     }
@@ -5995,7 +6028,6 @@ impl AgentPanel {
             .unwrap_or(false);
 
         let has_custom_icon = selected_agent_custom_icon.is_some();
-        let selected_agent_custom_icon_for_button = selected_agent_custom_icon.clone();
         let selected_agent_builtin_icon = if showing_terminal {
             Some(IconName::Terminal)
         } else {
@@ -6090,74 +6122,23 @@ impl AgentPanel {
             .flex_none()
             .justify_between();
 
-        let toolbar_content = if can_create_entries && matches!(mode, ToolbarMode::EmptyThread) {
-            let (chevron_icon, icon_color, label_color) =
-                if self.new_thread_menu_handle.is_deployed() {
-                    (IconName::ChevronUp, Color::Accent, Color::Accent)
-                } else {
-                    (IconName::ChevronDown, Color::Muted, Color::Default)
-                };
-
-            let agent_icon = if let Some(icon_path) = selected_agent_custom_icon_for_button {
-                Icon::from_external_svg(icon_path)
-                    .size(IconSize::Small)
-                    .color(icon_color)
-            } else {
-                let icon_name = selected_agent_builtin_icon.unwrap_or(IconName::ZedAgent);
-                Icon::new(icon_name).size(IconSize::Small).color(icon_color)
-            };
-
-            let agent_selector_button = Button::new("agent-selector-trigger", selected_agent_label)
-                .start_icon(agent_icon)
-                .color(label_color)
-                .end_icon(
-                    Icon::new(chevron_icon)
-                        .color(icon_color)
-                        .size(IconSize::XSmall),
-                );
-
-            let agent_selector_menu = PopoverMenu::new("new_thread_menu")
-                .trigger_with_tooltip(agent_selector_button, {
-                    move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "New Thread…",
-                            &ToggleNewThreadMenu,
-                            &focus_handle,
-                            cx,
-                        )
-                    }
-                })
-                .menu({
-                    let builder = new_thread_menu_builder.clone();
-                    move |window, cx| builder(window, cx)
-                })
-                .with_handle(self.new_thread_menu_handle.clone())
-                .anchor(Anchor::TopLeft)
-                .offset(gpui::Point {
-                    x: px(1.0),
-                    y: px(1.0),
-                });
-
-            base_container
-                .child(
-                    h_flex()
-                        .size_full()
-                        .gap(DynamicSpacing::Base04.rems(cx))
-                        .pl(DynamicSpacing::Base04.rems(cx))
-                        .child(agent_selector_menu),
-                )
-                .child(
-                    h_flex()
-                        .h_full()
-                        .flex_none()
-                        .gap_1()
-                        .pl_1()
-                        .pr_1()
-                        .child(full_screen_button)
-                        .child(self.render_panel_options_menu(window, cx)),
-                )
-                .into_any_element()
+        let empty_thread_title = if matches!(mode, ToolbarMode::EmptyThread) {
+            let draft_label = self
+                .active_thread_id(cx)
+                .and_then(|thread_id| self.editor_text(thread_id, cx))
+                .and_then(|text| crate::draft_prompt_store::truncate_draft_label(&text));
+            Some(match draft_label {
+                Some(label) => Label::new(label).truncate().into_any_element(),
+                None => Label::new(format!("New {} Thread", selected_agent_label))
+                    .color(Color::Muted)
+                    .truncate()
+                    .into_any_element(),
+            })
         } else {
+            None
+        };
+
+        let toolbar_content = {
             let new_thread_menu = PopoverMenu::new("new_thread_menu")
                 .trigger_with_tooltip(
                     IconButton::new("new_thread_menu_btn", IconName::Plus)
@@ -6192,7 +6173,10 @@ impl AgentPanel {
                         } else {
                             selected_agent.into_any_element()
                         })
-                        .child(self.render_title_view(window, cx)),
+                        .child(match empty_thread_title {
+                            Some(title) => title,
+                            None => self.render_title_view(window, cx),
+                        }),
                 )
                 .child(
                     h_flex()

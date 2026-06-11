@@ -1,9 +1,12 @@
 mod agent_profile;
 mod user_agents_md;
 
+use std::cmp::Ordering::{Equal, Greater, Less};
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
+use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
@@ -18,6 +21,7 @@ use settings::{
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
 };
+use util::ResultExt as _;
 
 pub use crate::agent_profile::*;
 pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
@@ -135,6 +139,68 @@ impl WindowLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AutoCompactThreshold {
+    /// Compact once the context window is at least this full, as a fraction in
+    /// the range `(0.0, 1.0]`.
+    Percentage(f64),
+    /// Compact once at least this many tokens have been used.
+    TokensUsed(u64),
+    /// Compact once fewer than this many tokens remain in the context window.
+    TokensRemaining(u64),
+}
+
+impl AutoCompactThreshold {
+    /// The threshold used when none is configured, or when the configured value
+    /// is invalid (90% of the context window).
+    pub const DEFAULT: Self = Self::Percentage(0.9);
+}
+
+impl fmt::Display for AutoCompactThreshold {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Percentage(percent) => write!(formatter, "{}%", percent * 100.0),
+            Self::TokensUsed(tokens) => write!(formatter, "{tokens}"),
+            Self::TokensRemaining(tokens) => write!(formatter, "-{tokens}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoCompactSettings {
+    pub enabled: bool,
+    pub threshold: AutoCompactThreshold,
+}
+
+fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshold> {
+    let trimmed = raw.trim();
+    if let Some(percent) = trimmed.strip_suffix('%') {
+        let value: f64 = percent
+            .trim_end()
+            .parse()
+            .with_context(|| format!("invalid auto_compact threshold percentage {raw:?}"))?;
+        anyhow::ensure!(
+            value > 0.0 && value <= 100.0,
+            "auto_compact threshold percentage must be between 0% and 100%, got {raw:?}"
+        );
+        Ok(AutoCompactThreshold::Percentage(value / 100.0))
+    } else {
+        let tokens: i64 = trimmed.parse().with_context(|| {
+            format!(
+                "invalid auto_compact threshold {raw:?}; \
+                 expected a percentage like \"90%\" or an integer number of tokens"
+            )
+        })?;
+        match tokens.cmp(&0) {
+            Greater => Ok(AutoCompactThreshold::TokensUsed(tokens as u64)),
+            Less => Ok(AutoCompactThreshold::TokensRemaining(tokens.unsigned_abs())),
+            Equal => {
+                anyhow::bail!("auto_compact threshold of 0 is not valid")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
@@ -161,6 +227,7 @@ pub struct AgentSettings {
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
+    pub auto_compact: AutoCompactSettings,
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
@@ -682,6 +749,16 @@ impl Settings for AgentSettings {
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
+            auto_compact: {
+                let auto_compact = agent.auto_compact.unwrap();
+                let threshold = parse_auto_compact_threshold(&auto_compact.threshold.unwrap().0)
+                    .log_err()
+                    .unwrap_or(AutoCompactThreshold::DEFAULT);
+                AutoCompactSettings {
+                    enabled: auto_compact.enabled.unwrap(),
+                    threshold,
+                }
+            },
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
@@ -822,6 +899,52 @@ mod tests {
     use serde_json::json;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
+
+    #[test]
+    fn test_parse_auto_compact_threshold() {
+        use AutoCompactThreshold::*;
+
+        assert_eq!(
+            parse_auto_compact_threshold("90%").unwrap(),
+            Percentage(0.9)
+        );
+        assert_eq!(AutoCompactThreshold::DEFAULT, Percentage(0.9));
+        assert_eq!(
+            parse_auto_compact_threshold("  92.5% ").unwrap(),
+            Percentage(0.925)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("95.5%").unwrap(),
+            Percentage(0.955)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("100%").unwrap(),
+            Percentage(1.0)
+        );
+        // Token counts must be integers; a non-integer token value is invalid.
+        assert!(parse_auto_compact_threshold("100.5").is_err());
+        assert_eq!(
+            parse_auto_compact_threshold("100000").unwrap(),
+            TokensUsed(100_000)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("-20000").unwrap(),
+            TokensRemaining(20_000)
+        );
+
+        assert_eq!(Percentage(0.9).to_string(), "90%");
+        assert_eq!(Percentage(0.925).to_string(), "92.5%");
+        assert_eq!(TokensUsed(100_000).to_string(), "100000");
+        assert_eq!(TokensRemaining(20_000).to_string(), "-20000");
+
+        // 0 is invalid in every form.
+        assert!(parse_auto_compact_threshold("0").is_err());
+        assert!(parse_auto_compact_threshold("0%").is_err());
+        // Out-of-range percentages and bare decimals are invalid.
+        assert!(parse_auto_compact_threshold("150%").is_err());
+        assert!(parse_auto_compact_threshold("0.8").is_err());
+        assert!(parse_auto_compact_threshold("eighty percent").is_err());
+    }
 
     #[test]
     fn test_compiled_regex_case_insensitive() {

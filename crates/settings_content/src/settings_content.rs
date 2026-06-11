@@ -521,6 +521,11 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+    /// Allow sending requests to Anthropic models that cannot be offered with
+    /// Zero Data Retention.
+    ///
+    /// Default: false
+    pub anthropic_retention: Option<bool>,
 }
 
 impl Default for TelemetrySettingsContent {
@@ -528,6 +533,7 @@ impl Default for TelemetrySettingsContent {
         Self {
             diagnostics: Some(true),
             metrics: Some(true),
+            anthropic_retention: Some(false),
         }
     }
 }
@@ -703,7 +709,7 @@ pub struct GitPanelSettingsContent {
     /// Maximum length of the commit message title before a warning is shown.
     /// Set to 0 to disable.
     ///
-    /// Default: 72
+    /// Default: 0
     pub commit_title_max_length: Option<usize>,
 }
 

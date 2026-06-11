@@ -920,13 +920,22 @@ pub fn format_active_buffer_diagnostics_with_budget(
         return String::new();
     }
 
+    const MAX_DIAGNOSTICS: usize = 10;
+
     let mut diagnostic_indices = (0..diagnostics.len()).collect::<Vec<_>>();
     if let Some(cursor_buffer_row) = cursor_buffer_row {
-        diagnostic_indices.sort_by_key(|index| {
+        let distance = |index: &usize| {
             let range = &diagnostics[*index].snippet_buffer_row_range;
             u32::abs_diff(cursor_buffer_row, range.start)
                 + u32::abs_diff(cursor_buffer_row, range.end)
-        });
+        };
+        // Only the closest `MAX_DIAGNOSTICS` are rendered below, so select that
+        // prefix instead of fully sorting every diagnostic.
+        if diagnostic_indices.len() > MAX_DIAGNOSTICS {
+            diagnostic_indices.select_nth_unstable_by_key(MAX_DIAGNOSTICS, &distance);
+            diagnostic_indices.truncate(MAX_DIAGNOSTICS);
+        }
+        diagnostic_indices.sort_unstable_by_key(&distance);
     }
 
     let mut output = format!("{}diagnostics\n", seed_coder::FILE_MARKER);
@@ -937,7 +946,7 @@ pub fn format_active_buffer_diagnostics_with_budget(
 
     let mut used_tokens = header_tokens;
     let mut included_diagnostics = 0;
-    for diagnostic_index in diagnostic_indices.into_iter().take(10) {
+    for diagnostic_index in diagnostic_indices.into_iter().take(MAX_DIAGNOSTICS) {
         let diagnostic = &diagnostics[diagnostic_index];
         let snippet = clamp_text_to_token_count(&diagnostic.snippet, 256);
 

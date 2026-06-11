@@ -7,6 +7,7 @@ use smol::Unblock;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::process::ExitStatusExt;
@@ -445,10 +446,10 @@ fn spawn_posix_spawn(
             current_dir_cstr.as_ptr(),
         ))?;
 
-        if let Some(fd) = stdin_read {
+        if let Some(fd) = &stdin_read {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDIN_FILENO,
             ))?;
             cvt_nz(posix_spawn_file_actions_addinherit_np(
@@ -457,10 +458,10 @@ fn spawn_posix_spawn(
             ))?;
         }
 
-        if let Some(fd) = stdout_write {
+        if let Some(fd) = &stdout_write {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDOUT_FILENO,
             ))?;
             cvt_nz(posix_spawn_file_actions_addinherit_np(
@@ -469,10 +470,10 @@ fn spawn_posix_spawn(
             ))?;
         }
 
-        if let Some(fd) = stderr_write {
+        if let Some(fd) = &stderr_write {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDERR_FILENO,
             ))?;
             cvt_nz(posix_spawn_file_actions_addinherit_np(
@@ -499,30 +500,20 @@ fn spawn_posix_spawn(
         libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut file_actions);
 
-        if let Some(fd) = stdin_read {
-            libc::close(fd);
-        }
-        if let Some(fd) = stdout_write {
-            libc::close(fd);
-        }
-        if let Some(fd) = stderr_write {
-            libc::close(fd);
-        }
-
         cvt_nz(spawn_result)?;
 
         Ok(Child {
             pid,
-            stdin: stdin_write.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            stdout: stdout_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            stderr: stderr_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
+            stdin: stdin_write.map(|fd| Unblock::new(fd)),
+            stdout: stdout_read.map(|fd| Unblock::new(fd)),
+            stderr: stderr_read.map(|fd| Unblock::new(fd)),
             kill_on_drop,
             status: None,
         })
     }
 }
 
-fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
+fn create_pipe() -> io::Result<(std::fs::File, std::fs::File)> {
     let mut fds: [libc::c_int; 2] = [0; 2];
     unsafe {
         let result = libc::pipe(fds.as_mut_ptr());
@@ -548,11 +539,14 @@ fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
             }
         }
 
-        Ok((fds[0], fds[1]))
+        Ok((
+            std::fs::File::from_raw_fd(fds[0]),
+            std::fs::File::from_raw_fd(fds[1]),
+        ))
     }
 }
 
-fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
+fn open_dev_null(flags: libc::c_int) -> io::Result<std::fs::File> {
     // Set close-on-exec for this pipe, for the same reason as in `create_pipe`.
     let fd = unsafe {
         libc::open(
@@ -563,7 +557,7 @@ fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
     if fd == -1 {
         return Err(io::Error::last_os_error());
     }
-    Ok(fd)
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 /// Zero means `Ok()`, all other values are treated as raw OS errors. Does not look at `errno`.
@@ -597,7 +591,9 @@ mod tests {
     // git's stdin write end open and deadlock the git child on `read()`.
     #[test]
     fn test_create_pipe_not_inherited_by_unrelated_spawn() {
-        let (read_fd, write_fd) = create_pipe().expect("create_pipe failed");
+        let (read_file, write_file) = create_pipe().expect("create_pipe failed");
+        let read_fd = read_file.as_raw_fd();
+        let write_fd = write_file.as_raw_fd();
 
         // Probe with the exact fds returned by `create_pipe` (no dup), since
         // duping with `F_DUPFD` would lose CLOEXEC and `F_DUPFD_CLOEXEC` would
@@ -619,11 +615,6 @@ mod tests {
             .expect("failed to spawn sh");
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
 
         assert_eq!(
             stdout,
@@ -899,5 +890,34 @@ mod tests {
             assert!(output.status.success());
             assert_eq!(output.stdout, b"piped input");
         });
+    }
+
+    #[test]
+    fn test_stdio_fds_closed_on_error() {
+        fn count_open_fds() -> usize {
+            let limit = unsafe { libc::getdtablesize() };
+            (0..limit)
+                .filter(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } != -1)
+                .count()
+        }
+
+        const ATTEMPTS: usize = 100;
+        const SLACK: usize = 32;
+
+        let before = count_open_fds();
+        for _ in 0..ATTEMPTS {
+            Command::new("/bin/binarythatdoesnotexist")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect_err("spawn should fail for a nonexistent binary");
+        }
+        let after = count_open_fds();
+
+        assert!(
+            after <= before + SLACK,
+            "fd leak detected: {before} open fds before, {after} after {ATTEMPTS} failed spawns"
+        );
     }
 }

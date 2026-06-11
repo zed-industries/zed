@@ -281,7 +281,7 @@ limits, or a custom endpoint.
 {
   "language_models": {
     "deepseek": {
-      "api_url": "https://api.deepseek.com",
+      "api_url": "https://api.deepseek.com/v1",
       "available_models": [
         {
           "name": "deepseek-v4-flash",

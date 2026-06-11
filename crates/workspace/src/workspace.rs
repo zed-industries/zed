@@ -111,7 +111,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{
-    CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
+    CenteredPaddingSettings, DefaultOpenBehavior, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 
 use sqlez::{
@@ -225,21 +226,16 @@ pub trait DebuggerProvider {
 #[action(namespace = workspace)]
 pub struct Open {
     /// When true, opens in a new window. When false, adds to the current
-    /// window as a new workspace (multi-workspace).
-    #[serde(default = "Open::default_create_new_window")]
-    pub create_new_window: bool,
+    /// window as a new workspace (multi-workspace). When omitted, uses
+    /// `default_open_behavior`.
+    #[serde(default)]
+    pub create_new_window: Option<bool>,
 }
 
 impl Open {
     pub const DEFAULT: Self = Self {
-        create_new_window: false,
+        create_new_window: None,
     };
-
-    /// Used by `#[serde(default)]` on the `create_new_window` field so that
-    /// the serde default and `Open::DEFAULT` stay in sync.
-    fn default_create_new_window() -> bool {
-        Self::DEFAULT.create_new_window
-    }
 }
 
 impl Default for Open {
@@ -307,6 +303,8 @@ actions!(
         ResetActiveDockSize,
         /// Resets all open docks to their default sizes.
         ResetOpenDocksSize,
+        /// Resets all panes in the center group to equal sizes, preserving the split layout.
+        ResetPaneSizes,
         /// Reloads the application
         Reload,
         /// Formats and saves the current file, regardless of the format_on_save setting.
@@ -786,7 +784,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window.unwrap_or_else(|| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    )
+                }),
                 cx,
             );
         })
@@ -7651,6 +7654,11 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetPaneSizes, _window, cx| {
+                    workspace.reset_pane_sizes(cx);
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
                     adjust_active_dock_size_by_px(
                         px_with_ui_font_fallback(act.px, cx),
@@ -12767,6 +12775,74 @@ mod tests {
 
         workspace.update(cx, |workspace, _| {
             assert_eq!(workspace.active_pane().entity_id(), target_last_pane_id);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_pane_sizes(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        // A horizontal split of three panes whose last child is itself a vertical
+        // split, so equalizing has to recurse into the nested axis.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
+        });
+
+        let nested_axis = |workspace: &Workspace| {
+            let Member::Axis(top) = &workspace.center.root else {
+                panic!("expected the center to be a split axis");
+            };
+            let nested = top
+                .members
+                .iter()
+                .find_map(|member| match member {
+                    Member::Axis(axis) => Some(axis.clone()),
+                    Member::Pane(_) => None,
+                })
+                .expect("expected a nested split axis");
+            (top.clone(), nested)
+        };
+
+        // Skew every axis away from uniform sizes.
+        workspace.update(cx, |workspace, _| {
+            let (top, nested) = nested_axis(workspace);
+            *top.flexes.lock() = vec![1.6, 0.7, 0.7];
+            *nested.flexes.lock() = vec![1.3, 0.7];
+        });
+
+        cx.run_until_parked();
+        cx.dispatch_action(ResetPaneSizes);
+
+        workspace.update(cx, |workspace, _| {
+            let (top, nested) = nested_axis(workspace);
+            assert_eq!(*top.flexes.lock(), vec![1.0; top.members.len()]);
+            assert_eq!(*nested.flexes.lock(), vec![1.0; nested.members.len()]);
         });
     }
 
