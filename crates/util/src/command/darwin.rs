@@ -3,7 +3,7 @@ use mach2::exception_types::{
 };
 use mach2::port::{MACH_PORT_NULL, mach_port_t};
 use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
-use smol::Unblock;
+use smol::Async;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
@@ -230,9 +230,9 @@ impl Command {
 #[derive(Debug)]
 pub struct Child {
     inner: smol::process::Child,
-    pub stdin: Option<Unblock<std::fs::File>>,
-    pub stdout: Option<Unblock<std::fs::File>>,
-    pub stderr: Option<Unblock<std::fs::File>>,
+    pub stdin: Option<Async<std::fs::File>>,
+    pub stdout: Option<Async<std::fs::File>>,
+    pub stderr: Option<Async<std::fs::File>>,
 }
 
 impl Child {
@@ -480,9 +480,9 @@ fn spawn_posix_spawn(
 
         Ok(Child {
             inner,
-            stdin: stdin_write.map(|fd| Unblock::new(fd)),
-            stdout: stdout_read.map(|fd| Unblock::new(fd)),
-            stderr: stderr_read.map(|fd| Unblock::new(fd)),
+            stdin: stdin_write.map(Async::new).transpose()?,
+            stdout: stdout_read.map(Async::new).transpose()?,
+            stderr: stderr_read.map(Async::new).transpose()?,
         })
     }
 }
