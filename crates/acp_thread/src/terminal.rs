@@ -169,30 +169,50 @@ pub(crate) fn apply_sandbox_wrap(
     }
 }
 
+/// Upper bound on preparing a WSL-sandboxed command (the probe and path
+/// resolution `wsl.exe` round-trips in [`apply_windows_wsl_sandbox_wrap`]).
+/// Deliberately generous: the first invocation after the WSL utility VM has
+/// shut down (or after boot) has to start the VM and the distro, which
+/// routinely takes 10-30 seconds on slow disks or under antivirus scanning.
+/// The point is not latency policing but turning a wedged `wsl.exe` (a real
+/// failure mode when the WSL service is unhealthy) into an actionable error
+/// instead of a terminal command that never starts.
 #[cfg(target_os = "windows")]
-pub(crate) fn apply_windows_wsl_sandbox_wrap(
+pub(crate) const WSL_SANDBOX_WRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wrap a terminal command so it runs under Bubblewrap inside WSL (see
+/// [`sandbox::windows_wsl`]).
+///
+/// Async because it performs `wsl.exe` round-trips and UNC-path stats that
+/// can take seconds when the WSL VM is cold; callers must run it on a
+/// background executor so the UI thread is never blocked, and should bound
+/// it with [`WSL_SANDBOX_WRAP_TIMEOUT`]. Parameters are owned so the future
+/// is `Send + 'static`. Dropping the future (timeout or caller cancellation)
+/// kills any in-flight `wsl.exe` child rather than leaking it.
+#[cfg(target_os = "windows")]
+pub(crate) async fn apply_windows_wsl_sandbox_wrap(
     command: String,
-    args: &[String],
-    cwd: Option<&std::path::Path>,
+    args: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
     sandbox_wrap: SandboxWrap,
-    env: &collections::HashMap<String, String>,
+    env: collections::HashMap<String, String>,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
         .non_interactive()
         .redirect_stdin_to_dev_null()
-        .build(Some(command), args);
-    let writable: Vec<_> = sandbox_wrap
+        .build(Some(command), &args);
+    let writable: Vec<std::path::PathBuf> = sandbox_wrap
         .writable_paths
-        .iter()
-        .chain(sandbox_wrap.extra_write_paths.iter())
-        .map(|path| path.as_path())
+        .into_iter()
+        .chain(sandbox_wrap.extra_write_paths)
         .collect();
     let permissions = sandbox::SandboxPermissions {
         allow_network: sandbox_wrap.allow_network,
         allow_fs_write: sandbox_wrap.allow_fs_write,
     };
     let (program, args) =
-        sandbox::windows_wsl::wrap_invocation(&program, &args, &writable, permissions, cwd, env)?;
+        sandbox::windows_wsl::wrap_invocation(program, args, writable, permissions, cwd, env)
+            .await?;
     Ok((program, args, None))
 }
 

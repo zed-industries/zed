@@ -104,19 +104,32 @@ impl PathMapping {
 /// the PTY) and the rest of the project environment. Variables whose Windows
 /// values are meaningless or harmful inside Linux are dropped (see
 /// [`is_forwardable_env_var`]).
-pub fn wrap_invocation<S: std::hash::BuildHasher>(
-    program: &str,
-    args: &[String],
-    writable_paths: &[&Path],
+///
+/// This function performs up to two `wsl.exe` round-trips (environment probe
+/// and path resolution, each cached) plus filesystem stats of WSL UNC paths,
+/// any of which can take seconds when the WSL VM is cold (and the stats can
+/// stall on a slow `\\wsl.localhost` filesystem). Run it on a background
+/// executor, never on the UI thread, and bound it with a timeout — a wedged
+/// `wsl.exe` (a real failure mode when the WSL service is unhealthy)
+/// otherwise stalls the returned future forever. This crate deliberately has
+/// no timer of its own (timers come from the caller's executor so tests stay
+/// deterministic); instead it guarantees that dropping the future kills any
+/// in-flight `wsl.exe` child, so a caller-side timeout that drops the future
+/// also reaps the process. Parameters are owned so the returned future is
+/// `Send + 'static`.
+pub async fn wrap_invocation<S: std::hash::BuildHasher>(
+    program: String,
+    args: Vec<String>,
+    writable_paths: Vec<PathBuf>,
     permissions: SandboxPermissions,
-    cwd: Option<&Path>,
-    env: &HashMap<String, String, S>,
+    cwd: Option<PathBuf>,
+    env: HashMap<String, String, S>,
 ) -> Result<(String, Vec<String>)> {
     // Mapping failures are bad requests (a path that doesn't exist or has a
     // shape WSL can't address), not environment problems, so no
     // `WSL_SANDBOX_UNAVAILABLE_PREFIX` here.
     let cwd_mapping =
-        match cwd {
+        match &cwd {
             Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
                 format!("failed to map terminal cwd `{}` into WSL", cwd.display())
             })?),
@@ -139,7 +152,7 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
         "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: WSL (`wsl.exe`) was not found at `{}`",
         wsl_exe.display()
     );
-    let environment = probe_environment(&wsl_exe, distro.as_deref())?;
+    let environment = probe_environment(&wsl_exe, distro.as_deref()).await?;
 
     // Resolve all paths (translating native drive-letter paths with `wslpath`
     // now that the distro is known) and confirm they exist, in a single WSL
@@ -154,7 +167,9 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
             .into_iter()
             .map(|mapping| (mapping, "writable path")),
     );
-    let mut resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings)?.into_iter();
+    let mut resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings)
+        .await?
+        .into_iter();
     let cwd = if has_cwd { resolved.next() } else { None };
     let writable_paths: Vec<String> = resolved.collect();
 
@@ -174,11 +189,11 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
         permissions,
         cwd.as_deref(),
         environment.mask_interop_dir,
-        env,
+        &env,
     ));
     wsl_args.push("--".to_string());
-    wsl_args.push(program.to_string());
-    wsl_args.extend(args.iter().cloned());
+    wsl_args.push(program);
+    wsl_args.extend(args);
 
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
 }
@@ -255,7 +270,7 @@ fn probe_script() -> String {
 /// change while Zed runs. Failures are deliberately *not* cached so a user
 /// who installs `bwrap` (or lifts a user-namespace restriction) after seeing
 /// the error can retry the command without restarting Zed.
-fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<EnvironmentProbe> {
+async fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<EnvironmentProbe> {
     static CACHE: OnceLock<Mutex<HashMap<Option<String>, EnvironmentProbe>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
@@ -277,7 +292,8 @@ fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<Environment
         distro,
         ["--exec", "sh", "-lc", &script],
         "probe the sandbox environment",
-    )?;
+    )
+    .await?;
     if output.status.code() == Some(BWRAP_MISSING_EXIT_CODE) {
         bail!(
             "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
@@ -395,7 +411,7 @@ struct ResolvedPath {
 ///
 /// Each mapping is paired with a human-readable description used in errors.
 /// The returned paths are in the same order as `mappings`.
-fn resolve_paths(
+async fn resolve_paths(
     wsl_exe: &Path,
     distro: Option<&str>,
     mappings: &[(PathMapping, &str)],
@@ -422,7 +438,7 @@ fn resolve_paths(
     if !misses.is_empty() {
         let miss_mappings: Vec<&(PathMapping, &str)> =
             misses.iter().map(|&index| &mappings[index]).collect();
-        let miss_resolved = resolve_uncached_paths(wsl_exe, distro, &miss_mappings)?;
+        let miss_resolved = resolve_uncached_paths(wsl_exe, distro, &miss_mappings).await?;
         let mut cache = cache
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -442,7 +458,7 @@ fn resolve_paths(
 /// Resolve and existence-check mappings that weren't in the cache, in a
 /// single `wsl.exe` round-trip. A non-login shell runs the script so profile
 /// scripts can't pollute the stdout protocol.
-fn resolve_uncached_paths(
+async fn resolve_uncached_paths(
     wsl_exe: &Path,
     distro: Option<&str>,
     mappings: &[&(PathMapping, &str)],
@@ -458,7 +474,7 @@ fn resolve_uncached_paths(
     args.extend(path_resolution_args(
         mappings.iter().map(|(mapping, _)| mapping),
     ));
-    let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths")?;
+    let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths").await?;
     ensure!(
         output.status.success(),
         "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to resolve sandbox paths in {}{}",
@@ -570,7 +586,12 @@ fn parse_path_resolution_output(stdout: &str, expected: usize) -> Result<Vec<Res
 /// themselves. stdout, when used, is decoded as UTF-8 (lossily) — that's
 /// only valid for `--exec`'d programs whose output we control, not for
 /// `wsl.exe`'s own diagnostics (which are UTF-16LE).
-fn run_wsl_command(
+///
+/// `output()` spawns the child eagerly and the returned future owns it, so
+/// with `kill_on_drop` the child can't outlive this future: a caller-side
+/// timeout or cancellation that drops us also terminates a wedged `wsl.exe`
+/// instead of leaking it.
+async fn run_wsl_command(
     wsl_exe: &Path,
     distro: Option<&str>,
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
@@ -580,9 +601,9 @@ fn run_wsl_command(
     if let Some(distro) = distro {
         command.args(["-d", distro]);
     }
-    command.args(args).stdin(Stdio::null());
+    command.args(args).stdin(Stdio::null()).kill_on_drop(true);
 
-    smol::block_on(command.output()).with_context(|| {
+    command.output().await.with_context(|| {
         format!(
             "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to invoke WSL while trying to {description}"
         )
@@ -824,6 +845,22 @@ fn parse_native_drive_path(path: &str) -> Result<WslPath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_invocation_future_is_send() {
+        // Callers run `wrap_invocation` via `background_spawn`, which
+        // requires a `Send` future. This fails to compile if, for example, a
+        // cache `MutexGuard` is ever held across an await point.
+        fn assert_send<T: Send>(_: T) {}
+        assert_send(wrap_invocation(
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            SandboxPermissions::default(),
+            None,
+            HashMap::<String, String>::new(),
+        ));
+    }
 
     #[test]
     fn parse_wsl_localhost_path() {
