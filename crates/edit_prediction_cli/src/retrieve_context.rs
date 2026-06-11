@@ -6,8 +6,9 @@ use crate::{
 };
 use anyhow::Context as _;
 use clap::ValueEnum;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use edit_prediction::{DebugEvent, EditPredictionStore, udiff::refresh_worktree_entries};
+use edit_prediction_context::OracleTarget;
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity};
 use language::Buffer;
@@ -29,6 +30,7 @@ pub enum ContextRetrievalType {
     GitLog,
     Bm25,
     OracleFile,
+    OracleSnippet,
     #[default]
     All,
     None,
@@ -45,6 +47,7 @@ impl std::fmt::Display for ContextRetrievalType {
             ContextRetrievalType::GitLog => write!(f, "git-log"),
             ContextRetrievalType::Bm25 => write!(f, "bm25"),
             ContextRetrievalType::OracleFile => write!(f, "oracle-file"),
+            ContextRetrievalType::OracleSnippet => write!(f, "oracle-snippet"),
             ContextRetrievalType::All => write!(f, "all"),
             ContextRetrievalType::None => write!(f, "none"),
         }
@@ -62,6 +65,7 @@ impl ContextRetrievalType {
             ContextRetrievalType::GitLog => vec![ContextSource::GitLog],
             ContextRetrievalType::Bm25 => vec![ContextSource::Bm25],
             ContextRetrievalType::OracleFile => vec![ContextSource::OracleFile],
+            ContextRetrievalType::OracleSnippet => vec![ContextSource::OracleSnippet],
             ContextRetrievalType::All => {
                 let mut sources = vec![ContextSource::Lsp];
                 sources.extend(editable_context_sources());
@@ -158,10 +162,16 @@ pub async fn run_context_retrieval(
         .filter(|context_source| *context_source != ContextSource::Lsp)
         .collect::<Vec<_>>();
     if !editable_context_sources.is_empty() {
-        let oracle_paths = if editable_context_sources.contains(&ContextSource::OracleFile) {
-            let oracle_paths = oracle_paths_from_expected_patches(example);
+        let oracle_targets = if editable_context_sources.contains(&ContextSource::OracleFile)
+            || editable_context_sources.contains(&ContextSource::OracleSnippet)
+        {
+            let oracle_targets = oracle_targets_from_expected_patches(example);
+            let oracle_paths = oracle_targets
+                .iter()
+                .map(|target| target.path.clone())
+                .collect::<Vec<_>>();
             refresh_paths(&project, &oracle_paths, &mut cx).await?;
-            oracle_paths
+            oracle_targets
         } else {
             Vec::new()
         };
@@ -172,7 +182,7 @@ pub async fn run_context_retrieval(
                     project.clone(),
                     state.buffer.clone(),
                     state.cursor_position,
-                    oracle_paths,
+                    oracle_targets,
                     editable_context_sources,
                     cx,
                 )
@@ -212,30 +222,54 @@ fn merge_context_files(
     }
 }
 
-fn oracle_paths_from_expected_patches(example: &Example) -> Vec<Arc<Path>> {
-    let mut seen_paths = HashSet::default();
-    let mut paths = Vec::new();
+fn oracle_targets_from_expected_patches(example: &Example) -> Vec<OracleTarget> {
+    let mut target_indices: HashMap<PathBuf, usize> = HashMap::default();
+    let mut targets: Vec<(PathBuf, Vec<std::ops::Range<u32>>)> = Vec::new();
+
+    let mut target_index = |path: &str, targets: &mut Vec<(PathBuf, Vec<std::ops::Range<u32>>)>| {
+        let path = Path::new(path).to_path_buf();
+        *target_indices.entry(path.clone()).or_insert_with(|| {
+            targets.push((path, Vec::new()));
+            targets.len() - 1
+        })
+    };
 
     for patch in &example.spec.expected_patches {
-        for path in paths_from_diff(patch) {
-            if seen_paths.insert(path.clone()) {
-                paths.push(path.into());
+        // Index of the target whose old-side rows the current hunk headers
+        // refer to. Hunk old rows refer to the file's current state only for
+        // the first expected patch; later patches drift, but the snippet
+        // padding absorbs small offsets.
+        let mut current_target: Option<usize> = None;
+        for line in patch.lines() {
+            match DiffLine::parse(line) {
+                DiffLine::OldPath { path } => {
+                    current_target = (path.as_ref() != "/dev/null")
+                        .then(|| target_index(path.as_ref(), &mut targets));
+                }
+                DiffLine::NewPath { path } => {
+                    if path.as_ref() != "/dev/null" {
+                        let index = target_index(path.as_ref(), &mut targets);
+                        if current_target.is_none() {
+                            current_target = Some(index);
+                        }
+                    }
+                }
+                DiffLine::HunkHeader(Some(location)) => {
+                    if let Some(index) = current_target {
+                        let start = location.start_line_old;
+                        targets[index].1.push(start..start + location.count_old);
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    paths
-}
-
-fn paths_from_diff(diff: &str) -> Vec<PathBuf> {
-    diff.lines()
-        .filter_map(|line| match DiffLine::parse(line) {
-            DiffLine::OldPath { path } | DiffLine::NewPath { path }
-                if path.as_ref() != "/dev/null" =>
-            {
-                Some(Path::new(path.as_ref()).to_path_buf())
-            }
-            _ => None,
+    targets
+        .into_iter()
+        .map(|(path, row_ranges)| OracleTarget {
+            path: path.into(),
+            row_ranges,
         })
         .collect()
 }

@@ -267,6 +267,7 @@ pub enum ContextSource {
     GitLog,
     Bm25,
     OracleFile,
+    OracleSnippet,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {

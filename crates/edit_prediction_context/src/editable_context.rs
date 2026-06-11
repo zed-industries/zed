@@ -22,6 +22,8 @@ const CURSOR_CONTEXT_LINE_COUNT: u32 = 20;
 const EDIT_HISTORY_CONTEXT_LINE_COUNT: u32 = 20;
 const GIT_LOG_CONTEXT_LINE_COUNT: u32 = 10000;
 const GIT_LOG_CONTEXT_FILE_COUNT: usize = 10;
+const ORACLE_SNIPPET_MIN_CONTEXT_LINE_COUNT: u32 = 10;
+const ORACLE_SNIPPET_MAX_CONTEXT_LINE_COUNT: u32 = 40;
 
 type RangesByBuffer = HashMap<EntityId, (Entity<Buffer>, Vec<EditableContextRange>)>;
 
@@ -29,6 +31,16 @@ type RangesByBuffer = HashMap<EntityId, (Entity<Buffer>, Vec<EditableContextRang
 pub struct EditHistoryContextEntry {
     pub buffer: Entity<Buffer>,
     pub edited_range: Range<Anchor>,
+}
+
+/// A file known (from expected patches) to be edited next, used by the
+/// oracle context sources when generating training data.
+#[derive(Clone, Debug)]
+pub struct OracleTarget {
+    pub path: Arc<Path>,
+    /// 0-based, end-exclusive row ranges of the expected edit hunks.
+    /// Only used by `ContextSource::OracleSnippet`.
+    pub row_ranges: Vec<Range<u32>>,
 }
 
 struct EditableContextRange {
@@ -48,7 +60,7 @@ pub async fn collect_editable_context(
     active_buffer: Entity<Buffer>,
     cursor_position: Anchor,
     edit_history: Vec<EditHistoryContextEntry>,
-    oracle_paths: Vec<Arc<Path>>,
+    oracle_targets: Vec<OracleTarget>,
     context_sources: Vec<ContextSource>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<Vec<RelatedFile>> {
@@ -81,6 +93,14 @@ pub async fn collect_editable_context(
         .await;
     }
 
+    // Collected before bm25 so that, under a related-files byte budget, the
+    // small snippets containing the expected edits are never trimmed away in
+    // favor of bm25 excerpts.
+    if context_sources.contains(&ContextSource::OracleSnippet) {
+        collect_oracle_snippet_context(&mut ranges_by_buffer, project.clone(), &oracle_targets, cx)
+            .await;
+    }
+
     if context_sources.contains(&ContextSource::Bm25) {
         collect_bm25_context_ranges(
             &mut ranges_by_buffer,
@@ -94,7 +114,8 @@ pub async fn collect_editable_context(
     }
 
     if context_sources.contains(&ContextSource::OracleFile) {
-        collect_oracle_file_context(&mut ranges_by_buffer, project.clone(), oracle_paths, cx).await;
+        collect_oracle_file_context(&mut ranges_by_buffer, project.clone(), &oracle_targets, cx)
+            .await;
     }
 
     Ok(cx.update(|cx| {
@@ -405,24 +426,24 @@ fn anchor_range_for_row_range(
 async fn collect_oracle_file_context(
     ranges_by_buffer: &mut RangesByBuffer,
     project: Entity<Project>,
-    oracle_paths: Vec<Arc<Path>>,
+    oracle_targets: &[OracleTarget],
     cx: &mut AsyncApp,
 ) {
     let next_order = next_context_order(ranges_by_buffer);
     let mut seen_buffers = HashSet::default();
     let mut index = 0;
 
-    for path in oracle_paths {
-        let buffer = match open_buffer_for_path(&project, &path, cx).await {
+    for target in oracle_targets {
+        let buffer = match open_buffer_for_path(&project, &target.path, cx).await {
             Ok(Some(buffer)) => buffer,
             Ok(None) => {
-                log::debug!("failed to find oracle file path: {}", path.display());
+                log::debug!("failed to find oracle file path: {}", target.path.display());
                 continue;
             }
             Err(error) => {
                 log::debug!(
                     "failed to open oracle file path {}: {error:#}",
-                    path.display()
+                    target.path.display()
                 );
                 continue;
             }
@@ -441,6 +462,82 @@ async fn collect_oracle_file_context(
         );
         index += 1;
     }
+}
+
+async fn collect_oracle_snippet_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    project: Entity<Project>,
+    oracle_targets: &[OracleTarget],
+    cx: &mut AsyncApp,
+) {
+    let next_order = next_context_order(ranges_by_buffer);
+    let mut index = 0;
+
+    for target in oracle_targets {
+        if target.row_ranges.is_empty() {
+            continue;
+        }
+
+        let buffer = match open_buffer_for_path(&project, &target.path, cx).await {
+            Ok(Some(buffer)) => buffer,
+            Ok(None) => {
+                log::debug!(
+                    "failed to find oracle snippet path: {}",
+                    target.path.display()
+                );
+                continue;
+            }
+            Err(error) => {
+                log::debug!(
+                    "failed to open oracle snippet path {}: {error:#}",
+                    target.path.display()
+                );
+                continue;
+            }
+        };
+
+        for row_range in &target.row_ranges {
+            let Some(range) = buffer.read_with(cx, |buffer, _cx| {
+                let snapshot = buffer.snapshot();
+                let padding_above = oracle_snippet_padding(&target.path, row_range.start, 0);
+                let padding_below = oracle_snippet_padding(&target.path, row_range.end, 1);
+                let start_row = row_range.start.saturating_sub(padding_above);
+                // Empty hunk row ranges (pure insertions) still cover one row.
+                let end_row = row_range
+                    .end
+                    .max(row_range.start + 1)
+                    .saturating_add(padding_below);
+                anchor_range_for_row_range(&snapshot, start_row..end_row)
+            }) else {
+                continue;
+            };
+
+            push_context_range(
+                ranges_by_buffer,
+                buffer.clone(),
+                range,
+                next_order + index,
+                ContextSource::OracleSnippet,
+            );
+            index += 1;
+        }
+    }
+}
+
+/// Deterministic pseudo-random padding, so that the expected edit is not
+/// always centered in the snippet (a student model could otherwise learn the
+/// excerpt center as a position prior), while keeping context retrieval
+/// reproducible across runs.
+fn oracle_snippet_padding(path: &Path, row: u32, salt: u32) -> u32 {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let mut hasher = collections::FxHasher::default();
+    path.hash(&mut hasher);
+    row.hash(&mut hasher);
+    salt.hash(&mut hasher);
+    let span =
+        u64::from(ORACLE_SNIPPET_MAX_CONTEXT_LINE_COUNT - ORACLE_SNIPPET_MIN_CONTEXT_LINE_COUNT);
+    ORACLE_SNIPPET_MIN_CONTEXT_LINE_COUNT + (hasher.finish() % (span + 1)) as u32
 }
 
 async fn open_buffer_for_path(
@@ -716,7 +813,8 @@ fn context_source_order(context_source: ContextSource) -> usize {
         ContextSource::EditHistoryFile => 4,
         ContextSource::GitLog => 5,
         ContextSource::Bm25 => 6,
-        ContextSource::OracleFile => 7,
+        ContextSource::OracleSnippet => 7,
+        ContextSource::OracleFile => 8,
     }
 }
 
