@@ -137,7 +137,19 @@ pub(crate) struct MetalRenderer {
     /// rendering headlessly without reading pixels back.
     #[cfg(any(test, feature = "test-support"))]
     headless_render_target: Option<metal::Texture>,
+    /// Bounds the number of in-flight headless frames, mirroring the
+    /// `CAMetalLayer` drawable limit that throttles real windows. Without it,
+    /// committed-but-unfinished frames pile up GPU memory until the process
+    /// is jetsam-killed.
+    #[cfg(any(test, feature = "test-support"))]
+    headless_frame_semaphore: Arc<std::sync::Mutex<usize>>,
+    #[cfg(any(test, feature = "test-support"))]
+    headless_frame_condvar: Arc<std::sync::Condvar>,
 }
+
+/// Matches `layer.set_maximum_drawable_count(3)` used for real windows.
+#[cfg(any(test, feature = "test-support"))]
+const MAX_INFLIGHT_HEADLESS_FRAMES: usize = 3;
 
 #[repr(C)]
 pub struct PathRasterizationVertex {
@@ -353,6 +365,10 @@ impl MetalRenderer {
             path_sample_count: PATH_SAMPLE_COUNT,
             #[cfg(any(test, feature = "test-support"))]
             headless_render_target: None,
+            #[cfg(any(test, feature = "test-support"))]
+            headless_frame_semaphore: Arc::new(std::sync::Mutex::new(0)),
+            #[cfg(any(test, feature = "test-support"))]
+            headless_frame_condvar: Arc::new(std::sync::Condvar::new()),
         }
     }
 
@@ -744,16 +760,26 @@ impl MetalRenderer {
     /// inspected.
     #[cfg(any(test, feature = "test-support"))]
     pub fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()> {
+        // Frames render outside a platform run loop here, so drain autoreleased
+        // Metal objects (command buffers, encoders) per frame ourselves.
+        objc::rc::autoreleasepool(|| self.render_scene_inner(scene, size))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_scene_inner(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()> {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             anyhow::bail!("Invalid size for render_scene: {:?}", size);
         }
-
-        self.update_path_intermediate_textures(size);
 
         let needs_new_target = self.headless_render_target.as_ref().is_none_or(|texture| {
             texture.width() != size.width.0 as u64 || texture.height() != size.height.0 as u64
         });
         if needs_new_target {
+            // Recreate the size-dependent textures only on resize, mirroring
+            // how window rendering recreates them in `update_drawable_size`.
+            // Allocating them per frame would accumulate dead textures faster
+            // than Metal reclaims them while frames are in flight.
+            self.update_path_intermediate_textures(size);
             let texture_descriptor = metal::TextureDescriptor::new();
             texture_descriptor.set_width(size.width.0 as u64);
             texture_descriptor.set_height(size.height.0 as u64);
@@ -769,6 +795,22 @@ impl MetalRenderer {
             .clone()
             .expect("just ensured the render target exists");
 
+        // Apply the same backpressure a real window gets from the drawable
+        // pool: block until fewer than the maximum frames are in flight.
+        {
+            let mut inflight = self
+                .headless_frame_semaphore
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            while *inflight >= MAX_INFLIGHT_HEADLESS_FRAMES {
+                inflight = self
+                    .headless_frame_condvar
+                    .wait(inflight)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+            *inflight += 1;
+        }
+
         loop {
             let mut instance_buffer = self
                 .instance_buffer_pool
@@ -782,10 +824,17 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
+                    let frame_semaphore = self.headless_frame_semaphore.clone();
+                    let frame_condvar = self.headless_frame_condvar.clone();
                     let block = ConcreteBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        let mut inflight = frame_semaphore
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        *inflight = inflight.saturating_sub(1);
+                        frame_condvar.notify_one();
                     });
                     let block = block.copy();
                     command_buffer.add_completed_handler(&block);
@@ -803,6 +852,12 @@ impl MetalRenderer {
                     let mut instance_buffer_pool = self.instance_buffer_pool.lock();
                     let buffer_size = instance_buffer_pool.buffer_size;
                     if buffer_size >= 256 * 1024 * 1024 {
+                        let mut inflight = self
+                            .headless_frame_semaphore
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        *inflight = inflight.saturating_sub(1);
+                        self.headless_frame_condvar.notify_one();
                         anyhow::bail!("instance buffer size grew too large: {}", buffer_size);
                     }
                     instance_buffer_pool.reset(buffer_size * 2);

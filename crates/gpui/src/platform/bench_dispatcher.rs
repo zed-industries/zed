@@ -270,6 +270,18 @@ impl BenchDispatcher {
         }
     }
 
+    /// Describes the dispatcher's idle-tracking state, for diagnosing
+    /// benchmarks that fail to reach quiescence.
+    pub fn debug_state(&self) -> String {
+        let inflight = *self.idle.inflight.lock();
+        let timers = self.timers.state.lock().heap.len();
+        let main_queue_has_work = self.main_queue_has_work();
+        format!(
+            "BenchDispatcher {{ inflight: {inflight}, pending_timers: {timers}, \
+             main_queue_has_work: {main_queue_has_work} }}"
+        )
+    }
+
     fn has_due_timer(&self) -> bool {
         let state = self.timers.state.lock();
         state

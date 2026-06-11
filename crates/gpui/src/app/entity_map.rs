@@ -1082,12 +1082,31 @@ impl LeakDetector {
     }
 }
 
+/// When set, leaked handles at app drop are ignored instead of panicking.
+///
+/// Benchmarks enable this: they intentionally leak parked tasks (and the
+/// entity handles captured inside them) when forgetting cross-benchmark
+/// timers during teardown.
+#[cfg(any(test, feature = "leak-detection"))]
+static LEAK_PANICS_SUPPRESSED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Suppresses the panic on leaked entity handles for the rest of the process.
+#[cfg(any(test, feature = "leak-detection"))]
+#[cfg_attr(not(feature = "bench"), allow(dead_code))]
+pub(crate) fn suppress_leak_panics() {
+    LEAK_PANICS_SUPPRESSED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[cfg(any(test, feature = "leak-detection"))]
 impl Drop for LeakDetector {
     fn drop(&mut self) {
         use std::fmt::Write;
 
-        if self.entity_handles.is_empty() || std::thread::panicking() {
+        if self.entity_handles.is_empty()
+            || std::thread::panicking()
+            || LEAK_PANICS_SUPPRESSED.load(std::sync::atomic::Ordering::Relaxed)
+        {
             return;
         }
 

@@ -99,18 +99,22 @@ where
 }
 
 pub fn init_test(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        cx.set_global(acp_thread::StubSessionCounter(
-            std::sync::atomic::AtomicUsize::new(0),
-        ));
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
-        editor::init(cx);
-        release_channel::init("0.0.0".parse().unwrap(), cx);
-        agent_panel::init(cx);
-        crate::terminal_thread_metadata_store::TerminalThreadMetadataStore::init_global(cx);
-    });
+    cx.update(init_test_app);
+}
+
+/// Like [`init_test`], but usable from contexts that only expose `&mut App`
+/// (e.g. GPUI benchmarks running in a `BenchAppContext`).
+pub fn init_test_app(cx: &mut App) {
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
+    cx.set_global(acp_thread::StubSessionCounter(
+        std::sync::atomic::AtomicUsize::new(0),
+    ));
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
+    editor::init(cx);
+    release_channel::init("0.0.0".parse().unwrap(), cx);
+    agent_panel::init(cx);
+    crate::terminal_thread_metadata_store::TerminalThreadMetadataStore::init_global(cx);
 }
 
 pub struct TestWorkspaceSidebar {
