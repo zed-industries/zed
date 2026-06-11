@@ -381,7 +381,7 @@ pub enum MessageContent {
     },
     #[serde(rename = "resource")]
     Resource {
-        resource: ResourceContents,
+        resource: ResourceContentsType,
         #[serde(skip_serializing_if = "Option::is_none")]
         annotations: Option<MessageAnnotations>,
     },
@@ -748,7 +748,7 @@ pub enum ToolResponseContent {
     #[serde(rename = "audio", rename_all = "camelCase")]
     Audio { data: String, mime_type: String },
     #[serde(rename = "resource")]
-    Resource { resource: ResourceContents },
+    Resource { resource: ResourceContentsType },
     /// Link to an MCP resource on the server, without inlining its contents.
     /// Added in MCP 2025-06-18.
     #[serde(rename = "resource_link", rename_all = "camelCase")]
@@ -808,4 +808,86 @@ pub struct Root {
     pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_tool_response_with_resource_text() {
+        // This is the exact JSON shape returned by github-mcp-server v0.5.0+
+        let json = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "successfully downloaded text file"},
+                {"type": "resource", "resource": {
+                    "uri": "repo://owner/repo/contents/path/to/file.py",
+                    "mimeType": "text/plain; charset=utf-8",
+                    "text": "def hello():\n    print(\"hello world\")\n"
+                }}
+            ]
+        });
+
+        let response: CallToolResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.content.len(), 2);
+
+        match &response.content[0] {
+            ToolResponseContent::Text { text } => {
+                assert_eq!(text, "successfully downloaded text file");
+            }
+            other => panic!("expected Text, got {:?}", other),
+        }
+
+        match &response.content[1] {
+            ToolResponseContent::Resource { resource } => match resource {
+                ResourceContentsType::Text(text_resource) => {
+                    assert_eq!(
+                        text_resource.uri.as_str(),
+                        "repo://owner/repo/contents/path/to/file.py"
+                    );
+                    assert_eq!(
+                        text_resource.mime_type.as_deref(),
+                        Some("text/plain; charset=utf-8")
+                    );
+                    assert_eq!(
+                        text_resource.text,
+                        "def hello():\n    print(\"hello world\")\n"
+                    );
+                }
+                other => panic!("expected Text resource, got {:?}", other),
+            },
+            other => panic!("expected Resource, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_tool_response_with_resource_blob() {
+        let json = serde_json::json!({
+            "content": [
+                {"type": "resource", "resource": {
+                    "uri": "repo://owner/repo/contents/image.png",
+                    "mimeType": "image/png",
+                    "blob": "iVBORw0KGgoAAAANSUhEUg=="
+                }}
+            ]
+        });
+
+        let response: CallToolResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.content.len(), 1);
+
+        match &response.content[0] {
+            ToolResponseContent::Resource { resource } => match resource {
+                ResourceContentsType::Blob(blob_resource) => {
+                    assert_eq!(
+                        blob_resource.uri.as_str(),
+                        "repo://owner/repo/contents/image.png"
+                    );
+                    assert_eq!(blob_resource.mime_type.as_deref(), Some("image/png"));
+                    assert_eq!(blob_resource.blob, "iVBORw0KGgoAAAANSUhEUg==");
+                }
+                other => panic!("expected Blob resource, got {:?}", other),
+            },
+            other => panic!("expected Resource, got {:?}", other),
+        }
+    }
 }
