@@ -479,6 +479,7 @@ impl ProjectDiagnosticsEditor {
         }
         existing.iter().zip(new.iter()).all(|(existing, new)| {
             existing.diagnostic.message == new.diagnostic.message
+                && existing.diagnostic.markdown == new.diagnostic.markdown
                 && existing.diagnostic.severity == new.diagnostic.severity
                 && existing.diagnostic.is_primary == new.diagnostic.is_primary
                 && existing.range.to_offset(snapshot) == new.range.to_offset(snapshot)
