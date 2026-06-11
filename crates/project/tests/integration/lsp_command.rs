@@ -15,7 +15,7 @@ fn test_serialize_lsp_diagnostic() {
         severity: Some(DiagnosticSeverity::ERROR),
         code: Some(lsp::NumberOrString::String("E001".to_string())),
         source: Some("test-source".to_string()),
-        message: "Test error message".to_string(),
+        message: "Test error message".into(),
         related_information: None,
         tags: Some(vec![DiagnosticTag::DEPRECATED]),
         code_description: None,
@@ -53,6 +53,7 @@ fn test_deserialize_lsp_diagnostic() {
         tags: vec![],
         code_description: None,
         data: None,
+        markup_message_kind: None,
     };
 
     let lsp_diagnostic = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic)
@@ -92,7 +93,7 @@ fn test_related_information() {
         severity: Some(DiagnosticSeverity::INFORMATION),
         code: None,
         source: Some("Prism".to_string()),
-        message: "assigned but unused variable - a".to_string(),
+        message: "assigned but unused variable - a".into(),
         related_information: Some(vec![related_info]),
         tags: None,
         code_description: None,
@@ -109,6 +110,38 @@ fn test_related_information() {
 }
 
 #[test]
+fn test_serialize_lsp_diagnostic_markup_message() {
+    let message = lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+        kind: lsp::MarkupKind::Markdown,
+        value: "unused variable `a`\n\nsee [docs](https://example.com)".to_string(),
+    });
+    let lsp_diagnostic = lsp::Diagnostic {
+        range: lsp::Range {
+            start: lsp::Position::new(0, 1),
+            end: lsp::Position::new(2, 3),
+        },
+        severity: Some(DiagnosticSeverity::WARNING),
+        message: message.clone(),
+        ..lsp::Diagnostic::default()
+    };
+
+    let proto_diagnostic = GetDocumentDiagnostics::serialize_lsp_diagnostic(lsp_diagnostic)
+        .expect("Failed to serialize diagnostic");
+    assert_eq!(
+        proto_diagnostic.message,
+        "unused variable `a`\n\nsee [docs](https://example.com)"
+    );
+    assert_eq!(
+        proto_diagnostic.markup_message_kind,
+        Some(proto::MarkupKind::Markdown as i32)
+    );
+
+    let lsp_diagnostic = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic)
+        .expect("Failed to deserialize diagnostic");
+    assert_eq!(lsp_diagnostic.message, message);
+}
+
+#[test]
 fn test_invalid_ranges() {
     let proto_diagnostic = proto::LspDiagnostic {
         start: None,
@@ -121,6 +154,7 @@ fn test_invalid_ranges() {
         tags: vec![],
         code_description: None,
         data: None,
+        markup_message_kind: None,
     };
 
     let result = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic);

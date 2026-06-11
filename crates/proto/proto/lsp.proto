@@ -1041,6 +1041,8 @@ message LspDiagnostic {
   repeated LspDiagnosticRelatedInformation related_information = 8;
   repeated LspDiagnosticTag tags = 9;
   optional string data = 10;
+  // Set when the message is a MarkupContent rather than a plain string.
+  optional MarkupKind markup_message_kind = 11;
 
   enum Severity {
     None = 0;

@@ -5395,13 +5395,31 @@ impl BufferSnapshot {
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
+        self.diagnostics_in_range_with_server_id(search_range, reversed)
+            .map(|(_, diagnostic)| diagnostic)
+    }
+
+    /// Returns all the diagnostics intersecting the given range along with the
+    /// language server that produced each diagnostic.
+    pub fn diagnostics_in_range_with_server_id<'a, T, O>(
+        &'a self,
+        search_range: Range<T>,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = (LanguageServerId, DiagnosticEntryRef<'a, O>)>
+    where
+        T: 'a + Clone + ToOffset,
+        O: 'a + FromAnchor,
+    {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
-            .map(|(_, collection)| {
-                collection
-                    .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
-                    .peekable()
+            .map(|(server_id, collection)| {
+                (
+                    *server_id,
+                    collection
+                        .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
+                        .peekable(),
+                )
             })
             .collect();
 
@@ -5409,7 +5427,7 @@ impl BufferSnapshot {
             let (next_ix, _) = iterators
                 .iter_mut()
                 .enumerate()
-                .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
+                .flat_map(|(ix, (_, iter))| Some((ix, iter.peek()?)))
                 .min_by(|(_, a), (_, b)| {
                     let cmp = a
                         .range
@@ -5421,15 +5439,20 @@ impl BufferSnapshot {
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
                     if reversed { cmp.reverse() } else { cmp }
                 })?;
-            iterators[next_ix]
+            let (server_id, iterator) = iterators.get_mut(next_ix)?;
+            let server_id = *server_id;
+            iterator
                 .next()
-                .map(
-                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
-                        diagnostic,
-                        range: FromAnchor::from_anchor(&range.start, self)
-                            ..FromAnchor::from_anchor(&range.end, self),
-                    },
-                )
+                .map(|DiagnosticEntryRef { range, diagnostic }| {
+                    (
+                        server_id,
+                        DiagnosticEntryRef {
+                            diagnostic,
+                            range: FromAnchor::from_anchor(&range.start, self)
+                                ..FromAnchor::from_anchor(&range.end, self),
+                        },
+                    )
+                })
         })
     }
 

@@ -1003,6 +1003,7 @@ impl LanguageServer {
                     diagnostic: Some(DiagnosticClientCapabilities {
                         dynamic_registration: Some(true),
                         related_document_support: Some(true),
+                        markup_message_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {

@@ -4175,7 +4175,7 @@ async fn test_collaborating_with_diagnostics(
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
-                message: "message 0".to_string(),
+                message: "message 0".into(),
                 ..Default::default()
             }],
         },
@@ -4195,7 +4195,7 @@ async fn test_collaborating_with_diagnostics(
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
-                message: "message 1".to_string(),
+                message: "message 1".into(),
                 ..Default::default()
             }],
         },
@@ -4270,13 +4270,13 @@ async fn test_collaborating_with_diagnostics(
                 lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::ERROR),
                     range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
-                    message: "message 1".to_string(),
+                    message: "message 1".into(),
                     ..Default::default()
                 },
                 lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
                     range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 13)),
-                    message: "message 2".to_string(),
+                    message: "message 2".into(),
                     ..Default::default()
                 },
             ],
@@ -4479,7 +4479,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
                     source: Some("the-disk-based-diagnostics-source".into()),
                     range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                    message: "message one".to_string(),
+                    message: "message one".into(),
                     ..Default::default()
                 }],
             },

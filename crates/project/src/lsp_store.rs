@@ -11996,6 +11996,20 @@ impl LspStore {
                 primary_diagnostic_group_ids
                     .insert((source, diagnostic.code.clone(), range.clone()), group_id);
 
+                let (message, markdown, lsp_markup) = match &diagnostic.message {
+                    lsp::DiagnosticMessage::String(message) => (
+                        message.trim().to_string(),
+                        adapter
+                            .as_ref()
+                            .and_then(|adapter| adapter.diagnostic_message_to_markdown(message)),
+                        None,
+                    ),
+                    lsp::DiagnosticMessage::MarkupContent(markup) => (
+                        markup.value.trim().to_string(),
+                        (markup.kind == lsp::MarkupKind::Markdown).then(|| markup.value.clone()),
+                        Some(markup.clone()),
+                    ),
+                };
                 diagnostics.push(DiagnosticEntry {
                     range,
                     diagnostic: Diagnostic {
@@ -12007,10 +12021,9 @@ impl LspStore {
                             .as_ref()
                             .and_then(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        markdown: adapter.as_ref().and_then(|adapter| {
-                            adapter.diagnostic_message_to_markdown(&diagnostic.message)
-                        }),
-                        message: diagnostic.message.trim().to_string(),
+                        markdown,
+                        lsp_markup,
+                        message,
                         group_id,
                         is_primary: true,
                         is_disk_based,
@@ -12038,6 +12051,7 @@ impl LspStore {
                                     markdown: adapter.as_ref().and_then(|adapter| {
                                         adapter.diagnostic_message_to_markdown(&info.message)
                                     }),
+                                    lsp_markup: None,
                                     message: info.message.trim().to_string(),
                                     group_id,
                                     is_primary: false,
