@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use smol::process::{Command, Stdio};
 
@@ -19,6 +20,11 @@ use anyhow::{Context as _, Result, bail, ensure};
 use crate::SandboxPermissions;
 
 const WSL_SANDBOX_ERROR_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
+
+/// Exit code the environment probe script uses to signal that `bwrap` is not
+/// installed, distinguishing that from WSL itself failing to start a shell.
+/// Chosen to be unlikely to collide with `wsl.exe`'s own failure codes.
+const BWRAP_MISSING_EXIT_CODE: i32 = 41;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WslPath {
@@ -119,64 +125,38 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
         "{WSL_SANDBOX_ERROR_PREFIX}: WSL (`wsl.exe`) was not found at `{}`",
         wsl_exe.display()
     );
-    check_wsl_command(
-        &wsl_exe,
-        distro.as_deref(),
-        &["--exec", "sh", "-lc", "true"],
-        "start a shell in WSL",
-    )?;
-    // Locate `bwrap` and, in the same round-trip, report whether the WSL
-    // interop socket directory exists so we know whether masking it is
-    // possible (see `build_bwrap_args`). `printf` on stdout is the success
-    // signal; a missing `bwrap` exits non-zero and surfaces the
-    // "not installed" error below.
-    let probe = check_wsl_command_capture(
-        &wsl_exe,
-        distro.as_deref(),
-        &[
-            "--exec",
-            "sh",
-            "-lc",
-            "command -v bwrap >/dev/null || exit 1; [ -d /run/WSL ] && printf interop",
-        ],
-        "find Bubblewrap (`bwrap`) in WSL",
-    )
-    .with_context(|| {
-        format!(
-            "{WSL_SANDBOX_ERROR_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
-            wsl_distro_label(distro.as_deref())
-        )
-    })?;
-    let mask_interop_dir = probe.contains("interop");
+    let environment = probe_environment(&wsl_exe, distro.as_deref())?;
 
-    // Translate native drive-letter paths with `wslpath` now that the distro
-    // is known and WSL is confirmed to work.
-    let cwd = cwd_mapping.map(|mapping| resolve_path_mapping(&wsl_exe, distro.as_deref(), mapping));
-    let writable_paths = writable_mappings
-        .into_iter()
-        .map(|mapping| resolve_path_mapping(&wsl_exe, distro.as_deref(), mapping))
-        .collect::<Vec<_>>();
-
-    if let Some(cwd) = &cwd {
-        check_wsl_path_exists(&wsl_exe, distro.as_deref(), cwd, "terminal cwd")?;
+    // Resolve all paths (translating native drive-letter paths with `wslpath`
+    // now that the distro is known) and confirm they exist, in a single WSL
+    // round-trip.
+    let has_cwd = cwd_mapping.is_some();
+    let mut mappings = Vec::with_capacity(writable_mappings.len() + 1);
+    if let Some(mapping) = cwd_mapping {
+        mappings.push((mapping, "terminal cwd"));
     }
-    for path in &writable_paths {
-        check_wsl_path_exists(&wsl_exe, distro.as_deref(), path, "writable path")?;
-    }
+    mappings.extend(
+        writable_mappings
+            .into_iter()
+            .map(|mapping| (mapping, "writable path")),
+    );
+    let mut resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings)?.into_iter();
+    let cwd = if has_cwd { resolved.next() } else { None };
+    let writable_paths: Vec<String> = resolved.collect();
 
     let mut wsl_args = Vec::new();
     if let Some(distro) = distro.as_deref() {
         wsl_args.extend(["-d".to_string(), distro.to_string()]);
     }
     if let Some(cwd) = &cwd {
-        wsl_args.extend(["--cd".to_string(), cwd.path.clone()]);
+        wsl_args.extend(["--cd".to_string(), cwd.clone()]);
     }
     wsl_args.extend(["--exec".to_string(), "bwrap".to_string()]);
     wsl_args.extend(build_bwrap_args(
         &writable_paths,
         permissions,
-        cwd.as_ref().map(|path| path.path.as_str()),
-        mask_interop_dir,
+        cwd.as_deref(),
+        environment.mask_interop_dir,
         env,
     ));
     wsl_args.push("--".to_string());
@@ -208,92 +188,249 @@ fn select_distro(
     Ok(distro)
 }
 
-fn check_wsl_command(
-    wsl_exe: &Path,
-    distro: Option<&str>,
-    args: &[&str],
-    description: &str,
-) -> Result<()> {
-    let mut command = Command::new(wsl_exe);
-    if let Some(distro) = distro {
-        command.args(["-d", distro]);
-    }
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
+/// What [`probe_environment`] learned about a WSL distro.
+#[derive(Clone, Copy, Debug)]
+struct EnvironmentProbe {
+    /// Whether the WSL interop socket directory (`/run/WSL`) exists and so
+    /// must (and can) be masked — see [`build_bwrap_args`].
+    mask_interop_dir: bool,
+}
 
-    let output = smol::block_on(command.output()).with_context(|| {
-        format!("{WSL_SANDBOX_ERROR_PREFIX}: failed to invoke WSL while trying to {description}")
-    })?;
+/// Probe a distro's sandbox environment in one `wsl.exe` round-trip: confirm
+/// a shell starts, confirm `bwrap` is installed, and report whether the
+/// interop socket directory exists.
+///
+/// Successful results are cached per distro for the life of the process —
+/// like `linux_bubblewrap::is_available`, the answers can't realistically
+/// change while Zed runs. Failures are deliberately *not* cached so a user
+/// who installs `bwrap` after seeing the error can retry the command without
+/// restarting Zed.
+fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<EnvironmentProbe> {
+    static CACHE: OnceLock<Mutex<HashMap<Option<String>, EnvironmentProbe>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let key = distro.map(str::to_string);
+    if let Some(probe) = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+    {
+        return Ok(*probe);
+    }
+
+    // A missing `bwrap` exits with the distinctive code; the interop marker
+    // on stdout reports whether `/run/WSL` exists. A login shell (`-lc`) is
+    // used so a `bwrap` reachable only through a profile-managed PATH is
+    // still found.
+    let script = format!(
+        "command -v bwrap >/dev/null || exit {BWRAP_MISSING_EXIT_CODE}; \
+         [ -d /run/WSL ] && printf interop; exit 0"
+    );
+    let output = run_wsl_command(
+        wsl_exe,
+        distro,
+        ["--exec", "sh", "-lc", &script],
+        "probe the sandbox environment",
+    )?;
+    if output.status.code() == Some(BWRAP_MISSING_EXIT_CODE) {
+        bail!(
+            "{WSL_SANDBOX_ERROR_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
+            wsl_distro_label(distro)
+        );
+    }
     ensure!(
         output.status.success(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: failed to {description} in {}{}",
+        "{WSL_SANDBOX_ERROR_PREFIX}: failed to start a shell in {}{}",
         wsl_distro_label(distro),
         command_failure_details(output.status.code(), &output.stderr)
     );
-    Ok(())
+
+    let probe = EnvironmentProbe {
+        mask_interop_dir: String::from_utf8_lossy(&output.stdout).contains("interop"),
+    };
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key, probe);
+    Ok(probe)
 }
 
-/// Like [`check_wsl_command`], but returns the command's stdout on success.
+/// Shell script that resolves and existence-checks paths in a single WSL
+/// round-trip. Arguments come in triples `(kind, path, fallback)`: kind `W`
+/// is a native Windows path to translate with `wslpath -u` (falling back to
+/// the precomputed `/mnt/<drive>/...` mapping when translation fails), kind
+/// `L` is an already-Linux path with an empty fallback. One result line is
+/// printed per triple: `<ok|fallback> <ok|missing> <resolved path>`.
+const PATH_RESOLUTION_SCRIPT: &str = "\
+    while [ \"$#\" -ge 3 ]; do \
+        kind=$1; path=$2; fallback=$3; shift 3; translate=ok; \
+        if [ \"$kind\" = W ]; then \
+            resolved=$(wslpath -u \"$path\" 2>/dev/null) || { resolved=$fallback; translate=fallback; }; \
+        else resolved=$path; fi; \
+        exists=ok; [ -e \"$resolved\" ] || exists=missing; \
+        printf '%s %s %s\\n' \"$translate\" \"$exists\" \"$resolved\"; \
+    done";
+
+/// A line of [`PATH_RESOLUTION_SCRIPT`] output, parsed.
+#[derive(Debug, Eq, PartialEq)]
+struct ResolvedPath {
+    path: String,
+    used_fallback: bool,
+    exists: bool,
+}
+
+/// Resolve path mappings into final WSL paths and confirm they exist, in a
+/// single `wsl.exe` round-trip. Native drive-letter paths are translated
+/// with `wslpath -u` inside the chosen distro so its actual automount
+/// configuration is honored, falling back to the structural `/mnt/<drive>`
+/// mapping when translation fails (e.g. a distro without `wslpath`); a wrong
+/// fallback is still caught by the existence check.
 ///
-/// stdout is decoded as UTF-8 (lossily). This is only used for `--exec`'d
-/// programs whose output we control, not for `wsl.exe`'s own diagnostics
-/// (which are UTF-16LE).
-fn check_wsl_command_capture(
+/// Each mapping is paired with a human-readable description used in errors.
+/// The returned paths are in the same order as `mappings`. A non-login shell
+/// runs the script so profile scripts can't pollute the stdout protocol.
+fn resolve_paths(
     wsl_exe: &Path,
     distro: Option<&str>,
-    args: &[&str],
+    mappings: &[(PathMapping, &str)],
+) -> Result<Vec<String>> {
+    if mappings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut args = vec![
+        "--exec".to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        PATH_RESOLUTION_SCRIPT.to_string(),
+        // argv[0] for the script; the path triples follow as "$@".
+        "zed-resolve-paths".to_string(),
+    ];
+    args.extend(path_resolution_args(mappings.iter().map(|(m, _)| m)));
+    let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths")?;
+    ensure!(
+        output.status.success(),
+        "{WSL_SANDBOX_ERROR_PREFIX}: failed to resolve sandbox paths in {}{}",
+        wsl_distro_label(distro),
+        command_failure_details(output.status.code(), &output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let resolved = parse_path_resolution_output(&stdout, mappings.len()).with_context(|| {
+        format!(
+            "{WSL_SANDBOX_ERROR_PREFIX}: failed to resolve sandbox paths in {}",
+            wsl_distro_label(distro)
+        )
+    })?;
+
+    mappings
+        .iter()
+        .zip(resolved)
+        .map(|((mapping, description), resolved)| {
+            if resolved.used_fallback
+                && let PathMapping::NativeDrive { windows_path, .. } = mapping
+            {
+                log::warn!(
+                    "failed to translate `{windows_path}` with wslpath in {}; \
+                     falling back to `{}`",
+                    wsl_distro_label(distro),
+                    resolved.path
+                );
+            }
+            ensure!(
+                resolved.exists,
+                "{WSL_SANDBOX_ERROR_PREFIX}: mapped {description} `{}` does not exist in {}",
+                resolved.path,
+                wsl_distro_label(distro)
+            );
+            Ok(resolved.path)
+        })
+        .collect()
+}
+
+/// Flatten path mappings into the `(kind, path, fallback)` argument triples
+/// consumed by [`PATH_RESOLUTION_SCRIPT`].
+fn path_resolution_args<'a>(mappings: impl Iterator<Item = &'a PathMapping>) -> Vec<String> {
+    let mut args = Vec::new();
+    for mapping in mappings {
+        match mapping {
+            PathMapping::Wsl(path) => {
+                args.extend(["L".to_string(), path.path.clone(), String::new()]);
+            }
+            PathMapping::NativeDrive {
+                windows_path,
+                fallback,
+            } => {
+                args.extend(["W".to_string(), windows_path.clone(), fallback.path.clone()]);
+            }
+        }
+    }
+    args
+}
+
+/// Parse [`PATH_RESOLUTION_SCRIPT`] output: one strictly-formatted line per
+/// input triple. Anything else (wrong line count, unknown status words, a
+/// non-absolute path) means the stdout protocol was corrupted and is an error.
+fn parse_path_resolution_output(stdout: &str, expected: usize) -> Result<Vec<ResolvedPath>> {
+    let lines: Vec<&str> = stdout.lines().collect();
+    ensure!(
+        lines.len() == expected,
+        "expected {expected} result lines from the path resolution script, got {}: {stdout:?}",
+        lines.len()
+    );
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut parts = line.splitn(3, ' ');
+            let (Some(translate), Some(exists), Some(path)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                bail!("malformed line from the path resolution script: {line:?}");
+            };
+            let used_fallback = match translate {
+                "ok" => false,
+                "fallback" => true,
+                _ => bail!("malformed line from the path resolution script: {line:?}"),
+            };
+            let exists = match exists {
+                "ok" => true,
+                "missing" => false,
+                _ => bail!("malformed line from the path resolution script: {line:?}"),
+            };
+            ensure!(
+                path.starts_with('/'),
+                "unexpected resolved path from the path resolution script: {path:?}"
+            );
+            Ok(ResolvedPath {
+                path: path.to_string(),
+                used_fallback,
+                exists,
+            })
+        })
+        .collect()
+}
+
+/// Invoke `wsl.exe` with the given args and return its raw output.
+///
+/// Only spawn failures become errors here; callers interpret the exit status
+/// themselves. stdout, when used, is decoded as UTF-8 (lossily) — that's
+/// only valid for `--exec`'d programs whose output we control, not for
+/// `wsl.exe`'s own diagnostics (which are UTF-16LE).
+fn run_wsl_command(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
     description: &str,
-) -> Result<String> {
+) -> Result<std::process::Output> {
     let mut command = Command::new(wsl_exe);
     if let Some(distro) = distro {
         command.args(["-d", distro]);
     }
     command.args(args).stdin(Stdio::null());
 
-    let output = smol::block_on(command.output()).with_context(|| {
+    smol::block_on(command.output()).with_context(|| {
         format!("{WSL_SANDBOX_ERROR_PREFIX}: failed to invoke WSL while trying to {description}")
-    })?;
-    ensure!(
-        output.status.success(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: failed to {description} in {}{}",
-        wsl_distro_label(distro),
-        command_failure_details(output.status.code(), &output.stderr)
-    );
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-fn check_wsl_path_exists(
-    wsl_exe: &Path,
-    distro: Option<&str>,
-    path: &WslPath,
-    description: &str,
-) -> Result<()> {
-    let mut command = Command::new(wsl_exe);
-    if let Some(distro) = distro {
-        command.args(["-d", distro]);
-    }
-    command
-        .args(["--exec", "test", "-e", &path.path])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
-
-    let output = smol::block_on(command.output()).with_context(|| {
-        format!(
-            "{WSL_SANDBOX_ERROR_PREFIX}: failed to check {description} `{}` in {}",
-            path.path,
-            wsl_distro_label(distro)
-        )
-    })?;
-    ensure!(
-        output.status.success(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: mapped {description} `{}` does not exist in {}{}",
-        path.path,
-        wsl_distro_label(distro),
-        command_failure_details(output.status.code(), &output.stderr)
-    );
-    Ok(())
+    })
 }
 
 fn command_failure_details(exit_code: Option<i32>, stderr: &[u8]) -> String {
@@ -326,7 +463,7 @@ fn wsl_exe_path() -> PathBuf {
 }
 
 fn build_bwrap_args<S: std::hash::BuildHasher>(
-    writable_paths: &[WslPath],
+    writable_paths: &[String],
     permissions: SandboxPermissions,
     cwd: Option<&str>,
     mask_interop_dir: bool,
@@ -340,7 +477,7 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
         push_bind(&mut args, "--ro-bind", "/", "/");
         args.extend(["--tmpfs".to_string(), "/tmp".to_string()]);
         for path in writable_paths {
-            push_bind(&mut args, "--bind", &path.path, &path.path);
+            push_bind(&mut args, "--bind", path, path);
         }
     }
 
@@ -426,52 +563,6 @@ fn push_bind(args: &mut Vec<String>, flag: &str, source: &str, destination: &str
         source.to_string(),
         destination.to_string(),
     ]);
-}
-
-/// Resolve a [`PathMapping`] into the final WSL path, translating native
-/// drive-letter paths with `wslpath -u` inside the chosen distro so the
-/// distro's actual automount configuration is honored. Falls back to the
-/// structural `/mnt/<drive>/...` mapping when translation fails (e.g. a
-/// distro without `wslpath`); a wrong fallback is still caught by the
-/// existence check that follows.
-fn resolve_path_mapping(wsl_exe: &Path, distro: Option<&str>, mapping: PathMapping) -> WslPath {
-    match mapping {
-        PathMapping::Wsl(path) => path,
-        PathMapping::NativeDrive {
-            windows_path,
-            fallback,
-        } => match translate_windows_path(wsl_exe, distro, &windows_path) {
-            Ok(path) => WslPath { distro: None, path },
-            Err(error) => {
-                log::warn!(
-                    "failed to translate `{windows_path}` with wslpath in {}; \
-                     falling back to `{}`: {error:#}",
-                    wsl_distro_label(distro),
-                    fallback.path
-                );
-                fallback
-            }
-        },
-    }
-}
-
-/// Translate a forward-slashed Windows path into the distro's view with
-/// `wslpath -u` (the same technique as
-/// `remote::transport::wsl::WslConnectionOptions::abs_windows_path_to_wsl_path`).
-fn translate_windows_path(
-    wsl_exe: &Path,
-    distro: Option<&str>,
-    windows_path: &str,
-) -> Result<String> {
-    let output = check_wsl_command_capture(
-        wsl_exe,
-        distro,
-        &["--exec", "wslpath", "-u", windows_path],
-        "translate a Windows path with `wslpath`",
-    )?;
-    let path = output.trim_end_matches(['\r', '\n']);
-    ensure!(path.starts_with('/'), "unexpected wslpath output: {path:?}");
-    Ok(path.to_string())
 }
 
 fn directory_to_wsl(path: &Path) -> Result<PathMapping> {
@@ -626,10 +717,7 @@ mod tests {
     #[test]
     fn bwrap_denies_network_by_default() {
         let args = build_bwrap_args(
-            &[WslPath {
-                distro: Some("Ubuntu".to_string()),
-                path: "/home/me/project".to_string(),
-            }],
+            &["/home/me/project".to_string()],
             SandboxPermissions::default(),
             Some("/home/me/project"),
             true,
@@ -660,10 +748,7 @@ mod tests {
     #[test]
     fn bwrap_binds_explicit_writable_file_paths() {
         let args = build_bwrap_args(
-            &[WslPath {
-                distro: None,
-                path: "/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md".to_string(),
-            }],
+            &["/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md".to_string()],
             SandboxPermissions::default(),
             None,
             true,
@@ -680,10 +765,7 @@ mod tests {
     #[test]
     fn bwrap_blocks_wsl_interop_by_default() {
         let args = build_bwrap_args(
-            &[WslPath {
-                distro: Some("Ubuntu".to_string()),
-                path: "/home/me/project".to_string(),
-            }],
+            &["/home/me/project".to_string()],
             SandboxPermissions::default(),
             Some("/home/me/project"),
             true,
@@ -863,5 +945,79 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn path_resolution_args_flattens_mappings_into_triples() {
+        let mappings = [
+            PathMapping::NativeDrive {
+                windows_path: "C:/Users/me/project".to_string(),
+                fallback: WslPath {
+                    distro: None,
+                    path: "/mnt/c/Users/me/project".to_string(),
+                },
+            },
+            PathMapping::Wsl(WslPath {
+                distro: Some("Ubuntu".to_string()),
+                path: "/home/me/project".to_string(),
+            }),
+        ];
+        assert_eq!(
+            path_resolution_args(mappings.iter()),
+            [
+                "W",
+                "C:/Users/me/project",
+                "/mnt/c/Users/me/project",
+                "L",
+                "/home/me/project",
+                "",
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_path_resolution_output_reads_one_line_per_path() {
+        let resolved = parse_path_resolution_output(
+            "ok ok /mnt/c/Users/me/project\nfallback missing /mnt/d/workspace\n",
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            [
+                ResolvedPath {
+                    path: "/mnt/c/Users/me/project".to_string(),
+                    used_fallback: false,
+                    exists: true,
+                },
+                ResolvedPath {
+                    path: "/mnt/d/workspace".to_string(),
+                    used_fallback: true,
+                    exists: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_path_resolution_output_keeps_spaces_in_paths() {
+        let resolved =
+            parse_path_resolution_output("ok ok /mnt/c/Users/me/My Documents/project\n", 1)
+                .unwrap();
+        assert_eq!(resolved[0].path, "/mnt/c/Users/me/My Documents/project");
+    }
+
+    #[test]
+    fn parse_path_resolution_output_rejects_wrong_line_count() {
+        assert!(parse_path_resolution_output("ok ok /a\n", 2).is_err());
+        assert!(parse_path_resolution_output("ok ok /a\nok ok /b\n", 1).is_err());
+    }
+
+    #[test]
+    fn parse_path_resolution_output_rejects_corrupted_lines() {
+        assert!(parse_path_resolution_output("garbage\n", 1).is_err());
+        assert!(parse_path_resolution_output("weird ok /a\n", 1).is_err());
+        assert!(parse_path_resolution_output("ok weird /a\n", 1).is_err());
+        assert!(parse_path_resolution_output("ok ok not-absolute\n", 1).is_err());
     }
 }
