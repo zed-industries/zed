@@ -20,8 +20,6 @@ pub enum Stdio {
     /// A new pipe should be arranged to connect the parent and child processes.
     #[default]
     Piped,
-    /// The child inherits from the corresponding parent descriptor.
-    Inherit,
     /// This stream will be ignored (redirected to `/dev/null`).
     Null,
 }
@@ -29,10 +27,6 @@ pub enum Stdio {
 impl Stdio {
     pub fn piped() -> Self {
         Self::Piped
-    }
-
-    pub fn inherit() -> Self {
-        Self::Inherit
     }
 
     pub fn null() -> Self {
@@ -394,7 +388,6 @@ fn spawn_posix_spawn(
             let fd = open_dev_null(libc::O_RDONLY)?;
             (Some(fd), None)
         }
-        Stdio::Inherit => (None, None),
     };
 
     let (stdout_read, stdout_write) = match stdout_cfg {
@@ -406,7 +399,6 @@ fn spawn_posix_spawn(
             let fd = open_dev_null(libc::O_WRONLY)?;
             (None, Some(fd))
         }
-        Stdio::Inherit => (None, None),
     };
 
     let (stderr_read, stderr_write) = match stderr_cfg {
@@ -418,7 +410,6 @@ fn spawn_posix_spawn(
             let fd = open_dev_null(libc::O_WRONLY)?;
             (None, Some(fd))
         }
-        Stdio::Inherit => (None, None),
     };
 
     let mut attr: libc::posix_spawnattr_t = ptr::null_mut();
