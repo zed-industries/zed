@@ -1315,14 +1315,15 @@ impl GitPanel {
         }
     }
 
-    /// If: `selected_entry > entry_count`
+    /// If: `selected_entry >= entries.len()`
     ///
     /// Then: select last entry
     ///
-    /// Assumes: git panel `entry_count` is the most relevant and won't be changed further
+    /// Note: `select_last` is no-op for `self.entries.last().is_none()`
+    /// that's why I don't check if it have entries at all.
     fn select_last_entry_if_out_of_bounds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(idx) = self.selected_entry
-            && idx > self.entry_count
+            && idx >= self.entries.len()
         {
             self.select_last(&menu::SelectLast, window, cx);
         }
