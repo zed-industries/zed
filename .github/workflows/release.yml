@@ -256,6 +256,10 @@ jobs:
       run: '"$ACTIONLINT_BIN" -color'
       env:
         ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: run_tests::check_scripts::run_zizmor
+      uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d
+      with:
+        advanced-security: false
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:

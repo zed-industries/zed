@@ -5,8 +5,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use strum::IntoEnumIterator;
 
-use crate::tasks::workflow_checks::{self};
-
 mod after_release;
 mod autofix_pr;
 mod bump_patch_version;
@@ -254,5 +252,5 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         workflow_file.generate_file(&args)?;
     }
 
-    workflow_checks::validate(Default::default())
+    Ok(())
 }
