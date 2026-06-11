@@ -11,33 +11,26 @@ use hdrhistogram::Histogram;
 
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BenchDispatcher,
-    Bounds, Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global,
-    NoopTextSystem, Platform, PlatformHeadlessRenderer, Render, Reservation, Task, TestPlatform,
+    Bounds, Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform,
+    PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Task, TestPlatform,
     VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
     profiler::{self, FrameTiming, FrameTimingCollector},
 };
 
-/// Returns this thread's shared benchmark platform, creating it on first use.
+/// Returns a benchmark platform backed by this thread's shared dispatcher.
 ///
 /// The platform is a [`TestPlatform`] backed by a multithreaded
 /// [`BenchDispatcher`], so background work runs with production concurrency in
-/// real time. It is cached per thread and reused across benchmark invocations
-/// so worker and timer threads persist for the whole process instead of being
-/// recreated for every Criterion calibration pass.
+/// real time. The dispatcher is cached per thread and reused across benchmark
+/// invocations so worker and timer threads persist for the whole process
+/// instead of being recreated for every Criterion calibration pass.
 ///
-/// When `text_system` is `None`, text is shaped with [`NoopTextSystem`] (one
-/// glyph per character at fixed advances). This keeps results deterministic
-/// across machines and font installations while preserving the structure of
-/// downstream layout and paint work; absolute timings exclude production text
-/// shaping (roughly 10% of draw time for a full editor frame). Pass the
-/// platform text system (e.g. `gpui_platform::current_platform_text_system`,
-/// or `text_system = platform` on `#[gpui::bench]`) to include real shaping
-/// and glyph rasterization. The noop and real-text platforms are cached
-/// separately per thread, sharing one dispatcher.
+/// Text is shaped with the provided platform text system. Benchmarks generated
+/// by `#[gpui::bench]` use the current platform's text system, so text-heavy
+/// benchmark measurements include production shaping and glyph rasterization.
 ///
-/// `headless_renderer_factory` (only used the first time each platform is
-/// built) supplies a renderer for benchmark windows, e.g.
+/// `headless_renderer_factory` supplies a renderer for benchmark windows, e.g.
 /// `gpui_platform::current_headless_renderer`. When present, scenes drawn by
 /// benchmarks are rasterized through the real sprite atlas and submitted to
 /// the GPU on present, so quad/sprite regressions show up in measurements.
@@ -46,36 +39,23 @@ use crate::{
 /// measurements on other platforms.
 pub fn bench_platform(
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
-    text_system: Option<Arc<dyn crate::PlatformTextSystem>>,
+    text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {
         static DISPATCHER: OnceCell<Arc<BenchDispatcher>> = const { OnceCell::new() };
-        static NOOP_TEXT_PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
-        static REAL_TEXT_PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
     }
     let dispatcher = DISPATCHER.with(|cell| {
         cell.get_or_init(|| Arc::new(BenchDispatcher::new()))
             .clone()
     });
-    let build = move |text_system: Arc<dyn crate::PlatformTextSystem>| {
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
-        TestPlatform::with_platform(
-            background_executor,
-            foreground_executor,
-            text_system,
-            headless_renderer_factory,
-        )
-    };
-    match text_system {
-        Some(text_system) => REAL_TEXT_PLATFORM
-            .with(|cell| cell.get_or_init(move || build(text_system)).clone())
-            as Rc<dyn Platform>,
-        None => NOOP_TEXT_PLATFORM.with(|cell| {
-            cell.get_or_init(move || build(Arc::new(NoopTextSystem::new())))
-                .clone()
-        }) as Rc<dyn Platform>,
-    }
+    let background_executor = BackgroundExecutor::new(dispatcher.clone());
+    let foreground_executor = ForegroundExecutor::new(dispatcher);
+    TestPlatform::with_platform(
+        background_executor,
+        foreground_executor,
+        text_system,
+        headless_renderer_factory,
+    ) as Rc<dyn Platform>
 }
 
 /// Default target frame rate when a benchmark doesn't specify `fps = N`.
@@ -339,9 +319,6 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        // Benchmark teardown intentionally leaks parked tasks when forgetting
-        // cross-benchmark timers, so leaked-handle panics would misfire here.
-        crate::app::entity_map::suppress_leak_panics();
         let app = App::new_app(platform, asset_source, http_client);
 
         Self {
@@ -458,32 +435,12 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.replace_bencher(bencher);
     }
 
-    /// Adds a window of the given size with an empty root view, for
-    /// benchmarks that want a specific viewport (e.g. a laptop display's
-    /// logical resolution).
-    pub fn add_window_with_size(
-        &mut self,
-        size: crate::Size<crate::Pixels>,
-    ) -> BenchWindowContext<'a, 'measurement> {
-        self.add_window_with_bounds(Bounds {
-            origin: crate::Point::default(),
-            size,
-        })
-    }
-
     /// Adds a window with an empty root view for benchmark setup.
     pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
         let bounds = {
             let app = self.app.borrow();
             Bounds::maximized(None, &app)
         };
-        self.add_window_with_bounds(bounds)
-    }
-
-    fn add_window_with_bounds(
-        &mut self,
-        bounds: Bounds<crate::Pixels>,
-    ) -> BenchWindowContext<'a, 'measurement> {
         let window = {
             let mut app = self.app.borrow_mut();
             let window: AnyWindowHandle = app
@@ -522,20 +479,34 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs GPUI benchmark teardown.
     ///
-    /// Forgets any timers still armed on the shared dispatcher so they can't
-    /// fire during a later benchmark; assumes no other `BenchAppContext` is
-    /// live on this thread.
+    /// Cancels any timers still armed on the shared dispatcher and drains the
+    /// work that cancellation unblocks so they can't fire during a later
+    /// benchmark; assumes no other `BenchAppContext` is live on this thread.
     pub fn teardown(mut self) {
         self.run_until_idle();
         self.update(|cx| {
             cx.quit();
         });
         self.run_until_idle();
-        self.background_executor
-            .dispatcher()
+
+        let dispatcher = self.background_executor.dispatcher();
+        let dispatcher = dispatcher
             .as_bench()
-            .expect("validated in BenchAppContext::build")
-            .forget_pending_timers();
+            .expect("validated in BenchAppContext::build");
+
+        drop(self.app);
+        drop(self.foreground_executor);
+
+        for _ in 0..100 {
+            if dispatcher.cancel_pending_timers() == 0 {
+                return;
+            }
+            dispatcher.run_until_idle();
+        }
+        panic!(
+            "benchmark teardown kept scheduling timers: {}",
+            dispatcher.debug_state()
+        );
     }
 }
 

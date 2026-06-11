@@ -47,9 +47,10 @@ pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
 
-pub use platform::MacPlatform;
 #[cfg(feature = "font-kit")]
-pub use text_system::MacTextSystem;
+pub(crate) use text_system::*;
+
+pub use platform::MacPlatform;
 
 trait BoolExt {
     fn to_objc(self) -> BOOL;

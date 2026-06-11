@@ -317,7 +317,7 @@ fn turn_updates(turn: usize) -> Vec<acp::SessionUpdate> {
     updates
 }
 
-#[gpui::bench(text_system = platform)]
+#[gpui::bench]
 fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     // === Global init ===
     cx.update(|cx| {
@@ -388,9 +388,13 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     block_on(cx, scan);
 
     // === Window with a workspace root and a visible agent panel ===
+    let mut window = cx.add_empty_window();
     // Sized like the logical resolution of a 16" MacBook Pro (the test window
     // reports a 2.0 scale factor, so the device size is 3456x2234).
-    let mut window = cx.add_window_with_size(size(px(1728.0), px(1117.0)));
+    window.update(|window, cx| {
+        window.resize(size(px(1728.0), px(1117.0)));
+        window.bounds_changed(cx);
+    });
     let multi_workspace = window.update(|window, cx| {
         window.replace_root(cx, |window, cx| {
             MultiWorkspace::test_new(project.clone(), window, cx)
