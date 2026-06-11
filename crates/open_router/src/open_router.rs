@@ -610,13 +610,6 @@ pub async fn list_models(
     } else {
         let code = ApiErrorCode::from_status(response.status().as_u16());
 
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(OpenRouterError::ReadResponse)?;
-
         let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
             Ok(OpenRouterErrorResponse { error }) => error,
             Err(_) => OpenRouterErrorBody {

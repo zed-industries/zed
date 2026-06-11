@@ -321,7 +321,7 @@ impl BookmarkStore {
                     }
                 };
 
-                rows.sort();
+                rows.sort_unstable();
                 rows.dedup();
 
                 if rows.is_empty() {

@@ -585,7 +585,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
-                    Container::new("postgres:15")
+                    Container::new("postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e")
                         .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
                         .ports(vec![Port::Name("5432:5432".into())])
                         .options(
@@ -659,13 +659,22 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     }
 
     fn bufbuild_setup_action() -> Step<Use> {
-        named::uses("bufbuild", "buf-setup-action", "v1")
-            .add_with(("version", "v1.29.0"))
-            .add_with(("github_token", vars::GITHUB_TOKEN))
+        named::uses(
+            "bufbuild",
+            "buf-setup-action",
+            "a47c93e0b1648d5651a065437926377d060baa99", // v1.50.0
+        )
+        .add_with(("version", "v1.29.0"))
+        .add_with(("github_token", vars::GITHUB_TOKEN))
     }
 
     fn bufbuild_breaking_action() -> Step<Use> {
-        named::uses("bufbuild", "buf-breaking-action", "v1").add_with(("input", "crates/proto/proto/"))
+        named::uses(
+            "bufbuild",
+            "buf-breaking-action",
+            "c57b3d842a5c3f3b454756ef65305a50a587c5ba", // v1.1.4
+        )
+        .add_with(("input", "crates/proto/proto/"))
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 

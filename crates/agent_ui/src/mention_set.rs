@@ -166,7 +166,8 @@ impl MentionSet {
             ))),
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
-            | MentionUri::MergeConflict { .. } => {
+            | MentionUri::MergeConflict { .. }
+            | MentionUri::Rule { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -346,6 +347,10 @@ impl MentionSet {
             MentionUri::MergeConflict { .. } => {
                 debug_panic!("unexpected merge conflict URI");
                 Task::ready(Err(anyhow!("unexpected merge conflict URI")))
+            }
+            MentionUri::Rule { .. } => {
+                debug_panic!("unexpected rule URI");
+                Task::ready(Err(anyhow!("unexpected rule URI")))
             }
         };
         let task = cx
