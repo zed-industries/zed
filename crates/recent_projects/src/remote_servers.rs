@@ -987,10 +987,12 @@ impl RemoteServerProjects {
     pub fn popover(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
-        create_new_window: bool,
+        create_new_window: Option<bool>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let create_new_window =
+            create_new_window.unwrap_or_else(|| crate::default_open_in_new_window(cx));
         cx.new(|cx| {
             let server = Self::new(create_new_window, fs, window, workspace, cx);
             server.focus_handle(cx).focus(window, cx);
@@ -1780,7 +1782,7 @@ impl RemoteServerProjects {
                             gpui::PromptLevel::Critical,
                             "Failed to connect",
                             Some(&e.to_string()),
-                            &["Ok"],
+                            &["OK"],
                         )
                         .await
                         .ok();
@@ -2075,7 +2077,7 @@ impl RemoteServerProjects {
                             gpui::PromptLevel::Critical,
                             "Failed to start Dev Container. See logs for details",
                             Some(&format!("{e}")),
-                            &["Ok"],
+                            &["OK"],
                         )
                         .await
                         .ok();
@@ -2130,7 +2132,7 @@ impl RemoteServerProjects {
                     gpui::PromptLevel::Critical,
                     "Failed to connect",
                     Some(&e.to_string()),
-                    &["Ok"],
+                    &["OK"],
                 )
                 .await
                 .ok();

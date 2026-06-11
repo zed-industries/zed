@@ -354,12 +354,17 @@ mod tests {
         );
 
         let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
-        let failed_capture = ep_store
+        let unfiltered_uncommitted_diffs = ep_store
             .update(cx, |_store, cx| {
                 uncommitted_diffs_for_events(project.clone(), worktree_id, events.clone(), cx)
             })
-            .await;
-        assert!(failed_capture.is_err());
+            .await
+            .unwrap();
+        assert!(
+            unfiltered_uncommitted_diffs
+                .iter()
+                .all(|(path, _, _)| path.as_ref() != Path::new("external.rs"))
+        );
 
         let project_events = events
             .into_iter()

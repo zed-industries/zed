@@ -123,6 +123,7 @@ enum ThreadFeedback {
 #[derive(Debug)]
 pub(crate) enum ThreadError {
     PaymentRequired,
+    DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
     RateLimitExceeded {
@@ -162,8 +163,6 @@ impl From<anyhow::Error> for ThreadError {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if error.is::<language_model::PaymentRequiredError>() {
-            Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
@@ -180,6 +179,7 @@ impl From<anyhow::Error> for ThreadError {
                     }
                 }
                 PromptTooLarge { .. } => Self::PromptTooLarge,
+                PaymentRequired => Self::PaymentRequired,
                 NoApiKey { provider } => Self::NoApiKey {
                     provider: provider.to_string().into(),
                 },
@@ -196,6 +196,7 @@ impl From<anyhow::Error> for ThreadError {
                     provider: provider.to_string().into(),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
+                DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
                 BadRequestFormat { provider, .. }
                 | HttpResponseError { provider, .. }
                 | ApiEndpointNotFound { provider } => Self::ApiError {
@@ -389,7 +390,7 @@ impl Conversation {
     ) -> Option<()> {
         let (authorize_session_id, tool_call_id, options) =
             self.pending_tool_call(session_id, cx)?;
-        let option = options.first_option_of_kind(kind)?;
+        let option = permission_option_for_action(options, kind)?;
         self.authorize_tool_call(
             authorize_session_id,
             tool_call_id,
@@ -452,6 +453,26 @@ impl Conversation {
 pub(crate) struct RootThreadUpdated;
 
 impl EventEmitter<RootThreadUpdated> for ConversationView {}
+
+fn permission_option_for_action(
+    options: &PermissionOptions,
+    kind: acp::PermissionOptionKind,
+) -> Option<&acp::PermissionOption> {
+    if kind == acp::PermissionOptionKind::AllowAlways
+        && let PermissionOptions::Flat(options) = options
+        && let Some(option) = options.iter().find(|option| {
+            option.option_id.0.as_ref() == acp_thread::SandboxPermission::AllowAlways.as_id()
+        })
+    {
+        return Some(option);
+    }
+
+    options.first_option_of_kind(kind)
+}
+
+pub struct StateChange;
+
+impl EventEmitter<StateChange> for ConversationView {}
 
 fn resolve_outcome_from_selection(
     options: &PermissionOptions,
@@ -536,6 +557,7 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    loading_status: Option<SharedString>,
     /// When settings change, use this to see if the theme has changed (which
     /// causes mermaid diagrams to re-render).
     last_theme_id: Option<String>,
@@ -809,6 +831,7 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            loading_status: None,
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
             code_span_resolver,
@@ -823,6 +846,7 @@ impl ConversationView {
         }
 
         self.server_state = state;
+        cx.emit(StateChange);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         if matches!(&self.server_state, ServerState::Connected(_)) {
             cx.emit(RootThreadUpdated);
@@ -854,6 +878,8 @@ impl ConversationView {
                     .unwrap_or((None, None));
                 (session_id, work_dirs, title)
             });
+
+        self.loading_status = None;
 
         let state = Self::initial_state(
             self.agent.clone(),
@@ -917,6 +943,10 @@ impl ConversationView {
                             cx.notify();
                         });
                     }
+                }
+                AgentConnectionEntryEvent::LoadingStatusChanged(status) => {
+                    this.loading_status = status.clone();
+                    cx.notify();
                 }
             });
 
@@ -1148,16 +1178,12 @@ impl ConversationView {
             model_selector = None;
             mode_selector = None;
         } else {
-            // Fall back to legacy mode/model selectors
+            // Fall back to dedicated mode/model selectors
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
-                let agent_server = self.agent.clone();
-                let fs = self.project.read(cx).fs().clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
-                        agent_server,
-                        fs,
                         PopoverMenuHandle::default(),
                         self.focus_handle(cx),
                         window,
@@ -1330,6 +1356,7 @@ impl ConversationView {
             };
             if let Some(connected) = this.as_connected_mut() {
                 connected.auth_state = auth_state;
+                cx.emit(StateChange);
                 if let Some(view) = connected.active_view()
                     && view
                         .read(cx)
@@ -1410,7 +1437,10 @@ impl ConversationView {
                 .active_view()
                 .and_then(|v| v.read(cx).thread.read(cx).title())
                 .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into()),
-            ServerState::Loading { .. } => "Loading…".into(),
+            ServerState::Loading { .. } => self
+                .loading_status
+                .clone()
+                .unwrap_or_else(|| "Loading…".into()),
             ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => {
                     format!("Upgrade {}", self.agent.agent_id()).into()
@@ -1511,6 +1541,7 @@ impl ConversationView {
                     });
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1524,6 +1555,7 @@ impl ConversationView {
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1824,6 +1856,7 @@ impl ConversationView {
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
+            cx.emit(StateChange);
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
@@ -1869,6 +1902,7 @@ impl ConversationView {
                             }) = this.as_connected_mut()
                             {
                                 pending_auth_method.take();
+                                cx.emit(StateChange);
                             }
                             if let Some(active) = this.root_thread_view() {
                                 active.update(cx, |active, cx| {
@@ -1890,6 +1924,7 @@ impl ConversationView {
         pending_auth_method.replace(method.clone());
 
         let authenticate = connection.authenticate(method, cx);
+        cx.emit(StateChange);
         cx.notify();
         self.auth_task = Some(cx.spawn_in(window, {
             async move |this, cx| {
@@ -1917,6 +1952,7 @@ impl ConversationView {
                         }) = this.as_connected_mut()
                         {
                             pending_auth_method.take();
+                            cx.emit(StateChange);
                         }
                         if let Some(active) = this.root_thread_view() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
@@ -3000,6 +3036,7 @@ impl ConversationView {
                             pending_auth_method: None,
                             _subscription: None,
                         };
+                        cx.emit(StateChange);
                         if let Some(view) = connected.active_view()
                             && view
                                 .read(cx)
@@ -3040,6 +3077,7 @@ fn native_available_skills(
             description: skill.description.into(),
             source: skill.source,
             skill_file_path: skill.skill_file_path,
+            warning: skill.warning,
         })
         .collect()
 }
@@ -3103,21 +3141,27 @@ impl Render for ConversationView {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {
-                ServerState::Loading { .. } => v_flex()
-                    .flex_1()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        Label::new("Loading…").color(Color::Muted).with_animation(
-                            "loading-agent-label",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.3, 0.7)),
-                            |label, delta| label.alpha(delta),
-                        ),
-                    )
-                    .into_any(),
+                ServerState::Loading { .. } => {
+                    let label_text = self
+                        .loading_status
+                        .clone()
+                        .unwrap_or_else(|| "Loading…".into());
+                    v_flex()
+                        .flex_1()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Label::new(label_text).color(Color::Muted).with_animation(
+                                "loading-agent-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.7)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                        )
+                        .into_any()
+                }
                 ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
                     .size_full()
@@ -3401,6 +3445,21 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_data_retention_error_maps_from_provider_error() {
+        // The agent wraps the provider error in a fresh `anyhow::Error`, so
+        // the mapping must downcast to `LanguageModelCompletionError` rather
+        // than matching on the anyhow error directly.
+        let provider_error = LanguageModelCompletionError::DataRetentionConsentRequired {
+            model_name: "Claude Fable 5".to_string(),
+        };
+        let error = ThreadError::from(anyhow!(provider_error));
+        assert!(
+            matches!(error, ThreadError::DataRetentionConsentRequired),
+            "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
+        );
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -5771,6 +5830,178 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_regenerate_keeps_pending_subagent_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "file.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store.clone()),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        // First turn: a subagent tool call. Subagent edits never appear as
+        // diffs in the parent thread's entries; they are only forwarded to the
+        // parent's action log through the linked-log mechanism.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("spawn1", "Subagent task")
+                .kind(acp::ToolKind::Other)
+                .status(acp::ToolCallStatus::Completed)
+                .meta(acp_thread::meta_with_tool_name("spawn_agent")),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Use a subagent", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Simulate the subagent editing a file: edits performed through a
+        // child action log are forwarded to the parent thread's action log,
+        // just like `Thread::new_subagent` wires it up.
+        let parent_action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+        let subagent_action_log = cx.update(|_, cx| {
+            cx.new(|_| {
+                ActionLog::new(project.clone()).with_linked_action_log(parent_action_log.clone())
+            })
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path("file.txt", cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        cx.update(|_, cx| {
+            subagent_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text("edited by subagent", cx);
+            });
+            subagent_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        parent_action_log.read_with(cx, |log, cx| {
+            assert_eq!(
+                log.changed_buffers(cx).count(),
+                1,
+                "the subagent edit should be pending review in the parent's action log"
+            );
+        });
+
+        // Second turn: a plain follow-up.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Follow-up", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let follow_up_ix = thread.read_with(cx, |thread, cx| {
+            thread
+                .entries()
+                .iter()
+                .position(|entry| entry.to_markdown(cx) == "## User\n\nFollow-up\n\n")
+                .unwrap()
+        });
+
+        // Edit and regenerate the follow-up message.
+        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .entry_view_state
+                .read(cx)
+                .entry(follow_up_ix)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited follow-up", window, cx);
+        });
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("New response".into()),
+        )]);
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.regenerate(follow_up_ix, user_message_editor.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // The thread should have been rewound and the edited message resent.
+        thread.read_with(cx, |thread, cx| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert_eq!(
+                entries[2].to_markdown(cx),
+                "## User\n\nEdited follow-up\n\n"
+            );
+        });
+
+        // The subagent's edits predate the regenerated prompt, so they must be
+        // auto-kept rather than rejected by the rewind.
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.text(),
+                "edited by subagent",
+                "pending subagent edits should be kept when regenerating a later prompt"
+            );
+        });
+        parent_action_log.read_with(cx, |log, cx| {
+            assert_eq!(
+                log.changed_buffers(cx).count(),
+                0,
+                "the subagent edit should have been auto-kept"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_scroll_to_most_recent_user_prompt(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -7517,6 +7748,42 @@ pub(crate) mod tests {
         ])
     }
 
+    fn sandbox_permission_options() -> PermissionOptions {
+        PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_thread"),
+                "Allow for this thread",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_always"),
+                "Allow always",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ])
+    }
+
+    #[test]
+    fn permission_option_for_action_prefers_explicit_sandbox_allow_always() {
+        let options = sandbox_permission_options();
+
+        let option =
+            super::permission_option_for_action(&options, acp::PermissionOptionKind::AllowAlways)
+                .unwrap();
+
+        assert_eq!(option.option_id.0.as_ref(), "allow_always");
+    }
+
     #[test]
     fn resolve_outcome_from_selection_flat_allow_picks_allow_once() {
         let options = flat_allow_deny_options();
@@ -8208,6 +8475,71 @@ pub(crate) mod tests {
                 "Floating row should disappear after scrolling brings the inline prompt into view"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_permission_row_does_not_flicker_when_activity_bar_squeezes_list(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, _entry_ix, cx) =
+            setup_pending_permission_thread("perm-flicker", cx).await;
+
+        // Give the pending tool call tall content (like a full plan awaiting
+        // approval), so the floating row embedding it dwarfs the panel.
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        acp::ToolCallId::new("perm-flicker"),
+                        acp::ToolCallUpdateFields::new().content(vec![
+                            acp::ToolCallContent::Content(acp::Content::new(
+                                acp::ContentBlock::Text(acp::TextContent::new(
+                                    "Plan step\n\n".repeat(100),
+                                )),
+                            )),
+                        ]),
+                    )),
+                    cx,
+                )
+                .expect("tool call content update should be accepted");
+        });
+        cx.run_until_parked();
+
+        // Park the inline prompt below the viewport so the floating row renders.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            });
+        });
+
+        // Drive several real window draws. Each draw lays out the activity bar
+        // (containing the floating row) and the conversation list together, so
+        // the row's height feeds back into the list viewport height that the
+        // next frame's visibility decision is based on. Since showing the row
+        // squeezes the list to zero height, a decision that treats a
+        // zero-height viewport as "unknown" makes the row's visibility
+        // oscillate from frame to frame, flickering between the conversation
+        // and the permission prompt.
+        let mut row_visibility = Vec::new();
+        for _ in 0..4 {
+            thread_view.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+            thread_view.update_in(cx, |view, window, cx| {
+                row_visibility.push(
+                    view.render_main_agent_awaiting_permission(window, cx)
+                        .is_some(),
+                );
+            });
+        }
+        assert_eq!(
+            row_visibility,
+            vec![true; 4],
+            "Floating row visibility must be stable across frames (false entries mean flicker)"
+        );
     }
 
     #[gpui::test]

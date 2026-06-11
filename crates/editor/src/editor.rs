@@ -66,6 +66,7 @@ mod config;
 mod diagnostics;
 mod edit_prediction;
 mod input;
+mod markdown_actions;
 mod navigation;
 mod rewrap;
 mod selection;
@@ -73,6 +74,7 @@ mod selection;
 pub(crate) use actions::*;
 pub use clipboard::ClipboardSelection;
 pub use code_actions::CodeActionProvider;
+use collections::TypeIdHashMap;
 pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
@@ -93,6 +95,7 @@ pub(crate) use edit_prediction::{
     EditPredictionKeybindAction, EditPredictionKeybindSurface, edit_prediction_edit_text,
 };
 pub use edit_prediction_types::Direction;
+pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
     DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
@@ -991,10 +994,10 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
+    highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
-    gutter_highlights: HashMap<TypeId, GutterHighlight>,
+    gutter_highlights: TypeIdHashMap<GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -1114,11 +1117,15 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
-    addons: HashMap<TypeId, Box<dyn Addon>>,
+    addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
+    /// Whether to render all diff hunks with the "unstaged" appearance,
+    /// regardless of whether they have a secondary hunk. Used by views whose
+    /// diffs aren't related to the git index (e.g. agent diffs).
+    render_diff_hunks_as_unstaged: bool,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1793,8 +1800,10 @@ impl Editor {
         self.sticky_headers_task = cx.spawn(async move |this, cx| {
             let sticky_headers = background_task.await;
             this.update(cx, |this, cx| {
-                this.sticky_headers = Some(sticky_headers);
-                cx.notify();
+                if this.sticky_headers.as_ref() != Some(&sticky_headers) {
+                    this.sticky_headers = Some(sticky_headers);
+                    cx.notify();
+                }
             })
             .ok();
         });
@@ -2187,10 +2196,10 @@ impl Editor {
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
-            highlighted_rows: HashMap::default(),
+            highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
             navigation_overlays: HashMap::default(),
-            gutter_highlights: HashMap::default(),
+            gutter_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -2333,7 +2342,7 @@ impl Editor {
             breadcrumb_header: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
-            addons: HashMap::default(),
+            addons: Default::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
@@ -2343,6 +2352,7 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             temporary_diff_override: false,
+            render_diff_hunks_as_unstaged: false,
             minimap: None,
             change_list: ChangeList::new(),
             mode,
@@ -3079,6 +3089,8 @@ impl Editor {
         self.use_modal_editing
     }
 
+    /// Inserted text is normalized to LF line endings before being applied.
+    /// Normalize before measuring inserted text for post-edit offsets.
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -4009,7 +4021,7 @@ impl Editor {
         anchor: Anchor,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<ui::ContextMenu> {
+    ) -> Entity<ContextMenu> {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
 
@@ -4064,37 +4076,50 @@ impl Editor {
 
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
-            BreakpointState::Enabled => Some("Disable"),
-            BreakpointState::Disabled => Some("Enable"),
-        });
+        let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
+            breakpoint.as_ref().map(|bp| match bp.1.state {
+                BreakpointState::Enabled => {
+                    ("Disable", crate::actions::DisableBreakpoint.boxed_clone())
+                }
+                BreakpointState::Disabled => {
+                    ("Enable", crate::actions::EnableBreakpoint.boxed_clone())
+                }
+            });
 
         let (anchor, breakpoint) =
             breakpoint.unwrap_or_else(|| (anchor, Arc::new(Breakpoint::new_standard())));
 
-        ui::ContextMenu::build(window, cx, |menu, _, _cx| {
+        ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
-                    this.entry("Run to Cursor", None, move |window, cx| {
-                        weak_editor
-                            .update(cx, |editor, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::no_scroll(),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges([Point::new(row, 0)..Point::new(row, 0)]),
-                                );
-                            })
-                            .ok();
+                    this.entry(
+                        "Run to Cursor",
+                        Some(RunToCursor.boxed_clone()),
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll(),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_ranges(
+                                                [Point::new(row, 0)..Point::new(row, 0)],
+                                            )
+                                        },
+                                    );
+                                })
+                                .ok();
 
-                        window.dispatch_action(Box::new(RunToCursor), cx);
-                    })
+                            window.dispatch_action(Box::new(RunToCursor), cx);
+                        },
+                    )
                     .separator()
                 })
-                .when_some(toggle_state_msg, |this, msg| {
-                    this.entry(msg, None, {
+                .when_some(toggle_state_entry, |this, (msg, action)| {
+                    this.entry(msg, Some(action), {
                         let weak_editor = weak_editor.clone();
                         let breakpoint = breakpoint.clone();
                         move |_window, cx| {
@@ -4111,39 +4136,47 @@ impl Editor {
                         }
                     })
                 })
-                .entry(set_breakpoint_msg, None, {
-                    let weak_editor = weak_editor.clone();
-                    let breakpoint = breakpoint.clone();
-                    move |_window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.edit_breakpoint_at_anchor(
-                                    anchor,
-                                    breakpoint.as_ref().clone(),
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .entry(log_breakpoint_msg, None, {
-                    let breakpoint = breakpoint.clone();
-                    let weak_editor = weak_editor.clone();
-                    move |window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.add_edit_breakpoint_block(
-                                    anchor,
-                                    breakpoint.as_ref(),
-                                    BreakpointPromptEditAction::Log,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
+                .entry(
+                    set_breakpoint_msg,
+                    Some(crate::actions::ToggleBreakpoint.boxed_clone()),
+                    {
+                        let weak_editor = weak_editor.clone();
+                        let breakpoint = breakpoint.clone();
+                        move |_window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.edit_breakpoint_at_anchor(
+                                        anchor,
+                                        breakpoint.as_ref().clone(),
+                                        BreakpointEditAction::Toggle,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    },
+                )
+                .entry(
+                    log_breakpoint_msg,
+                    Some(crate::actions::EditLogBreakpoint.boxed_clone()),
+                    {
+                        let breakpoint = breakpoint.clone();
+                        let weak_editor = weak_editor.clone();
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.add_edit_breakpoint_block(
+                                        anchor,
+                                        breakpoint.as_ref(),
+                                        BreakpointPromptEditAction::Log,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    },
+                )
                 .entry(condition_breakpoint_msg, None, {
                     let breakpoint = breakpoint.clone();
                     let weak_editor = weak_editor.clone();
@@ -4179,13 +4212,17 @@ impl Editor {
                     }
                 })
                 .separator()
-                .entry(set_bookmark_msg, None, move |_window, cx| {
-                    weak_editor
-                        .update(cx, |this, cx| {
-                            this.toggle_bookmark_at_anchor(anchor, cx);
-                        })
-                        .log_err();
-                })
+                .entry(
+                    set_bookmark_msg,
+                    Some(ToggleBookmark.boxed_clone()),
+                    move |_window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.toggle_bookmark_at_anchor(anchor, cx);
+                            })
+                            .log_err();
+                    },
+                )
         })
     }
 
@@ -4803,7 +4840,13 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.insert("", window, cx);
             linked_edits.apply_with_left_expansion(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -4826,7 +4869,13 @@ impl Editor {
             let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
             this.insert("", window, cx);
             linked_edits.apply(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -5011,7 +5060,13 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -7322,7 +7377,13 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -7350,7 +7411,13 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -7750,7 +7817,6 @@ impl Editor {
 
         self.selections
             .disjoint_anchor_ranges()
-            .filter(|range| range.start != range.end)
             .flat_map(|range| [range.start, range.end])
             .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
             .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
@@ -7969,6 +8035,7 @@ impl Editor {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
                         HashSet::default(),
+                        true,
                         cx,
                     );
                 });
@@ -8468,7 +8535,13 @@ impl Editor {
                     (selection.range(), uuid.to_string())
                 });
             this.edit(edits, cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -9487,7 +9560,7 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, window, cx);
+        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
@@ -10646,7 +10719,7 @@ impl Editor {
         };
 
         breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
-            text: symbol.text.clone().into(),
+            text: symbol.text.clone(),
             highlights: symbol.highlight_ranges.clone(),
         }));
         Some(breadcrumbs)
@@ -11304,7 +11377,7 @@ impl EditorSnapshot {
                 self.git_blame_gutter_max_author_length
                     .map(|max_author_length| {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                        const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+                        const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
                         /// The number of characters to dedicate to gaps and margins.
                         const SPACING_WIDTH: usize = 4;
@@ -11503,8 +11576,11 @@ pub enum EditorEvent {
     RestoreRequested {
         hunks: Vec<MultiBufferDiffHunk>,
     },
+    /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,
+    /// Emitted when this editor creates, undoes, or redoes an edit transaction.
     Edited {
+        /// The transaction that changed the editor's buffer.
         transaction_id: clock::Lamport,
     },
     Reparsed(BufferId),

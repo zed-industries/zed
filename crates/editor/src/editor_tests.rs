@@ -4235,6 +4235,53 @@ fn test_newline_respects_read_only(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_below_with_cursor_on_deleted_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("aaa\nbbb\ncˇcc");
+    cx.set_head_text("aaa\nXXX\nbbb\nccc");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(3), 3)..DisplayPoint::new(DisplayRow(3), 3),
+            ]);
+        });
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline_below(&NewlineBelow, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer(|buffer, _| buffer.text()), "aaa\nbbb\nccc\n");
+
+    let cursors = cx.update_editor(|editor, window, cx| {
+        let display_snapshot = editor.snapshot(window, cx).display_snapshot;
+        editor
+            .selections
+            .all_display(&display_snapshot)
+            .iter()
+            .map(|selection| selection.head())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        cursors,
+        vec![
+            DisplayPoint::new(DisplayRow(1), 0),
+            DisplayPoint::new(DisplayRow(4), 0),
+        ],
+    );
+}
+
+#[gpui::test]
 fn test_newline_below_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -7992,7 +8039,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in comment prefix (e.g., `//` to `///`) trigger seperate rewraps
+    // Test that change in comment prefix (e.g., `//` to `///`) trigger separate rewraps
     assert_rewrap(
         indoc! {"
             «// A regular long long comment to be wrapped.
@@ -8008,7 +8055,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in indentation level trigger seperate rewraps
+    // Test that change in indentation level trigger separate rewraps
     assert_rewrap(
         indoc! {"
             fn foo() {
@@ -14827,6 +14874,24 @@ async fn test_format_selections_action_available_when_range_formatting_is_suppor
 }
 
 #[gpui::test]
+async fn test_format_selections_action_available_for_cursor_when_range_formatting_is_supported(
+    cx: &mut TestAppContext,
+) {
+    let (_, editor, cx, _) = setup_range_format_test(cx).await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("foo\nbar\n", window, cx);
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 1)..Point::new(1, 1)]);
+        });
+    });
+
+    refresh_editor_actions(cx);
+
+    assert!(cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
+}
+
+#[gpui::test]
 async fn test_format_selections_action_hidden_without_range_formatting_support(
     cx: &mut TestAppContext,
 ) {
@@ -21197,6 +21262,88 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
             function test() {
                 console.logˇ('test')
             }"},
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_select_inside_enclosing_bracket(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    #[track_caller]
+    fn assert_after_runs(before: &str, after: &str, runs: usize, cx: &mut EditorLspTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        for _ in 0..runs {
+            cx.update_editor(|editor, window, cx| {
+                editor.select_inside_enclosing_bracket(&SelectInsideEnclosingBracket, window, cx)
+            });
+        }
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
+        assert_after_runs(before, after, 1, cx);
+    }
+
+    assert("console.log(ˇvar);", "console.log(«varˇ»);", &mut cx);
+    assert("console.logˇ(var);", "console.log(«varˇ»);", &mut cx);
+    assert("console.log(var)ˇ;", "console.log(«varˇ»);", &mut cx);
+    assert(
+        "let numbers = [1, ˇ2, 3];",
+        "let numbers = [«1, 2, 3ˇ»];",
+        &mut cx,
+    );
+    assert(
+        "const object = { foo: ˇbar };",
+        "const object = {« foo: bar ˇ»};",
+        &mut cx,
+    );
+    assert(
+        r#"const doubleQuoted = "foo ˇbar";"#,
+        r#"const doubleQuoted = "«foo barˇ»";"#,
+        &mut cx,
+    );
+    assert(
+        "const singleQuoted = 'foo ˇbar';",
+        "const singleQuoted = '«foo barˇ»';",
+        &mut cx,
+    );
+    assert(
+        "const template = `foo ˇbar`;",
+        "const template = `«foo barˇ»`;",
+        &mut cx,
+    );
+    assert(
+        "let result = foo(bar(ˇbaz));",
+        "let result = foo(bar(«bazˇ»));",
+        &mut cx,
+    );
+    assert(
+        "let result = foo(«barˇ»(baz));",
+        "let result = foo(«bar(baz)ˇ»);",
+        &mut cx,
+    );
+    assert_after_runs(
+        "let result = foo(bar(ˇbaz));",
+        "let result = foo(«bar(baz)ˇ»);",
+        2,
+        &mut cx,
+    );
+    assert_after_runs(
+        r#"let result = (xx[xxx{xxˇx}] xx"xxx"xx);"#,
+        r#"let result = («xx[xxx{xxx}] xx"xxx"xxˇ»);"#,
+        3,
+        &mut cx,
+    );
+    assert("let plain = ˇvalue;", "let plain = ˇvalue;", &mut cx);
+    assert(
+        "foo(ˇone); bar(ˇtwo);",
+        "foo(«oneˇ»); bar(«twoˇ»);",
         &mut cx,
     );
 }
@@ -29306,6 +29453,72 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rename_with_out_of_order_document_highlights(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state(indoc! {"
+        struct Foo {}
+        fn main() {
+            let first = Foo {};
+            let second = Fˇoo {};
+        }
+    "});
+
+    cx.update_editor(|editor, _window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let read_highlight = (Point::new(2, 16)..Point::new(2, 19)).to_anchors(&snapshot);
+        let write_highlight = (Point::new(3, 17)..Point::new(3, 20)).to_anchors(&snapshot);
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
+            &[read_highlight],
+            |_, theme| theme.colors().editor_document_highlight_read_background,
+            cx,
+        );
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightWrite,
+            &[write_highlight],
+            |_, theme| theme.colors().editor_document_highlight_write_background,
+            cx,
+        );
+    });
+
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 3,
+                        character: 17,
+                    },
+                    end: lsp::Position {
+                        line: 3,
+                        character: 20,
+                    },
+                })))
+            },
+        );
+    let prepare_rename_task = cx
+        .update_editor(|e, window, cx| e.rename(&Rename, window, cx))
+        .expect("Prepare rename was not started");
+    prepare_rename_handler.next().await.unwrap();
+    prepare_rename_task.await.expect("Prepare rename failed");
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .snapshot(window, cx)
+            .layout_row(DisplayRow(2), &editor.text_layout_details(window, cx));
+    });
+}
+
+#[gpui::test]
 async fn test_rename_without_prepare(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     // These capabilities indicate that the server does not support prepare rename.
@@ -30142,7 +30355,18 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
             &::git::blame::BlameEntry {
                 sha: "1b1b1b".parse().unwrap(),
                 range: 0..1,
-                ..Default::default()
+                original_line_number: 0,
+                author: None,
+                author_mail: None,
+                author_time: None,
+                author_tz: None,
+                committer_name: None,
+                committer_email: None,
+                committer_time: None,
+                committer_tz: None,
+                summary: None,
+                previous: None,
+                filename: String::new(),
             },
             gpui::point(gpui::px(0.), gpui::px(0.)),
             false,
@@ -33124,6 +33348,36 @@ async fn test_paste_plain_text_from_other_app_replaces_selection_without_creatin
     });
 
     cx.assert_editor_state(&format!("Hello, {text}ˇ.\nZed is {text}ˇ"));
+}
+
+#[gpui::test]
+async fn test_paste_text_with_scheme_like_prefix_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    // `url::Url::parse` accepts this as a URL with the scheme `editor`, but it
+    // should not be treated as one when pasting.
+    let text = "editor: Fix double-click bracket selection for large spans";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("«(feat on git-ui-add-info-exclude-to-context-menus) Fmtˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("{text}ˇ"));
 }
 
 #[gpui::test]
@@ -37495,95 +37749,6 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_restore_hunk_with_stale_base_text(cx: &mut TestAppContext) {
-    // Regression test: prepare_restore_change must read base_text from the same
-    // snapshot the hunk came from, not from the live BufferDiff entity. The live
-    // entity's base_text may have already been updated asynchronously (e.g.
-    // because git HEAD changed) while the MultiBufferSnapshot still holds the
-    // old hunk byte ranges — using both together causes Rope::slice to panic
-    // when the old range exceeds the new base text length.
-    init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx).await;
-
-    let long_base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
-    cx.set_state("ˇONE\ntwo\nTHREE\nfour\nFIVE\nsix\nseven\neight\nnine\nten\n");
-    cx.set_head_text(long_base_text);
-
-    let buffer_id = cx.update_buffer(|buffer, _| buffer.remote_id());
-
-    // Verify we have hunks from the initial diff.
-    let has_hunks = cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let hunks = snapshot
-            .buffer_snapshot()
-            .diff_hunks_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len());
-        hunks.count() > 0
-    });
-    assert!(has_hunks, "should have diff hunks before restoring");
-
-    // Now trigger a git HEAD change to a much shorter base text.
-    // After this, the live BufferDiff entity's base_text buffer will be
-    // updated synchronously (inside set_snapshot_with_secondary_inner),
-    // but DiffChanged is deferred until parsing_idle completes.
-    // We step the executor tick-by-tick to find the window where the
-    // live base_text is already short but the MultiBuffer snapshot is
-    // still stale (old hunks + old base_text).
-    let short_base_text = "short\n";
-    let fs = cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
-    let path = cx.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
-    fs.set_head_for_repo(
-        &Path::new(path!("/root")).join(".git"),
-        &[(path.as_unix_str(), short_base_text.to_string())],
-        "newcommit",
-    );
-
-    // Step the executor tick-by-tick. At each step, check whether the
-    // race condition exists: live BufferDiff has short base text but
-    // the MultiBuffer snapshot still has old (long) hunks.
-    let mut found_race = false;
-    for _ in 0..200 {
-        cx.executor().tick();
-
-        let race_exists = cx.update_editor(|editor, _window, cx| {
-            let multi_buffer = editor.buffer().read(cx);
-            let diff_entity = match multi_buffer.diff_for(buffer_id) {
-                Some(d) => d,
-                None => return false,
-            };
-            let live_base_len = diff_entity.read(cx).base_text(cx).len();
-            let snapshot = multi_buffer.snapshot(cx);
-            let snapshot_base_len = snapshot
-                .diff_for_buffer_id(buffer_id)
-                .map(|d| d.base_text().len());
-            // Race: live base text is shorter than what the snapshot knows.
-            live_base_len < long_base_text.len() && snapshot_base_len == Some(long_base_text.len())
-        });
-
-        if race_exists {
-            found_race = true;
-            // The race window is open: the live entity has new (short) base
-            // text but the MultiBuffer snapshot still has old hunks with byte
-            // ranges computed against the old long base text. Attempt restore.
-            // Without the fix, this panics with "cannot summarize past end of
-            // rope". With the fix, it reads base_text from the stale snapshot
-            // (consistent with the stale hunks) and succeeds.
-            cx.update_editor(|editor, window, cx| {
-                editor.select_all(&SelectAll, window, cx);
-                editor.git_restore(&Default::default(), window, cx);
-            });
-            break;
-        }
-    }
-
-    assert!(
-        found_race,
-        "failed to observe the race condition between \
-        live BufferDiff base_text and stale MultiBuffer snapshot; \
-        the test may need adjustment if the async diff pipeline changed"
-    );
-}
-
-#[gpui::test]
 async fn test_align_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -37902,4 +38067,100 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
             "diagnostics should be re-enabled after second toggle"
         );
     });
+}
+
+#[gpui::test]
+async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // No-op with no language
+    cx.set_state(indoc! {"
+        «helloˇ» world
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ» world
+    "});
+
+    // No-op in non-Markdown language (Rust)
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        «helloˇ» world
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ» world
+    "});
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    // Line is quoted with an empty selection
+    cx.set_state(indoc! {"
+        helˇlo world
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «> hello worldˇ»
+    "});
+
+    // Line is unquoted with an empty selection
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // Multi-line selection is quoted, including blank lines
+    cx.set_state(indoc! {"
+        «first
+
+        thirdˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «> first
+        >
+        > thirdˇ»
+    "});
+
+    // Multi-line selection is unquoted, including blank lines
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «first
+
+        thirdˇ»
+    "});
+
+    // A multi-line selection, including a mixture of quoted and unquoted lines
+    // and a mixture of empty and non-empty lines, normalizes each line to a
+    // single quote.
+    cx.set_state(indoc! {"
+        «> first
+        second
+        >
+
+        > third
+        >fourthˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «> first
+        > second
+        >
+        >
+        > third
+        > fourthˇ»
+    "});
+
+    // A multi-line selection is unquoted.
+    cx.update_editor(|e, window, cx| e.toggle_markdown_block_quote(&ToggleBlockQuote, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «first
+        second
+
+
+        third
+        fourthˇ»
+    "});
 }

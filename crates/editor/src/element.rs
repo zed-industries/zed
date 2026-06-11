@@ -334,6 +334,7 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
         register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
+        register_action(editor, window, Editor::select_inside_enclosing_bracket);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
         register_action(editor, window, Editor::redo_selection);
@@ -426,6 +427,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
+        register_action(editor, window, Editor::toggle_inline_values);
         register_action(editor, window, Editor::toggle_code_lens_action);
         register_action(editor, window, Editor::toggle_semantic_highlights);
         register_action(editor, window, Editor::toggle_edit_predictions);
@@ -571,6 +573,7 @@ impl EditorElement {
             register_action(editor, window, Editor::redo);
             register_action(editor, window, Editor::toggle_comments);
             register_action(editor, window, Editor::toggle_block_comments);
+            register_action(editor, window, Editor::toggle_markdown_block_quote);
             register_action(editor, window, Editor::unwrap_syntax_node);
             register_action(editor, window, Editor::accept_next_word_edit_prediction);
             register_action(editor, window, Editor::accept_next_line_edit_prediction);
@@ -4515,6 +4518,11 @@ impl EditorElement {
     ) {
         let colors = cx.theme().colors();
 
+        let visible_start =
+            DisplayPoint::new(start_row, 0).to_offset(&snapshot.display_snapshot, Bias::Left);
+        let visible_end = DisplayPoint::new(DisplayRow(start_row.0 + row_infos.len() as u32), 0)
+            .to_offset(&snapshot.display_snapshot, Bias::Right);
+
         let word_highlights = display_hunks
             .into_iter()
             .filter_map(|(hunk, _)| match hunk {
@@ -4525,6 +4533,7 @@ impl EditorElement {
             })
             .filter(|(_, status)| status.is_modified())
             .flat_map(|(word_diffs, _)| word_diffs)
+            .filter(|word_diff| word_diff.start < visible_end && word_diff.end > visible_start)
             .flat_map(|word_diff| {
                 let display_ranges = snapshot
                     .display_snapshot
@@ -5127,6 +5136,7 @@ impl EditorElement {
     }
 
     fn paint_gutter_diff_hunks(
+        &self,
         layout: &mut EditorLayout,
         split_side: Option<SplitSide>,
         window: &mut Window,
@@ -5202,7 +5212,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if !Self::diff_hunk_hollow(status, cx) {
+                    if !self.diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -5380,7 +5390,7 @@ impl EditorElement {
                 )
             });
         if show_git_gutter {
-            Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
+            self.paint_gutter_diff_hunks(layout, self.split_side, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -6493,8 +6503,9 @@ impl EditorElement {
         )
     }
 
-    fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged = status.has_secondary_hunk();
+    fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
+        let unstaged =
+            self.editor.read(cx).render_diff_hunks_as_unstaged || status.has_secondary_hunk();
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
@@ -8186,7 +8197,7 @@ impl Element for EditorElement {
                             type_id: None,
                         };
 
-                        let background = if Self::diff_hunk_hollow(diff_status, cx) {
+                        let background = if self.diff_hunk_hollow(diff_status, cx) {
                             hollow_highlight
                         } else {
                             filled_highlight

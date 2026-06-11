@@ -590,6 +590,10 @@ mod tests {
             play_sound_when_agent_done: PlaySoundWhenAgentDone::default(),
             single_file_review: false,
             model_parameters: vec![],
+            auto_compact: agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: agent_settings::AutoCompactThreshold::DEFAULT,
+            },
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
@@ -597,6 +601,7 @@ mod tests {
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
             tool_permissions,
+            sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),

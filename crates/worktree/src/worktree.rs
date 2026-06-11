@@ -3142,7 +3142,34 @@ impl BackgroundScannerState {
         self.snapshot.check_invariants(false);
     }
 
-    fn remove_path(&mut self, path: &RelPath, watcher: &dyn Watcher) {
+    fn remove_path_from_snapshot_and_unwatch(&mut self, path: &RelPath, watcher: &dyn Watcher) {
+        let removed_descendant_abs_paths = self.remove_path_from_snapshot(path);
+        self.unwatch_path(watcher, path, removed_descendant_abs_paths);
+    }
+
+    fn unwatch_path(
+        &mut self,
+        watcher: &dyn Watcher,
+        path: &RelPath,
+        removed_descendant_abs_paths: Vec<PathBuf>,
+    ) {
+        for removed_dir_abs_path in removed_descendant_abs_paths {
+            watcher.remove(&removed_dir_abs_path).log_err();
+        }
+
+        self.snapshot
+            .external_canonical_to_relative
+            .retain(|canonical, relative| {
+                if relative.starts_with(path) {
+                    watcher.remove(canonical.as_ref()).log_err();
+                    false
+                } else {
+                    true
+                }
+            });
+    }
+
+    fn remove_path_from_snapshot(&mut self, path: &RelPath) -> Vec<PathBuf> {
         log::trace!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
@@ -3204,23 +3231,10 @@ impl BackgroundScannerState {
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
 
-        for removed_dir_abs_path in removed_dir_abs_paths {
-            watcher.remove(&removed_dir_abs_path).log_err();
-        }
-
-        self.snapshot
-            .external_canonical_to_relative
-            .retain(|canonical, relative| {
-                if relative.starts_with(path) {
-                    watcher.remove(canonical.as_ref()).log_err();
-                    false
-                } else {
-                    true
-                }
-            });
-
         #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
+
+        return removed_dir_abs_paths;
     }
 
     async fn insert_git_repository(
@@ -3299,6 +3313,16 @@ impl BackgroundScannerState {
             .add(&repository_dir_abs_path)
             .context("failed to add repository directory to watcher")
             .log_err();
+
+        // On Linux and FreeBSD, the native watcher is non-recursive, so subdirectories inside `.git` need explicit watching.
+        // For repos using the reftable backend, watch the `.git/reftable` directory so that ref changes are detected.
+        let reftable_path = common_dir_abs_path.join("reftable");
+        if fs.is_dir(&reftable_path).await {
+            watcher
+                .add(&reftable_path)
+                .context("failed to add reftable directory to watcher")
+                .log_err();
+        }
 
         let work_directory_id = work_dir_entry.id;
 
@@ -4175,6 +4199,12 @@ impl BackgroundScanner {
 
                 path_prefix_request = self.path_prefixes_to_scan_rx.recv().fuse() => {
                     let Ok(request) = path_prefix_request else { break };
+
+                    if self.state.lock().await.path_prefixes_to_scan.contains(&request.path) {
+                        self.send_status_update(false, request.done, &[]).await;
+                        continue;
+                    }
+
                     log::trace!("adding path prefix {:?}", request.path);
 
                     let did_scan = self.forcibly_load_paths(std::slice::from_ref(&request.path)).await;
@@ -4505,6 +4535,10 @@ impl BackgroundScanner {
             for (ix, event) in events.iter().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
                 let relative_path = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
+                    && let Ok(path) = RelPath::new(path, PathStyle::local())
+                {
+                    path
+                } else if let Ok(path) = abs_path.strip_prefix(&root_path)
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
@@ -4905,10 +4939,11 @@ impl BackgroundScanner {
 
             if self.settings.is_path_excluded(&child_path) {
                 log::debug!("skipping excluded child entry {child_path:?}");
+
                 self.state
                     .lock()
                     .await
-                    .remove_path(&child_path, self.watcher.as_ref());
+                    .remove_path_from_snapshot_and_unwatch(&child_path, self.watcher.as_ref());
                 continue;
             }
 
@@ -5150,13 +5185,18 @@ impl BackgroundScanner {
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
+        let mut paths_to_process = Vec::with_capacity(relative_paths.len());
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
-            if matches!(metadata, Ok(None)) || doing_recursive_update {
-                state.remove_path(path, self.watcher.as_ref());
-            }
+            let removed_descendant_paths = if matches!(metadata, Ok(None)) || doing_recursive_update
+            {
+                state.remove_path_from_snapshot(path)
+            } else {
+                Vec::new()
+            };
+            paths_to_process.push((path, metadata, removed_descendant_paths));
         }
 
-        for (path, metadata) in relative_paths.iter().zip(metadata) {
+        for (path, metadata, removed_descendant_abs_paths) in paths_to_process {
             let abs_path: Arc<Path> = root_abs_path.join(path.as_std_path()).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
@@ -5238,9 +5278,11 @@ impl BackgroundScanner {
                 }
                 Ok(None) => {
                     self.remove_repo_path(path.clone(), &mut state.snapshot);
+                    state.unwatch_path(self.watcher.as_ref(), path, removed_descendant_abs_paths);
                 }
                 Err(err) => {
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
+                    state.unwatch_path(self.watcher.as_ref(), path, removed_descendant_abs_paths);
                 }
             }
         }
