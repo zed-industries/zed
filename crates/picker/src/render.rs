@@ -1,4 +1,4 @@
-use gpui::{anchored, canvas};
+use gpui::{MouseButton, anchored, canvas};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -53,7 +53,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
         anchored()
             .position(self.shape.origin(window))
             .snap_to_window()
-            .child(content)
+            .child(
+                div()
+                     // Below the picker there is a layer that dismisses the
+                     // picker modal on click. Do not propegate clicks to that
+                     // if the clicks are on the picker
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(content),
+            )
     }
 }
 
