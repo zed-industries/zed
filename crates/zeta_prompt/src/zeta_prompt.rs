@@ -1737,7 +1737,7 @@ pub fn format_related_files_within_budget(
     // Render all of the files that fit within the token budget, in the original order.
     let mut result = String::new();
     let mut last_file_ix = None;
-    for candidate in &excerpt_candidates {
+    for (candidate_ix, candidate) in excerpt_candidates.iter().enumerate() {
         if last_file_ix != Some(candidate.file_ix) {
             if last_file_ix.is_some() {
                 result.push_str(file_suffix);
@@ -1751,12 +1751,30 @@ pub fn format_related_files_within_budget(
         if !result.ends_with('\n') {
             result.push('\n');
         }
-        if excerpt.row_range.end < file.max_row {
+        let next_excerpt_start = excerpt_candidates
+            .get(candidate_ix + 1)
+            .filter(|next| next.file_ix == candidate.file_ix)
+            .map(|next| file.excerpts[next.excerpt_ix].row_range.start);
+        if rows_omitted_after_excerpt(excerpt, next_excerpt_start, file.max_row) {
             result.push_str("...\n");
         }
     }
 
     result
+}
+
+/// Whether rows are omitted between this excerpt and the next rendered
+/// excerpt of the same file (or the end of the file), in which case an
+/// ellipsis line should be rendered.
+pub fn rows_omitted_after_excerpt(
+    excerpt: &RelatedExcerpt,
+    next_excerpt_start: Option<u32>,
+    file_max_row: u32,
+) -> bool {
+    match next_excerpt_start {
+        Some(next_start) => excerpt.row_range.end < next_start,
+        None => excerpt.row_range.end < file_max_row,
+    }
 }
 
 pub fn write_related_files(
@@ -1768,12 +1786,16 @@ pub fn write_related_files(
         let start = prompt.len();
         let path_str = file.path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
-        for excerpt in &file.excerpts {
+        for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
             prompt.push_str(&excerpt.text);
             if !prompt.ends_with('\n') {
                 prompt.push('\n');
             }
-            if excerpt.row_range.end < file.max_row {
+            let next_excerpt_start = file
+                .excerpts
+                .get(excerpt_ix + 1)
+                .map(|next| next.row_range.start);
+            if rows_omitted_after_excerpt(excerpt, next_excerpt_start, file.max_row) {
                 prompt.push_str("...\n");
             }
         }
@@ -5219,13 +5241,13 @@ mod tests {
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 10..20,
+                        row_range: 11..20,
                         text: "second excerpt\n".into(),
                         order: 0,
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 20..30,
+                        row_range: 21..30,
                         text: "third excerpt\n".into(),
                         order: 0,
                         context_source: ContextSource::Lsp,
@@ -5258,6 +5280,55 @@ mod tests {
             indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
+                ...
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn test_contiguous_excerpts_render_without_ellipsis() {
+        // Excerpts whose row ranges touch (end == next start) are contiguous
+        // segments of the same region and must render seamlessly, without an
+        // ellipsis line between them.
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            vec![],
+            vec![RelatedFile {
+                path: Path::new("big.rs").into(),
+                max_row: 30,
+                in_open_source_repo: false,
+                excerpts: vec![
+                    RelatedExcerpt {
+                        row_range: 0..10,
+                        text: "first segment\n".into(),
+                        order: 1,
+                        context_source: ContextSource::GitLog,
+                    },
+                    RelatedExcerpt {
+                        row_range: 10..20,
+                        text: "second segment\n".into(),
+                        order: 0,
+                        context_source: ContextSource::OracleSnippet,
+                    },
+                ],
+            }],
+        );
+
+        assert_eq!(
+            format_with_budget(&input, 10000).unwrap(),
+            indoc! {r#"
+                <|file_sep|>big.rs
+                first segment
+                second segment
                 ...
                 <|file_sep|>test.rs
                 <|fim_prefix|>
@@ -5367,13 +5438,13 @@ mod tests {
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 5..15,
+                        row_range: 6..15,
                         text: "important fn\n".into(),
                         order: 1,
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 15..30,
+                        row_range: 16..30,
                         text: "less important fn\n".into(),
                         order: 3,
                         context_source: ContextSource::Lsp,

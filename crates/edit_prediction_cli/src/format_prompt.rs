@@ -745,9 +745,6 @@ impl TeacherJumpsPrompt {
                 if !rendered.ends_with('\n') {
                     rendered.push('\n');
                 }
-                if excerpt.row_range.end < file.max_row {
-                    rendered.push_str("...\n");
-                }
                 candidates.push(RenderedExcerpt {
                     file_ix,
                     excerpt_ix,
@@ -802,6 +799,18 @@ impl TeacherJumpsPrompt {
                 last_file_ix = Some(candidate.file_ix);
             }
             result.push_str(&candidate.rendered);
+
+            let file = &related_files[candidate.file_ix];
+            let excerpt = &file.excerpts[candidate.excerpt_ix];
+            let next_excerpt_start = candidates
+                .iter()
+                .enumerate()
+                .skip(candidate_ix + 1)
+                .find(|(next_ix, next)| included[*next_ix] && next.file_ix == candidate.file_ix)
+                .map(|(_, next)| file.excerpts[next.excerpt_ix].row_range.start);
+            if zeta_prompt::rows_omitted_after_excerpt(excerpt, next_excerpt_start, file.max_row) {
+                result.push_str("...\n");
+            }
         }
         if last_file_ix.is_some() {
             result.push_str(file_suffix);

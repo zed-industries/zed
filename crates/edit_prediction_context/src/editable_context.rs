@@ -726,9 +726,9 @@ fn related_file_for_ranges(
     .into();
 
     let mut ranges = resolved_context_ranges(ranges, &snapshot);
-    merge_overlapping_ranges(&mut ranges);
+    split_overlapping_ranges(&mut ranges);
 
-    let mut excerpts = ranges
+    let excerpts = ranges
         .into_iter()
         .map(|range| RelatedExcerpt {
             row_range: range.range.start.row..range.range.end.row,
@@ -740,7 +740,6 @@ fn related_file_for_ranges(
             context_source: range.context_source,
         })
         .collect::<Vec<_>>();
-    excerpts.sort_by_key(|excerpt| excerpt.order);
 
     Some(RelatedFile {
         path,
@@ -772,28 +771,110 @@ fn resolved_context_ranges(
         .collect()
 }
 
-fn merge_overlapping_ranges(ranges: &mut Vec<ResolvedEditableContextRange>) {
+/// Split overlapping ranges into disjoint segments instead of merging them
+/// into one range. Each segment keeps the minimum order and highest-priority
+/// source among the ranges covering it, and adjacent segments with equal
+/// order are coalesced. This preserves priority granularity: a small
+/// high-priority snippet inside a large low-priority range remains its own
+/// excerpt, so byte-budget selection can retain it even when the surrounding
+/// range doesn't fit. The resulting segments are disjoint and sorted by
+/// position.
+fn split_overlapping_ranges(ranges: &mut Vec<ResolvedEditableContextRange>) {
     ranges.sort_by_key(|range| (range.range.start, range.range.end));
-    let mut merged: Vec<ResolvedEditableContextRange> = Vec::new();
+    let mut output: Vec<ResolvedEditableContextRange> = Vec::new();
+    let mut cluster: Vec<ResolvedEditableContextRange> = Vec::new();
+    let mut cluster_end = Point::zero();
 
     for range in ranges.drain(..) {
-        if let Some(last_range) = merged.last_mut()
-            && range.range.start <= last_range.range.end
-        {
-            if context_source_order(range.context_source)
-                < context_source_order(last_range.context_source)
+        if cluster.is_empty() || range.range.start <= cluster_end {
+            cluster_end = cluster_end.max(range.range.end);
+            cluster.push(range);
+        } else {
+            split_cluster(std::mem::take(&mut cluster), cluster_end, &mut output);
+            cluster_end = range.range.end;
+            cluster.push(range);
+        }
+    }
+    if !cluster.is_empty() {
+        split_cluster(cluster, cluster_end, &mut output);
+    }
+
+    *ranges = output;
+}
+
+fn split_cluster(
+    cluster: Vec<ResolvedEditableContextRange>,
+    cluster_end: Point,
+    output: &mut Vec<ResolvedEditableContextRange>,
+) {
+    if cluster.len() == 1 {
+        output.extend(cluster);
+        return;
+    }
+
+    let cluster_start = cluster[0].range.start;
+    let mut boundaries = Vec::with_capacity(cluster.len() * 2 + 1);
+    boundaries.push(cluster_start);
+    for range in &cluster {
+        boundaries.push(range.range.start);
+        boundaries.push(row_aligned_end(range.range.end));
+    }
+    boundaries.retain(|boundary| *boundary >= cluster_start && *boundary < cluster_end);
+    boundaries.sort();
+    boundaries.dedup();
+    boundaries.push(cluster_end);
+
+    for window in boundaries.windows(2) {
+        let segment = window[0]..window[1];
+        // The segment is attributed to the lowest-order covering range
+        // (breaking ties by source priority), so that its source label is
+        // consistent with the order that drives budget selection.
+        let mut order_and_source: Option<(usize, ContextSource)> = None;
+        for range in &cluster {
+            if range.range.start <= segment.start && row_aligned_end(range.range.end) >= segment.end
             {
-                last_range.context_source = range.context_source;
+                let candidate = (range.order, range.context_source);
+                if order_and_source.is_none_or(|(order, context_source)| {
+                    (candidate.0, context_source_order(candidate.1))
+                        < (order, context_source_order(context_source))
+                }) {
+                    order_and_source = Some(candidate);
+                }
             }
-            last_range.range.end = last_range.range.end.max(range.range.end);
-            last_range.order = last_range.order.min(range.order);
+        }
+        let Some((order, context_source)) = order_and_source else {
+            continue;
+        };
+
+        if let Some(last) = output.last_mut()
+            && last.range.end == segment.start
+            && last.order == order
+        {
+            last.range.end = segment.end;
+            if context_source_order(context_source) < context_source_order(last.context_source) {
+                last.context_source = context_source;
+            }
             continue;
         }
 
-        merged.push(range);
+        output.push(ResolvedEditableContextRange {
+            range: segment,
+            order,
+            context_source,
+        });
     }
+}
 
-    *ranges = merged;
+/// Context ranges always cover whole lines: their ends sit either at a line
+/// start (column 0) or at the end of a line's content. Cutting a segment at
+/// the end of a line's content would attribute the trailing newline to the
+/// next segment, so nudge such ends forward to the next line start.
+fn row_aligned_end(point: Point) -> Point {
+    if point.column > 0 {
+        Point::new(point.row + 1, 0)
+    } else {
+        point
+    }
 }
 
 #[allow(dead_code)]
@@ -836,17 +917,17 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_overlapping_ranges() {
-        // A full-file current-file range plus edit-history windows inside it
-        // collapse into a single range with the lowest order and the
-        // highest-priority source.
+    fn test_split_overlapping_ranges_coalesces_equal_orders() {
+        // A full-file current-file range plus edit-history windows inside it:
+        // every segment is covered by the order-0 full-file range, so they
+        // coalesce back into a single range with the highest-priority source.
         let mut ranges = vec![
             resolved_range(6, 46, 1, ContextSource::EditHistory),
             resolved_range(0, 281, 0, ContextSource::CurrentFile),
             resolved_range(17, 79, 2, ContextSource::EditHistory),
             resolved_range(85, 125, 3, ContextSource::EditHistory),
         ];
-        merge_overlapping_ranges(&mut ranges);
+        split_overlapping_ranges(&mut ranges);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(281, 0));
         assert_eq!(ranges[0].order, 0);
@@ -854,28 +935,110 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_overlapping_ranges_keeps_disjoint_ranges() {
+    fn test_split_overlapping_ranges_keeps_disjoint_ranges() {
         let mut ranges = vec![
             resolved_range(50, 60, 1, ContextSource::EditHistory),
             resolved_range(0, 10, 0, ContextSource::CursorExcerpt),
             resolved_range(5, 12, 2, ContextSource::EditHistory),
         ];
-        merge_overlapping_ranges(&mut ranges);
-        assert_eq!(ranges.len(), 2);
-        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(12, 0));
+        split_overlapping_ranges(&mut ranges);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(10, 0));
         assert_eq!(ranges[0].order, 0);
         assert_eq!(ranges[0].context_source, ContextSource::CursorExcerpt);
-        assert_eq!(ranges[1].range, Point::new(50, 0)..Point::new(60, 0));
+        assert_eq!(ranges[1].range, Point::new(10, 0)..Point::new(12, 0));
+        assert_eq!(ranges[1].order, 2);
+        assert_eq!(ranges[1].context_source, ContextSource::EditHistory);
+        assert_eq!(ranges[2].range, Point::new(50, 0)..Point::new(60, 0));
+        assert_eq!(ranges[2].order, 1);
     }
 
     #[test]
-    fn test_merge_overlapping_ranges_merges_adjacent_ranges() {
+    fn test_split_overlapping_ranges_keeps_adjacent_ranges_with_distinct_orders() {
         let mut ranges = vec![
             resolved_range(0, 10, 0, ContextSource::EditHistory),
             resolved_range(10, 20, 1, ContextSource::EditHistory),
         ];
-        merge_overlapping_ranges(&mut ranges);
+        split_overlapping_ranges(&mut ranges);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(10, 0));
+        assert_eq!(ranges[0].order, 0);
+        assert_eq!(ranges[1].range, Point::new(10, 0)..Point::new(20, 0));
+        assert_eq!(ranges[1].order, 1);
+    }
+
+    #[test]
+    fn test_split_overlapping_ranges_preserves_high_priority_snippet_inside_large_range() {
+        // A small high-priority snippet inside a large low-priority range
+        // stays its own segment, so byte-budget selection can keep it even
+        // when the surrounding range doesn't fit.
+        let mut ranges = vec![
+            resolved_range(0, 200, 8, ContextSource::GitLog),
+            resolved_range(50, 60, 2, ContextSource::OracleSnippet),
+        ];
+        split_overlapping_ranges(&mut ranges);
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(50, 0));
+        assert_eq!(ranges[0].order, 8);
+        assert_eq!(ranges[0].context_source, ContextSource::GitLog);
+        assert_eq!(ranges[1].range, Point::new(50, 0)..Point::new(60, 0));
+        assert_eq!(ranges[1].order, 2);
+        assert_eq!(ranges[1].context_source, ContextSource::OracleSnippet);
+        assert_eq!(ranges[2].range, Point::new(60, 0)..Point::new(200, 0));
+        assert_eq!(ranges[2].order, 8);
+        assert_eq!(ranges[2].context_source, ContextSource::GitLog);
+    }
+
+    #[test]
+    fn test_split_overlapping_ranges_aligns_mid_line_ends_to_row_starts() {
+        // Ranges ending at a line's content end (column > 0) are treated as
+        // covering through that whole line, so equal-order overlapping ranges
+        // still coalesce into one segment.
+        let mut ranges = vec![
+            ResolvedEditableContextRange {
+                range: Point::new(0, 0)..Point::new(10, 5),
+                order: 1,
+                context_source: ContextSource::EditHistory,
+            },
+            resolved_range(5, 20, 1, ContextSource::EditHistory),
+        ];
+        split_overlapping_ranges(&mut ranges);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].range, Point::new(0, 0)..Point::new(20, 0));
+        assert_eq!(ranges[0].order, 1);
+    }
+
+    #[test]
+    fn test_limit_retrieved_context_keeps_high_priority_snippet_under_tight_budget() {
+        let line = "0123456789\n";
+        let excerpt = |row_range: Range<u32>, order: usize, context_source: ContextSource| {
+            let text = line.repeat((row_range.end - row_range.start) as usize);
+            RelatedExcerpt {
+                row_range,
+                text: text.into(),
+                order,
+                context_source,
+            }
+        };
+        let related_files = vec![RelatedFile {
+            path: Path::new("root/file.rs").into(),
+            max_row: 200,
+            excerpts: vec![
+                excerpt(0..50, 8, ContextSource::GitLog),
+                excerpt(50..60, 2, ContextSource::OracleSnippet),
+                excerpt(60..200, 8, ContextSource::GitLog),
+            ],
+            in_open_source_repo: false,
+        }];
+
+        // Budget fits the snippet but not the surrounding segments.
+        let limited = limit_retrieved_context_to_bytes(&related_files, 20 * line.len());
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].excerpts.len(), 1);
+        assert_eq!(limited[0].excerpts[0].row_range, 50..60);
+        assert_eq!(
+            limited[0].excerpts[0].context_source,
+            ContextSource::OracleSnippet
+        );
     }
 }
