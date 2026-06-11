@@ -622,7 +622,7 @@ pub enum CurrentLineHighlight {
 pub enum CurrentColumnHighlight {
     // Don't highlight the current column.
     None,
-    // Highlight the curren column
+    // Highlight the current column
     Column,
 }
 
