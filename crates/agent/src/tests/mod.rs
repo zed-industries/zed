@@ -7442,6 +7442,14 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
+    // Enable interrupting the turn for queued messages. This must happen after
+    // `setup`, which re-initializes the settings store.
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.interrupt_turn_for_queued_message = true;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
     // Add a tool so we can simulate tool calls
     thread.update(cx, |thread, _cx| {
         thread.add_tool(EchoTool);
@@ -7517,6 +7525,84 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
             "Thread should not be running after turn ends"
         );
     });
+}
+
+#[gpui::test]
+async fn test_queued_message_does_not_end_turn_when_interrupt_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Disable interrupting the turn for queued messages. This must happen after
+    // `setup`, which re-initializes the settings store.
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.interrupt_turn_for_queued_message = false;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    // Start a turn by sending a message
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Simulate the model making a tool call
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text": "hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+
+    // Queue a message before ending the stream.
+    thread.update(cx, |thread, _cx| {
+        thread.set_has_queued_message(true);
+    });
+
+    // End the stream - the tool will run, but the turn should continue because
+    // interrupting for queued messages is disabled.
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The thread should still be running: it has looped back to the model with
+    // the tool results instead of ending the turn.
+    thread.update(cx, |thread, _cx| {
+        assert!(
+            !thread.is_turn_complete(),
+            "Turn should still be running because interrupt_turn_for_queued_message is disabled"
+        );
+    });
+
+    // Let the model finish the turn naturally.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
+        "Done".to_string(),
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let all_events = collect_events_until_stop(&mut events, cx).await;
+    let stop_reasons = stop_events(all_events);
+    assert_eq!(
+        stop_reasons,
+        vec![acp::StopReason::EndTurn],
+        "Turn should end naturally once the model stops"
+    );
 }
 
 #[gpui::test]
