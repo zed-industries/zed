@@ -88,6 +88,14 @@ impl LanguageModelCompletionEvent {
 pub enum LanguageModelCompletionError {
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
+    /// The model requires the user to consent to the upstream provider
+    /// retaining inference logs (see `LanguageModel::requires_data_retention`)
+    /// and that consent has not been given.
+    #[error(
+        "{model_name} cannot be offered with Zero Data Retention. \
+        Anthropic will retain inference logs."
+    )]
+    DataRetentionConsentRequired { model_name: String },
     #[error("missing {provider} API key")]
     NoApiKey { provider: LanguageModelProviderName },
     #[error("{provider}'s API rate limit exceeded")]
@@ -166,6 +174,8 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    #[error("payment required to use this language model; please upgrade your account")]
+    PaymentRequired,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
