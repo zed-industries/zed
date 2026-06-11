@@ -11,9 +11,9 @@ use editor::{
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{App, Context, Font, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
+use gpui::{App, Context, Font, FontId, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
 use text::{Bias, LineEnding, SelectionGoal};
@@ -1039,7 +1039,8 @@ impl Vim {
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
         self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
+            let (snapshot, font, font_size, label_color) =
+                Self::jump_ui_context(editor, window, cx);
             let display_snapshot = &snapshot.display_snapshot;
             let buffer_snapshot = display_snapshot.buffer_snapshot();
             let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
@@ -1058,11 +1059,6 @@ impl Vim {
                 .first()
                 .map(|s| buffer_snapshot.point_to_offset(s.head()))
                 .unwrap_or(start_offset);
-
-            let style = editor.style(cx);
-            let font = style.text.font();
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
-            let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
 
             Self::build_helix_jump_ui_data(
                 buffer_snapshot,
@@ -1085,24 +1081,58 @@ impl Vim {
         cx: &App,
     ) -> Range<Point> {
         let visible_range = editor.multi_buffer_visible_range(display_snapshot, cx);
-        if editor.visible_line_count().is_some() || visible_range.start != visible_range.end {
-            return visible_range;
+        let mut range = if editor.visible_line_count().is_some()
+            || visible_range.start != visible_range.end
+        {
+            visible_range
+        } else {
+            let scroll_position = snapshot.scroll_position();
+            let top_row = scroll_position.y.floor().max(0.0) as u32;
+            let visible_rows = display_snapshot
+                .max_point()
+                .row()
+                .0
+                .saturating_sub(top_row)
+                .saturating_add(1);
+            let start_display_point = DisplayPoint::new(DisplayRow(top_row), 0);
+            let end_display_point =
+                DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
+
+            display_snapshot.display_point_to_point(start_display_point, Bias::Left)
+                ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
+        };
+
+        // In vim normal mode a range end at the end of a line has been
+        // clipped to before the line's last character; recover it so that
+        // fully visible character isn't excluded from jump target collection.
+        // Ends further from the end of their line (e.g. a soft-wrap boundary
+        // at the viewport bottom partway through a long line) are left alone:
+        // snapping those to the line end would pull off-screen text in.
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let line_len = buffer_snapshot.line_len(MultiBufferRow(range.end.row));
+        if range.end.column > 0
+            && range.end.column < line_len
+            && let Some(last_char) = buffer_snapshot
+                .chars_at(buffer_snapshot.point_to_offset(range.end))
+                .next()
+            && range.end.column + last_char.len_utf8() as u32 == line_len
+        {
+            range.end.column = line_len;
         }
+        range
+    }
 
-        let scroll_position = snapshot.scroll_position();
-        let top_row = scroll_position.y.floor().max(0.0) as u32;
-        let visible_rows = display_snapshot
-            .max_point()
-            .row()
-            .0
-            .saturating_sub(top_row)
-            .saturating_add(1);
-        let start_display_point = DisplayPoint::new(DisplayRow(top_row), 0);
-        let end_display_point =
-            DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
-
-        display_snapshot.display_point_to_point(start_display_point, Bias::Left)
-            ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
+    pub(crate) fn jump_ui_context(
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> (editor::EditorSnapshot, Font, Pixels, Hsla) {
+        let snapshot = editor.snapshot(window, cx);
+        let style = editor.style(cx);
+        let font = style.text.font();
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
+        (snapshot, font, font_size, label_color)
     }
 
     fn build_helix_jump_ui_data(
@@ -1150,7 +1180,8 @@ impl Vim {
             text_system.layout_line(text, font_size, &[run], None).width
         };
 
-        let is_monospace = Self::is_monospace_jump_font(text_system, &font, font_size);
+        let is_monospace =
+            Self::is_monospace_jump_font(text_system, text_system.resolve_font(&font), font_size);
 
         for (label_index, candidate) in ordered_candidates.into_iter().enumerate() {
             let start_anchor = buffer.anchor_after(candidate.word_start);
@@ -1384,18 +1415,25 @@ impl Vim {
         ]
     }
 
-    fn is_monospace_jump_font(
+    pub(crate) fn jump_font_char_width(
         text_system: &WindowTextSystem,
-        font: &Font,
+        font_id: FontId,
+        font_size: Pixels,
+        ch: char,
+    ) -> Pixels {
+        text_system
+            .advance(font_id, font_size, ch)
+            .map(|size| size.width)
+            .unwrap_or_else(|_| text_system.layout_width(font_id, font_size, ch))
+    }
+
+    pub(crate) fn is_monospace_jump_font(
+        text_system: &WindowTextSystem,
+        font_id: FontId,
         font_size: Pixels,
     ) -> bool {
-        let font_id = text_system.resolve_font(font);
-        let width_of_char = |ch| {
-            text_system
-                .advance(font_id, font_size, ch)
-                .map(|size| size.width)
-                .unwrap_or_else(|_| text_system.layout_width(font_id, font_size, ch))
-        };
+        let width_of_char =
+            |ch| Self::jump_font_char_width(text_system, font_id, font_size, ch);
 
         let a = width_of_char('i');
         let b = width_of_char('w');

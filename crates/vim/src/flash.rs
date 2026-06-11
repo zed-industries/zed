@@ -1,20 +1,20 @@
+use std::collections::VecDeque;
 use std::ops::Range;
 
 use collections::HashMap;
 use editor::display_map::HighlightKey;
 use editor::{
-    Anchor, Editor, MultiBufferOffset, NavigationOverlayKey, NavigationOverlayLabel,
+    Anchor, Bias, Editor, MultiBufferOffset, NavigationOverlayKey, NavigationOverlayLabel,
     NavigationTargetOverlay, ToOffset,
 };
-use gpui::{Context, Hsla, Window, actions};
+use gpui::{Context, Font, Hsla, Pixels, Window, WindowTextSystem, actions};
 use language::Point;
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::MultiBufferSnapshot;
 use settings::Settings;
-use theme::ActiveTheme as _;
 use ui::px;
 
 use crate::{
-    Vim, VimSettings,
+    ClearOperators, Vim, VimSettings,
     motion::{self, Motion},
     state::{FlashJumpLabel, Operator},
 };
@@ -47,12 +47,25 @@ const FLASH_JUMP_ALPHABET: &[char] = &[
     'z', 'x', 'c', 'v', 'b', 'n', 'm',
 ];
 
+// The visible range is normally a small viewport, but it can span an entire
+// minified line, or the rest of the buffer when the editor has not been laid
+// out yet, and the scan runs on the foreground thread on every keystroke.
+const FLASH_JUMP_MAX_SEARCH_BYTES: usize = 256 * 1024;
+const FLASH_JUMP_MAX_MATCHES: usize = 4096;
+
 #[derive(Default)]
 struct FlashJumpUiData {
     labels: Vec<FlashJumpLabel>,
     target: Option<Range<Anchor>>,
     overlays: Vec<NavigationTargetOverlay>,
     match_ranges: Vec<Range<Anchor>>,
+}
+
+struct FlashMatch {
+    range: Range<MultiBufferOffset>,
+    /// The character right after the match, captured during the scan so the
+    /// label-conflict check doesn't need a buffer seek per match.
+    next_char: Option<char>,
 }
 
 impl Vim {
@@ -100,11 +113,11 @@ impl Vim {
         self.pop_operator(window, cx);
 
         if input_char == '\n' {
-            self.clear_flash_jump_ui(cx);
             if let Some(target) = target {
+                self.clear_flash_jump_ui(cx);
                 self.finish_flash_jump(target, window, cx);
             } else {
-                self.clear_operator(window, cx);
+                self.abort_flash_jump(window, cx);
             }
             return;
         }
@@ -141,82 +154,122 @@ impl Vim {
             return;
         }
 
-        let Some(data) = self.collect_flash_jump_data(&pattern, &previous_labels, window, cx)
-        else {
-            self.clear_flash_jump_ui(cx);
-            return;
-        };
+        let smartcase = VimSettings::get_global(cx).use_smartcase_find;
+        let applied = self.update_editor(cx, |_, editor, cx| {
+            let FlashJumpUiData {
+                labels,
+                target,
+                overlays,
+                match_ranges,
+            } = Self::collect_flash_jump_data(
+                editor,
+                &pattern,
+                &previous_labels,
+                smartcase,
+                window,
+                cx,
+            );
 
-        if data.match_ranges.is_empty() {
-            // flash.nvim exits as soon as the pattern stops matching. This also
-            // aborts any pending operator, like an unsuccessful `f`.
-            self.clear_flash_jump_ui(cx);
-            self.clear_operator(window, cx);
-            return;
+            if match_ranges.is_empty() {
+                editor.clear_navigation_overlays(FLASH_JUMP_OVERLAY_KEY, cx);
+                editor.clear_background_highlights(HighlightKey::VimFlash, cx);
+                None
+            } else {
+                editor.set_navigation_overlays(FLASH_JUMP_OVERLAY_KEY, overlays, cx);
+                editor.highlight_background(
+                    HighlightKey::VimFlash,
+                    &match_ranges,
+                    |_, theme| theme.colors().search_match_background,
+                    cx,
+                );
+                Some((labels, target))
+            }
+        });
+
+        match applied.flatten() {
+            Some((labels, target)) => self.push_operator(
+                Operator::FlashJump {
+                    pattern,
+                    labels,
+                    target,
+                },
+                window,
+                cx,
+            ),
+            None => self.abort_flash_jump(window, cx),
         }
+    }
 
-        if !self.apply_flash_jump_ui(data.overlays, &data.match_ranges, cx) {
-            return;
-        }
-
-        self.push_operator(
-            Operator::FlashJump {
-                pattern,
-                labels: data.labels,
-                target: data.target,
-            },
-            window,
-            cx,
-        );
+    /// Exits flash without jumping: flash.nvim leaves as soon as the pattern
+    /// stops matching. A pending operator is aborted like a failed `f`, which
+    /// also means ending dot recording the way `delete_motion` and the
+    /// observe_keystrokes safety net do.
+    fn abort_flash_jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_flash_jump_ui(cx);
+        self.clear_operator(window, cx);
+        self.stop_recording_immediately(Box::new(ClearOperators), cx);
     }
 
     fn collect_flash_jump_data(
-        &mut self,
+        editor: &mut Editor,
         pattern: &str,
         previous_labels: &[FlashJumpLabel],
+        smartcase: bool,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<FlashJumpUiData> {
-        let smartcase = VimSettings::get_global(cx).use_smartcase_find;
-        self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let display_snapshot = &snapshot.display_snapshot;
-            let buffer_snapshot = display_snapshot.buffer_snapshot();
-            let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
-            let start_offset = buffer_snapshot.point_to_offset(visible_range.start);
-            // In normal mode the visible range end is clipped to sit before
-            // the last character of a line, which would exclude that character
-            // from the search; extend the end to cover its whole line.
-            let mut visible_end = visible_range.end;
-            if visible_end.column > 0 {
-                visible_end.column = buffer_snapshot.line_len(MultiBufferRow(visible_end.row));
-            }
-            let end_offset = buffer_snapshot.point_to_offset(visible_end);
+        cx: &mut Context<Editor>,
+    ) -> FlashJumpUiData {
+        let (snapshot, font, font_size, label_color) = Self::jump_ui_context(editor, window, cx);
+        let display_snapshot = &snapshot.display_snapshot;
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
+        let visible_start = buffer_snapshot.point_to_offset(visible_range.start).0;
+        let visible_end = buffer_snapshot
+            .point_to_offset(visible_range.end)
+            .0
+            .max(visible_start);
 
-            let selections = editor.selections.all::<Point>(&display_snapshot);
-            let cursor_offset = selections
-                .first()
-                .map(|selection| buffer_snapshot.point_to_offset(selection.head()))
-                .unwrap_or(start_offset);
+        let cursor_offset = MultiBufferOffset(
+            buffer_snapshot
+                .point_to_offset(editor.selections.newest::<Point>(display_snapshot).head())
+                .0
+                .clamp(visible_start, visible_end),
+        );
 
-            let previous_labels = previous_labels
-                .iter()
-                .map(|label| (label.range.start.to_offset(buffer_snapshot), label.label))
-                .collect::<HashMap<_, _>>();
+        // The scan window is centered on the cursor so that when the visible
+        // range exceeds the byte cap (e.g. one enormous unwrapped line), the
+        // matches next to the cursor are the ones that survive.
+        let scan_start = buffer_snapshot.clip_offset(
+            MultiBufferOffset(
+                cursor_offset
+                    .0
+                    .saturating_sub(FLASH_JUMP_MAX_SEARCH_BYTES / 2)
+                    .max(visible_start),
+            ),
+            Bias::Left,
+        );
+        let scan_end = buffer_snapshot.clip_offset(
+            MultiBufferOffset((scan_start.0 + FLASH_JUMP_MAX_SEARCH_BYTES).min(visible_end)),
+            Bias::Left,
+        );
 
-            let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
+        let previous_labels = previous_labels
+            .iter()
+            .map(|label| (label.range.start.to_offset(buffer_snapshot), label.label))
+            .collect::<HashMap<_, _>>();
 
-            Self::build_flash_jump_ui_data(
-                buffer_snapshot,
-                start_offset,
-                end_offset,
-                cursor_offset,
-                pattern,
-                smartcase,
-                &previous_labels,
-                label_color,
-            )
-        })
+        Self::build_flash_jump_ui_data(
+            buffer_snapshot,
+            scan_start,
+            scan_end,
+            cursor_offset,
+            pattern,
+            smartcase,
+            &previous_labels,
+            label_color,
+            window.text_system(),
+            font,
+            font_size,
+        )
     }
 
     fn build_flash_jump_ui_data(
@@ -228,6 +281,9 @@ impl Vim {
         smartcase: bool,
         previous_labels: &HashMap<MultiBufferOffset, char>,
         label_color: Hsla,
+        text_system: &WindowTextSystem,
+        font: Font,
+        font_size: Pixels,
     ) -> FlashJumpUiData {
         if start_offset >= end_offset {
             return FlashJumpUiData::default();
@@ -239,44 +295,77 @@ impl Vim {
             return FlashJumpUiData::default();
         }
 
-        let target = matches
+        let match_ranges = matches
             .iter()
-            .find(|range| range.start >= cursor_offset)
-            .or_else(|| matches.first())
-            .map(|range| buffer.anchor_after(range.start)..buffer.anchor_after(range.end));
+            .map(|flash_match| {
+                buffer.anchor_after(flash_match.range.start)
+                    ..buffer.anchor_after(flash_match.range.end)
+            })
+            .collect::<Vec<_>>();
 
-        let allowed_labels = Self::flash_allowed_labels(buffer, &matches, smartcase);
+        // Like vim search, a match starting exactly at the cursor is not the
+        // target — enter should always go somewhere.
+        let target_index = matches
+            .iter()
+            .position(|flash_match| flash_match.range.start > cursor_offset)
+            .unwrap_or(0);
+        let target = match_ranges.get(target_index).cloned();
+
+        let allowed_labels = Self::flash_allowed_labels(&matches, smartcase);
         let assignments =
             Self::assign_flash_labels(&matches, cursor_offset, allowed_labels, previous_labels);
 
-        let match_ranges = matches
-            .iter()
-            .map(|range| buffer.anchor_after(range.start)..buffer.anchor_after(range.end))
-            .collect();
+        let font_id = text_system.resolve_font(&font);
+        let is_monospace = Self::is_monospace_jump_font(text_system, font_id, font_size);
+        let width_of_char = |ch| Self::jump_font_char_width(text_system, font_id, font_size, ch);
 
         let mut labels = Vec::with_capacity(assignments.len());
         let mut overlays = Vec::with_capacity(assignments.len());
-        for (label, range) in assignments {
-            let start_anchor = buffer.anchor_after(range.start);
-            let end_anchor = buffer.anchor_after(range.end);
+        for (label, match_index) in assignments {
+            let Some((flash_match, match_anchors)) =
+                matches.get(match_index).zip(match_ranges.get(match_index))
+            else {
+                continue;
+            };
             labels.push(FlashJumpLabel {
                 label,
-                range: start_anchor..end_anchor,
+                range: match_anchors.clone(),
             });
 
-            // The label is drawn over the character that follows the match,
-            // like flash.nvim. At the end of a line there is no character to
-            // cover and the label renders in the empty space past it.
-            let covered_text_range = buffer
-                .chars_at(range.end)
-                .next()
-                .filter(|ch| *ch != '\n' && *ch != '\r')
-                .map(|ch| end_anchor..buffer.anchor_after(range.end + ch.len_utf8()));
+            // The label is drawn over the text that follows the match, like
+            // flash.nvim. A monospace label covers exactly the one character
+            // already captured by the scan; in a proportional font the label
+            // glyph can be wider, so fade out as many characters as it needs.
+            // At a line end (or the scan boundary) there is nothing to cover
+            // and the label renders in the empty space.
+            let covered_end = if is_monospace {
+                flash_match
+                    .next_char
+                    .filter(|ch| *ch != '\n' && *ch != '\r')
+                    .map(|ch| flash_match.range.end + ch.len_utf8())
+            } else {
+                let label_width = width_of_char(label);
+                let mut covered_end = flash_match.range.end;
+                let mut covered_width = px(0.0);
+                for ch in buffer.chars_at(flash_match.range.end) {
+                    if ch == '\n' || ch == '\r' {
+                        break;
+                    }
+                    covered_end = covered_end + ch.len_utf8();
+                    covered_width += width_of_char(ch);
+                    if covered_width >= label_width {
+                        break;
+                    }
+                }
+                (covered_end > flash_match.range.end).then_some(covered_end)
+            };
+            let covered_text_range =
+                covered_end.map(|end| match_anchors.end..buffer.anchor_after(end));
 
             overlays.push(NavigationTargetOverlay {
                 target_range: covered_text_range
                     .clone()
-                    .unwrap_or(end_anchor..end_anchor),
+                    .unwrap_or(match_anchors.end..match_anchors.end),
                 label: NavigationOverlayLabel {
                     text: label.to_string().into(),
                     text_color: label_color,
@@ -301,39 +390,50 @@ impl Vim {
         end_offset: MultiBufferOffset,
         pattern: &str,
         smartcase: bool,
-    ) -> Vec<Range<MultiBufferOffset>> {
-        if pattern.is_empty() {
+    ) -> Vec<FlashMatch> {
+        let pattern_chars = pattern.chars().collect::<Vec<_>>();
+        if pattern_chars.is_empty() {
             return Vec::new();
         }
-        let pattern_chars = pattern.chars().collect::<Vec<_>>();
 
-        let mut text = String::new();
-        for chunk in buffer.text_for_range(start_offset..end_offset) {
-            text.push_str(chunk);
-        }
+        // A single streaming pass: each character is decoded once and slides
+        // through a pattern-sized window of candidate positions.
+        let mut matches: Vec<FlashMatch> = Vec::new();
+        let mut window = VecDeque::with_capacity(pattern_chars.len() + 1);
+        let mut chunk_start = start_offset;
+        'chunks: for chunk in buffer.text_for_range(start_offset..end_offset) {
+            for (index, ch) in chunk.char_indices() {
+                let offset = chunk_start + index;
 
-        let mut matches = Vec::new();
-        for (byte_offset, _) in text.char_indices() {
-            let mut buffer_chars = text[byte_offset..].chars();
-            let mut match_len = 0;
-            let mut matched = true;
-            for pattern_char in &pattern_chars {
-                match buffer_chars.next() {
-                    Some(buffer_char)
-                        if motion::is_character_match(*pattern_char, buffer_char, smartcase) =>
-                    {
-                        match_len += buffer_char.len_utf8();
-                    }
-                    _ => {
-                        matched = false;
-                        break;
-                    }
+                if let Some(last) = matches.last_mut()
+                    && last.range.end == offset
+                {
+                    last.next_char = Some(ch);
+                }
+                if matches.len() >= FLASH_JUMP_MAX_MATCHES {
+                    break 'chunks;
+                }
+
+                window.push_back((offset, ch));
+                if window.len() > pattern_chars.len() {
+                    window.pop_front();
+                }
+                if window.len() == pattern_chars.len()
+                    && let Some((match_start, _)) = window.front().copied()
+                    && window
+                        .iter()
+                        .zip(&pattern_chars)
+                        .all(|((_, buffer_char), pattern_char)| {
+                            motion::is_character_match(*pattern_char, *buffer_char, smartcase)
+                        })
+                {
+                    matches.push(FlashMatch {
+                        range: match_start..offset + ch.len_utf8(),
+                        next_char: None,
+                    });
                 }
             }
-            if matched {
-                let match_start = start_offset + byte_offset;
-                matches.push(match_start..match_start + match_len);
-            }
+            chunk_start = chunk_start + chunk.len();
         }
         matches
     }
@@ -341,41 +441,50 @@ impl Vim {
     /// Excludes labels that could be the next typed pattern character: a label
     /// equal to the character right after a match would be ambiguous between
     /// jumping and extending the pattern.
-    fn flash_allowed_labels(
-        buffer: &MultiBufferSnapshot,
-        matches: &[Range<MultiBufferOffset>],
-        smartcase: bool,
-    ) -> Vec<char> {
+    fn flash_allowed_labels(matches: &[FlashMatch], smartcase: bool) -> Vec<char> {
+        let mut follower_chars = matches
+            .iter()
+            .filter_map(|flash_match| flash_match.next_char)
+            .collect::<Vec<_>>();
+        follower_chars.sort_unstable();
+        follower_chars.dedup();
+
         let mut labels = FLASH_JUMP_ALPHABET.to_vec();
-        for match_range in matches {
+        for next_char in follower_chars {
             if labels.is_empty() {
                 break;
             }
-            if let Some(next_char) = buffer.chars_at(match_range.end).next() {
-                labels.retain(|label| !motion::is_character_match(*label, next_char, smartcase));
-            }
+            labels.retain(|label| !motion::is_character_match(*label, next_char, smartcase));
         }
         labels
     }
 
+    /// Assigns labels to matches by distance from the cursor, returning
+    /// `(label, index into matches)` pairs.
     fn assign_flash_labels(
-        matches: &[Range<MultiBufferOffset>],
+        matches: &[FlashMatch],
         cursor_offset: MultiBufferOffset,
         allowed_labels: Vec<char>,
         previous_labels: &HashMap<MultiBufferOffset, char>,
-    ) -> Vec<(char, Range<MultiBufferOffset>)> {
-        let mut ordered = matches.to_vec();
-        ordered.sort_by_key(|range| range.start.0.abs_diff(cursor_offset.0));
+    ) -> Vec<(char, usize)> {
+        let mut ordered = (0..matches.len()).collect::<Vec<_>>();
+        ordered.sort_by_key(|match_index| {
+            matches[*match_index]
+                .range
+                .start
+                .0
+                .abs_diff(cursor_offset.0)
+        });
 
         // Matches keep the label they had on the previous keystroke when
         // possible, so labels don't shuffle while the user types.
         let mut available = allowed_labels;
         let mut assignments = vec![None; ordered.len()];
-        for (index, range) in ordered.iter().enumerate() {
-            if let Some(previous) = previous_labels.get(&range.start)
+        for (slot, match_index) in ordered.iter().enumerate() {
+            if let Some(previous) = previous_labels.get(&matches[*match_index].range.start)
                 && let Some(position) = available.iter().position(|label| label == previous)
             {
-                assignments[index] = Some(available.remove(position));
+                assignments[slot] = Some(available.remove(position));
             }
         }
 
@@ -392,26 +501,8 @@ impl Vim {
         ordered
             .into_iter()
             .zip(assignments)
-            .filter_map(|(range, label)| Some((label?, range)))
+            .filter_map(|(match_index, label)| Some((label?, match_index)))
             .collect()
-    }
-
-    fn apply_flash_jump_ui(
-        &mut self,
-        overlays: Vec<NavigationTargetOverlay>,
-        match_ranges: &[Range<Anchor>],
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_editor(cx, |_, editor, cx| {
-            editor.set_navigation_overlays(FLASH_JUMP_OVERLAY_KEY, overlays, cx);
-            editor.highlight_background(
-                HighlightKey::VimFlash,
-                match_ranges,
-                |_, theme| theme.colors().search_match_background,
-                cx,
-            );
-        })
-        .is_some()
     }
 
     pub(crate) fn clear_flash_jump_ui(&mut self, cx: &mut Context<Self>) {
@@ -445,11 +536,12 @@ impl Vim {
 mod test {
     use editor::{HighlightKey, ToOffset};
     use gpui::KeyBinding;
+    use language::Point;
     use settings::SettingsStore;
 
-    use super::{FLASH_JUMP_OVERLAY_KEY, PushFlash};
+    use super::{FLASH_JUMP_MAX_SEARCH_BYTES, FLASH_JUMP_OVERLAY_KEY, PushFlash};
     use crate::{
-        VimAddon,
+        Vim, VimAddon,
         state::{Mode, Operator},
         test::VimTestContext,
     };
@@ -713,6 +805,50 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_flash_jump_operator_pending_backward(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+
+        // A backward jump includes the character under the cursor, matching
+        // flash.nvim's unconditional inclusive toggle in op-pending mode.
+        cx.set_state("lorem ipsum ˇdolor", Mode::Normal);
+        cx.simulate_keystrokes("d s l o");
+        let label = flash_label_at(&mut cx, 0);
+        cx.simulate_keystrokes(&label);
+        cx.assert_state("ˇolor", Mode::Normal);
+        assert_flash_cleared(&mut cx);
+
+        cx.set_state("lorem ipsum ˇdolor", Mode::Normal);
+        cx.simulate_keystrokes("c s l o");
+        let label = flash_label_at(&mut cx, 0);
+        cx.simulate_keystrokes(&label);
+        cx.assert_state("ˇolor", Mode::Insert);
+        assert_flash_cleared(&mut cx);
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_operator_pending_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+
+        // Forward across a line boundary.
+        cx.set_state("ˇone\ntwo three", Mode::Normal);
+        cx.simulate_keystrokes("d s t h");
+        let label = flash_label_at(&mut cx, 8);
+        cx.simulate_keystrokes(&label);
+        cx.assert_state("ˇhree", Mode::Normal);
+        assert_flash_cleared(&mut cx);
+
+        // Backward across a line boundary.
+        cx.set_state("one two\nthrˇee", Mode::Normal);
+        cx.simulate_keystrokes("d s o n");
+        let label = flash_label_at(&mut cx, 0);
+        cx.simulate_keystrokes(&label);
+        cx.assert_state("ˇe", Mode::Normal);
+        assert_flash_cleared(&mut cx);
+    }
+
+    #[gpui::test]
     async fn test_flash_jump_visual_mode(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         bind_flash(&mut cx);
@@ -756,6 +892,120 @@ mod test {
 
         cx.simulate_keystrokes("ctrl-o");
         cx.assert_state(&format!("ˇone{blank_lines}two three"), Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_ui_cleared_on_mouse_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+        cx.set_state("ˇalpha beta gamma", Mode::Normal);
+
+        cx.simulate_keystrokes("s b e");
+        assert_eq!(active_flash_labels(&mut cx).len(), 1);
+
+        // A mouse drag updates selections directly; vim reacts by switching
+        // to visual mode, which discards the operator stack without going
+        // through clear_operator.
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 0)..Point::new(0, 5)]);
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.mode(), Mode::Visual);
+        assert_flash_cleared(&mut cx);
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_ui_cleared_with_stacked_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+        cx.set_state("ˇalpha beta gamma", Mode::Normal);
+
+        cx.simulate_keystrokes("s b e");
+        assert_eq!(active_flash_labels(&mut cx).len(), 1);
+
+        // ctrl-k stacks a digraph operator on top of flash; escape then
+        // discards the whole stack, with flash no longer on top.
+        cx.simulate_keystrokes("ctrl-k escape");
+
+        cx.assert_state("ˇalpha beta gamma", Mode::Normal);
+        assert_flash_cleared(&mut cx);
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_abort_stops_dot_recording(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+        cx.set_state("ˇabc def", Mode::Normal);
+
+        cx.simulate_keystrokes("d s q");
+        cx.assert_state("ˇabc def", Mode::Normal);
+        assert!(
+            !cx.update(|_, cx| Vim::globals(cx).dot_recording),
+            "aborted flash must not leave dot recording on"
+        );
+
+        // Recording state is sane afterwards: a new change records and
+        // repeats normally.
+        cx.simulate_keystrokes("x");
+        cx.assert_state("ˇbc def", Mode::Normal);
+        cx.simulate_keystrokes(".");
+        cx.assert_state("ˇc def", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_scan_window_follows_cursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+
+        // A single line longer than the scan cap with the cursor at its end:
+        // the capped window must cover the text around the cursor, not just
+        // the start of the visible range.
+        let filler = "x".repeat(FLASH_JUMP_MAX_SEARCH_BYTES + 16 * 1024);
+        cx.set_state(&format!("{filler}ˇneedle"), Mode::Normal);
+
+        cx.simulate_keystrokes("s n e");
+        let labels = active_flash_labels(&mut cx);
+        assert_eq!(labels.len(), 1);
+        cx.simulate_keystrokes("escape");
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_consumes_full_ime_input(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+        cx.set_state("ˇにほんご にほ", Mode::Normal);
+
+        cx.simulate_keystrokes("s");
+        // An IME commit delivers the whole string in one InputIgnored event
+        // (vim disables editor input in normal mode).
+        cx.update_editor(|editor, window, cx| {
+            editor.replay_insert_event("にほ", None, window, cx)
+        });
+
+        let labels = active_flash_labels(&mut cx);
+        assert_eq!(labels.len(), 2);
+        cx.simulate_keystrokes("escape");
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_enter_skips_match_at_cursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+
+        cx.set_state("ˇbeta gamma beta", Mode::Normal);
+        cx.simulate_keystrokes("s b e enter");
+        cx.assert_state("beta gamma ˇbeta", Mode::Normal);
+        assert_flash_cleared(&mut cx);
+
+        // Operating to the target must not degenerate into a zero-width jump
+        // deleting a single character.
+        cx.set_state("ˇbeta gamma beta", Mode::Normal);
+        cx.simulate_keystrokes("d s b e enter");
+        cx.assert_state("ˇeta", Mode::Normal);
+        assert_flash_cleared(&mut cx);
     }
 
     #[gpui::test]

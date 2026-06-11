@@ -1206,6 +1206,7 @@ impl Vim {
         let prior_tx = self.current_tx;
         self.last_mode = last_mode;
         self.mode = mode;
+        self.clear_stacked_operator_ui(window, cx);
         self.operator_stack.clear();
         self.selected_register.take();
         self.cancel_running_command(window, cx);
@@ -1473,7 +1474,13 @@ impl Vim {
                 } else {
                     mode = "waiting".to_string();
                     // Flash needs its own bindings (e.g. backspace) while
-                    // waiting for input, so expose its operator id.
+                    // waiting for input, so expose its operator id. Other
+                    // waiting operators deliberately stay "none": exposing
+                    // them all would activate dormant keymap sections written
+                    // against waiting operator ids (like the ys/cs escape
+                    // override in vim.json) and change matching for user
+                    // keymaps that test vim_operator, so generalizing this is
+                    // a separate behavioral decision.
                     if matches!(active_operator, Operator::FlashJump { .. }) {
                         operator_id = active_operator.id();
                     }
@@ -1748,12 +1755,30 @@ impl Vim {
         popped_operator
     }
 
-    fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.active_operator() {
-            Some(Operator::HelixJump { .. }) => self.clear_helix_jump_ui(window, cx),
-            Some(Operator::FlashJump { .. }) => self.clear_flash_jump_ui(cx),
-            _ => {}
+    /// Tears down UI owned by jump operators anywhere in the stack. Must be
+    /// called wherever the operator stack is discarded wholesale: the owning
+    /// operator may not be on top (e.g. a digraph stacked above it), and
+    /// mode switches clear the stack without going through clear_operator.
+    fn clear_stacked_operator_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut has_helix_jump = false;
+        let mut has_flash_jump = false;
+        for operator in &self.operator_stack {
+            match operator {
+                Operator::HelixJump { .. } => has_helix_jump = true,
+                Operator::FlashJump { .. } => has_flash_jump = true,
+                _ => {}
+            }
         }
+        if has_helix_jump {
+            self.clear_helix_jump_ui(window, cx);
+        }
+        if has_flash_jump {
+            self.clear_flash_jump_ui(cx);
+        }
+    }
+
+    fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_stacked_operator_ui(window, cx);
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
         self.selected_register.take();
@@ -2072,8 +2097,15 @@ impl Vim {
                     self.handle_helix_jump_input(operator, input_char, window, cx);
                 }
             }
-            Some(operator @ Operator::FlashJump { .. }) => {
-                if let Some(input_char) = text.chars().next() {
+            Some(Operator::FlashJump { .. }) => {
+                // The pattern is arbitrary-length, so consume the whole input:
+                // an IME commit can deliver several characters at once. A
+                // label hit or an exit mid-input stops the remainder.
+                for input_char in text.chars() {
+                    let Some(operator @ Operator::FlashJump { .. }) = self.active_operator()
+                    else {
+                        break;
+                    };
                     self.handle_flash_jump_input(operator, input_char, window, cx);
                 }
             }
