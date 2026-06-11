@@ -5547,12 +5547,8 @@ mod tests {
         );
 
         assert_eq!(
-            format_prompt_with_budget_for_format(
-                &input,
-                ZetaFormat::QwenMultiRegions,
-                10000
-            )
-            .expect("qwen prompt formatting should succeed"),
+            format_prompt_with_budget_for_format(&input, ZetaFormat::QwenMultiRegions, 10000)
+                .expect("qwen prompt formatting should succeed"),
             indoc! {r#"
                 <|fim_prefix|><|file_sep|>related.rs
                 fn helper() {}
