@@ -1192,22 +1192,46 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .log_err();
                         } else {
                             let path_list = key.path_list().clone();
-                            if let Some(task) = handle
+                            let host = key.host().clone();
+                            handle
                                 .update(cx, |multi_workspace, window, cx| {
-                                    multi_workspace.find_or_create_local_workspace(
+                                    let modal_workspace = multi_workspace.workspace().clone();
+                                    let dismiss_modal_workspace = modal_workspace.clone();
+                                    let task = multi_workspace.find_or_create_workspace(
                                         path_list,
+                                        host,
                                         Some(key.clone()),
+                                        move |options, window, cx| {
+                                            remote_connection::connect_with_modal(
+                                                &modal_workspace,
+                                                options,
+                                                window,
+                                                cx,
+                                            )
+                                        },
                                         &[],
                                         None,
                                         OpenMode::Activate,
                                         window,
                                         cx,
-                                    )
+                                    );
+
+                                    // Ensure the modal opened in `connect_with_modal` is closed.
+                                    // Otherwise it may remain open, but hidden, while the workspace is
+                                    // active; only to reappear once the user changes workspaces again.
+                                    // See: `Sidebar::open_workspace_for_group`
+                                    cx.spawn_in(window, async move |_, cx| {
+                                        let result = task.await;
+                                        remote_connection::dismiss_connection_modal(
+                                            &dismiss_modal_workspace,
+                                            cx,
+                                        );
+                                        result?;
+                                        anyhow::Ok(())
+                                    })
+                                    .detach_and_log_err(cx);
                                 })
-                                .log_err()
-                            {
-                                task.detach_and_log_err(cx);
-                            }
+                                .log_err();
                         }
                     });
                 }
@@ -2978,6 +3002,179 @@ mod tests {
             final_window_count,
             initial_window_count + 1,
             "open_local_project with create_new_window=true should open a new window"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remote_project_group_confirm_opens_remote_workspace(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        use extension::ExtensionHostProxy;
+        use fs::FakeFs;
+        use http_client::BlockedHttpClient;
+        use node_runtime::NodeRuntime;
+        use remote::RemoteClient;
+        use remote_server::{HeadlessAppState, HeadlessProject};
+
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+        server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+
+        // Set up a fake remote server.
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/remote-project"),
+                json!({ "src": { "main.rs": "fn main() {}" } }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let headless_executor = server_cx.executor();
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client: Arc::new(BlockedHttpClient),
+                    node_runtime: NodeRuntime::unavailable(),
+                    languages: Arc::new(language::LanguageRegistry::new(headless_executor)),
+                    extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+
+        // Open a local project to get a MultiWorkspace window.
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/local-project"), json!({}))
+            .await;
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/local-project"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        let multi_workspace_handle =
+            cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        // Simulate a session restore: register the remote group with no active workspace.
+        // After a restart, groups are recovered from the DB but last_active_workspace is
+        // always None because workspace entity handles can't be serialized.
+        let remote_key = ProjectGroupKey::new(
+            Some(opts.clone()),
+            workspace::PathList::new(&[PathBuf::from(path!("/remote-project"))]),
+        );
+
+        multi_workspace_handle
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.restore_project_groups(
+                    vec![workspace::SerializedProjectGroupState {
+                        key: remote_key.clone(),
+                        expanded: true,
+                    }],
+                    cx,
+                );
+            })
+            .unwrap();
+
+        // Precondition: no live workspace for the remote group.
+        let has_active_workspace = multi_workspace_handle
+            .read_with(cx, |mw, cx| {
+                mw.last_active_workspace_for_group(&remote_key, cx)
+                    .is_some()
+            })
+            .unwrap();
+        assert!(
+            !has_active_workspace,
+            "no workspace should be live for the remote group at session start"
+        );
+
+        // Open the recent projects picker, passing the remote group as a window_project_group
+        // so it shows up in the "This Window" section.
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        multi_workspace_handle
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let focus_handle = workspace.focus_handle(cx);
+                    RecentProjects::open(
+                        workspace,
+                        false,
+                        vec![remote_key.clone()],
+                        window,
+                        focus_handle,
+                        cx,
+                    );
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // Confirm the ProjectGroup entry. Before the fix, this fell through to
+        // find_or_create_local_workspace (dropping the host), opening a broken local
+        // workspace at ~. After the fix it calls find_or_create_workspace, which
+        // preserves the host and establishes the remote connection.
+        multi_workspace_handle
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let modal = workspace
+                        .active_modal::<RecentProjects>(cx)
+                        .expect("picker should be open");
+                    modal.update(cx, |modal, cx| {
+                        modal.picker.update(cx, |picker, cx| {
+                            let entry_ix = picker
+                                .delegate
+                                .filtered_entries
+                                .iter()
+                                .position(|e| matches!(e, ProjectPickerEntry::ProjectGroup(_)))
+                                .expect("picker should contain a ProjectGroup entry");
+                            picker.set_selected_index(entry_ix, None, false, window, cx);
+                            picker.delegate.confirm(false, window, cx);
+                        });
+                    });
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+        executor.run_until_parked();
+
+        // The active workspace should now be a remote project, not a local one at ~.
+        let is_remote = multi_workspace_handle
+            .update(cx, |mw, _, cx| {
+                mw.workspace().read(cx).project().read(cx).is_remote()
+            })
+            .unwrap();
+        assert!(
+            is_remote,
+            "confirming a remote ProjectGroup with no live workspace should open a remote workspace"
+        );
+
+        // No extra window should have been created.
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "should reuse the existing window, not open a new one"
         );
     }
 
