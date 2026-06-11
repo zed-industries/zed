@@ -2897,45 +2897,57 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let strip_prefix = if include_remote_name {
-                    "refs/remotes/"
-                } else {
-                    "refs/remotes/upstream/"
-                };
-
-                if let Ok(output) = git
-                    .run(&["symbolic-ref", "refs/remotes/upstream/HEAD"])
+                let output = git
+                    .run(&[
+                        "for-each-ref",
+                        "--format=%(refname)\t%(symref)",
+                        "refs/remotes/upstream/HEAD",
+                        "refs/remotes/origin/HEAD",
+                        "refs/heads/",
+                    ])
                     .await
-                {
-                    let output = output
-                        .strip_prefix(strip_prefix)
-                        .map(|s| SharedString::from(s.to_owned()));
-                    return Ok(output);
+                    .unwrap_or_default();
+                let refs: HashMap<&str, &str> = output
+                    .lines()
+                    .filter_map(|line| line.split_once('\t'))
+                    .collect();
+
+                if let Some(target) = refs.get("refs/remotes/upstream/HEAD") {
+                    let strip_prefix = if include_remote_name {
+                        "refs/remotes/"
+                    } else {
+                        "refs/remotes/upstream/"
+                    };
+                    if let Some(branch) = target.strip_prefix(strip_prefix) {
+                        return Ok(Some(branch.into()));
+                    }
                 }
 
-                let strip_prefix = if include_remote_name {
-                    "refs/remotes/"
-                } else {
-                    "refs/remotes/origin/"
-                };
-
-                if let Ok(output) = git.run(&["symbolic-ref", "refs/remotes/origin/HEAD"]).await {
-                    return Ok(output
-                        .strip_prefix(strip_prefix)
-                        .map(|s| SharedString::from(s.to_owned())));
+                if let Some(target) = refs.get("refs/remotes/origin/HEAD") {
+                    let strip_prefix = if include_remote_name {
+                        "refs/remotes/"
+                    } else {
+                        "refs/remotes/origin/"
+                    };
+                    if let Some(branch) = target.strip_prefix(strip_prefix) {
+                        return Ok(Some(branch.into()));
+                    }
                 }
+
+                let local_branch_exists =
+                    |branch: &str| refs.contains_key(format!("refs/heads/{branch}").as_str());
 
                 if let Ok(default_branch) = git.run(&["config", "init.defaultBranch"]).await {
-                    if git.run(&["rev-parse", &default_branch]).await.is_ok() {
+                    if local_branch_exists(&default_branch) {
                         return Ok(Some(default_branch.into()));
                     }
                 }
 
-                if git.run(&["rev-parse", "main"]).await.is_ok() {
+                if local_branch_exists("main") {
                     return Ok(Some("main".into()));
                 }
 
-                if git.run(&["rev-parse", "master"]).await.is_ok() {
+                if local_branch_exists("master") {
                     return Ok(Some("master".into()));
                 }
 
