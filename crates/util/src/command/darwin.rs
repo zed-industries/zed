@@ -884,6 +884,37 @@ mod tests {
     }
 
     #[test]
+    fn test_child_sigpipe_disposition_matches_std() {
+        const SCRIPT: &str = "kill -s PIPE $$; echo survived";
+
+        #[allow(clippy::disallowed_methods)]
+        let std_output = std::process::Command::new("/bin/sh")
+            .args(["-c", SCRIPT])
+            .output()
+            .expect("failed to run std command");
+
+        let our_output = smol::block_on(async {
+            Command::new("/bin/sh")
+                .args(["-c", SCRIPT])
+                .output()
+                .await
+                .expect("failed to run command")
+        });
+
+        assert_eq!(
+            std_output.status.signal(),
+            Some(libc::SIGPIPE),
+            "expected std to reset SIGPIPE to SIG_DFL in children; did its default change?"
+        );
+        assert_eq!(
+            our_output.status.signal(),
+            std_output.status.signal(),
+            "child SIGPIPE disposition diverges from std::process::Command"
+        );
+        assert_eq!(our_output.stdout, std_output.stdout);
+    }
+
+    #[test]
     fn test_stdio_fds_closed_on_error() {
         fn count_open_fds() -> usize {
             let limit = unsafe { libc::getdtablesize() };
