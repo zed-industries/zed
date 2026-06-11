@@ -9,11 +9,10 @@ use ui::{
 };
 
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape, ViewPortHeight,
-    ViewPortWidth,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape, ViewPortLength,
     head::Head,
     preview::PreviewLayout,
-    render::window_controls::{Bottom, Left, LeftCorner, Right, RightCorner},
+    render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
 };
 
 pub mod window_controls;
@@ -29,19 +28,19 @@ impl<D: PickerDelegate> Render for Picker<D> {
         let content = match &self.preview {
             Some(
                 preview @ Preview {
-                    layout: PreviewLayout::Below(height),
+                    layout: PreviewLayout::Below,
                     ..
                 },
             ) => self
-                .render_with_preview_below(preview, *height, window, cx)
+                .render_with_preview_below(preview, window, cx)
                 .into_any_element(),
             Some(
                 preview @ Preview {
-                    layout: PreviewLayout::Right(width),
+                    layout: PreviewLayout::Right,
                     ..
                 },
             ) => self
-                .render_with_preview_right(preview, *width, window, cx)
+                .render_with_preview_right(preview, window, cx)
                 .into_any_element(),
             Some(Preview {
                 layout: PreviewLayout::Hidden,
@@ -53,7 +52,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
         // Position relative to the window so shape fully controls placement
         anchored()
             .position(self.shape.origin(window))
-            .snap_to_window()
+            .snap_to_window_with_margin(ViewPortLength(0.05).as_pixels(window))
             .child(
                 div()
                     // Below the picker there is a layer that dismisses the
@@ -64,11 +63,11 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     })
                     .child(content),
             )
-            .child(self.render_width_resize::<Left>(window, cx))
-            .child(self.render_width_resize::<Right>(window, cx))
-            .child(self.render_height_resize::<Bottom>(window, cx))
-            .child(self.render_corner_resize::<LeftCorner>(window, cx))
-            .child(self.render_corner_resize::<RightCorner>(window, cx))
+            .child(self.render_resize::<Left>(window, cx))
+            .child(self.render_resize::<Right>(window, cx))
+            .child(self.render_resize::<Bottom>(window, cx))
+            .child(self.render_resize::<LeftCorner>(window, cx))
+            .child(self.render_resize::<RightCorner>(window, cx))
     }
 }
 
@@ -258,36 +257,37 @@ impl<D: PickerDelegate> Picker<D> {
     fn render_with_preview_below(
         &self,
         preview: &Preview,
-        preview_height: ViewPortHeight,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        v_flex()
-            .child(
-                div()
-                    .h(self.shape.height(window) - preview_height.as_pixels(window))
-                    .overflow_hidden()
-                    .child(self.render_results(window, cx)),
-            )
-            // .child(self.render_results_resize(window, cx))
-            .child(
-                div()
-                    .h(preview_height.as_pixels(window))
-                    .child(preview.render(window, cx)),
-            )
-        // .child(self.render_vertical_resize(ResizeSide::End, window, cx))
+        // TODO!(yara) minimize the number of flex/divs etc needed
+        h_flex().relative().child(
+            v_flex()
+                .h(self.shape.height(window))
+                .child(
+                    div()
+                        .h(self.shape.results_height(preview, window))
+                        .overflow_hidden()
+                        .child(self.render_results(window, cx)),
+                )
+                // .child(self.render_resize::<Middle>(window, cx))
+                .child(
+                    div()
+                        .h(self.shape.preview_height(preview, window))
+                        .child(preview.render(cx)),
+                ),
+        )
     }
 
     pub(crate) fn render_with_preview_right(
         &self,
         preview: &Preview,
-        preview_width: ViewPortWidth,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         v_flex().relative().child(
             h_flex()
-                .map(|this| self.shape.apply_height(this, window))
+                .h(self.shape.height(window))
                 .child(
                     div()
                         .flex_1()
@@ -295,88 +295,14 @@ impl<D: PickerDelegate> Picker<D> {
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
-                // .child(self.render_telescope_preview_resize(window, cx))
+                .child(self.render_resize::<Middle>(window, cx))
                 .child(
                     div()
-                        .w(preview_width.as_pixels(window))
+                        .w(self.shape.preview_width(preview, window))
                         .map(|this| self.shape.apply_height(this, window))
                         .overflow_hidden()
-                        .child(preview.render(window, cx)),
+                        .child(preview.render(cx)),
                 ),
         )
-        // .child(self.render_telescope_height_resize(ResizeSide::End, window, cx))
     }
 }
-
-// TODO!(yara) re-add
-// impl<D: PickerDelegate> Picker<D> {
-//     fn render_results_resize(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-//         let is_highlighted = window.use_state(cx, |_window, _cx| false);
-//         let divider_size = px(window_controls::RESIZE_DIVIDER_SIZE);
-//         let handle_height = px(window_controls::RESIZE_HANDLE_HEIGHT);
-//         let handle_offset = (handle_height - divider_size) / 2.0;
-
-//         div()
-//             .id("resize-divider")
-//             .relative()
-//             .h(divider_size)
-//             .w_full()
-//             .bg(cx.theme().colors().border)
-//             .when(*is_highlighted.read(cx), |this| {
-//                 this.bg(cx.theme().colors().border_focused)
-//             })
-//             .child(
-//                 div()
-//                     .id("resize-handle")
-//                     .absolute()
-//                     .top(-handle_offset)
-//                     .left_0()
-//                     .right_0()
-//                     .h(handle_height)
-//                     .cursor_row_resize()
-//                     .block_mouse_except_scroll()
-//                     .on_hover(set_highlighted_to(is_highlighted.clone()))
-//                     .on_mouse_down(MouseButton::Left, do_nothing), // TODO!(yara) resize drag for results done later
-//                                                                    //         .on_drag(
-//                                                                    //             ResizeDrag {
-//                                                                    //                 mouse_start_y: window.mouse_position().y,
-//                                                                    //                 results_height_start: self.picker_height,
-//                                                                    //                 preview_height_start: self
-//                                                                    //                     .preview
-//                                                                    //                     .and_then(|p| {
-//                                                                    //                         if let LayoutMode::Stacked(layout) = p.layout {
-//                                                                    //                             Some(layout.preview_height)
-//                                                                    //                         } else {
-//                                                                    //                             None
-//                                                                    //                         }
-//                                                                    //                     })
-//                                                                    //                     .unwrap_or(self.picker_height),
-//                                                                    //             },
-//                                                                    //             highlighted_drag_preview(is_highlighted.clone()),
-//                                                                    //         )
-//                                                                    //         .on_drop::<ResizeDrag>(clear_resize_highlight(is_highlighted.clone())),
-//             )
-//         // .on_drag_move::<ResizeDrag>(cx.listener(
-//         //     |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
-//         //         let drag = event.drag(cx);
-//         //         let delta = event.event.position.y - drag.mouse_start_y;
-//         //         let total_height = drag.results_height_start + drag.preview_height_start;
-
-//         //         let new_results = (drag.results_height_start + delta)
-//         //             .max(px(StackedLayout::MIN_PANEL_HEIGHT))
-//         //             .min(total_height - px(StackedLayout::MIN_PANEL_HEIGHT));
-//         //         let new_preview = total_height - new_results;
-
-//         //         this.picker_height = new_results;
-//         //         if let Some(Preview {
-//         //             layout: LayoutMode::Stacked(StackedLayout { preview_height, .. }),
-//         //             ..
-//         //         }) = &mut this.preview
-//         //         {
-//         //             *preview_height = new_preview
-//         //         }
-//         //         cx.notify();
-//         //     },
-//         // ))
-//     }
-// }

@@ -1,14 +1,13 @@
 //! This holds the resize logic for picker windows.
 //!
 //! # Resizing basics:
-//! We have between three and four dedicated resize renders active:
-//!  - render_width_resize
-//!  - render_corner_resize (allows resizing in both directions)
-//!  - render height_resize
+//! We render a resize handle (`render_resize`) for each side and corner that
+//! can be dragged. The `Side` trait implementations (`Left`, `Right`,
+//! `Bottom`, `LeftCorner`, `RightCorner`, ...) determine where each handle is
+//! placed and how a drag changes the picker's shape.
 //!
 //! If there is a preview to the right or below there is an additional resize
-//!  - render_horizontal_divider_resize
-//!  - render_vertical_divider_resize
+//! handle on the divider between the results and the preview.
 //!
 //! The resize's are div's aka rectangles that are "placed" by specifying the
 //! position of their sides. When hovering over these the cursor is changed
@@ -63,8 +62,7 @@ use gpui::{Action, Context, DragMoveEvent, Focusable, MouseButton, Point, Styled
 use ui::{Tooltip, prelude::*};
 
 use crate::{
-    Picker, PickerDelegate, PositionAndShape, Preview, Shape, ToggleLayout,
-    preview::{PreviewLayout, render::do_nothing},
+    Picker, PickerDelegate, PositionAndShape, Shape, ToggleLayout, preview::PreviewLayout,
 };
 
 pub struct DragPreview;
@@ -76,21 +74,7 @@ impl Render for DragPreview {
 }
 
 #[derive(Clone, Copy)]
-struct VerticalResizeDrag<S> {
-    shape_before: PositionAndShape,
-    phantom_data: PhantomData<S>,
-    mouse_pos_before: Point<Pixels>,
-}
-
-#[derive(Clone, Copy)]
-struct CornerResizeDrag<C> {
-    shape_before: PositionAndShape,
-    phantom_data: PhantomData<C>,
-    mouse_pos_before: Point<Pixels>,
-}
-
-#[derive(Clone, Copy)]
-struct HorizontalResizeDrag<S> {
+struct ResizeDrag<S> {
     shape_before: PositionAndShape,
     phantom_data: PhantomData<S>,
     mouse_pos_before: Point<Pixels>,
@@ -116,7 +100,13 @@ pub(crate) trait Side {
     }
     /// Sets the resize cursor for this side's handle.
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div>;
-    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div>;
+    /// Places and sizes the grab strip along this side's edge.
+    fn position(
+        div: gpui::Stateful<Div>,
+        preview: PreviewLayout,
+        shape: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div>;
     fn current_position_and_shape(
         shape_before: PositionAndShape,
         preview: PreviewLayout,
@@ -129,8 +119,16 @@ impl Side for Left {
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
         div.cursor_col_resize()
     }
-    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
-        div.left(-Self::handle_offset(window))
+    fn position(
+        div: gpui::Stateful<Div>,
+        _: PreviewLayout,
+        _: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div> {
+        div.top_0()
+            .bottom(Self::corner_clearance(window))
+            .w(Self::handle_width(window))
+            .left(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
         mut shape_before: PositionAndShape,
@@ -146,35 +144,97 @@ impl Side for Right {
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
         div.cursor_col_resize()
     }
-    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
-        div.right(-Self::handle_offset(window))
+    fn position(
+        div: gpui::Stateful<Div>,
+        _: PreviewLayout,
+        _: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div> {
+        div.top_0()
+            .bottom(Self::corner_clearance(window))
+            .w(Self::handle_width(window))
+            .right(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
         mut shape_before: PositionAndShape,
         preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
-        if let PreviewLayout::Right(_) = preview {
+        if let PreviewLayout::Right = preview {
             shape_before.preview += mouse_movement.x;
         }
         shape_before.right += mouse_movement.x;
         shape_before
     }
 }
+
+pub(crate) struct Middle;
+impl Side for Middle {
+    fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
+        div.cursor_col_resize()
+    }
+
+    fn position(
+        div: gpui::Stateful<Div>,
+        preview: PreviewLayout,
+        shape: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div> {
+        match preview {
+            PreviewLayout::Hidden => {
+                unreachable!("This resize handle is not drawn when the preview is hidden")
+            }
+            PreviewLayout::Below => div
+                .left(Self::corner_clearance(window))
+                .right(Self::corner_clearance(window))
+                .h(Self::handle_width(window))
+                .bottom(-Self::handle_offset(window) - shape.preview),
+            PreviewLayout::Right => div
+                .top_0()
+                .bottom(Self::corner_clearance(window))
+                .w(Self::handle_width(window))
+                .right(-Self::handle_offset(window) - shape.preview),
+        }
+    }
+
+    fn current_position_and_shape(
+        mut shape_before: PositionAndShape,
+        preview: PreviewLayout,
+        mouse_movement: Point<Pixels>,
+    ) -> PositionAndShape {
+        match preview {
+            PreviewLayout::Hidden => {
+                unreachable!("This resize handle is not drawn when the preview is hidden")
+            }
+            PreviewLayout::Below => shape_before.preview += mouse_movement.y,
+            PreviewLayout::Right => shape_before.preview += mouse_movement.x,
+        }
+        shape_before
+    }
+}
+
 pub(crate) struct Bottom;
 impl Side for Bottom {
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
         div.cursor_row_resize()
     }
-    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
-        div.bottom(-Self::handle_offset(window))
+    fn position(
+        div: gpui::Stateful<Div>,
+        _: PreviewLayout,
+        _: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div> {
+        div.left(Self::corner_clearance(window))
+            .right(Self::corner_clearance(window))
+            .h(Self::handle_width(window))
+            .bottom(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
         mut shape_before: PositionAndShape,
         preview: PreviewLayout,
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
-        if let PreviewLayout::Below(_) = preview {
+        if let PreviewLayout::Below = preview {
             shape_before.preview += mouse_movement.y;
         }
         shape_before.bottom += mouse_movement.y;
@@ -186,8 +246,15 @@ impl Side for LeftCorner {
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
         div.cursor_nesw_resize()
     }
-    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
-        div.left(-Self::handle_offset(window))
+    fn position(
+        div: gpui::Stateful<Div>,
+        _: PreviewLayout,
+        _: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div> {
+        div.w(Self::handle_width(window))
+            .h(Self::handle_width(window))
+            .left(-Self::handle_offset(window))
             .bottom(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
@@ -197,8 +264,8 @@ impl Side for LeftCorner {
     ) -> PositionAndShape {
         match preview {
             PreviewLayout::Hidden => (),
-            PreviewLayout::Below(_) => shape_before.preview += mouse_movement.y,
-            PreviewLayout::Right(_) => shape_before.preview += mouse_movement.x,
+            PreviewLayout::Below => shape_before.preview += mouse_movement.y,
+            PreviewLayout::Right => shape_before.preview += mouse_movement.x,
         }
         shape_before.left += mouse_movement.x;
         shape_before.bottom += mouse_movement.y;
@@ -210,8 +277,15 @@ impl Side for RightCorner {
     fn cursor(div: gpui::Stateful<Div>) -> gpui::Stateful<Div> {
         div.cursor_nwse_resize()
     }
-    fn position(div: gpui::Stateful<Div>, window: &Window) -> gpui::Stateful<Div> {
-        div.right(-Self::handle_offset(window))
+    fn position(
+        div: gpui::Stateful<Div>,
+        _: PreviewLayout,
+        _: PositionAndShape,
+        window: &Window,
+    ) -> gpui::Stateful<Div> {
+        div.w(Self::handle_width(window))
+            .h(Self::handle_width(window))
+            .right(-Self::handle_offset(window))
             .bottom(-Self::handle_offset(window))
     }
     fn current_position_and_shape(
@@ -221,8 +295,8 @@ impl Side for RightCorner {
     ) -> PositionAndShape {
         match preview {
             PreviewLayout::Hidden => (),
-            PreviewLayout::Below(_) => shape_before.preview += mouse_movement.y,
-            PreviewLayout::Right(_) => shape_before.preview += mouse_movement.x,
+            PreviewLayout::Below => shape_before.preview += mouse_movement.y,
+            PreviewLayout::Right => shape_before.preview += mouse_movement.x,
         }
         shape_before.right += mouse_movement.x;
         shape_before.bottom += mouse_movement.y;
@@ -230,28 +304,8 @@ impl Side for RightCorner {
     }
 }
 
-impl<S: Side> HorizontalResizeDrag<S> {
-    fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
-        Self {
-            mouse_pos_before: window.mouse_position(),
-            shape_before: shape.picker_position_and_size(window),
-            phantom_data: PhantomData,
-        }
-    }
-}
-
-impl<S: Side> VerticalResizeDrag<S> {
-    fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
-        Self {
-            mouse_pos_before: window.mouse_position(),
-            shape_before: shape.picker_position_and_size(window),
-            phantom_data: PhantomData,
-        }
-    }
-}
-
-impl<S: Side> CornerResizeDrag<S> {
-    fn start_new(shape: Shape, preview: Option<&Preview>, window: &mut Window) -> Self {
+impl<S: Side> ResizeDrag<S> {
+    fn start_new(shape: Shape, window: &mut Window) -> Self {
         Self {
             mouse_pos_before: window.mouse_position(),
             shape_before: shape.picker_position_and_size(window),
@@ -262,112 +316,43 @@ impl<S: Side> CornerResizeDrag<S> {
 
 // TODO!(yara) make this all work for with and without preview
 impl<D: PickerDelegate> Picker<D> {
-    /// Resizes the picker model by extending it on the left or right
-    pub(crate) fn render_width_resize<S: Side + 'static>(
+    /// Resizes the picker modal by dragging the handle on the given side or corner
+    pub(crate) fn render_resize<S: Side + 'static>(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let preview = self
+            .preview
+            .as_ref()
+            .map(|p| p.layout)
+            .unwrap_or(PreviewLayout::Hidden);
         div()
             .id(S::id())
             .absolute()
-            .top_0()
-            .bottom(S::corner_clearance(window))
-            .w(S::handle_width(window))
             .map(S::cursor)
-            .map(|this| S::position(this, window))
+            .map(|this| {
+                S::position(
+                    this,
+                    preview,
+                    self.shape.picker_position_and_size(window),
+                    window,
+                )
+            })
             .block_mouse_except_scroll()
-            .on_mouse_down(MouseButton::Left, do_nothing)
+            .on_mouse_down(MouseButton::Left, do_nothing) // TODO!(yara) do we need this?
             .on_drag(
-                HorizontalResizeDrag::<S>::start_new(self.shape, self.preview.as_ref(), window),
+                ResizeDrag::<S>::start_new(self.shape, window),
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
-            .on_drag_move::<HorizontalResizeDrag<S>>(cx.listener(
-                move |this, event: &DragMoveEvent<HorizontalResizeDrag<S>>, _, cx| {
+            .on_drag_move::<ResizeDrag<S>>(cx.listener(
+                move |this, event: &DragMoveEvent<ResizeDrag<S>>, _, cx| {
                     let drag = event.drag(cx);
                     let delta = event.event.position - drag.mouse_pos_before;
                     let shape_before = drag.shape_before;
                     this.shape = Shape::Resizing(S::current_position_and_shape(
                         shape_before,
-                        this.preview
-                            .as_ref()
-                            .map(|p| p.layout)
-                            .unwrap_or(PreviewLayout::Hidden),
-                        delta,
-                    ));
-                    cx.notify();
-                },
-            ))
-    }
-
-    /// Resizes the picker model by extending it on the top or bottom
-    pub(crate) fn render_height_resize<S: Side + 'static>(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .id(S::id())
-            .absolute()
-            .left(S::corner_clearance(window))
-            .right(S::corner_clearance(window))
-            .h(S::handle_width(window))
-            .map(S::cursor)
-            .map(|this| S::position(this, window))
-            .block_mouse_except_scroll()
-            .on_mouse_down(MouseButton::Left, do_nothing)
-            .on_drag(
-                VerticalResizeDrag::<S>::start_new(self.shape, self.preview.as_ref(), window),
-                |_, _, _, cx| cx.new(|_| DragPreview),
-            )
-            .on_drag_move::<VerticalResizeDrag<S>>(cx.listener(
-                move |this, event: &DragMoveEvent<VerticalResizeDrag<S>>, _, cx| {
-                    let drag = event.drag(cx);
-                    let delta = event.event.position - drag.mouse_pos_before;
-                    let shape_before = drag.shape_before;
-                    this.shape = Shape::Resizing(S::current_position_and_shape(
-                        shape_before,
-                        this.preview
-                            .as_ref()
-                            .map(|p| p.layout)
-                            .unwrap_or(PreviewLayout::Hidden),
-                        delta,
-                    ));
-                    cx.notify();
-                },
-            ))
-    }
-
-    /// Resizes the picker model diagonally by extending it on a corner
-    pub(crate) fn render_corner_resize<S: Side + 'static>(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .id(S::id())
-            .absolute()
-            .w(S::handle_width(window))
-            .h(S::handle_width(window))
-            .map(S::cursor)
-            .map(|this| S::position(this, window))
-            .block_mouse_except_scroll()
-            .on_mouse_down(MouseButton::Left, do_nothing)
-            .on_drag(
-                CornerResizeDrag::<S>::start_new(self.shape, self.preview.as_ref(), window),
-                |_, _, _, cx| cx.new(|_| DragPreview),
-            )
-            .on_drag_move::<CornerResizeDrag<S>>(cx.listener(
-                move |this, event: &DragMoveEvent<CornerResizeDrag<S>>, _, cx| {
-                    let drag = event.drag(cx);
-                    let delta = event.event.position - drag.mouse_pos_before;
-                    let shape_before = drag.shape_before;
-                    this.shape = Shape::Resizing(S::current_position_and_shape(
-                        shape_before,
-                        this.preview
-                            .as_ref()
-                            .map(|p| p.layout)
-                            .unwrap_or(PreviewLayout::Hidden),
+                        preview,
                         delta,
                     ));
                     cx.notify();
@@ -386,8 +371,8 @@ impl<D: PickerDelegate> Picker<D> {
             let focus_handle = self.focus_handle(cx);
             let (icon, tooltip_text) = match preview.layout {
                 PreviewLayout::Hidden => (IconName::Split, "Show preview to the right"),
-                PreviewLayout::Right(_) => (IconName::ListTree, "Show preview below"),
-                PreviewLayout::Below(_) => (IconName::ListCollapse, "Hide Preview"),
+                PreviewLayout::Right => (IconName::ListTree, "Show preview below"),
+                PreviewLayout::Below => (IconName::ListCollapse, "Hide Preview"),
             };
             IconButton::new("layout-cycle", icon)
                 .size(ButtonSize::Compact)
@@ -399,4 +384,9 @@ impl<D: PickerDelegate> Picker<D> {
                 })
         }))
     }
+}
+
+fn do_nothing(_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
+    window.prevent_default();
+    cx.stop_propagation();
 }

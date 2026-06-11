@@ -24,13 +24,11 @@ pub struct Preview {
     pub(crate) layout: PreviewLayout,
 }
 
-use crate::{ViewPortHeight, ViewPortWidth};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreviewLayout {
     Hidden,
-    Below(ViewPortHeight), // TODO!(yara): height/width: remove, no longer used
-    Right(ViewPortWidth),
+    Below,
+    Right,
 }
 
 impl Default for PreviewLayout {
@@ -54,11 +52,11 @@ impl Preview {
         });
     }
 
-    pub fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    pub fn render(&self, cx: &mut App) -> impl IntoElement {
         // self.content since this will become a match to support non editor previews
         let layout = self.layout;
         self.content.update(cx, |content, cx| {
-            content.render(layout, window, cx).into_any_element()
+            content.render(layout, cx).into_any_element()
         })
     }
 }

@@ -207,35 +207,34 @@ impl Shape {
         }
     }
 
-    fn preview_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
-        let mut picker = self.picker_position_and_size(window);
-
-        match preview.layout {
-            PreviewLayout::Below(s) => {
-                //  picker.
-                // res.preview_size = res.bottom + s.as_pixels(window)
-                todo!()
-            }
-            PreviewLayout::Right(s) => {
-                todo!()
-            }
-            PreviewLayout::Hidden => todo!(),
-        }
-    }
-
     fn results_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
-        let mut picker = self.picker_position_and_size(window);
+        let mut pos = self.picker_position_and_size(window);
 
         match preview.layout {
-            PreviewLayout::Below(height) => {
-                picker.bottom -= height.as_pixels(window);
+            PreviewLayout::Below => {
+                pos.bottom -= pos.preview;
             }
-            PreviewLayout::Right(width) => {
-                picker.right -= width.as_pixels(window);
+            PreviewLayout::Right => {
+                pos.right -= pos.preview;
             }
             PreviewLayout::Hidden => (),
         }
-        picker
+        pos
+    }
+
+    fn preview_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
+        let mut pos = self.picker_position_and_size(window);
+
+        match preview.layout {
+            PreviewLayout::Below => {
+                pos.top = pos.bottom - pos.preview;
+            }
+            PreviewLayout::Right => {
+                pos.left = pos.right - pos.preview;
+            }
+            PreviewLayout::Hidden => (),
+        }
+        pos
     }
 
     /// The top-left corner of the picker in window coordinates.
@@ -261,6 +260,21 @@ impl Shape {
 
     fn apply_height(&self, div: Div, window: &Window) -> Div {
         div.h(self.height(window))
+    }
+
+    fn results_height(&self, preview: &Preview, window: &mut Window) -> Pixels {
+        let pos = self.results_position_and_size(preview, window);
+        pos.bottom - pos.top
+    }
+
+    fn preview_width(&self, preview: &Preview, window: &mut Window) -> Pixels {
+        let pos = self.preview_position_and_size(preview, window);
+        pos.right - pos.left
+    }
+
+    fn preview_height(&self, preview: &Preview, window: &mut Window) -> Pixels {
+        let pos = self.preview_position_and_size(preview, window);
+        pos.bottom - pos.top
     }
 
     /// Resizing done, re-center the picker and use relative sizes instead of
@@ -908,12 +922,12 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         preview.layout = match preview.layout {
-            PreviewLayout::Hidden => PreviewLayout::Right(ViewPortWidth(0.3)),
-            PreviewLayout::Right(_) => PreviewLayout::Below(ViewPortHeight(0.3)),
-            PreviewLayout::Below(_) => PreviewLayout::Hidden,
+            PreviewLayout::Hidden => PreviewLayout::Right,
+            PreviewLayout::Right => PreviewLayout::Below,
+            PreviewLayout::Below => PreviewLayout::Hidden,
         };
         self.delegate
-            .preview_layout_changed(matches!(preview.layout, PreviewLayout::Right(_)));
+            .preview_layout_changed(matches!(preview.layout, PreviewLayout::Right));
         cx.notify();
     }
 
