@@ -16,7 +16,7 @@ use feature_flags::{
 };
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
+use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled_for_project};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, COMPACTION_PROMPT, SUMMARIZE_THREAD_DETAILED_PROMPT,
@@ -1314,9 +1314,10 @@ impl Thread {
         &self.id
     }
 
-    // Only used by Seatbelt-style sandboxes; Linux relies on bwrap's tmpfs
-    // `/tmp` and never needs a per-thread temp directory.
-    #[cfg(not(target_os = "linux"))]
+    // Only used by Seatbelt-style sandboxes (macOS); Linux relies on bwrap's
+    // tmpfs `/tmp` and Windows on the WSL bwrap tmpfs, so neither needs a
+    // per-thread temp directory.
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn sandboxed_terminal_temp_dir(
         &mut self,
         cx: &mut Context<Self>,
@@ -3367,7 +3368,7 @@ impl Thread {
         // Terminal variants are configured by users under the canonical
         // `terminal` name. Expose the one matching the current sandbox state
         // to the model under that name.
-        let use_sandboxed_terminal = sandboxing_enabled(cx);
+        let use_sandboxed_terminal = sandboxing_enabled_for_project(self.project.read(cx), cx);
 
         let mut tools = self
             .tools
@@ -3548,8 +3549,12 @@ impl Thread {
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
-            sandboxing: crate::sandboxing::sandboxing_enabled(cx),
+            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
+                self.project.read(cx),
+                cx,
+            ),
             is_linux: cfg!(target_os = "linux"),
+            is_windows: cfg!(target_os = "windows"),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -4847,6 +4852,21 @@ impl ToolCallEventStream {
         self.sandbox_grants
             .borrow()
             .effective_with_persistent(request, persistent)
+    }
+
+    /// Persistently turn terminal sandboxing off entirely (the `disabled`
+    /// sandbox setting). Deliberately distinct from the `allow_unsandboxed`
+    /// grant, which only auto-approves commands that explicitly request
+    /// `unsandboxed: true` while keeping the sandbox on for everything else.
+    pub(crate) fn turn_off_sandboxing_always(&self, cx: &AsyncApp) {
+        let Some(fs) = self.fs.clone() else {
+            return;
+        };
+        cx.update(|cx| {
+            update_settings_file(fs, cx, |settings, _| {
+                settings.agent.get_or_insert_default().disable_sandbox();
+            });
+        });
     }
 
     /// Prompts the user to choose between an explicit set of actions and

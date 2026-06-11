@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use crate::sandboxing::sandboxing_enabled;
+use crate::sandboxing::sandboxing_enabled_for_project;
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -334,7 +334,8 @@ async fn run_terminal_tool(
             crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
         let authorize =
             event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-        let sandboxing = input.sandbox.is_some() && sandboxing_enabled(cx);
+        let sandboxing =
+            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
         Result::<_, String>::Ok((working_dir, authorize, sandboxing))
     })?;
 
@@ -443,17 +444,48 @@ async fn run_terminal_tool(
         Some(COMMAND_OUTPUT_LIMIT)
     };
 
-    let terminal = environment
+    let terminal = match environment
         .create_terminal(
             input.command.clone(),
-            extra_env,
-            working_dir,
+            extra_env.clone(),
+            working_dir.clone(),
             output_byte_limit,
-            sandbox_wrap,
+            sandbox_wrap.clone(),
             cx,
         )
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(terminal) => terminal,
+        Err(error)
+            if cfg!(target_os = "windows")
+                && sandbox_wrap.is_some()
+                && is_windows_wsl_sandbox_error(&format!("{error:#}")) =>
+        {
+            let error = format!("{error:#}");
+            if !prompt_to_turn_off_windows_sandboxing(&event_stream, &error, cx).await? {
+                return Ok(
+                    "Command cancelled: Windows sandboxing is unavailable, and the user chose to keep sandboxing enabled."
+                        .to_string(),
+                );
+            }
+            event_stream.turn_off_sandboxing_always(cx);
+            environment
+                .create_terminal(
+                    input.command.clone(),
+                    extra_env,
+                    working_dir,
+                    output_byte_limit,
+                    None,
+                    cx,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        // `{error:#}` keeps the context chain: bad-request errors from the
+        // WSL sandbox machinery put the actionable detail (which path, why)
+        // in the inner error.
+        Err(error) => return Err(format!("{error:#}")),
+    };
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
     event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
@@ -527,22 +559,36 @@ fn resolve_write_paths(
     if raw_paths.is_empty() {
         return Vec::new();
     }
+    let project = project.read(cx);
+    let windows_paths = project.path_style(cx).is_windows();
     let base = working_dir.map(Path::to_path_buf).or_else(|| {
         project
-            .read(cx)
             .worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
     });
-    join_write_paths(raw_paths, base.as_deref())
+    join_write_paths(raw_paths, base.as_deref(), windows_paths)
 }
 
 /// Pure path-joining step of [`resolve_write_paths`], split out so it can be
 /// unit-tested without a `Project`/`App`.
-fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
+fn join_write_paths(
+    raw_paths: &[String],
+    base: Option<&Path>,
+    windows_paths: bool,
+) -> Vec<PathBuf> {
     raw_paths
         .iter()
         .filter_map(|raw| {
+            if windows_paths {
+                if let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
+                    return Some(path);
+                }
+                if let Some(path) = wsl_absolute_path(raw) {
+                    return Some(path);
+                }
+            }
+
             let path = Path::new(raw);
             if path.is_absolute() {
                 Some(path.to_path_buf())
@@ -551,6 +597,74 @@ fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
             }
         })
         .collect()
+}
+
+fn wsl_drive_mount_path_to_windows_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    let remainder = raw.strip_prefix("/mnt/")?;
+    let (drive, rest) = remainder
+        .split_once('/')
+        .map_or((remainder, ""), |(drive, rest)| (drive, rest));
+    let mut drive_chars = drive.chars();
+    let drive = drive_chars.next()?.to_ascii_uppercase();
+    if !drive.is_ascii_alphabetic() || drive_chars.next().is_some() {
+        return None;
+    }
+
+    let mut windows_path = format!("{drive}:\\");
+    if !rest.is_empty() {
+        windows_path.push_str(&rest.replace('/', "\\"));
+    }
+    Some(PathBuf::from(windows_path))
+}
+
+fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    if raw.starts_with('/') && !raw.starts_with("//") {
+        Some(PathBuf::from(raw))
+    } else {
+        None
+    }
+}
+
+/// Whether a terminal-creation error means the Windows WSL sandboxing
+/// *environment* is unavailable (WSL missing, no usable `bwrap`, ...), in
+/// which case the user is offered the option of turning sandboxing off.
+///
+/// Bad-request errors from the same machinery — a nonexistent write path,
+/// paths mixing WSL distros — deliberately don't carry this marker; those
+/// are returned to the model, which can fix the request and retry, rather
+/// than prompting for a globally persistent remedy.
+fn is_windows_wsl_sandbox_error(error: &str) -> bool {
+    error.contains(sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX)
+}
+
+async fn prompt_to_turn_off_windows_sandboxing(
+    event_stream: &ToolCallEventStream,
+    error: &str,
+    cx: &mut AsyncApp,
+) -> Result<bool, String> {
+    let title = "Windows sandboxing is unavailable".to_string();
+    let message = format!(
+        "Zed couldn't start this terminal command in the Windows sandbox.\n\n{error}\n\nYou can cancel the command and keep sandboxing enabled, or turn off terminal sandboxing and run this command normally."
+    );
+    let options = vec![
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new("turn_off_sandboxing"),
+            "Turn Off Sandboxing",
+            acp::PermissionOptionKind::AllowAlways,
+        ),
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new("cancel"),
+            "Cancel",
+            acp::PermissionOptionKind::RejectOnce,
+        ),
+    ];
+
+    let selected =
+        cx.update(|cx| event_stream.prompt_for_decision(Some(title), Some(message), options, cx));
+    let selected = selected.await.map_err(|error| error.to_string())?;
+    Ok(selected.0.as_ref() == "turn_off_sandboxing")
 }
 
 /// User-facing title for the sandbox-escalation approval prompt. Only called
@@ -629,6 +743,24 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
     }
 }
 
+/// Explanation appended to the model-facing result when a sandboxed command
+/// fails because it tried to use WSL's Windows interop (see
+/// [`wsl_interop_blocked`]).
+const WSL_INTEROP_BLOCKED_NOTE: &str = "This command tried to launch a Windows \
+executable, which the sandbox blocks: WSL Windows interop is disabled so \
+sandboxed commands can't escape to the Windows host. The noisy `WSL ... ERROR` \
+lines below are from that blocked attempt, not a bug in the command. If you \
+genuinely need to run a Windows program, re-run with `unsandboxed: true`.";
+
+/// Whether terminal output contains the kernel-style diagnostics WSL prints
+/// when a Windows executable is launched inside our pid-namespaced sandbox
+/// (interop init fails to parse `/proc/1/stat`, which is now `bwrap`). These
+/// markers don't appear for ordinary Linux commands.
+#[cfg(target_os = "windows")]
+fn wsl_interop_blocked(content: &str) -> bool {
+    content.contains("UtilGetPpid") || content.contains("Failed to parse: /proc/1/stat")
+}
+
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
@@ -639,6 +771,15 @@ fn process_content(
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
     let is_empty = content.is_empty();
+
+    // On Windows, recognize the kernel-style diagnostics WSL prints when a
+    // command tries to launch a Windows executable inside the sandbox (where
+    // interop is deliberately disabled). They're noise the model can't act on,
+    // so we explain what actually happened.
+    #[cfg(target_os = "windows")]
+    let interop_blocked = wsl_interop_blocked(&content);
+    #[cfg(not(target_os = "windows"))]
+    let interop_blocked = false;
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
@@ -681,6 +822,11 @@ fn process_content(
                 } else {
                     content
                 }
+            }
+            Some(exit_code) if interop_blocked => {
+                format!(
+                    "Command \"{command}\" failed with exit code {exit_code}. {WSL_INTEROP_BLOCKED_NOTE}\n\n{content}"
+                )
             }
             Some(exit_code) => {
                 if is_empty {
@@ -2326,6 +2472,7 @@ mod tests {
                 "file.txt".to_string(),
             ],
             Some(base.as_path()),
+            cfg!(windows),
         );
         assert_eq!(
             joined,
@@ -2346,8 +2493,42 @@ mod tests {
         } else {
             "/abs/keep"
         };
-        let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
+        let joined = join_write_paths(
+            &[abs.to_string(), "relative/drop".to_string()],
+            None,
+            cfg!(windows),
+        );
         assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_join_write_paths_converts_wsl_drive_mounts_on_windows() {
+        let joined = join_write_paths(
+            &["/mnt/c/example/write-root".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("C:\\example\\write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_only_converts_wsl_drive_mounts_for_windows_paths() {
+        let joined = join_write_paths(
+            &["/mnt/c/example/write-root".to_string()],
+            Some(Path::new("/project")),
+            false,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/mnt/c/example/write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_preserves_wsl_absolute_paths_on_windows() {
+        let joined = join_write_paths(
+            &["/home/example".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/home/example")]);
     }
 
     #[test]
@@ -2393,6 +2574,25 @@ mod tests {
         let title =
             sandbox_approval_title(&sandbox_request(false, false, &["/a", "/b", "/c", "/d"]));
         assert_eq!(title, "Allow write access to 4 paths?");
+    }
+
+    #[test]
+    fn test_wsl_sandbox_error_detection_only_matches_environment_errors() {
+        // Environment-unavailable errors carry the shared marker prefix and
+        // trigger the "turn off sandboxing" prompt...
+        assert!(is_windows_wsl_sandbox_error(&format!(
+            "{}: Bubblewrap (`bwrap`) is not installed in the default WSL distro",
+            sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX
+        )));
+        // ...while bad-request errors (model-fixable) must not, even though
+        // they mention WSL sandboxing.
+        assert!(!is_windows_wsl_sandbox_error(
+            "failed to map writable path `C:\\missing` into WSL: Windows sandboxing via WSL \
+             can only grant existing files or directories: C:\\missing"
+        ));
+        assert!(!is_windows_wsl_sandbox_error(
+            "cannot sandbox a command whose paths mix WSL distros `Ubuntu` and `Debian`"
+        ));
     }
 
     #[test]

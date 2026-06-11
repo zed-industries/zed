@@ -69,9 +69,9 @@ pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 ///   [`sandbox::linux_bubblewrap`]); no handle is needed. When no usable
 ///   `bwrap` is available the command runs unsandboxed (with a logged
 ///   warning) rather than failing.
-/// * Windows and all other platforms pass the command through unchanged —
-///   we have no sandbox integration there, so the command runs with the
-///   agent's ambient permissions.
+/// * Other platforms pass the command through unchanged — we have no sandbox
+///   integration there, so the command runs with the agent's ambient permissions.
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -111,7 +111,8 @@ pub(crate) fn apply_sandbox_wrap(
         // When it can't (no usable bwrap, or unprivileged user namespaces are
         // unavailable), run the command unsandboxed rather than failing.
         // TODO: surface this to the user via the UI instead of only logging.
-        let Some(bwrap) = linux_bubblewrap::locate_bwrap().filter(|_| linux_bubblewrap::is_available())
+        let Some(bwrap) =
+            linux_bubblewrap::locate_bwrap().filter(|_| linux_bubblewrap::is_available())
         else {
             log::warn!(
                 "no usable bwrap sandbox on this system; running terminal command \
@@ -119,9 +120,9 @@ pub(crate) fn apply_sandbox_wrap(
             );
             return Ok((program, args, None));
         };
-        let bwrap = bwrap.to_str().with_context(|| {
-            format!("bwrap path contains invalid UTF-8: {}", bwrap.display())
-        })?;
+        let bwrap = bwrap
+            .to_str()
+            .with_context(|| format!("bwrap path contains invalid UTF-8: {}", bwrap.display()))?;
 
         let writable: Vec<_> = sandbox_wrap
             .writable_paths
@@ -160,18 +161,59 @@ pub(crate) fn apply_sandbox_wrap(
         // there's no on-disk resource to keep alive.
         Ok((new_program, new_args, None))
     }
-    #[cfg(target_os = "windows")]
-    {
-        // No sandbox integration on Windows; run with ambient permissions.
-        let _ = (sandbox_wrap, cwd);
-        Ok((program, args, None))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         // No sandbox integration available; run with ambient permissions.
         let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
+}
+
+/// Upper bound on preparing a WSL-sandboxed command (the probe and path
+/// resolution `wsl.exe` round-trips in [`apply_windows_wsl_sandbox_wrap`]).
+/// Deliberately generous: the first invocation after the WSL utility VM has
+/// shut down (or after boot) has to start the VM and the distro, which
+/// routinely takes 10-30 seconds on slow disks or under antivirus scanning.
+/// The point is not latency policing but turning a wedged `wsl.exe` (a real
+/// failure mode when the WSL service is unhealthy) into an actionable error
+/// instead of a terminal command that never starts.
+#[cfg(target_os = "windows")]
+pub(crate) const WSL_SANDBOX_WRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wrap a terminal command so it runs under Bubblewrap inside WSL (see
+/// [`sandbox::windows_wsl`]).
+///
+/// Async because it performs `wsl.exe` round-trips and UNC-path stats that
+/// can take seconds when the WSL VM is cold; callers must run it on a
+/// background executor so the UI thread is never blocked, and should bound
+/// it with [`WSL_SANDBOX_WRAP_TIMEOUT`]. Parameters are owned so the future
+/// is `Send + 'static`. Dropping the future (timeout or caller cancellation)
+/// kills any in-flight `wsl.exe` child rather than leaking it.
+#[cfg(target_os = "windows")]
+pub(crate) async fn apply_windows_wsl_sandbox_wrap(
+    command: String,
+    args: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
+    sandbox_wrap: SandboxWrap,
+    env: collections::HashMap<String, String>,
+) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
+    let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
+        .non_interactive()
+        .redirect_stdin_to_dev_null()
+        .build(Some(command), &args);
+    let writable: Vec<std::path::PathBuf> = sandbox_wrap
+        .writable_paths
+        .into_iter()
+        .chain(sandbox_wrap.extra_write_paths)
+        .collect();
+    let permissions = sandbox::SandboxPermissions {
+        allow_network: sandbox_wrap.allow_network,
+        allow_fs_write: sandbox_wrap.allow_fs_write,
+    };
+    let (program, args) =
+        sandbox::windows_wsl::wrap_invocation(program, args, writable, permissions, cwd, env)
+            .await?;
+    Ok((program, args, None))
 }
 
 pub struct Terminal {

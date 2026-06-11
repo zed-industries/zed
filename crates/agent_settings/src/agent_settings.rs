@@ -342,7 +342,12 @@ impl Default for AgentProfileId {
 pub struct SandboxPermissions {
     pub allow_network: bool,
     pub allow_fs_write_all: bool,
+    /// Auto-approve commands that request `unsandboxed: true`. Unlike
+    /// `disabled`, the sandbox stays on for commands that don't ask.
     pub allow_unsandboxed: bool,
+    /// Turn terminal sandboxing off entirely: the sandboxed terminal tool is
+    /// not exposed and every command runs outside the sandbox.
+    pub disabled: bool,
     pub write_paths: Vec<PathBuf>,
 }
 
@@ -734,6 +739,7 @@ fn compile_sandbox_permissions(
         allow_network: content.allow_network.unwrap_or(false),
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        disabled: content.disabled.unwrap_or(false),
         write_paths,
     }
 }
@@ -948,6 +954,9 @@ mod tests {
         assert!(permissions.allow_network);
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
+        // `allow_unsandboxed` is a per-request grant; it must not imply that
+        // sandboxing is disabled.
+        assert!(!permissions.disabled);
         assert_eq!(
             permissions.write_paths,
             vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]

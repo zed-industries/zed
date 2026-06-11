@@ -3049,19 +3049,60 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) =
-                    ShellBuilder::new(&Shell::Program(shell), is_windows)
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, cwd.as_deref(), sandbox_wrap)?;
+                #[cfg(target_os = "windows")]
+                let (task_command, task_args, sandbox_config, spawn_cwd) =
+                    if let Some(sandbox_wrap) = sandbox_wrap {
+                        // Run the wrap on a background task: it probes WSL
+                        // (possibly booting its VM) and stats UNC paths,
+                        // either of which can take seconds and must not block
+                        // the foreground thread this task runs on. Bound it
+                        // with a timeout so a wedged `wsl.exe` can't stall
+                        // this command forever; on timeout, dropping the task
+                        // cancels the wrap future, which kills any in-flight
+                        // `wsl.exe` child (see `windows_wsl::wrap_invocation`).
+                        let wrap = cx.background_spawn(apply_windows_wsl_sandbox_wrap(
+                            command.clone(),
+                            args.clone(),
+                            cwd.clone(),
+                            sandbox_wrap,
+                            env.clone(),
+                        ));
+                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
+                        let (task_command, task_args, sandbox_config) = futures::select_biased! {
+                            result = wrap.fuse() => result?,
+                            _ = timeout.fuse() => anyhow::bail!(
+                                "{}: WSL did not respond within {} seconds while preparing the \
+                                 sandboxed command",
+                                sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX,
+                                WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
+                            ),
+                        };
+                        (task_command, task_args, sandbox_config, None)
+                    } else {
+                        let (task_command, task_args) =
+                            ShellBuilder::new(&Shell::Program(shell), is_windows)
+                                .redirect_stdin_to_dev_null()
+                                .build(Some(command.clone()), &args);
+                        (task_command, task_args, None, cwd.clone())
+                    };
+
+                #[cfg(not(target_os = "windows"))]
+                let (task_command, task_args, sandbox_config, spawn_cwd) = {
+                    let (task_command, task_args) =
+                        ShellBuilder::new(&Shell::Program(shell), is_windows)
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
+                    let (task_command, task_args, sandbox_config) =
+                        apply_sandbox_wrap(task_command, task_args, cwd.as_deref(), sandbox_wrap)?;
+                    (task_command, task_args, sandbox_config, cwd.clone())
+                };
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: cwd.clone(),
+                                cwd: spawn_cwd,
                                 env,
                                 ..Default::default()
                             },

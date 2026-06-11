@@ -55,6 +55,8 @@ pub struct SystemPromptTemplate<'a> {
     /// section describes the right one rather than advertising a `$TMPDIR`
     /// that doesn't behave as stated.
     pub is_linux: bool,
+    /// Whether sandboxed terminal commands run through WSL on Windows.
+    pub is_windows: bool,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -101,6 +103,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -135,6 +138,7 @@ mod tests {
             user_agents_md: Some("always be concise".into()),
             sandboxing: false,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -163,6 +167,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -195,6 +200,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: true,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -227,6 +233,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: true,
             is_linux: true,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -249,6 +256,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: true,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -268,6 +276,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -285,6 +294,7 @@ mod tests {
             user_agents_md: None,
             sandboxing: false,
             is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
