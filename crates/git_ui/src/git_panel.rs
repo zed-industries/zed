@@ -2822,6 +2822,7 @@ impl GitPanel {
                     thinking_allowed: false,
                     thinking_effort: None,
                     speed: None,
+                    compact_at_tokens: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);

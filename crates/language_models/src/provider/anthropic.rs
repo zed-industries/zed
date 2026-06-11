@@ -350,6 +350,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_adaptive_thinking,
         supports_images: true,
         supports_speed: false,
+        supports_compaction: false,
         supported_effort_levels: if supports_adaptive_thinking {
             vec![
                 anthropic::Effort::Low,
@@ -469,6 +470,10 @@ impl LanguageModel for AnthropicModel {
         } else {
             None
         }
+    }
+
+    fn supports_server_side_compaction(&self) -> bool {
+        self.model.supports_compaction
     }
 
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
