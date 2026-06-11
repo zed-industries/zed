@@ -75,6 +75,23 @@ pub fn current_headless_renderer() -> Option<Box<dyn gpui::PlatformHeadlessRende
     }
 }
 
+/// Returns the current platform's real text system, if available.
+///
+/// Used by benchmarks that want production text shaping and glyph
+/// rasterization instead of the deterministic noop text system.
+#[cfg(feature = "test-support")]
+pub fn current_platform_text_system() -> Option<std::sync::Arc<dyn gpui::PlatformTextSystem>> {
+    #[cfg(all(target_os = "macos", feature = "font-kit"))]
+    {
+        Some(std::sync::Arc::new(gpui_macos::MacTextSystem::new()))
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "font-kit")))]
+    {
+        None
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;

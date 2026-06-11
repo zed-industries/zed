@@ -11,14 +11,14 @@ use std::{cell::RefCell, future::Future, rc::Rc, time::Duration};
 
 use acp_thread::{
     AgentThreadEntry, AssistantMessageChunk, SUBAGENT_SESSION_INFO_META_KEY, StubAgentConnection,
-    SubagentSessionInfo,
+    SubagentSessionInfo, TerminalProviderEvent,
 };
 use agent_client_protocol::schema as acp;
 use agent_ui::AgentPanel;
 use agent_ui::test_support::{StubAgentServer, init_test_app};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, BenchAppContext, FollowMode, UpdateGlobal as _, px};
+use gpui::{AppContext as _, BenchAppContext, FollowMode, UpdateGlobal as _, px, size};
 use language::{LanguageRegistry, rust_lang};
 use node_runtime::NodeRuntime;
 use project::Project;
@@ -26,6 +26,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::sync::Arc;
 use util::path;
+use util::paths::PathStyle;
 use workspace::MultiWorkspace;
 
 /// Conversation turns to fabricate. Each turn adds a user message, a thinking
@@ -45,6 +46,10 @@ const FRAMES_PER_CYCLE: usize = 30;
 const HUGE_TOOL_OUTPUT_LINES: usize = 8000;
 /// Every Nth turn gets a giant tool output entry.
 const HUGE_OUTPUT_EVERY: usize = 4;
+/// Every Nth turn embeds a real (display-only) terminal view in a tool call.
+const TERMINAL_VIEW_EVERY: usize = 5;
+/// Lines of ANSI-colored output initially written into each embedded terminal.
+const TERMINAL_VIEW_LINES: usize = 600;
 
 /// Drives a `'static` future to completion by spawning it on the benchmark's
 /// foreground executor and pumping the dispatcher until it resolves.
@@ -207,6 +212,47 @@ fn text_content(text: String) -> acp::ToolCallContent {
     )))
 }
 
+/// ANSI-colored compiler-style output, making the embedded terminal's
+/// alacritty grid parse escape sequences like real `cargo build` output.
+fn ansi_terminal_output(seed: usize, lines: usize) -> Vec<u8> {
+    let mut output = Vec::new();
+    for line in 0..lines {
+        let color = 31 + (line + seed) % 6;
+        output.extend_from_slice(
+            format!(
+                "\x1b[1;32m   Compiling\x1b[0m crate_{seed} v0.{line}.0 \
+                 (\x1b[{color}m/project/src/file_{line}.rs\x1b[0m): \
+                 \x1b[1mwarning\x1b[0m: unused variable `value_{line}`\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    output
+}
+
+fn plan_update(completed_through: usize) -> acp::SessionUpdate {
+    let entries = (0..24)
+        .map(|item| {
+            let status = if item < completed_through {
+                acp::PlanEntryStatus::Completed
+            } else if item == completed_through {
+                acp::PlanEntryStatus::InProgress
+            } else {
+                acp::PlanEntryStatus::Pending
+            };
+            acp::PlanEntry::new(
+                format!(
+                    "**Step {item}**: refactor `module_{item}::render` to cache \
+                     highlighted chunks across frames (see `crates/editor`)"
+                ),
+                acp::PlanEntryPriority::Medium,
+                status,
+            )
+        })
+        .collect();
+    acp::SessionUpdate::Plan(acp::Plan::new(entries))
+}
+
 /// Builds the session updates for one conversation turn.
 fn turn_updates(turn: usize) -> Vec<acp::SessionUpdate> {
     let mut updates = vec![
@@ -271,7 +317,7 @@ fn turn_updates(turn: usize) -> Vec<acp::SessionUpdate> {
     updates
 }
 
-#[gpui::bench]
+#[gpui::bench(text_system = platform)]
 fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     // === Global init ===
     cx.update(|cx| {
@@ -342,7 +388,9 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     block_on(cx, scan);
 
     // === Window with a workspace root and a visible agent panel ===
-    let mut window = cx.add_empty_window();
+    // Sized like the logical resolution of a 16" MacBook Pro (the test window
+    // reports a 2.0 scale factor, so the device size is 3456x2234).
+    let mut window = cx.add_window_with_size(size(px(1728.0), px(1117.0)));
     let multi_workspace = window.update(|window, cx| {
         window.replace_root(cx, |window, cx| {
             MultiWorkspace::test_new(project.clone(), window, cx)
@@ -357,6 +405,30 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
             panel
         })
     });
+    cx.run_until_idle();
+
+    // Open real editors in the workspace center, like a user working while
+    // the agent runs: the window renders the full app (tabs, gutters, syntax
+    // highlighted buffers) every frame, not just the panel, and buffer/project
+    // events flow through the same main thread.
+    let worktree_id = cx.read(|cx| worktree.read(cx).id());
+    for file in ["src/file_1.rs", "src/file_2.rs"] {
+        let open_task = window.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_path(
+                    project::ProjectPath {
+                        worktree_id,
+                        path: util::rel_path::rel_path(file).into(),
+                    },
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+        });
+        block_on(cx, open_task).expect("failed to open editor in workspace");
+    }
     cx.run_until_idle();
 
     // === Open a thread backed by the stub connection ===
@@ -384,9 +456,68 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     // One `cx.update` per session update: entry view syncing assumes each
     // `NewEntry` event is observed before the next entry lands, which holds in
     // production because updates arrive as individual messages.
+    let mut terminal_ids = Vec::new();
     for turn in 0..TURNS {
         for update in turn_updates(turn) {
             cx.update(|cx| connection.send_update(session_id.clone(), update, cx));
+        }
+
+        // A live plan that mutates as turns complete; its in-progress entry
+        // renders with a rotating animation like production.
+        cx.update(|cx| connection.send_update(session_id.clone(), plan_update(turn % 24), cx));
+
+        if turn % TERMINAL_VIEW_EVERY == 0 {
+            // Embed a real terminal view (display-only: a full alacritty grid
+            // without a PTY) and fill it with ANSI-colored output.
+            let terminal_id = acp::TerminalId::new(format!("term-view-{turn}"));
+            terminal_ids.push(terminal_id.clone());
+            cx.update(|cx| {
+                let lower = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        terminal::terminal_settings::CursorShape::default(),
+                        terminal::terminal_settings::AlternateScroll::On,
+                        None,
+                        0,
+                        cx.background_executor(),
+                        PathStyle::local(),
+                    )
+                    .subscribe(cx)
+                });
+                thread.update(cx, |thread, cx| {
+                    thread.on_terminal_provider_event(
+                        TerminalProviderEvent::Created {
+                            terminal_id: terminal_id.clone(),
+                            label: format!("cargo build --turn {turn}"),
+                            cwd: None,
+                            output_byte_limit: None,
+                            terminal: lower,
+                        },
+                        cx,
+                    );
+                    thread.on_terminal_provider_event(
+                        TerminalProviderEvent::Output {
+                            terminal_id: terminal_id.clone(),
+                            data: ansi_terminal_output(turn, TERMINAL_VIEW_LINES),
+                        },
+                        cx,
+                    );
+                });
+                connection.send_update(
+                    session_id.clone(),
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(
+                            format!("term-view-call-{turn}"),
+                            "Run `cargo build` in terminal",
+                        )
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::InProgress)
+                        .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                            terminal_id.clone(),
+                        ))]),
+                    ),
+                    cx,
+                );
+            });
         }
 
         if turn % SUBAGENT_EVERY == 0 {
@@ -431,6 +562,25 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
                 };
                 cx.update(|cx| connection.send_update(subagent_id.clone(), update, cx));
             }
+            // Sub-agents edit files too.
+            cx.update(|cx| {
+                connection.send_update(
+                    subagent_id.clone(),
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(
+                            format!("subagent-edit-{turn}"),
+                            format!("Edit `src/file_{turn}.rs`"),
+                        )
+                        .kind(acp::ToolKind::Edit)
+                        .status(acp::ToolCallStatus::Completed)
+                        .content(vec![acp::ToolCallContent::Diff(
+                            acp::Diff::new(file_path(turn), churned_file_text(turn, 11))
+                                .old_text(old_file_text(turn)),
+                        )]),
+                    ),
+                    cx,
+                );
+            });
         }
 
         // Drain entry-view syncing and diff buffer loads as we go, like
@@ -489,7 +639,9 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
         thread_view.update(cx, |view, cx| {
             for (tool_call_id, entry_ix, thought_chunks) in entries {
                 if let Some(id) = tool_call_id {
-                    view.expanded_tool_calls.insert(id);
+                    view.expanded_tool_calls.insert(id.clone());
+                    // Raw inputs render as a JSON markdown block when expanded.
+                    view.expanded_tool_call_raw_inputs.insert(id);
                 }
                 for chunk_ix in 0..thought_chunks {
                     view.expanded_thinking_blocks.insert((entry_ix, chunk_ix));
@@ -548,6 +700,8 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     //      tree-sitter parse, background re-diff, brand-new editor), and
     //   4. flick-scrolls through the surrounding entries while smaller tool
     //      call updates keep arriving.
+    // In parallel, every frame streams ANSI output into one of the embedded
+    //   terminals, and each cycle advances the live plan.
     // Content alternates rather than accumulating so the workload stays in a
     // steady state across Criterion samples.
     let huge_entries: Vec<(usize, String)> = cx.read(|cx| {
@@ -580,6 +734,7 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
         list_state.scroll_to_end();
     });
 
+    let thread = thread.clone();
     let mut frame = 0usize;
     let mut direction = -1.0f32;
     cx.bench_iter(move |cx| {
@@ -594,6 +749,23 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
             .expect("huge tool call ids are terminal-N");
 
         window.update(|_, cx| {
+            // Terminal output streams continuously, like `cargo build`
+            // running in an embedded terminal card.
+            let streaming_terminal = &terminal_ids[cycle % terminal_ids.len()];
+            thread.update(cx, |thread, cx| {
+                thread.on_terminal_provider_event(
+                    TerminalProviderEvent::Output {
+                        terminal_id: streaming_terminal.clone(),
+                        data: ansi_terminal_output(frame, 6),
+                    },
+                    cx,
+                );
+            });
+            if cycle_frame == 3 {
+                // The plan advances as the agent works.
+                connection.send_update(session_id.clone(), plan_update(cycle % 24), cx);
+            }
+
             if cycle_frame == 2 {
                 // Replace the adjacent edit tool call's diff, alternating its
                 // contents so `needs_update` is always true. This is the

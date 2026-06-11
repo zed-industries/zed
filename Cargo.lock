@@ -2154,6 +2154,7 @@ dependencies = [
  "remote_connection",
  "serde_json",
  "settings",
+ "terminal",
  "text",
  "theme",
  "theme_settings",

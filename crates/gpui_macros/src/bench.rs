@@ -4,6 +4,7 @@ use syn::{ItemFn, parse::Parser, spanned::Spanned};
 
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut fps: Option<u64> = None;
+    let mut platform_text_system = false;
     if !args.is_empty() {
         let parser = syn::meta::parser(|meta| {
             if meta.path.is_ident("fps") {
@@ -14,14 +15,35 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                 }
                 fps = Some(value);
                 Ok(())
+            } else if meta.path.is_ident("text_system") {
+                let value: syn::Ident = meta.value()?.parse()?;
+                match value.to_string().as_str() {
+                    "platform" => {
+                        platform_text_system = true;
+                        Ok(())
+                    }
+                    "noop" => {
+                        platform_text_system = false;
+                        Ok(())
+                    }
+                    _ => {
+                        Err(meta.error("#[gpui::bench] `text_system` must be `platform` or `noop`"))
+                    }
+                }
             } else {
-                Err(meta.error("#[gpui::bench] only accepts `fps = N`"))
+                Err(meta.error("#[gpui::bench] only accepts `fps = N` and `text_system = ...`"))
             }
         });
         if let Err(error) = parser.parse(args) {
             return error_to_stream(error);
         }
     }
+
+    let text_system_expr = if platform_text_system {
+        quote! { gpui_platform::current_platform_text_system() }
+    } else {
+        quote! { None }
+    };
 
     // The frame budget math lives in `BenchReport` so `bench_context` is the
     // single source of truth; `default()` supplies the default frame rate.
@@ -55,9 +77,12 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                 let report = report.clone();
                 move |bencher| {
                     let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                        gpui::bench_platform(Some(Box::new(|| {
-                            gpui_platform::current_headless_renderer()
-                        }))),
+                        gpui::bench_platform(
+                            Some(Box::new(|| {
+                                gpui_platform::current_headless_renderer()
+                            })),
+                            #text_system_expr,
+                        ),
                         Some(stringify!(#outer_fn_name)),
                         bencher,
                         report.clone(),

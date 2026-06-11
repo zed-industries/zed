@@ -28,7 +28,7 @@ fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["bench"] }
-gpui_platform = { workspace = true, features = ["test-support"] }
+gpui_platform = { workspace = true, features = ["test-support", "font-kit"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
@@ -43,6 +43,7 @@ rand.workspace = true
 remote_connection = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+terminal = { workspace = true, features = ["test-support"] }
 text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 theme_settings.workspace = true

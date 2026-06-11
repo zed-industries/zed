@@ -200,15 +200,9 @@ impl BackgroundExecutor {
     /// yielding to other tasks.
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
-        let delay = self
-            .dispatcher
-            .as_test()
-            .map(|dispatcher| dispatcher.simulate_random_delay());
-        async move {
-            match delay {
-                Some(delay) => delay.await,
-                None => YieldOnce::default().await,
-            }
+        match self.dispatcher.as_test() {
+            Some(dispatcher) => futures::future::Either::Left(dispatcher.simulate_random_delay()),
+            None => futures::future::Either::Right(YieldOnce::default()),
         }
     }
 

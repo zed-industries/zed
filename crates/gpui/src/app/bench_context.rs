@@ -26,41 +26,56 @@ use crate::{
 /// so worker and timer threads persist for the whole process instead of being
 /// recreated for every Criterion calibration pass.
 ///
-/// Text is shaped with [`NoopTextSystem`] (one glyph per character at fixed
-/// advances). This keeps results deterministic across machines and font
-/// installations while preserving the structure of downstream layout and paint
-/// work; absolute timings exclude production text shaping (roughly 10% of draw
-/// time for a full editor frame). Benchmarks that need real shaping can build
-/// a [`TestPlatform`] with a platform text system and pass it to
-/// [`BenchAppContext::new_with_platform_and_report`].
+/// When `text_system` is `None`, text is shaped with [`NoopTextSystem`] (one
+/// glyph per character at fixed advances). This keeps results deterministic
+/// across machines and font installations while preserving the structure of
+/// downstream layout and paint work; absolute timings exclude production text
+/// shaping (roughly 10% of draw time for a full editor frame). Pass the
+/// platform text system (e.g. `gpui_platform::current_platform_text_system`,
+/// or `text_system = platform` on `#[gpui::bench]`) to include real shaping
+/// and glyph rasterization. The noop and real-text platforms are cached
+/// separately per thread, sharing one dispatcher.
 ///
-/// `headless_renderer_factory` (only used on first call) supplies a renderer
-/// for benchmark windows, e.g. `gpui_platform::current_headless_renderer`.
-/// When present, scenes drawn by benchmarks are rasterized through the real
-/// sprite atlas and submitted to the GPU on present, so quad/sprite
-/// regressions show up in measurements. When `None`, presenting discards the
-/// scene. Currently only macOS provides a headless renderer (Metal), so GPU
-/// submission is excluded from benchmark measurements on other platforms.
+/// `headless_renderer_factory` (only used the first time each platform is
+/// built) supplies a renderer for benchmark windows, e.g.
+/// `gpui_platform::current_headless_renderer`. When present, scenes drawn by
+/// benchmarks are rasterized through the real sprite atlas and submitted to
+/// the GPU on present, so quad/sprite regressions show up in measurements.
+/// When `None`, presenting discards the scene. Currently only macOS provides
+/// a headless renderer (Metal), so GPU submission is excluded from benchmark
+/// measurements on other platforms.
 pub fn bench_platform(
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    text_system: Option<Arc<dyn crate::PlatformTextSystem>>,
 ) -> Rc<dyn Platform> {
     thread_local! {
-        static PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
+        static DISPATCHER: OnceCell<Arc<BenchDispatcher>> = const { OnceCell::new() };
+        static NOOP_TEXT_PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
+        static REAL_TEXT_PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
     }
-    PLATFORM.with(|cell| {
-        cell.get_or_init(|| {
-            let dispatcher = Arc::new(BenchDispatcher::new());
-            let background_executor = BackgroundExecutor::new(dispatcher.clone());
-            let foreground_executor = ForegroundExecutor::new(dispatcher);
-            TestPlatform::with_platform(
-                background_executor,
-                foreground_executor,
-                Arc::new(NoopTextSystem::new()),
-                headless_renderer_factory,
-            )
-        })
-        .clone() as Rc<dyn Platform>
-    })
+    let dispatcher = DISPATCHER.with(|cell| {
+        cell.get_or_init(|| Arc::new(BenchDispatcher::new()))
+            .clone()
+    });
+    let build = move |text_system: Arc<dyn crate::PlatformTextSystem>| {
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        TestPlatform::with_platform(
+            background_executor,
+            foreground_executor,
+            text_system,
+            headless_renderer_factory,
+        )
+    };
+    match text_system {
+        Some(text_system) => REAL_TEXT_PLATFORM
+            .with(|cell| cell.get_or_init(move || build(text_system)).clone())
+            as Rc<dyn Platform>,
+        None => NOOP_TEXT_PLATFORM.with(|cell| {
+            cell.get_or_init(move || build(Arc::new(NoopTextSystem::new())))
+                .clone()
+        }) as Rc<dyn Platform>,
+    }
 }
 
 /// Default target frame rate when a benchmark doesn't specify `fps = N`.
@@ -443,11 +458,34 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         self.replace_bencher(bencher);
     }
 
+    /// Adds a window of the given size with an empty root view, for
+    /// benchmarks that want a specific viewport (e.g. a laptop display's
+    /// logical resolution).
+    pub fn add_window_with_size(
+        &mut self,
+        size: crate::Size<crate::Pixels>,
+    ) -> BenchWindowContext<'a, 'measurement> {
+        self.add_window_with_bounds(Bounds {
+            origin: crate::Point::default(),
+            size,
+        })
+    }
+
     /// Adds a window with an empty root view for benchmark setup.
     pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
+        let bounds = {
+            let app = self.app.borrow();
+            Bounds::maximized(None, &app)
+        };
+        self.add_window_with_bounds(bounds)
+    }
+
+    fn add_window_with_bounds(
+        &mut self,
+        bounds: Bounds<crate::Pixels>,
+    ) -> BenchWindowContext<'a, 'measurement> {
         let window = {
             let mut app = self.app.borrow_mut();
-            let bounds = Bounds::maximized(None, &app);
             let window: AnyWindowHandle = app
                 .open_window(
                     WindowOptions {
