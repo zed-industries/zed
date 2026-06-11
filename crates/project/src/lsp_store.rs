@@ -4673,6 +4673,22 @@ impl LspStore {
             self.detect_language_for_buffer(&buffer, cx);
         }
 
+        // A clean reload means the buffer now matches the file on disk, so treat
+        // it like a save for the language servers. Disk-based diagnostics (e.g.
+        // rust-analyzer's `cargo check`/flycheck, which only re-runs on
+        // `textDocument/didSave`) otherwise stay stale until the next manual
+        // save when a file is edited outside the editor.
+        // https://github.com/zed-industries/zed/issues/59041
+        //
+        // Gating on `!is_dirty()` skips reload conflicts and restored unsaved
+        // buffers, which must not masquerade as a save. Read-only buffers (e.g.
+        // dependency sources opened via go-to-definition) report `is_dirty() ==
+        // false` unconditionally and still notify here, which is correct: their
+        // on-disk content changed and should be re-diagnosed.
+        if !buffer.read(cx).is_dirty() {
+            self.on_buffer_saved(buffer.clone(), cx);
+        }
+
         let buffer_id = buffer.read(cx).remote_id();
         let task = self.pull_diagnostics_for_buffer(buffer, cx);
         self.buffer_reload_tasks.insert(buffer_id, task);
