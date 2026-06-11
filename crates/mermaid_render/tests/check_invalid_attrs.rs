@@ -268,27 +268,6 @@ fn generics_not_double_escaped() {
 }
 
 #[test]
-fn backslash_n_converted_to_line_break() {
-    let theme = rgb_theme();
-    let source = r#"graph TD
-    L7["Layer 7\nHTTP, FTP"]
-    L6["Layer 6\nEncryption"]
-    L7 --> L6"#;
-    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
-    assert!(
-        !svg.contains(r"\n"),
-        "Literal \\n should not appear in SVG output"
-    );
-    // Each label should be split into two `text-outer-tspan` lines. Native
-    // SVG labels emit one outer tspan per line of text.
-    let line_count = svg.matches("text-outer-tspan").count();
-    assert!(
-        line_count >= 4,
-        "Labels should be split into one tspan line per \\n, got {line_count} lines: {svg}"
-    );
-}
-
-#[test]
 fn class_diagram_label_text_uses_accent_classes() {
     let theme = rgb_theme();
     let source = r#"classDiagram

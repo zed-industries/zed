@@ -9,14 +9,6 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let diagram_id = format!("merman-{id}");
 
-    // A literal `\n` in label text used to become a line break as a side
-    // effect of merman's foreignObject fallback, which performed this
-    // conversion when flattening HTML labels. Labels now render as native SVG
-    // text (see the `htmlLabels` comment in `to_merman_config`), bypassing the
-    // fallback, so normalize to `<br/>`, which merman's SVG text wrapping
-    // understands.
-    let source = source.replace("\\n", "<br/>");
-
     let config = to_merman_config(theme);
     let renderer = merman::render::HeadlessRenderer::new()
         .with_site_config(config)
@@ -31,7 +23,7 @@ pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<Strin
         .with_postprocessor(merman::render::CssOverridePostprocessor::strip_existing_important());
 
     let svg = renderer
-        .render_svg_with_pipeline_sync(&source, &pipeline)
+        .render_svg_with_pipeline_sync(source, &pipeline)
         .context("merman render failed")?
         .ok_or_else(|| anyhow!("merman returned no SVG for the given input"))?;
 
