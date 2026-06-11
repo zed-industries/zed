@@ -542,7 +542,48 @@ struct SearchState {
     editor: Entity<Editor>,
     state: QueryState,
     matches: IndexSet<Oid>,
+    filtered_entry_indices: Vec<usize>,
+    filtered_visible_rows_by_entry_index: HashMap<usize, usize>,
     selected_index: Option<usize>,
+}
+
+impl SearchState {
+    fn clear_results(&mut self) {
+        self.matches.clear();
+        self.filtered_entry_indices.clear();
+        self.filtered_visible_rows_by_entry_index.clear();
+        self.selected_index = None;
+    }
+
+    fn insert_filtered_entry_indices(&mut self, entry_indices: impl IntoIterator<Item = usize>) {
+        let mut changed = false;
+
+        for entry_index in entry_indices {
+            match self.filtered_entry_indices.binary_search(&entry_index) {
+                Ok(_) => {}
+                Err(insert_index) => {
+                    self.filtered_entry_indices
+                        .insert(insert_index, entry_index);
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            self.rebuild_filtered_visible_rows();
+        }
+    }
+
+    fn rebuild_filtered_visible_rows(&mut self) {
+        self.filtered_visible_rows_by_entry_index.clear();
+        self.filtered_visible_rows_by_entry_index.extend(
+            self.filtered_entry_indices
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(visible_row, entry_index)| (entry_index, visible_row)),
+        );
+    }
 }
 
 struct SplitState {
@@ -1348,8 +1389,7 @@ pub struct GitGraph {
 impl GitGraph {
     fn invalidate_state(&mut self, cx: &mut Context<Self>) {
         self.graph_data.clear();
-        self.search_state.matches.clear();
-        self.search_state.selected_index = None;
+        self.search_state.clear_results();
         self.search_state.state.next_state();
         self.context_menu = None;
         cx.emit(ItemEvent::Edit);
@@ -1390,31 +1430,9 @@ impl GitGraph {
             && matches!(self.search_state.state, QueryState::Confirmed(_))
     }
 
-    fn visible_commit_indices(&self) -> Vec<usize> {
-        if !self.filter_search_matches() {
-            return (0..self.graph_data.commits.len()).collect();
-        }
-
-        self.graph_data
-            .commits
-            .iter()
-            .enumerate()
-            .filter_map(|(index, commit)| {
-                self.search_state
-                    .matches
-                    .contains(&commit.data.sha)
-                    .then_some(index)
-            })
-            .collect()
-    }
-
     fn visible_commit_count(&self) -> usize {
         if self.filter_search_matches() {
-            self.graph_data
-                .commits
-                .iter()
-                .filter(|commit| self.search_state.matches.contains(&commit.data.sha))
-                .count()
+            self.search_state.filtered_entry_indices.len()
         } else {
             self.graph_data.commits.len()
         }
@@ -1422,7 +1440,10 @@ impl GitGraph {
 
     fn entry_index_for_visible_row(&self, visible_row: usize) -> Option<usize> {
         if self.filter_search_matches() {
-            self.visible_commit_indices().get(visible_row).copied()
+            self.search_state
+                .filtered_entry_indices
+                .get(visible_row)
+                .copied()
         } else {
             (visible_row < self.graph_data.commits.len()).then_some(visible_row)
         }
@@ -1430,9 +1451,10 @@ impl GitGraph {
 
     fn visible_row_for_entry_index(&self, entry_index: usize) -> Option<usize> {
         if self.filter_search_matches() {
-            self.visible_commit_indices()
-                .into_iter()
-                .position(|visible_entry_index| visible_entry_index == entry_index)
+            self.search_state
+                .filtered_visible_rows_by_entry_index
+                .get(&entry_index)
+                .copied()
         } else {
             (entry_index < self.graph_data.commits.len()).then_some(entry_index)
         }
@@ -1597,6 +1619,8 @@ impl GitGraph {
                 filter_matches: false,
                 editor: search_editor,
                 matches: IndexSet::default(),
+                filtered_entry_indices: Vec::default(),
+                filtered_visible_rows_by_entry_index: HashMap::default(),
                 selected_index: None,
                 state: QueryState::Empty,
             },
@@ -1675,6 +1699,18 @@ impl GitGraph {
                                     cx,
                                 );
                                 self.graph_data.add_commits(commits);
+                                let filtered_entry_indices = commits
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(offset, commit)| {
+                                        self.search_state
+                                            .matches
+                                            .contains(&commit.sha)
+                                            .then_some(old_count + offset)
+                                    })
+                                    .collect::<Vec<_>>();
+                                self.search_state
+                                    .insert_filtered_entry_indices(filtered_entry_indices);
 
                                 let pending_sha_index = self.pending_select_sha.and_then(|oid| {
                                     repository.get_graph_data(source.clone(), *order).and_then(
@@ -1841,7 +1877,7 @@ impl GitGraph {
             let fetch_range_end = range.end + FETCH_RANGE;
 
             if self.filter_search_matches() {
-                let commit_indices = self.visible_commit_indices();
+                let commit_indices = &self.search_state.filtered_entry_indices;
                 repository.update(cx, |repository, cx| {
                     let fetch_range_end = fetch_range_end.min(commit_indices.len());
                     commit_indices[fetch_range_start.min(fetch_range_end)..fetch_range_end]
@@ -2170,8 +2206,7 @@ impl GitGraph {
             return;
         };
 
-        self.search_state.matches.clear();
-        self.search_state.selected_index = None;
+        self.search_state.clear_results();
         self.search_state.editor.update(cx, |editor, _cx| {
             editor.set_text_style_refinement(Default::default());
         });
@@ -2204,7 +2239,28 @@ impl GitGraph {
                 }
 
                 this.update(cx, |this, cx| {
-                    this.search_state.matches.extend(pending_oids);
+                    this.search_state
+                        .matches
+                        .extend(pending_oids.iter().copied());
+                    let pending_entry_indices = this
+                        .get_repository(cx)
+                        .and_then(|repository| {
+                            repository
+                                .read(cx)
+                                .get_graph_data(this.log_source.clone(), this.log_order)
+                                .map(|data| {
+                                    pending_oids
+                                        .iter()
+                                        .filter_map(|oid| {
+                                            data.commit_oid_to_index.get(oid).copied()
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                        })
+                        .unwrap_or_default();
+                    this.search_state
+                        .insert_filtered_entry_indices(pending_entry_indices);
+
                     if this.search_state.selected_index.is_none() {
                         this.search_state.selected_index = Some(0);
                         this.select_commit_by_sha(first_oid, cx);
@@ -3411,7 +3467,7 @@ impl GitGraph {
         let viewport_range = first_visible_row.min(visible_commit_count.saturating_sub(1))
             ..(last_visible_row).min(visible_commit_count);
         let rows = if self.filter_search_matches() {
-            let visible_commit_indices = self.visible_commit_indices();
+            let visible_commit_indices = &self.search_state.filtered_entry_indices;
             visible_commit_indices[viewport_range.clone()]
                 .iter()
                 .filter_map(|entry_index| {
