@@ -941,6 +941,19 @@ impl SettingsObserver {
         if cx.try_global::<SettingsStore>().is_some() {
             if let Some(upstream_client) = upstream_client {
                 let mut user_settings = None;
+                // Send the current user settings immediately so the remote server
+                // doesn't start with defaults when settings were already loaded.
+                if let Some(current_settings) = cx.global::<SettingsStore>().raw_user_settings() {
+                    if let Some(settings_string) = serde_json::to_string(current_settings).ok() {
+                        user_settings = Some(current_settings.clone());
+                        upstream_client
+                            .send(proto::UpdateUserSettings {
+                                project_id: REMOTE_SERVER_PROJECT_ID,
+                                contents: settings_string,
+                            })
+                            .log_err();
+                    }
+                }
                 user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
                     if let Some(new_settings) = cx.global::<SettingsStore>().raw_user_settings() {
                         if Some(new_settings) != user_settings.as_ref() {
