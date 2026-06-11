@@ -150,6 +150,14 @@
   //     that are already part of an open project)
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
+  // The default behavior when opening projects from the UI.
+  //
+  // May take 2 values:
+  //  1. Open projects as a new workspace in the current Zed window's sidebar
+  //         "default_open_behavior": "existing_window"
+  //  2. Open projects in a new window
+  //         "default_open_behavior": "new_window"
+  "default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.
@@ -990,8 +998,8 @@
     // Maximum length of the commit message title before a warning is shown.
     // Set to 0 to disable.
     //
-    // Default: 72
-    "commit_title_max_length": 72,
+    // Default: 0
+    "commit_title_max_length": 0,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1098,6 +1106,22 @@
     },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
+    // Settings for automatic agent context compaction, which summarizes earlier
+    // messages to free up room in the model's context window once it grows too
+    // large.
+    "auto_compact": {
+      // Whether to automatically compact the agent's context near the limit.
+      "enabled": true,
+      // The threshold at which auto-compaction runs. One of:
+      //   - A percentage string ending in "%" (e.g. "90%"), measured against
+      //     the model's context window. Decimals are allowed (e.g. "95.5%").
+      //   - A positive integer: compact after that many tokens have been used
+      //     (e.g. 100000 compacts after 100,000 tokens are used).
+      //   - A negative integer: compact once that many tokens remain in the
+      //     context window (e.g. -20000 compacts once fewer than 20,000 remain).
+      // 0 is not a valid threshold.
+      "threshold": "90%",
+    },
     // When enabled, show voting thumbs for feedback on agent edits.
     "enable_feedback": true,
     "default_profile": "write",
@@ -1128,8 +1152,6 @@
           "skill": true,
           "spawn_agent": true,
           "terminal": true,
-          "update_plan": true,
-          "update_title": true,
           "search_web": true,
         },
       },
@@ -1151,8 +1173,6 @@
           "grep": true,
           "skill": true,
           "spawn_agent": true,
-          "update_plan": true,
-          "update_title": true,
           "search_web": true,
         },
       },
@@ -1475,6 +1495,9 @@
     "diagnostics": true,
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true,
+    // Allow sending requests to Anthropic models that cannot be offered with
+    // Zero Data Retention
+    "anthropic_retention": false,
   },
   // Whether to disable all AI features in Zed.
   //

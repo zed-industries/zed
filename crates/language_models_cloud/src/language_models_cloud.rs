@@ -1,5 +1,5 @@
 use anthropic::AnthropicModelMode;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
     CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
@@ -23,9 +23,8 @@ use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    PaymentRequiredError, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -55,6 +54,11 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
     fn cached_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
     fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+
+    /// Whether the user has consented to upstream providers retaining
+    /// inference logs for models that require it (see
+    /// [`LanguageModel::requires_data_retention`]).
+    fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool;
 }
 
 /// Sends an authenticated request to the Zed LLM service, retrying once with
@@ -118,9 +122,16 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         auth_context: TP::AuthContext,
         app_version: Option<Version>,
         body: CompletionBody,
-    ) -> Result<PerformLlmCompletionResponse> {
-        let url = http_client.build_zed_llm_url("/completions", &[])?;
-        let body = serde_json::to_string(&body)?;
+    ) -> Result<PerformLlmCompletionResponse, LanguageModelCompletionError> {
+        let url = http_client
+            .build_zed_llm_url("/completions", &[])
+            .map_err(LanguageModelCompletionError::Other)?;
+        let body = serde_json::to_string(&body).map_err(|error| {
+            LanguageModelCompletionError::SerializeRequest {
+                provider: PROVIDER_NAME,
+                error,
+            }
+        })?;
         let mut response =
             authenticated_llm_request(http_client, token_provider, auth_context, |token| {
                 Ok(http_client::Request::builder()
@@ -135,7 +146,11 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
                     .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
                     .body(body.clone().into())?)
             })
-            .await?;
+            .await
+            .map_err(|error| LanguageModelCompletionError::HttpSend {
+                provider: PROVIDER_NAME,
+                error,
+            })?;
 
         let status = response.status();
         if status.is_success() {
@@ -151,17 +166,25 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         }
 
         if status == StatusCode::PAYMENT_REQUIRED {
-            return Err(anyhow!(PaymentRequiredError));
+            return Err(LanguageModelCompletionError::PaymentRequired);
         }
 
         let mut body = String::new();
         let headers = response.headers().clone();
-        response.body_mut().read_to_string(&mut body).await?;
-        Err(anyhow!(ApiError {
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| LanguageModelCompletionError::ApiReadResponseError {
+                provider: PROVIDER_NAME,
+                error,
+            })?;
+        Err(ApiError {
             status,
             body,
-            headers
-        }))
+            headers,
+        }
+        .into())
     }
 }
 
@@ -298,6 +321,27 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.is_latest
     }
 
+    fn requires_data_retention(&self) -> bool {
+        // Anthropic cannot offer Fable models with Zero Data Retention
+        self.id
+            .0
+            .as_ref()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+    }
+
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self
+            .id
+            .0
+            .as_ref()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+        {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
     fn supports_tools(&self) -> bool {
         self.model.supports_tools
     }
@@ -308,6 +352,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model.supports_disabling_thinking
     }
 
     fn supports_fast_mode(&self) -> bool {
@@ -379,6 +427,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             LanguageModelCompletionError,
         >,
     > {
+        if self.requires_data_retention() && !self.token_provider.has_data_retention_consent(cx) {
+            let model_name = self.model.display_name.clone();
+            return async move {
+                Err(LanguageModelCompletionError::DataRetentionConsentRequired { model_name })
+            }
+            .boxed();
+        }
+
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let app_version = self.app_version.clone();
@@ -435,15 +491,15 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             prompt_id,
                             provider: cloud_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
+                            provider_request: serde_json::to_value(&request).map_err(|error| {
+                                LanguageModelCompletionError::SerializeRequest {
+                                    provider: provider_name.clone(),
+                                    error,
+                                }
+                            })?,
                         },
                     )
-                    .await
-                    .map_err(|err| match err.downcast::<ApiError>() {
-                        Ok(api_err) => anyhow!(LanguageModelCompletionError::from(api_err)),
-                        Err(err) => anyhow!(err),
-                    })?;
+                    .await?;
 
                     let mut mapper = AnthropicEventMapper::new();
                     Ok(map_cloud_completion_events(
@@ -500,8 +556,12 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             prompt_id,
                             provider: cloud_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
+                            provider_request: serde_json::to_value(&request).map_err(|error| {
+                                LanguageModelCompletionError::SerializeRequest {
+                                    provider: provider_name.clone(),
+                                    error,
+                                }
+                            })?,
                         },
                     )
                     .await?;
@@ -542,8 +602,12 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             prompt_id,
                             provider: cloud_llm_client::LanguageModelProvider::XAi,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
+                            provider_request: serde_json::to_value(&request).map_err(|error| {
+                                LanguageModelCompletionError::SerializeRequest {
+                                    provider: provider_name.clone(),
+                                    error,
+                                }
+                            })?,
                         },
                     )
                     .await?;
@@ -577,8 +641,12 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                             prompt_id,
                             provider: cloud_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
-                            provider_request: serde_json::to_value(&request)
-                                .map_err(|e| anyhow!(e))?,
+                            provider_request: serde_json::to_value(&request).map_err(|error| {
+                                LanguageModelCompletionError::SerializeRequest {
+                                    provider: provider_name.clone(),
+                                    error,
+                                }
+                            })?,
                         },
                     )
                     .await?;
@@ -738,7 +806,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
 }
 
 pub fn map_cloud_completion_events<T, F>(
-    stream: Pin<Box<dyn Stream<Item = Result<CompletionEvent<T>>> + Send>>,
+    stream: Pin<Box<dyn Stream<Item = Result<CompletionEvent<T>, ResponseStreamError>> + Send>>,
     provider: &LanguageModelProviderName,
     mut map_callback: F,
 ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
@@ -770,7 +838,7 @@ where
                 Poll::Ready(Some(event)) => {
                     let items = match event {
                         Err(error) => {
-                            vec![Err(LanguageModelCompletionError::from(error))]
+                            vec![Err(error.into_completion_error(provider.clone()))]
                         }
                         Ok(CompletionEvent::Status(CompletionRequestStatus::StreamEnded)) => {
                             saw_stream_ended = true;
@@ -818,10 +886,36 @@ pub fn provider_name(
     }
 }
 
+/// A failure while reading the streamed completion response body.
+///
+/// Kept as a typed error (rather than `anyhow::Error`) so the consumer can
+/// attach the provider name and build a structured
+/// [`LanguageModelCompletionError`] without a runtime downcast.
+pub enum ResponseStreamError {
+    Read(std::io::Error),
+    Deserialize(serde_json::Error),
+}
+
+impl ResponseStreamError {
+    fn into_completion_error(
+        self,
+        provider: LanguageModelProviderName,
+    ) -> LanguageModelCompletionError {
+        match self {
+            ResponseStreamError::Read(error) => {
+                LanguageModelCompletionError::ApiReadResponseError { provider, error }
+            }
+            ResponseStreamError::Deserialize(error) => {
+                LanguageModelCompletionError::DeserializeResponse { provider, error }
+            }
+        }
+    }
+}
+
 pub fn response_lines<T: DeserializeOwned>(
     response: Response<AsyncBody>,
     includes_status_messages: bool,
-) -> impl Stream<Item = Result<CompletionEvent<T>>> {
+) -> impl Stream<Item = Result<CompletionEvent<T>, ResponseStreamError>> {
     futures::stream::try_unfold(
         (String::new(), BufReader::new(response.into_body())),
         move |(mut line, mut body)| async move {
@@ -829,15 +923,19 @@ pub fn response_lines<T: DeserializeOwned>(
                 Ok(0) => Ok(None),
                 Ok(_) => {
                     let event = if includes_status_messages {
-                        serde_json::from_str::<CompletionEvent<T>>(&line)?
+                        serde_json::from_str::<CompletionEvent<T>>(&line)
+                            .map_err(ResponseStreamError::Deserialize)?
                     } else {
-                        CompletionEvent::Event(serde_json::from_str::<T>(&line)?)
+                        CompletionEvent::Event(
+                            serde_json::from_str::<T>(&line)
+                                .map_err(ResponseStreamError::Deserialize)?,
+                        )
                     };
 
                     line.clear();
                     Ok(Some((event, (line, body))))
                 }
-                Err(e) => Err(e.into()),
+                Err(error) => Err(ResponseStreamError::Read(error)),
             }
         },
     )
@@ -992,5 +1090,33 @@ mod tests {
                 completion_error
             ),
         }
+    }
+
+    #[test]
+    fn test_response_stream_error_maps_to_structured_variant() {
+        // Read/deserialize failures mid-stream must keep their structured
+        // variant rather than collapsing into `Other` (the source of the
+        // generic "Request failed." message).
+        let read = ResponseStreamError::Read(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+            .into_completion_error(PROVIDER_NAME);
+        assert!(
+            matches!(
+                read,
+                LanguageModelCompletionError::ApiReadResponseError { .. }
+            ),
+            "Expected ApiReadResponseError, got: {read:?}"
+        );
+
+        let deserialize = ResponseStreamError::Deserialize(
+            serde_json::from_str::<serde_json::Value>("not json").unwrap_err(),
+        )
+        .into_completion_error(PROVIDER_NAME);
+        assert!(
+            matches!(
+                deserialize,
+                LanguageModelCompletionError::DeserializeResponse { .. }
+            ),
+            "Expected DeserializeResponse, got: {deserialize:?}"
+        );
     }
 }

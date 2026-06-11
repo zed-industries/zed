@@ -1345,9 +1345,10 @@ mod tests {
             .await
             .unwrap();
 
-        // The prompt is dismissed by transitioning to InProgress.
-        let dismiss = stream_rx.expect_update_fields().await;
-        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        // The prompt is dismissed by resolving the pending authorization.
+        let (_, outcome) = stream_rx.expect_authorization_resolved().await;
+        assert_eq!(outcome.option_id, acp::PermissionOptionId::new("keep"));
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::RejectOnce);
         drop(auth);
 
         // The overwrite is cancelled with an error.

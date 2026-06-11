@@ -75,7 +75,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         terminal_page(),
         version_control_page(),
         collaboration_page(),
-        ai_page(cx),
+        ai_page(),
         network_page(),
         developer_page(cx),
     ]
@@ -257,6 +257,25 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Open Behavior",
+                description: "How projects open from the UI by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content.workspace.default_open_behavior.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
         ]
     }
     fn security_section() -> [SettingsPageItem; 2] {
@@ -365,7 +384,7 @@ fn general_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn privacy_section() -> [SettingsPageItem; 3] {
+    fn privacy_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Privacy"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -404,6 +423,28 @@ fn general_page(cx: &App) -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.telemetry.get_or_insert_default().metrics = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Anthropic Data Retention",
+                description: "Allow sending requests to Anthropic models that cannot be offered with Zero Data Retention.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("telemetry.anthropic_retention"),
+                    pick: |settings_content| {
+                        settings_content
+                            .telemetry
+                            .as_ref()
+                            .and_then(|telemetry| telemetry.anthropic_retention.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .telemetry
+                            .get_or_insert_default()
+                            .anthropic_retention = value;
                     },
                 }),
                 metadata: None,
@@ -7784,7 +7825,7 @@ fn collaboration_page() -> SettingsPage {
     }
 }
 
-fn ai_page(cx: &App) -> SettingsPage {
+fn ai_page() -> SettingsPage {
     fn general_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("General"),
@@ -7819,13 +7860,13 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section() -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
-                json_path: Some("agent.skills"),
+                json_path: Some(zed_actions::AGENT_SKILLS_SETTINGS_PATH),
                 description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
                 in_json: false,
                 files: USER | PROJECT,
@@ -8105,6 +8146,66 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ]);
 
+        items.extend([
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Compact",
+                description: "Automatically compact the agent's context when it grows too large, summarizing earlier messages to free up room in the model's context window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.auto_compact.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .auto_compact
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .auto_compact
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Compact Threshold",
+                description: "When auto compaction runs. A percentage string like \"90%\" is measured against the context window. A positive integer is the number of used tokens to compact after. A negative integer is the number of tokens remaining in the context window before compacting.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.auto_compact.threshold"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .auto_compact
+                            .as_ref()?
+                            .threshold
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .auto_compact
+                            .get_or_insert_default()
+                            .threshold = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("90%"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+        ]);
+
         items.into_boxed_slice()
     }
 
@@ -8164,7 +8265,7 @@ fn ai_page(cx: &App) -> SettingsPage {
         title: "AI",
         items: concat_sections![
             general_section(),
-            agent_configuration_section(cx),
+            agent_configuration_section(),
             context_servers_section(),
             edit_prediction_language_settings_section(),
             edit_prediction_display_sub_section()

@@ -726,7 +726,14 @@ impl GlobalWatcher {
             return Ok(());
         }
 
-        let watcher = notify::recommended_watcher(handle_native_event)?;
+        // CORE excludes Access events, which Zed discards anyway. Without this,
+        // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
+        // file read in a watched directory would queue events, increasing the
+        // risk of queue overflows (and thus full rescans) under read-heavy
+        // workloads like grep or language server indexing.
+        let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+        let watcher =
+            <notify::RecommendedWatcher as notify::Watcher>::new(handle_native_event, config)?;
         *self.native_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }

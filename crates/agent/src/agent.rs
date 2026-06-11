@@ -163,6 +163,27 @@ impl From<&Skill> for NativeAvailableSkill {
     }
 }
 
+pub const COMPACT_COMMAND_NAME: &str = "compact";
+
+/// Returns the set of MCP prompt names that must be server-qualified
+/// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names
+/// shared by more than one MCP prompt, or names colliding with a reserved
+/// built-in command (e.g. `/compact`). A built-in always wins an unqualified
+/// invocation, so colliding MCP prompts are only reachable when prefixed.
+fn ambiguous_mcp_prompt_names<'a>(
+    reserved: impl IntoIterator<Item = &'a str>,
+    prompt_names: impl IntoIterator<Item = &'a str>,
+) -> HashSet<&'a str> {
+    let mut counts: HashMap<&str, usize> = HashMap::default();
+    for name in reserved.into_iter().chain(prompt_names) {
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .filter_map(|(name, count)| (count > 1).then_some(name))
+        .collect()
+}
+
 struct ProjectState {
     project: Entity<Project>,
     project_context: Entity<ProjectContext>,
@@ -265,6 +286,10 @@ impl LanguageModels {
 
     fn watch(&self) -> watch::Receiver<()> {
         self.refresh_models_rx.clone()
+    }
+
+    pub fn notify_model_selection_changed(&mut self) {
+        self.refresh_models_tx.send(()).ok();
     }
 
     pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<Arc<dyn LanguageModel>> {
@@ -528,10 +553,15 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
-            let subscriptions = vec![cx.subscribe(
-                &LanguageModelRegistry::global(cx),
-                Self::handle_models_updated_event,
-            )];
+            let subscriptions = vec![
+                cx.subscribe(
+                    &LanguageModelRegistry::global(cx),
+                    Self::handle_models_updated_event,
+                ),
+                // Flush thread content on quit so an in-flight async save
+                // can't leave a thread orphaned ("no thread found with ID").
+                cx.on_app_quit(Self::flush_threads_on_quit),
+            ];
 
             if !cx.has_global::<SkillIndex>() {
                 cx.set_global(SkillIndex::default());
@@ -1466,25 +1496,30 @@ impl NativeAgent {
         cx: &App,
     ) -> Vec<acp::AvailableCommand> {
         let Some(state) = project_state else {
-            return vec![];
+            return Vec::new();
         };
+        let compact_command = acp::AvailableCommand::new(
+            COMPACT_COMMAND_NAME,
+            "Summarize the conversation so far to free up context",
+        )
+        .meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ));
+
         let registry = state.context_server_registry.read(cx);
 
-        let mut prompt_name_counts: HashMap<&str, usize> = HashMap::default();
-        for context_server_prompt in registry.prompts() {
-            *prompt_name_counts
-                .entry(context_server_prompt.prompt.name.as_str())
-                .or_insert(0) += 1;
-        }
+        // Reserve the built-in command name so a same-named MCP prompt is
+        // force-prefixed (`/<server>.compact`) and stays reachable: an
+        // unqualified `/compact` always routes to the native command.
+        let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
+            [COMPACT_COMMAND_NAME],
+            registry.prompts().map(|p| p.prompt.name.as_str()),
+        );
 
         let mcp_commands = registry.prompts().flat_map(|context_server_prompt| {
             let prompt = &context_server_prompt.prompt;
 
-            let should_prefix = prompt_name_counts
-                .get(prompt.name.as_str())
-                .copied()
-                .unwrap_or(0)
-                > 1;
+            let should_prefix = ambiguous_prompt_names.contains(prompt.name.as_str());
 
             let name = if should_prefix {
                 format!("{}.{}", context_server_prompt.server_id, prompt.name)
@@ -1493,7 +1528,10 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default());
+                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
+                    .meta(acp_thread::meta_with_command_category(
+                        acp_thread::CommandCategory::Mcp,
+                    ));
 
             match prompt.arguments.as_deref() {
                 Some([arg]) => {
@@ -1513,7 +1551,9 @@ impl NativeAgent {
             Some(command)
         });
 
-        mcp_commands.collect()
+        std::iter::once(compact_command)
+            .chain(mcp_commands)
+            .collect()
     }
 
     pub fn load_thread(
@@ -1604,6 +1644,7 @@ impl NativeAgent {
                         NativeAgentConnection::handle_thread_events(
                             events,
                             acp_thread.downgrade(),
+                            None,
                             cx,
                         )
                     })
@@ -1729,6 +1770,48 @@ impl NativeAgent {
         });
     }
 
+    /// Commits every non-empty thread's content on shutdown so the async
+    /// `save_thread` losing the race can't leave metadata without content.
+    fn flush_threads_on_quit(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        let database_future = ThreadsDatabase::connect(cx);
+
+        let mut saves = Vec::new();
+        for session in self.sessions.values() {
+            let thread = session.thread.read(cx);
+            if thread.is_empty() {
+                continue;
+            }
+            let Some(state) = self.projects.get(&session.project_id) else {
+                continue;
+            };
+            let folder_paths = PathList::new(
+                &state
+                    .project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>(),
+            );
+            saves.push((thread.id().clone(), folder_paths, thread.to_db(cx)));
+        }
+
+        async move {
+            let Ok(database) = database_future.await else {
+                return;
+            };
+            for (id, folder_paths, db_thread) in saves {
+                let db_thread = db_thread.await;
+                database
+                    .save_thread(id, db_thread, folder_paths)
+                    .await
+                    .log_err();
+            }
+        }
+    }
+
     fn send_mcp_prompt(
         &self,
         message_id: UserMessageId,
@@ -1821,10 +1904,47 @@ impl NativeAgent {
                 }
             })?;
 
+            let connection = this.upgrade().map(NativeAgentConnection);
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
                     acp_thread.downgrade(),
+                    connection,
+                    cx,
+                )
+            })
+            .await
+        })
+    }
+
+    /// Run a summary-based context compaction in response to the built-in
+    /// `/compact` slash command.
+    fn send_compact_command(
+        &self,
+        message_id: UserMessageId,
+        session_id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        cx.spawn(async move |this, cx| {
+            let (acp_thread, thread) = this.update(cx, |this, _cx| {
+                let session = this
+                    .sessions
+                    .get(&session_id)
+                    .context("Failed to get session")?;
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
+            })??;
+
+            let response_stream = thread.update(cx, |thread, cx| thread.compact(message_id, cx))?;
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread.update_token_usage(None, cx);
+            });
+
+            let connection = this.upgrade().map(NativeAgentConnection);
+            cx.update(|cx| {
+                NativeAgentConnection::handle_thread_events(
+                    response_stream,
+                    acp_thread.downgrade(),
+                    connection,
                     cx,
                 )
             })
@@ -1923,10 +2043,12 @@ impl NativeAgent {
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
+            let connection = this.upgrade().map(NativeAgentConnection);
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
                     acp_thread.downgrade(),
+                    connection,
                     cx,
                 )
             })
@@ -2018,12 +2140,18 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread.downgrade(), cx)
+        Self::handle_thread_events(
+            response_stream,
+            acp_thread.downgrade(),
+            Some(self.clone()),
+            cx,
+        )
     }
 
     fn handle_thread_events(
         mut events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
         acp_thread: WeakEntity<AcpThread>,
+        connection: Option<NativeAgentConnection>,
         cx: &App,
     ) -> Task<Result<acp::PromptResponse>> {
         cx.spawn(async move |cx| {
@@ -2081,6 +2209,14 @@ impl NativeAgentConnection {
                                 })
                                 .detach();
                             }
+                            ThreadEvent::ToolCallAuthorizationResolved {
+                                tool_call_id,
+                                outcome,
+                            } => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.authorize_tool_call(tool_call_id, outcome, cx);
+                                })?;
+                            }
                             ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.upsert_tool_call(tool_call, cx)
@@ -2091,15 +2227,23 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            ThreadEvent::Plan(plan) => {
-                                acp_thread.update(cx, |thread, cx| thread.update_plan(plan, cx))?;
-                            }
                             ThreadEvent::SubagentSpawned(session_id) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.subagent_spawned(session_id, cx);
                                 })?;
                             }
                             ThreadEvent::Retry(status) => {
+                                if acp_thread::refusal_fallback_model_from_meta(&status.meta)
+                                    .is_some()
+                                {
+                                    if let Some(connection) = &connection {
+                                        cx.update(|cx| {
+                                            connection.0.update(cx, |agent, _| {
+                                                agent.models.notify_model_selection_changed();
+                                            });
+                                        });
+                                    }
+                                }
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
                                 })?;
@@ -2150,6 +2294,12 @@ struct Command<'a> {
 }
 
 impl<'a> Command<'a> {
+    fn is_unqualified(&self, prompt_name: &str) -> bool {
+        self.prompt_name == prompt_name
+            && self.explicit_server_id.is_none()
+            && self.skill_scope.is_none()
+    }
+
     fn parse(prompt: &'a [acp::ContentBlock]) -> Option<Self> {
         let acp::ContentBlock::Text(text_content) = prompt.first()? else {
             return None;
@@ -2486,6 +2636,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
+            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_compact_command(id, session_id, cx)
+                });
+            }
+
             // Skill scope qualifiers (`/:<name>` and
             // `/<worktree>:<name>`) use a colon separator that can't
             // collide with MCP's `/<server>.<name>` grammar. The popup
@@ -3487,12 +3643,14 @@ mod internal_tests {
 
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
+    use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
-        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+        CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
+        LanguageModelProviderName,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -3509,6 +3667,231 @@ mod internal_tests {
             disable_model_invocation: false,
             embedded_body: None,
         }
+    }
+
+    async fn setup_native_agent_session(
+        cx: &mut TestAppContext,
+    ) -> (
+        Rc<NativeAgentConnection>,
+        Entity<NativeAgent>,
+        Entity<Project>,
+        Entity<AcpThread>,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        (connection, agent, project, acp_thread)
+    }
+
+    fn native_thread_for_session(
+        agent: &Entity<NativeAgent>,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Entity<Thread> {
+        agent.read_with(cx, |agent, _cx| {
+            agent.sessions.get(session_id).unwrap().thread.clone()
+        })
+    }
+
+    fn request_texts_after_system(
+        messages: &[language_model::LanguageModelRequestMessage],
+    ) -> Vec<String> {
+        messages
+            .iter()
+            .skip(1)
+            .map(language_model::LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_compact_command_is_available(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let commands = acp_thread.read(cx).available_commands();
+
+            let compact = commands.iter().find(|command| command.name == "compact");
+            let compact = compact.expect("compact command should be available");
+            assert_eq!(
+                acp_thread::command_category_from_meta(&compact.meta),
+                Some(acp_thread::CommandCategory::Native),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.push_acp_user_block(
+                    old_message_id,
+                    [acp::ContentBlock::from("old user")],
+                    path_style,
+                    cx,
+                );
+                thread.push_acp_agent_block("old assistant".into(), cx);
+            });
+        });
+
+        let compact_message_id = UserMessageId::new();
+        let prompt_task = cx.update(|cx| {
+            connection.prompt(
+                compact_message_id,
+                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec![
+                "old user".to_string(),
+                "old assistant".to_string(),
+                COMPACTION_PROMPT.to_string(),
+            ]
+        );
+
+        model.send_completion_stream_text_chunk(&request, "summary");
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
+        prompt_task.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        // Give the thread content so it's no longer an empty draft.
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(
+                    UserMessageId::new(),
+                    [acp::ContentBlock::from("hello from the user")],
+                    path_style,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        // Reproduce the orphaned state from the bug: the sidebar metadata and
+        // serialized panel still reference the session, but the per-session
+        // async content save never landed, so the content row is absent.
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        database.delete_thread(session_id.clone()).await.unwrap();
+        assert!(
+            database
+                .load_thread(session_id.clone())
+                .await
+                .unwrap()
+                .is_none(),
+            "precondition: content row should be missing before the quit flush"
+        );
+
+        // Quitting must re-commit the content so the thread can be restored.
+        let flush = cx.update(|cx| agent.update(cx, |agent, cx| agent.flush_threads_on_quit(cx)));
+        flush.await;
+
+        let restored = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .expect("thread content should be persisted to the database on quit");
+        assert_eq!(
+            restored.messages.len(),
+            1,
+            "the user message should survive the quit flush"
+        );
+    }
+
+    #[test]
+    fn test_ambiguous_mcp_prompt_names() {
+        // Reserving the built-in `/compact` forces a same-named MCP prompt to be
+        // server-qualified so it stays reachable; unique names stay bare.
+        let ambiguous = ambiguous_mcp_prompt_names([COMPACT_COMMAND_NAME], ["compact", "deploy"]);
+        assert!(ambiguous.contains("compact"));
+        assert!(!ambiguous.contains("deploy"));
+
+        // Without the reservation, a unique MCP prompt is left bare.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
+        assert!(ambiguous.is_empty());
+
+        // Two MCP prompts sharing a name are both qualified regardless of
+        // reservation.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["dup", "dup", "unique"]);
+        assert!(ambiguous.contains("dup"));
+        assert!(!ambiguous.contains("unique"));
+    }
+
+    #[test]
+    fn test_qualified_compact_commands_are_not_native_compact() {
+        let unqualified_blocks = [acp::ContentBlock::from("/compact")];
+        let unqualified = Command::parse(&unqualified_blocks).unwrap();
+        assert!(unqualified.is_unqualified("compact"));
+
+        let mcp_blocks = [acp::ContentBlock::from("/server.compact")];
+        let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
+        assert_eq!(mcp_qualified.prompt_name, "compact");
+        assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
+        assert!(!mcp_qualified.is_unqualified("compact"));
+
+        let skill_blocks = [acp::ContentBlock::from("/:compact")];
+        let skill_qualified = Command::parse(&skill_blocks).unwrap();
+        assert_eq!(skill_qualified.prompt_name, "compact");
+        assert_eq!(skill_qualified.skill_scope, Some(""));
+        assert!(!skill_qualified.is_unqualified("compact"));
     }
 
     fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
