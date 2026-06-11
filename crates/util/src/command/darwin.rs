@@ -900,4 +900,33 @@ mod tests {
             assert_eq!(output.stdout, b"piped input");
         });
     }
+
+    #[test]
+    fn test_stdio_fds_closed_on_error() {
+        fn count_open_fds() -> usize {
+            let limit = unsafe { libc::getdtablesize() };
+            (0..limit)
+                .filter(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } != -1)
+                .count()
+        }
+
+        const ATTEMPTS: usize = 100;
+        const SLACK: usize = 32;
+
+        let before = count_open_fds();
+        for _ in 0..ATTEMPTS {
+            Command::new("/bin/binarythatdoesnotexist")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect_err("spawn should fail for a nonexistent binary");
+        }
+        let after = count_open_fds();
+
+        assert!(
+            after <= before + SLACK,
+            "fd leak detected: {before} open fds before, {after} after {ATTEMPTS} failed spawns"
+        );
+    }
 }
