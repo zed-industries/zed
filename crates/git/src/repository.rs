@@ -5177,6 +5177,57 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_default_branch(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert_eq!(repo.default_branch(false).await.unwrap(), None);
+
+        git_command(
+            repo_dir.path(),
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+
+        assert_eq!(
+            repo.default_branch(false).await.unwrap(),
+            Some("main".into())
+        );
+
+        git_command(
+            repo_dir.path(),
+            ["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+        git_command(
+            repo_dir.path(),
+            [
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+
+        assert_eq!(
+            repo.default_branch(false).await.unwrap(),
+            Some("main".into())
+        );
+        assert_eq!(
+            repo.default_branch(true).await.unwrap(),
+            Some("origin/main".into())
+        );
+    }
+
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
