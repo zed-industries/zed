@@ -326,10 +326,6 @@
       "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
       "ctrl-alt-.": "agent::ToggleFastMode",
-      "shift-alt-q": "agent::AllowAlways",
-      "shift-alt-a": "agent::AllowOnce",
-      "ctrl-alt-a": "agent::OpenPermissionDropdown",
-      "shift-alt-x": "agent::RejectOnce"
     },
   },
   {
