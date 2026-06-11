@@ -328,6 +328,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub chat_completions: bool,
     #[serde(default)]
     pub interleaved_reasoning: bool,
+    #[serde(default)]
+    pub strip_openai_extensions: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -339,6 +341,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             prompt_cache_key: false,
             chat_completions: default_true(),
             interleaved_reasoning: false,
+            strip_openai_extensions: false,
         }
     }
 }
