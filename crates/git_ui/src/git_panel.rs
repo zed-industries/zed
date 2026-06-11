@@ -5105,9 +5105,11 @@ impl GitPanel {
     fn render_history_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().flex_1().size_full().overflow_hidden().map(|this| {
             let has_repo = self.active_repository.is_some();
-            let has_commits = self.commit_history_shas.as_ref().map_or(false, |shas| !shas.is_empty());
+            let has_commits = self
+                .commit_history_shas
+                .as_ref()
+                .map_or(false, |shas| !shas.is_empty());
             let is_loading = self.commit_history_shas.is_none() && has_repo;
-            
             if is_loading {
                 this.child(
                     h_flex()
