@@ -15,6 +15,8 @@ use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
 use smol::{fs, io::AsyncReadExt};
 use std::mem;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     env::{
         self,
@@ -126,6 +128,7 @@ pub struct AssetQuery<'a> {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
+    Available { version: VersionCheckType },
     Downloading { version: VersionCheckType },
     Installing { version: VersionCheckType },
     Updated { version: VersionCheckType },
@@ -137,6 +140,10 @@ impl PartialEq for AutoUpdateStatus {
         match (self, other) {
             (AutoUpdateStatus::Idle, AutoUpdateStatus::Idle) => true,
             (AutoUpdateStatus::Checking, AutoUpdateStatus::Checking) => true,
+            (
+                AutoUpdateStatus::Available { version: v1 },
+                AutoUpdateStatus::Available { version: v2 },
+            ) => v1 == v2,
             (
                 AutoUpdateStatus::Downloading { version: v1 },
                 AutoUpdateStatus::Downloading { version: v2 },
@@ -162,6 +169,103 @@ impl AutoUpdateStatus {
         matches!(self, Self::Updated { .. })
     }
 }
+
+pub trait NetworkPolicy: Send + Sync {
+    fn is_constrained(&self) -> bool;
+}
+
+#[cfg(not(target_os = "macos"))]
+struct SystemNetworkPolicy;
+
+#[cfg(not(target_os = "macos"))]
+impl NetworkPolicy for SystemNetworkPolicy {
+    fn is_constrained(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos_network_policy {
+    use super::*;
+    use std::ffi::c_void;
+
+    type DispatchQueue = *mut c_void;
+    type NwPath = *mut c_void;
+    type NwPathMonitor = *mut c_void;
+
+    #[link(name = "Network", kind = "framework")]
+    unsafe extern "C" {
+        fn nw_path_monitor_create() -> NwPathMonitor;
+        fn nw_path_monitor_set_queue(monitor: NwPathMonitor, queue: DispatchQueue);
+        fn nw_path_monitor_set_update_handler(
+            monitor: NwPathMonitor,
+            handler: extern "C" fn(NwPath),
+        );
+        fn nw_path_monitor_start(monitor: NwPathMonitor);
+        fn nw_path_monitor_cancel(monitor: NwPathMonitor);
+        fn nw_path_is_constrained(path: NwPath) -> bool;
+    }
+
+    #[link(name = "System")]
+    unsafe extern "C" {
+        fn dispatch_get_global_queue(identifier: isize, flags: usize) -> DispatchQueue;
+    }
+
+    static IS_CONSTRAINED: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn update_path(path: NwPath) {
+        let is_constrained = unsafe { nw_path_is_constrained(path) };
+        IS_CONSTRAINED.store(is_constrained, Ordering::Relaxed);
+    }
+
+    pub struct SystemNetworkPolicy {
+        monitor: NwPathMonitor,
+    }
+
+    unsafe impl Send for SystemNetworkPolicy {}
+    unsafe impl Sync for SystemNetworkPolicy {}
+
+    impl SystemNetworkPolicy {
+        pub fn new() -> Self {
+            let monitor = unsafe { nw_path_monitor_create() };
+            let queue = unsafe { dispatch_get_global_queue(0, 0) };
+            unsafe {
+                nw_path_monitor_set_queue(monitor, queue);
+                nw_path_monitor_set_update_handler(monitor, update_path);
+                nw_path_monitor_start(monitor);
+            }
+            Self { monitor }
+        }
+    }
+
+    impl Drop for SystemNetworkPolicy {
+        fn drop(&mut self) {
+            unsafe { nw_path_monitor_cancel(self.monitor) };
+        }
+    }
+
+    impl NetworkPolicy for SystemNetworkPolicy {
+        fn is_constrained(&self) -> bool {
+            IS_CONSTRAINED.load(Ordering::Relaxed)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+use macos_network_policy::SystemNetworkPolicy;
+
+fn system_network_policy() -> Arc<dyn NetworkPolicy> {
+    #[cfg(target_os = "macos")]
+    return Arc::new(SystemNetworkPolicy::new());
+
+    #[cfg(not(target_os = "macos"))]
+    return Arc::new(SystemNetworkPolicy);
+}
+
+#[derive(Clone)]
+struct GlobalNetworkPolicy(Arc<dyn NetworkPolicy>);
+
+impl Global for GlobalNetworkPolicy {}
 
 pub struct AutoUpdater {
     status: AutoUpdateStatus,
@@ -230,6 +334,8 @@ struct GlobalAutoUpdate(Option<Entity<AutoUpdater>>);
 impl Global for GlobalAutoUpdate {}
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
+    cx.set_global(GlobalNetworkPolicy(system_network_policy()));
+
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
@@ -305,6 +411,11 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             cx,
         ));
     }
+}
+
+fn network_policy(cx: &AsyncApp) -> Arc<dyn NetworkPolicy> {
+    cx.update(|cx| cx.global::<GlobalNetworkPolicy>().0.clone())
+        .unwrap_or_else(|_| system_network_policy())
 }
 
 pub fn release_notes_url(cx: &mut App) -> Option<String> {
@@ -655,13 +766,14 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let (client, installed_version, previous_status, release_channel) =
-            this.read_with(cx, |this, cx| {
+        let (client, installed_version, previous_status, release_channel, check_type) = this
+            .read_with(cx, |this, cx| {
                 (
                     this.client.http_client(),
                     this.current_version.clone(),
                     this.status.clone(),
                     ReleaseChannel::try_global(cx).unwrap_or(ReleaseChannel::Stable),
+                    this.update_check_type,
                 )
             });
 
@@ -696,6 +808,17 @@ impl AutoUpdater {
             });
             return Ok(());
         };
+
+        if check_type == UpdateCheckType::Automatic && network_policy(cx).is_constrained() {
+            log::info!("skip auto update download: constrained network / Low Data Mode");
+            this.update(cx, |this, cx| {
+                this.status = AutoUpdateStatus::Available {
+                    version: newer_version,
+                };
+                cx.notify();
+            });
+            return Ok(());
+        }
 
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading {
@@ -1213,6 +1336,15 @@ mod tests {
     pub(super) struct InstallOverride(pub Rc<dyn Fn(&Path, &AsyncApp) -> Result<Option<PathBuf>>>);
     impl Global for InstallOverride {}
 
+    #[derive(Clone)]
+    struct ConstrainedNetworkPolicy;
+
+    impl NetworkPolicy for ConstrainedNetworkPolicy {
+        fn is_constrained(&self) -> bool {
+            true
+        }
+    }
+
     #[gpui::test]
     fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1335,6 +1467,171 @@ mod tests {
         let path = will_restart.await.unwrap().unwrap();
         assert_eq!(path, tmp_dir.path().join("zed"));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_auto_update_available_on_constrained_network(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        zlog::init_test();
+        let release_available = Arc::new(AtomicBool::new(true));
+        let request_uris = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            let current_version = semver::Version::new(0, 100, 0);
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let release_available = Arc::clone(&release_available);
+            let request_uris = Arc::clone(&request_uris);
+            let fake_client_http = FakeHttpClient::create(move |req| {
+                let release_available = release_available.load(atomic::Ordering::Relaxed);
+                let request_uris = request_uris.clone();
+                async move {
+                    request_uris.lock().push(req.uri().to_string());
+                    match req.uri().path() {
+                        "/releases/stable/latest/asset" => {
+                            let body = if release_available {
+                                r#"{"version":"0.100.1","url":"http://test.example/new-download"}"#
+                            } else {
+                                r#"{"version":"0.100.0","url":"http://test.example/old-download"}"#
+                            };
+                            Ok(Response::builder().status(200).body(body.into()).unwrap())
+                        }
+                        "/new-download" => Ok(Response::builder()
+                            .status(200)
+                            .body("<fake-zed-update>".into())
+                            .unwrap()),
+                        _ => Ok(Response::builder().status(404).body("".into()).unwrap()),
+                    }
+                }
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+            cx.set_global(GlobalNetworkPolicy(Arc::new(ConstrainedNetworkPolicy)));
+        });
+
+        let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
+
+        auto_updater.update(cx, |updater, cx| {
+            updater.poll(UpdateCheckType::Automatic, cx)
+        });
+        cx.background_executor.run_until_parked();
+
+        let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        assert_eq!(
+            status,
+            AutoUpdateStatus::Available {
+                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
+            }
+        );
+        let request_uris = request_uris.lock();
+        assert_eq!(request_uris.len(), 1);
+        assert!(request_uris[0].starts_with("/releases/stable/latest/asset"));
+        assert!(request_uris[0].contains("asset=zed"));
+        assert!(request_uris[0].contains(&format!("os={OS}")));
+        assert!(request_uris[0].contains(&format!("arch={ARCH}")));
+        assert!(
+            !request_uris
+                .iter()
+                .any(|uri| uri == "http://test.example/new-download")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_manual_auto_update_ignores_constrained_network(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        zlog::init_test();
+        let release_available = Arc::new(AtomicBool::new(true));
+        let request_uris = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+
+        let (download_tx, download_rx) = oneshot::channel::<String>();
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            let current_version = semver::Version::new(0, 100, 0);
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let release_available = Arc::clone(&release_available);
+            let request_uris = Arc::clone(&request_uris);
+            let download_rx = Arc::new(parking_lot::Mutex::new(Some(download_rx)));
+            let fake_client_http = FakeHttpClient::create(move |req| {
+                let release_available = release_available.load(atomic::Ordering::Relaxed);
+                let request_uris = request_uris.clone();
+                let download_rx = download_rx.clone();
+                async move {
+                    request_uris.lock().push(req.uri().to_string());
+                    match req.uri().path() {
+                        "/releases/stable/latest/asset" => {
+                            let body = if release_available {
+                                r#"{"version":"0.100.1","url":"http://test.example/new-download"}"#
+                            } else {
+                                r#"{"version":"0.100.0","url":"http://test.example/old-download"}"#
+                            };
+                            Ok(Response::builder().status(200).body(body.into()).unwrap())
+                        }
+                        "/new-download" => Ok(Response::builder()
+                            .status(200)
+                            .body({
+                                let download_rx = download_rx.lock().take().unwrap();
+                                download_rx.await.unwrap().into()
+                            })
+                            .unwrap()),
+                        _ => Ok(Response::builder().status(404).body("".into()).unwrap()),
+                    }
+                }
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+            cx.set_global(GlobalNetworkPolicy(Arc::new(ConstrainedNetworkPolicy)));
+        });
+
+        let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
+
+        let tmp_dir = Arc::new(tempdir().unwrap());
+        cx.update(|cx| {
+            let tmp_dir = tmp_dir.clone();
+            cx.set_global(InstallOverride(Rc::new(move |target_path, _cx| {
+                let tmp_dir = tmp_dir.clone();
+                let dest_path = tmp_dir.path().join("zed");
+                std::fs::copy(&target_path, &dest_path)?;
+                Ok(Some(dest_path))
+            })));
+        });
+
+        auto_updater.update(cx, |updater, cx| updater.poll(UpdateCheckType::Manual, cx));
+        cx.background_executor.run_until_parked();
+
+        download_tx.send("<fake-zed-update>".to_owned()).unwrap();
+        loop {
+            cx.background_executor.timer(Duration::from_millis(0)).await;
+            cx.run_until_parked();
+            if auto_updater
+                .read_with(cx, |updater, _| updater.status())
+                .is_updated()
+            {
+                break;
+            }
+        }
+
+        let request_uris = request_uris.lock();
+        assert_eq!(request_uris.len(), 2);
+        assert!(request_uris[0].starts_with("/releases/stable/latest/asset"));
+        assert_eq!(request_uris[1], "http://test.example/new-download");
+        assert!(request_uris[0].contains("asset=zed"));
+        assert!(request_uris[0].contains(&format!("os={OS}")));
+        assert!(request_uris[0].contains(&format!("arch={ARCH}")));
+        assert_eq!(
+            auto_updater.read_with(cx, |updater, _| updater.status()),
+            AutoUpdateStatus::Updated {
+                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
+            }
+        );
     }
 
     #[test]
