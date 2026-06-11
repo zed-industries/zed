@@ -15,12 +15,15 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{ReasoningEffort, responses::stream_response};
+use open_ai::{
+    ReasoningEffort,
+    responses::{StreamIdleTimeout, stream_response_with_idle_timeout},
+};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ui::{ConfiguredApiCard, prelude::*};
 use url::form_urlencoded;
 use util::ResultExt as _;
@@ -38,6 +41,26 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+
+/// The ChatGPT subscription API sometimes accepts a connection but never
+/// sends response headers, or goes silent mid-stream, leaving the request
+/// hanging forever (Zed has no read timeout, only a connect timeout). Treat a
+/// stream with no activity for this long as dead so the agent's retry logic
+/// can take over.
+///
+/// This matches the default `stream_idle_timeout_ms` (5 minutes) that
+/// OpenAI's Codex CLI uses in its own client code when talking to this same
+/// API. Don't make this significantly more aggressive than that: response
+/// headers can legitimately take a long time to arrive while the model
+/// reasons, which is how a 10-second header timeout caused the #58035 revert
+/// of #57891.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Bounds the OAuth token refresh request, which otherwise has no timeout and
+/// can hang a completion request forever before it even starts. The token
+/// endpoint is a plain POST, so this can be much tighter than the stream
+/// idle timeout while still being generous.
+const TOKEN_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -521,15 +544,23 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             let extra_headers = CustomHeaders::new(header_pairs);
 
             let access_token = creds.access_token.clone();
+            let background_executor = cx.background_executor().clone();
             request_limiter
                 .stream(async move {
-                    stream_response(
+                    let idle_timeout = StreamIdleTimeout {
+                        duration: STREAM_IDLE_TIMEOUT,
+                        make_timer: Arc::new(move |duration| {
+                            background_executor.timer(duration).boxed()
+                        }),
+                    };
+                    stream_response_with_idle_timeout(
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
                         &access_token,
                         responses_request,
                         &extra_headers,
+                        Some(idle_timeout),
                     )
                     .await
                     .map_err(LanguageModelCompletionError::from)
@@ -581,7 +612,20 @@ async fn get_fresh_credentials(
 
     let shared_task = cx
         .spawn(async move |cx| {
-            let result = refresh_token(&http_client_clone, &refresh_token_value).await;
+            // Bound the refresh request so a hung token endpoint can't stall
+            // completion requests indefinitely.
+            let timeout = cx.background_executor().timer(TOKEN_REFRESH_TIMEOUT);
+            let result = {
+                let mut refresh =
+                    std::pin::pin!(refresh_token(&http_client_clone, &refresh_token_value).fuse());
+                let mut timeout = std::pin::pin!(timeout.fuse());
+                futures::select_biased! {
+                    result = refresh => result,
+                    _ = timeout => Err(RefreshError::Transient(anyhow!(
+                        "timed out refreshing ChatGPT subscription token after {TOKEN_REFRESH_TIMEOUT:?}"
+                    ))),
+                }
+            };
 
             match result {
                 Ok(refreshed) => {
@@ -1108,6 +1152,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use language_model::{LanguageModelRequestMessage, Role};
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
@@ -1184,6 +1229,75 @@ mod tests {
             "expires_in": 3600
         })
         .to_string()
+    }
+
+    /// A response body that never produces any data, simulating a server
+    /// connection that goes silent.
+    struct StalledBody;
+
+    impl futures::AsyncRead for StalledBody {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_times_out_when_stream_stalls(cx: &mut TestAppContext) {
+        // The server sends response headers but then no data, ever.
+        let http_client = FakeHttpClient::create(move |_request| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from_reader(StalledBody))?)
+        });
+
+        let state = cx.new(|_cx| State {
+            credentials: Some(make_fresh_credentials()),
+            sign_in_task: None,
+            refresh_task: None,
+            load_task: None,
+            credentials_provider: Arc::new(FakeCredentialsProvider::new()),
+            auth_generation: 0,
+            last_auth_error: None,
+        });
+
+        let model = OpenAiSubscribedLanguageModel {
+            id: LanguageModelId::from(ChatGptModel::Gpt55.id().to_string()),
+            model: ChatGptModel::Gpt55,
+            state,
+            http_client,
+            request_limiter: RateLimiter::new(4),
+        };
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Hello".into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let mut stream = model
+            .stream_completion(request, &cx.to_async())
+            .await
+            .expect("request should start streaming");
+
+        let next_event = cx.executor().spawn(async move { stream.next().await });
+        cx.executor()
+            .advance_clock(STREAM_IDLE_TIMEOUT + Duration::from_secs(1));
+
+        let event = next_event.await;
+        assert!(
+            matches!(
+                event,
+                Some(Err(LanguageModelCompletionError::HttpSend { .. }))
+            ),
+            "expected a retryable HttpSend error, got {event:?}"
+        );
     }
 
     #[gpui::test]
