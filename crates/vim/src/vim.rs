@@ -6,6 +6,7 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod flash;
 mod helix;
 mod indent;
 mod insert;
@@ -985,6 +986,7 @@ impl Vim {
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);
+            flash::register(editor, cx);
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
@@ -1364,7 +1366,9 @@ impl Vim {
                     match operator {
                         // Vim jump labels are transient navigation, so keep the
                         // user's normal cursor shape while waiting for the label.
-                        Operator::HelixJump { .. } => cursor_shape.normal,
+                        Operator::HelixJump { .. } | Operator::FlashJump { .. } => {
+                            cursor_shape.normal
+                        }
 
                         // Navigation operators -> Block cursor
                         Operator::FindForward { .. }
@@ -1468,6 +1472,11 @@ impl Vim {
                     mode = "literal".to_string();
                 } else {
                     mode = "waiting".to_string();
+                    // Flash needs its own bindings (e.g. backspace) while
+                    // waiting for input, so expose its operator id.
+                    if matches!(active_operator, Operator::FlashJump { .. }) {
+                        operator_id = active_operator.id();
+                    }
                 }
             } else {
                 operator_id = active_operator.id();
@@ -1740,8 +1749,10 @@ impl Vim {
     }
 
     fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.active_operator(), Some(Operator::HelixJump { .. })) {
-            self.clear_helix_jump_ui(window, cx);
+        match self.active_operator() {
+            Some(Operator::HelixJump { .. }) => self.clear_helix_jump_ui(window, cx),
+            Some(Operator::FlashJump { .. }) => self.clear_flash_jump_ui(cx),
+            _ => {}
         }
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
@@ -2059,6 +2070,11 @@ impl Vim {
             Some(operator @ Operator::HelixJump { .. }) => {
                 if let Some(input_char) = text.chars().next() {
                     self.handle_helix_jump_input(operator, input_char, window, cx);
+                }
+            }
+            Some(operator @ Operator::FlashJump { .. }) => {
+                if let Some(input_char) = text.chars().next() {
+                    self.handle_flash_jump_input(operator, input_char, window, cx);
                 }
             }
             Some(Operator::Replace) => match self.mode {

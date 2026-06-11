@@ -186,6 +186,7 @@ pub enum HighlightKey {
     SelectedTextHighlight,
     SyntaxTreeView(usize),
     VimExchange,
+    VimFlash,
 }
 
 pub trait ToDisplayPoint {
