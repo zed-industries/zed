@@ -8258,7 +8258,8 @@ mod tests {
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().sort_by = Some(GitPanelSortBy::Path);
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::None);
                 })
             });
         });
@@ -8569,13 +8570,14 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
         let panel = workspace.update_in(cx, GitPanel::new);
 
-        // Enable the `sort_by` path setting and wait for entries to be updated,
+        // Disable status grouping and wait for entries to be updated,
         // as there should no longer be separators between Tracked and Untracked
         // files.
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().sort_by = Some(GitPanelSortBy::Path);
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::None);
                 })
             });
         });

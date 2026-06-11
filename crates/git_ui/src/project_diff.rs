@@ -2823,7 +2823,15 @@ mod tests {
             &editor,
             cx,
             &"
-                  ˇnine
+                  ˇone
+                  two
+                  three
+                  four
+                  five
+                  six
+                  seven
+                  eight
+                  nine
                   ten
                 - eleven
                 + ELEVEN
@@ -2870,13 +2878,16 @@ mod tests {
             &editor,
             cx,
             &"
-                  one
+                  ˇone
                 - two
                 + TWO
                   three
                   four
                   five
-                  ˇnine
+                  six
+                  seven
+                  eight
+                  nine
                   ten
                 - eleven
                 + ELEVEN
