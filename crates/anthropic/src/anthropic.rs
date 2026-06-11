@@ -1,5 +1,6 @@
 use std::io;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -98,6 +99,7 @@ pub struct Model {
     pub supports_adaptive_thinking: bool,
     pub supports_images: bool,
     pub supports_speed: bool,
+    pub supports_compaction: bool,
     pub supported_effort_levels: Vec<Effort>,
     /// A model id to substitute when invoking tools, used for models that
     /// don't support tool calling natively.
@@ -159,6 +161,18 @@ impl Model {
             "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
         );
 
+        // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
+        let supports_compaction = matches!(
+            entry.id.as_str(),
+            "claude-fable-5"
+                | "claude-mythos-5"
+                | "claude-mythos-preview"
+                | "claude-opus-4-8"
+                | "claude-opus-4-7"
+                | "claude-opus-4-6"
+                | "claude-sonnet-4-6"
+        );
+
         let mut extra_beta_headers = Vec::new();
         if supports_speed {
             extra_beta_headers.push(FAST_MODE_BETA_HEADER.to_string());
@@ -175,6 +189,7 @@ impl Model {
             supports_adaptive_thinking,
             supports_images,
             supports_speed,
+            supports_compaction,
             supported_effort_levels,
             tool_override: None,
             extra_beta_headers,
@@ -624,7 +639,7 @@ pub enum RequestContent {
     },
     #[serde(rename = "compaction")]
     Compaction {
-        content: Option<String>,
+        content: Option<Arc<str>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
@@ -660,7 +675,7 @@ pub enum ResponseContent {
         input: serde_json::Value,
     },
     #[serde(rename = "compaction")]
-    Compaction { content: Option<String> },
+    Compaction { content: Option<Arc<str>> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -913,7 +928,7 @@ pub enum ContentDelta {
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
     #[serde(rename = "compaction_delta")]
-    CompactionDelta { content: Option<String> },
+    CompactionDelta { content: Option<Arc<str>> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

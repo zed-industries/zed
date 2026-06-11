@@ -391,7 +391,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Compaction { .. } => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
@@ -451,7 +451,7 @@ pub fn into_mistral(
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
-                        MessageContent::Compaction { .. } => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(tool_use) => {
                             let tool_call = mistral::ToolCall {
                                 id: tool_use.id.to_string(),
@@ -505,7 +505,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Compaction { .. } => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::Image(_)
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {

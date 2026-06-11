@@ -2,8 +2,8 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
+    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
     Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
@@ -12,10 +12,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    Request as ResponseRequest, ResponseError, ResponseFunctionCallItem,
-    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
-    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
-    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ContextManagement, Request as ResponseRequest, ResponseCompactionItem, ResponseError,
+    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
+    ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
+    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
 };
@@ -82,7 +82,7 @@ pub fn into_open_ai(
                         }
                     }
                 }
-                MessageContent::RedactedThinking(_) | MessageContent::Compaction { .. } => {}
+                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         MessagePart::Image {
@@ -211,7 +211,7 @@ pub fn into_open_ai_response(
         thinking_allowed,
         thinking_effort,
         speed,
-        compact_at_tokens: _,
+        compact_at_tokens,
     } = request;
 
     let service_tier = service_tier_for(speed);
@@ -300,6 +300,8 @@ pub fn into_open_ai_response(
         },
         reasoning,
         service_tier,
+        context_management: compact_at_tokens
+            .map(|compact_threshold| vec![ContextManagement::Compaction { compact_threshold }]),
     }
 }
 
@@ -336,9 +338,26 @@ fn append_message_to_response_items(
             MessageContent::Text(text) => {
                 push_response_text_part(&role, text, &mut content_parts);
             }
-            MessageContent::Thinking { .. }
-            | MessageContent::RedactedThinking(_)
-            | MessageContent::Compaction { .. } => {}
+            MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
+            MessageContent::Compaction(CompactionContent::Encrypted {
+                id,
+                encrypted_content,
+            }) => {
+                flush_response_parts(
+                    &role,
+                    index,
+                    phase.as_deref(),
+                    &mut content_parts,
+                    input_items,
+                );
+                input_items.push(ResponseInputItem::Compaction(ResponseCompactionItem {
+                    id,
+                    encrypted_content,
+                }));
+            }
+            // Summary compaction blocks come from other providers and cannot
+            // be replayed to OpenAI.
+            MessageContent::Compaction(CompactionContent::Summary { .. }) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -760,7 +779,9 @@ impl OpenAiResponseEventMapper {
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
-                    ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
+                    ResponseOutputItem::Reasoning(_)
+                    | ResponseOutputItem::Compaction(_)
+                    | ResponseOutputItem::Unknown => {}
                 }
                 events
             }
@@ -908,6 +929,14 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
+                ResponseOutputItem::Compaction(compaction) => {
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionContent::Encrypted {
+                            id: compaction.id,
+                            encrypted_content: compaction.encrypted_content,
+                        },
+                    ))]
+                }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
             ResponsesStreamEvent::OutputTextDone { .. }
@@ -3285,5 +3314,121 @@ mod tests {
                 LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
             )
         }));
+    }
+
+    #[test]
+    fn into_open_ai_response_maps_compact_at_tokens_to_context_management() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["context_management"],
+            json!([{ "type": "compaction", "compact_threshold": 100_000 }])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_context_management_without_compact_at_tokens() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+
+        assert!(
+            serde_json::to_value(&response)
+                .unwrap()
+                .get("context_management")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_encrypted_compaction_block() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Compaction(CompactionContent::Encrypted {
+                        id: Some("cmp_1".into()),
+                        encrypted_content: "encrypted-blob".into(),
+                    }),
+                    MessageContent::Text("Done.".into()),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted-blob"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_maps_compaction_output_item() {
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: item.clone(),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item,
+            },
+        ];
+
+        let mapped = map_response_events(events);
+
+        assert_eq!(
+            mapped,
+            vec![LanguageModelCompletionEvent::Compaction(
+                CompactionContent::Encrypted {
+                    id: Some("cmp_1".into()),
+                    encrypted_content: "encrypted-blob".into(),
+                }
+            )]
+        );
     }
 }

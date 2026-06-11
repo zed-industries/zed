@@ -260,8 +260,17 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
-    Compaction {
-        content: Option<String>,
+    Compaction(CompactionContent),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum CompactionContent {
+    Summary {
+        content: Option<Arc<str>>,
+    },
+    Encrypted {
+        id: Option<Arc<str>>,
+        encrypted_content: Arc<str>,
     },
 }
 
@@ -274,7 +283,7 @@ impl MessageContent {
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
             | MessageContent::Image(_)
-            | MessageContent::Compaction { .. } => false,
+            | MessageContent::Compaction(_) => false,
         }
     }
 }
@@ -321,7 +330,7 @@ impl LanguageModelRequestMessage {
                 MessageContent::RedactedThinking(_)
                 | MessageContent::ToolUse(_)
                 | MessageContent::Image(_)
-                | MessageContent::Compaction { .. } => {}
+                | MessageContent::Compaction(_) => {}
             }
         }
         buffer

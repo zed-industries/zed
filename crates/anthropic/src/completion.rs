@@ -2,9 +2,10 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
+    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, Role, StopReason,
+    TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -153,10 +154,15 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
                 cache_control: None,
             })
         }
-        MessageContent::Compaction { content } => Some(RequestContent::Compaction {
-            content,
-            cache_control: None,
-        }),
+        MessageContent::Compaction(CompactionContent::Summary { content }) => {
+            Some(RequestContent::Compaction {
+                content,
+                cache_control: None,
+            })
+        }
+        // Encrypted compaction blocks come from other providers and cannot be
+        // replayed to Anthropic.
+        MessageContent::Compaction(CompactionContent::Encrypted { .. }) => None,
     }
 }
 
@@ -400,7 +406,9 @@ impl AnthropicEventMapper {
                     Vec::new()
                 }
                 ResponseContent::Compaction { content } => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction { content })]
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionContent::Summary { content },
+                    ))]
                 }
             },
             Event::ContentBlockDelta { index, delta } => match delta {
@@ -420,7 +428,9 @@ impl AnthropicEventMapper {
                     })]
                 }
                 ContentDelta::CompactionDelta { content } => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction { content })]
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionContent::Summary { content },
+                    ))]
                 }
                 ContentDelta::InputJsonDelta { partial_json } => {
                     if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
@@ -987,9 +997,9 @@ mod tests {
     #[test]
     fn test_compaction_content_replayed_as_compaction_block() {
         let result = request_with_assistant_content(vec![
-            MessageContent::Compaction {
-                content: Some("Summary of the conversation so far.".to_string()),
-            },
+            MessageContent::Compaction(CompactionContent::Summary {
+                content: Some("Summary of the conversation so far.".into()),
+            }),
             MessageContent::Text("Response".to_string()),
         ]);
 
@@ -1036,10 +1046,12 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                LanguageModelCompletionEvent::Compaction { content: None },
-                LanguageModelCompletionEvent::Compaction {
-                    content: Some("Summary chunk".to_string())
-                },
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Summary {
+                    content: None
+                }),
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Summary {
+                    content: Some("Summary chunk".into())
+                }),
             ]
         );
     }
