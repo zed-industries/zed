@@ -8001,19 +8001,18 @@ impl Editor {
         let project = self.project.clone()?;
         let kind = CodeActionKind::from(action.kind.clone());
         match action.apply {
-            ApplyMode::First => self.apply_first_code_action(project, kind, window, cx),
-            // TODO: IfSingle and Never temporarily behave as All until the
-            // kind-filtered picker lands.
-            ApplyMode::IfSingle | ApplyMode::Never | ApplyMode::All => {
-                Some(self.perform_code_action_kind(project, kind, window, cx))
+            ApplyMode::All => Some(self.perform_code_action_kind(project, kind, window, cx)),
+            ApplyMode::First | ApplyMode::IfSingle | ApplyMode::Never => {
+                self.dispatch_code_action_by_kind(project, kind, action.apply, window, cx)
             }
         }
     }
 
-    fn apply_first_code_action(
+    fn dispatch_code_action_by_kind(
         &mut self,
         project: Entity<Project>,
         kind: CodeActionKind,
+        mode: ApplyMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -8041,15 +8040,50 @@ impl Editor {
         let workspace = self.workspace()?.downgrade();
 
         Some(cx.spawn_in(window, async move |editor, cx| {
-            let Some(action) = actions.await?.unwrap_or_default().into_iter().next() else {
+            let actions = actions.await?.unwrap_or_default();
+            if actions.is_empty() {
                 return Ok(());
+            }
+            let apply_first = match mode {
+                ApplyMode::First => true,
+                ApplyMode::IfSingle => actions.len() == 1,
+                ApplyMode::Never => false,
+                ApplyMode::All => unreachable!(),
             };
-            let title = action.lsp_action.title().to_owned();
-            let apply = project.update(cx, |project, cx| {
-                project.apply_code_action(buffer, action, true, cx)
-            });
-            let transaction = apply.await?;
-            Self::open_project_transaction(&editor, workspace, transaction, title, cx).await
+            if apply_first {
+                let action = actions.into_iter().next().expect("non-empty checked above");
+                let title = action.lsp_action.title().to_owned();
+                let apply = project.update(cx, |project, cx| {
+                    project.apply_code_action(buffer, action, true, cx)
+                });
+                let transaction = apply.await?;
+                return Self::open_project_transaction(
+                    &editor, workspace, transaction, title, cx,
+                )
+                .await;
+            }
+            let provider: Rc<dyn CodeActionProvider> = Rc::new(project);
+            let available: Rc<[AvailableCodeAction]> = actions
+                .into_iter()
+                .map(|action| AvailableCodeAction {
+                    action,
+                    provider: provider.clone(),
+                })
+                .collect();
+            editor.update(cx, |editor, cx| {
+                let contents =
+                    CodeActionContents::new(None, Some(available), Vec::new(), Default::default());
+                *editor.context_menu.borrow_mut() =
+                    Some(CodeContextMenu::CodeActions(CodeActionsMenu {
+                        buffer,
+                        actions: contents,
+                        selected_item: Default::default(),
+                        scroll_handle: UniformListScrollHandle::default(),
+                        deployed_from: None,
+                    }));
+                cx.notify();
+            })?;
+            Ok(())
         }))
     }
 
