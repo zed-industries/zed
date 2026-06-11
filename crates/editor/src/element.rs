@@ -2744,7 +2744,6 @@ impl EditorElement {
                     + point(
                         gutter.hitbox.size.width
                             - shaped_line.width
-                            - gutter.dimensions.diff_hunk_signs_width
                             - gutter.dimensions.right_padding,
                         ix as f32 * gutter.line_height
                             - Pixels::from(
@@ -2868,10 +2867,8 @@ impl EditorElement {
 
                 let line_origin = gutter.hitbox.origin
                     + point(
-                        gutter.hitbox.size.width
-                            - gutter.dimensions.right_padding
-                            - gutter.dimensions.diff_hunk_signs_width
-                            + (gutter.dimensions.diff_hunk_signs_width - shaped_line.width) / 2.0,
+                        gutter.hitbox.size.width - gutter.dimensions.right_padding
+                            + (gutter.dimensions.right_padding - shaped_line.width) / 2.0,
                         ix as f32 * gutter.line_height - Pixels::from(scroll_top_line_height),
                     );
 
@@ -10814,7 +10811,6 @@ mod tests {
             width: px(30.0),
             margin: Pixels::ZERO,
             git_blame_entries_width: None,
-            diff_hunk_signs_width: Pixels::ZERO,
         };
         const EMPTY_ROW_INFO: RowInfo = RowInfo {
             buffer_id: None,
@@ -11211,7 +11207,6 @@ mod tests {
                 let dimensions = GutterDimensions {
                     left_padding: Pixels::ZERO,
                     right_padding: px(20.),
-                    diff_hunk_signs_width: px(20.),
                     width: px(80.),
                     margin: Pixels::ZERO,
                     git_blame_entries_width: None,
@@ -11262,7 +11257,6 @@ mod tests {
                 let dimensions = GutterDimensions {
                     left_padding: Pixels::ZERO,
                     right_padding: px(20.),
-                    diff_hunk_signs_width: px(20.),
                     width: px(80.),
                     margin: Pixels::ZERO,
                     git_blame_entries_width: None,
