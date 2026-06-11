@@ -3303,9 +3303,9 @@ impl LocalLspStore {
             let snapshot = snapshot?;
             let mut lsp_edits = lsp_edits
                 .into_iter()
-                .map(|mut edit|{
+                .map(|mut edit| {
                     LineEnding::normalize(&mut edit.new_text);
-                    (range_from_lsp(edit.range), edit.new_text);
+                    (range_from_lsp(edit.range), edit.new_text)
                 })
                 .collect::<Vec<_>>();
 
