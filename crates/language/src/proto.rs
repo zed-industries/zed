@@ -459,6 +459,7 @@ pub fn deserialize_diagnostics(
                     },
                     message: diagnostic.message,
                     markdown: diagnostic.markdown,
+                    lsp_markup: None,
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
                     code_description: diagnostic

@@ -3454,7 +3454,7 @@ async fn test_lsp_pull_diagnostics(
                                                         severity: Some(
                                                             lsp::DiagnosticSeverity::ERROR,
                                                         ),
-                                                        message,
+                                                        message: message.into(),
                                                         ..lsp::Diagnostic::default()
                                                     }],
                                                 },
@@ -3525,7 +3525,7 @@ async fn test_lsp_pull_diagnostics(
                                                             severity: Some(lsp::DiagnosticSeverity::WARNING),
                                                             message:
                                                                 expected_workspace_pull_diagnostics_main_message
-                                                                    .to_string(),
+                                                                    .to_string().into(),
                                                             ..lsp::Diagnostic::default()
                                                         }],
                                                     },
@@ -3554,7 +3554,7 @@ async fn test_lsp_pull_diagnostics(
                                                             severity: Some(lsp::DiagnosticSeverity::WARNING),
                                                             message:
                                                                 expected_workspace_pull_diagnostics_lib_message
-                                                                    .to_string(),
+                                                                    .to_string().into(),
                                                             ..lsp::Diagnostic::default()
                                                         }],
                                                     },
@@ -3691,7 +3691,7 @@ async fn test_lsp_pull_diagnostics(
                     },
                 },
                 severity: Some(lsp::DiagnosticSeverity::INFORMATION),
-                message: expected_push_diagnostic_main_message.to_string(),
+                message: expected_push_diagnostic_main_message.to_string().into(),
                 ..lsp::Diagnostic::default()
             }],
             version: None,
@@ -3712,7 +3712,7 @@ async fn test_lsp_pull_diagnostics(
                     },
                 },
                 severity: Some(lsp::DiagnosticSeverity::INFORMATION),
-                message: expected_push_diagnostic_lib_message.to_string(),
+                message: expected_push_diagnostic_lib_message.to_string().into(),
                 ..lsp::Diagnostic::default()
             }],
             version: None,
@@ -3751,7 +3751,8 @@ async fn test_lsp_pull_diagnostics(
                                             severity: Some(lsp::DiagnosticSeverity::ERROR),
                                             message:
                                                 expected_workspace_pull_diagnostics_main_message
-                                                    .to_string(),
+                                                    .to_string()
+                                                    .into(),
                                             ..lsp::Diagnostic::default()
                                         }],
                                     },
@@ -3929,7 +3930,8 @@ async fn test_lsp_pull_diagnostics(
                                     },
                                     severity: Some(lsp::DiagnosticSeverity::ERROR),
                                     message: expected_workspace_pull_diagnostics_lib_message
-                                        .to_string(),
+                                        .to_string()
+                                        .into(),
                                     ..lsp::Diagnostic::default()
                                 }],
                             },

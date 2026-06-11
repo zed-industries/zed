@@ -100,7 +100,11 @@ fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
     if diagnostic.source.is_none() && diagnostic.code.is_none() {
         return;
     }
-    markdown.push_str(" (");
+    if diagnostic.markdown.is_some() {
+        markdown.push_str("\n\n(");
+    } else {
+        markdown.push_str(" (");
+    }
     if let Some(source) = diagnostic.source.as_ref() {
         markdown.push_str(&Markdown::escape(source));
     }
