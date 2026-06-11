@@ -2903,7 +2903,7 @@ impl EditorElement {
                         compute_diff_hunk_sign_color(
                             is_light,
                             gutter_bg_color,
-                            cx.theme().colors().version_control_added,
+                            cx.theme().colors().editor_line_number,
                             git_gutter_sign_minimum_contrast,
                         ),
                     ),
@@ -2912,7 +2912,7 @@ impl EditorElement {
                         compute_diff_hunk_sign_color(
                             is_light,
                             gutter_bg_color,
-                            cx.theme().colors().version_control_modified,
+                            cx.theme().colors().editor_line_number,
                             git_gutter_sign_minimum_contrast,
                         ),
                     ),
@@ -2921,7 +2921,7 @@ impl EditorElement {
                         compute_diff_hunk_sign_color(
                             is_light,
                             gutter_bg_color,
-                            cx.theme().colors().version_control_deleted,
+                            cx.theme().colors().editor_line_number,
                             git_gutter_sign_minimum_contrast,
                         ),
                     ),
