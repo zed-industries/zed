@@ -351,6 +351,8 @@ pub struct BoxShadow {
     pub blur_radius: Pixels,
     /// How much should the shadow spread?
     pub spread_radius: Pixels,
+    /// Whether this is an inset shadow (drawn inside the element's bounds).
+    pub inset: bool,
 }
 
 /// How to handle whitespace in text
@@ -373,6 +375,10 @@ pub enum TextOverflow {
     /// displaying the provided string at the beginning (e.g., "…ong text here").
     /// Typically more adequate for file paths where the end is more important than the beginning.
     TruncateStart(SharedString),
+    /// Truncate the text in the middle when it doesn't fit, preserving both the start and end
+    /// of the string (e.g., "long fi…name.rs"). Useful for filenames where both the prefix
+    /// and the extension are important context.
+    TruncateMiddle(SharedString),
 }
 
 /// How to align text within the element
@@ -665,7 +671,7 @@ impl Style {
             .to_pixels(rem_size)
             .clamp_radii_for_quad_size(bounds.size);
 
-        window.paint_shadows(bounds, corner_radii, &self.box_shadow);
+        window.paint_drop_shadows(bounds, corner_radii, &self.box_shadow);
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some_and(|color| !color.is_transparent()) {
@@ -693,6 +699,8 @@ impl Style {
                 self.border_style,
             ));
         }
+
+        window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
 
         continuation(window, cx);
 

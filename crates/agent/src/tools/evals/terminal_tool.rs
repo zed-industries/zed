@@ -220,7 +220,7 @@ impl TerminalToolTest {
                 abs_path: Path::new("/path/to/root").into(),
                 rules_file: None,
             }];
-            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let project_context = ProjectContext::new(worktrees);
             let tool_names = tools
                 .iter()
                 .map(|tool| tool.name.clone().into())
@@ -229,6 +229,9 @@ impl TerminalToolTest {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                user_agents_md: None,
+                sandboxing: false,
             };
             template.render(&Templates::new())?
         };

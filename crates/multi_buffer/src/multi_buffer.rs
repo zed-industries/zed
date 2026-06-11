@@ -20,11 +20,11 @@ use futures_lite::future::yield_now;
 use gpui::{App, Context, Entity, EventEmitter};
 use itertools::Itertools;
 use language::{
-    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, File, IndentGuideSettings,
-    IndentSize, Language, LanguageAwareStyling, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
-    ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
+    AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow, BufferSnapshot, Capability,
+    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, File,
+    IndentGuideSettings, IndentSize, Language, LanguageAwareStyling, LanguageScope, OffsetRangeExt,
+    OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject,
+    ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
@@ -110,7 +110,7 @@ pub enum Event {
     DiffHunksToggled,
     Edited {
         edited_buffer: Option<Entity<Buffer>>,
-        is_local: bool,
+        source: BufferEditSource,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -615,6 +615,7 @@ impl DiffState {
                     changed_range,
                     base_text_changed_range: _,
                     extended_range,
+                    base_text_changed: _,
                 }) => {
                     let use_extended = this.snapshot.borrow().use_extended_diff_range;
                     let range = if use_extended {
@@ -622,13 +623,10 @@ impl DiffState {
                     } else {
                         changed_range.clone()
                     };
-                    if let Some(range) = range {
-                        this.buffer_diff_changed(diff, range, cx)
-                    }
+                    this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
-                _ => {}
+                BufferDiffEvent::BaseTextChanged | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
             }),
             diff,
             main_buffer: None,
@@ -652,6 +650,7 @@ impl DiffState {
                             changed_range: _,
                             base_text_changed_range,
                             extended_range: _,
+                            base_text_changed: _,
                         }) => {
                             this.inverted_buffer_diff_changed(
                                 diff,
@@ -661,10 +660,8 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::LanguageChanged => {
-                            this.inverted_buffer_diff_language_changed(diff, main_buffer, cx)
-                        }
-                        _ => {}
+                        BufferDiffEvent::BaseTextChanged
+                        | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
                     }
                 }
             }),
@@ -1828,7 +1825,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
         cx.emit(Event::BuffersRemoved { removed_buffer_ids });
         cx.notify();
@@ -1952,9 +1949,9 @@ impl MultiBuffer {
         use language::BufferEvent;
         let buffer_id = buffer.read(cx).remote_id();
         cx.emit(match event {
-            &BufferEvent::Edited { is_local } => Event::Edited {
+            &BufferEvent::Edited { source } => Event::Edited {
                 edited_buffer: Some(buffer),
-                is_local,
+                source,
             },
             BufferEvent::DirtyChanged => Event::DirtyChanged,
             BufferEvent::Saved => Event::Saved,
@@ -1973,38 +1970,10 @@ impl MultiBuffer {
         });
     }
 
-    fn buffer_diff_language_changed(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
-        let diff = diff.read(cx);
-        let buffer_id = diff.buffer_id;
-        let diff = DiffStateSnapshot {
-            buffer_id,
-            diff: diff.snapshot(cx),
-            main_buffer: None,
-        };
-        self.snapshot.get_mut().diffs.insert_or_replace(diff, ());
-    }
-
-    fn inverted_buffer_diff_language_changed(
-        &mut self,
-        diff: Entity<BufferDiff>,
-        main_buffer: Entity<language::Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
-        let main_buffer_snapshot = main_buffer.read(cx).snapshot();
-        let diff = diff.read(cx);
-        let diff = DiffStateSnapshot {
-            buffer_id: base_text_buffer_id,
-            diff: diff.snapshot(cx),
-            main_buffer: Some(main_buffer_snapshot),
-        };
-        self.snapshot.get_mut().diffs.insert_or_replace(diff, ());
-    }
-
     fn buffer_diff_changed(
         &mut self,
         diff: Entity<BufferDiff>,
-        range: Range<text::Anchor>,
+        range: Option<Range<text::Anchor>>,
         cx: &mut Context<Self>,
     ) {
         let Some(buffer) = self.buffer(diff.read(cx).buffer_id) else {
@@ -2029,6 +1998,9 @@ impl MultiBuffer {
         snapshot.diffs.insert_or_replace(new_diff, ());
 
         let buffer = buffer.read(cx);
+        let Some(range) = range else {
+            return;
+        };
         let diff_change_range = range.to_offset(buffer);
 
         let excerpt_edits = snapshot.excerpt_edits_for_diff_change(&path, diff_change_range);
@@ -2044,7 +2016,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
     }
 
@@ -2090,7 +2062,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
     }
 
@@ -2239,7 +2211,7 @@ impl MultiBuffer {
 
         self.buffer_diff_changed(
             diff.clone(),
-            text::Anchor::min_max_range_for_buffer(buffer_id),
+            Some(text::Anchor::min_max_range_for_buffer(buffer_id)),
             cx,
         );
         self.diffs.insert(buffer_id, DiffState::new(diff, cx));
@@ -2313,7 +2285,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
     }
 
@@ -2449,7 +2421,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
     }
 
@@ -3102,7 +3074,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
     }
 }
@@ -5011,6 +4983,20 @@ impl MultiBufferSnapshot {
         MBD::TextDimension: Sub<Output = MBD::TextDimension> + Ord,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
+        let mut summaries = Vec::new();
+        self.summaries_for_anchors_cb(anchors, |summary| summaries.push(summary));
+        summaries
+    }
+
+    pub fn summaries_for_anchors_cb<'a, MBD, I>(&'a self, anchors: I, mut cb: impl FnMut(MBD))
+    where
+        MBD: MultiBufferDimension
+            + Ord
+            + Sub<Output = MBD::TextDimension>
+            + AddAssign<MBD::TextDimension>,
+        MBD::TextDimension: Sub<Output = MBD::TextDimension> + Ord,
+        I: 'a + IntoIterator<Item = &'a Anchor>,
+    {
         let mut anchors = anchors.into_iter().peekable();
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(());
         let mut diff_transforms_cursor = self
@@ -5018,18 +5004,17 @@ impl MultiBufferSnapshot {
             .cursor::<Dimensions<ExcerptDimension<MBD>, OutputDimension<MBD>>>(());
         diff_transforms_cursor.next();
 
-        let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
             let target = anchor.seek_target(self);
             let excerpt_anchor = match anchor {
                 Anchor::Min => {
-                    summaries.push(MBD::default());
+                    cb(MBD::default());
                     anchors.next();
                     continue;
                 }
                 Anchor::Excerpt(excerpt_anchor) => excerpt_anchor,
                 Anchor::Max => {
-                    summaries.push(MBD::from_summary(&self.text_summary()));
+                    cb(MBD::from_summary(&self.text_summary()));
                     anchors.next();
                     continue;
                 }
@@ -5047,7 +5032,7 @@ impl MultiBufferSnapshot {
                         excerpt_start_position,
                         &mut diff_transforms_cursor,
                     );
-                    summaries.push(position);
+                    cb(position);
                     anchors.next();
                     continue;
                 }
@@ -5083,7 +5068,7 @@ impl MultiBufferSnapshot {
                         diff_transforms_cursor.seek_forward(&position, Bias::Left);
                     }
 
-                    summaries.push(self.summary_for_anchor_with_excerpt_position(
+                    cb(self.summary_for_anchor_with_excerpt_position(
                         excerpt_anchor,
                         position,
                         &mut diff_transforms_cursor,
@@ -5097,12 +5082,10 @@ impl MultiBufferSnapshot {
                     excerpt_start_position,
                     &mut diff_transforms_cursor,
                 );
-                summaries.push(position);
+                cb(position);
                 anchors.next();
             }
         }
-
-        summaries
     }
 
     pub fn dimensions_from_points<'a, MBD>(
@@ -7934,7 +7917,11 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         if self.range.start >= self.range.end {
             return None;
         }
-        if self.range.start == self.diff_transforms.end().0 {
+        while self
+            .diff_transforms
+            .item()
+            .is_some_and(|_| self.range.start >= self.diff_transforms.end().0)
+        {
             self.diff_transforms.next();
         }
 
@@ -7961,10 +7948,17 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let chunk_end = self.range.start + chunk.text.len();
                 let diff_transform_end = diff_transform_end.min(self.range.end);
 
-                if diff_transform_end < chunk_end {
-                    let split_idx = diff_transform_end - self.range.start;
+                let split_idx = if diff_transform_end < chunk_end {
+                    chunk
+                        .text
+                        .ceil_char_boundary(diff_transform_end - self.range.start)
+                } else {
+                    chunk.text.len()
+                };
+
+                if split_idx < chunk.text.len() {
                     let (before, after) = chunk.text.split_at(split_idx);
-                    self.range.start = diff_transform_end;
+                    self.range.start += split_idx;
                     let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
                     let chars = chunk.chars & mask;
                     let tabs = chunk.tabs & mask;

@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
-use http_client::{AsyncBody, HttpClient, http};
+use http_client::{AsyncBody, CustomHeaders, HttpClient, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
@@ -32,6 +32,7 @@ use crate::provider::open_ai::{
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
     match effort.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(ReasoningEffort::None),
         "minimal" => Some(ReasoningEffort::Minimal),
         "low" => Some(ReasoningEffort::Low),
         "medium" => Some(ReasoningEffort::Medium),
@@ -43,11 +44,12 @@ fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
 
 fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static str) {
     match effort {
+        ReasoningEffort::None => ("None", "none"),
         ReasoningEffort::Minimal => ("Minimal", "minimal"),
         ReasoningEffort::Low => ("Low", "low"),
         ReasoningEffort::Medium => ("Medium", "medium"),
         ReasoningEffort::High => ("High", "high"),
-        ReasoningEffort::XHigh => ("Max", "max"),
+        ReasoningEffort::XHigh => ("XHigh", "xhigh"),
     }
 }
 
@@ -56,11 +58,13 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 
 const API_KEY_ENV_VAR_NAME: &str = "OPENCODE_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["x-opencode-session"];
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenCodeSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
     pub show_zen_models: bool,
     pub show_go_models: bool,
     pub show_free_models: bool,
@@ -376,10 +380,19 @@ impl OpenCodeLanguageModel {
         })
     }
 
+    fn custom_headers(&self, cx: &AsyncApp) -> CustomHeaders {
+        self.state.read_with(cx, |_, cx| {
+            OpenCodeLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone()
+        })
+    }
+
     fn stream_anthropic(
         &self,
         request: anthropic::Request,
         http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -407,6 +420,7 @@ impl OpenCodeLanguageModel {
                 &api_key,
                 request,
                 None,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)
@@ -419,6 +433,7 @@ impl OpenCodeLanguageModel {
         &self,
         request: open_ai::Request,
         http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -442,6 +457,7 @@ impl OpenCodeLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)
@@ -454,6 +470,7 @@ impl OpenCodeLanguageModel {
         &self,
         request: open_ai::responses::Request,
         http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -477,6 +494,7 @@ impl OpenCodeLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)
@@ -489,6 +507,7 @@ impl OpenCodeLanguageModel {
         &self,
         request: google_ai::GenerateContentRequest,
         http_client: Arc<dyn HttpClient>,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -508,6 +527,7 @@ impl OpenCodeLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)
@@ -549,13 +569,17 @@ impl LanguageModel for OpenCodeLanguageModel {
     fn supports_thinking(&self) -> bool {
         self.model
             .supported_reasoning_effort_levels()
-            .is_some_and(|levels| !levels.is_empty())
+            .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_reasoning_effort_levels()
             .map(|levels| {
+                let levels = levels
+                    .into_iter()
+                    .filter(|effort| *effort != ReasoningEffort::None)
+                    .collect::<Vec<_>>();
                 if levels.is_empty() {
                     return Vec::new();
                 }
@@ -595,11 +619,11 @@ impl LanguageModel for OpenCodeLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.model.max_token_count(self.subscription)
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
+        self.model.max_output_tokens(self.subscription)
     }
 
     fn stream_completion(
@@ -627,6 +651,7 @@ impl LanguageModel for OpenCodeLanguageModel {
         } else {
             self.http_client.clone()
         };
+        let extra_headers = self.custom_headers(cx);
 
         match self.model.protocol(self.subscription) {
             ApiProtocol::Anthropic => {
@@ -639,10 +664,14 @@ impl LanguageModel for OpenCodeLanguageModel {
                     request,
                     self.model.id().to_string(),
                     1.0,
-                    self.model.max_output_tokens().unwrap_or(8192),
+                    self.model
+                        .max_output_tokens(self.subscription)
+                        .unwrap_or(8192),
                     mode,
+                    anthropic::completion::AnthropicPromptCacheMode::Automatic,
                 );
-                let stream = self.stream_anthropic(anthropic_request, http_client, cx);
+                let stream =
+                    self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = AnthropicEventMapper::new();
                     Ok(mapper.map_stream(stream.await?).boxed())
@@ -663,11 +692,12 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.id(),
                     false,
                     false,
-                    self.model.max_output_tokens(),
+                    self.model.max_output_tokens(self.subscription),
                     reasoning_effort,
                     self.model.interleaved_reasoning(),
                 );
-                let stream = self.stream_openai_chat(openai_request, http_client, cx);
+                let stream =
+                    self.stream_openai_chat(openai_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = OpenAiEventMapper::new();
                     Ok(mapper.map_stream(stream.await?).boxed())
@@ -675,23 +705,21 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::OpenAiResponses => {
-                let reasoning_effort = if request.thinking_allowed {
-                    request
-                        .thinking_effort
-                        .as_deref()
-                        .and_then(normalize_reasoning_effort)
-                } else {
-                    None
-                };
+                let supports_none_reasoning_effort = self
+                    .model
+                    .supported_reasoning_effort_levels()
+                    .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
                     false,
                     false,
-                    self.model.max_output_tokens(),
-                    reasoning_effort,
+                    self.model.max_output_tokens(self.subscription),
+                    None,
+                    supports_none_reasoning_effort,
                 );
-                let stream = self.stream_openai_response(response_request, http_client, cx);
+                let stream =
+                    self.stream_openai_response(response_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = OpenAiResponseEventMapper::new();
                     Ok(mapper.map_stream(stream.await?).boxed())
@@ -704,7 +732,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.id().to_string(),
                     google_ai::GoogleModelMode::Default,
                 );
-                let stream = self.stream_google(google_request, http_client, cx);
+                let stream = self.stream_google(google_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();
                     Ok(mapper.map_stream(stream.await?.boxed()).boxed())

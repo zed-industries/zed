@@ -6,6 +6,7 @@ import "worktree.proto";
 
 message GitBranchesResponse {
   repeated Branch branches = 1;
+  optional string error = 2;
 }
 
 message UpdateDiffBases {
@@ -130,6 +131,7 @@ message UpdateRepository {
   repeated Branch branch_list = 18;
   optional string repository_dir_abs_path = 19;
   optional string common_dir_abs_path = 20;
+  optional string branch_list_error = 21;
 }
 
 message RemoveRepository {

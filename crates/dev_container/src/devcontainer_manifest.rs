@@ -362,6 +362,59 @@ impl DevContainerManifest {
         }
     }
 
+    async fn copy_local_feature(
+        &self,
+        feature_ref: &str,
+        destination: &Path,
+    ) -> Result<(), DevContainerError> {
+        let source_path = normalize_path(&self.config_directory.join(feature_ref));
+
+        if !self.fs.is_dir(&source_path).await {
+            log::error!(
+                "Local feature directory '{}' not found at {:?}",
+                feature_ref,
+                source_path
+            );
+            return Err(DevContainerError::ResourceFetchFailed);
+        }
+
+        let items = fs::read_dir_items(&*self.fs, &source_path)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to read local feature directory {:?}: {e}",
+                    source_path
+                );
+                DevContainerError::FilesystemError
+            })?;
+
+        for (item_path, is_dir) in &items {
+            let relative = item_path.strip_prefix(&source_path).map_err(|e| {
+                log::error!("Failed to compute relative path for {:?}: {e}", item_path);
+                DevContainerError::FilesystemError
+            })?;
+            let dest_path = destination.join(relative);
+
+            if *is_dir {
+                self.fs.create_dir(&dest_path).await.map_err(|e| {
+                    log::error!("Failed to create directory {:?}: {e}", dest_path);
+                    DevContainerError::FilesystemError
+                })?;
+            } else {
+                let content = self.fs.load_bytes(item_path).await.map_err(|e| {
+                    log::error!("Failed to read file {:?}: {e}", item_path);
+                    DevContainerError::FilesystemError
+                })?;
+                self.fs.write(&dest_path, &content).await.map_err(|e| {
+                    log::error!("Failed to write file {:?}: {e}", dest_path);
+                    DevContainerError::FilesystemError
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn download_feature_and_dockerfile_resources(&mut self) -> Result<(), DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
@@ -458,59 +511,66 @@ impl DevContainerManifest {
                 DevContainerError::FilesystemError
             })?;
 
-            let oci_ref = parse_oci_feature_ref(feature_ref).ok_or_else(|| {
-                log::error!(
-                    "Feature '{}' is not a supported OCI feature reference",
-                    feature_ref
-                );
-                DevContainerError::DevContainerParseFailed
-            })?;
-            let TokenResponse { token } =
-                get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
-                    .await
-                    .map_err(|e| {
-                        log::error!("Failed to get OCI token for feature '{}': {e}", feature_ref);
-                        DevContainerError::ResourceFetchFailed
-                    })?;
-            let manifest = get_oci_manifest(
-                &oci_ref.registry,
-                &oci_ref.path,
-                &token,
-                &self.http_client,
-                &oci_ref.version,
-                None,
-            )
-            .await
-            .map_err(|e| {
-                log::error!(
-                    "Failed to fetch OCI manifest for feature '{}': {e}",
-                    feature_ref
-                );
-                DevContainerError::ResourceFetchFailed
-            })?;
-            let digest = &manifest
-                .layers
-                .first()
-                .ok_or_else(|| {
+            if is_local_feature_ref(feature_ref) {
+                self.copy_local_feature(feature_ref, &feature_dir).await?;
+            } else {
+                let oci_ref = parse_oci_feature_ref(feature_ref).ok_or_else(|| {
                     log::error!(
-                        "OCI manifest for feature '{}' contains no layers",
+                        "Feature '{}' is not a supported OCI feature reference",
+                        feature_ref
+                    );
+                    DevContainerError::DevContainerParseFailed
+                })?;
+                let TokenResponse { token } =
+                    get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
+                        .await
+                        .map_err(|e| {
+                            log::error!(
+                                "Failed to get OCI token for feature '{}': {e}",
+                                feature_ref
+                            );
+                            DevContainerError::ResourceFetchFailed
+                        })?;
+                let manifest = get_oci_manifest(
+                    &oci_ref.registry,
+                    &oci_ref.path,
+                    &token,
+                    &self.http_client,
+                    &oci_ref.version,
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to fetch OCI manifest for feature '{}': {e}",
                         feature_ref
                     );
                     DevContainerError::ResourceFetchFailed
-                })?
-                .digest;
-            download_oci_tarball(
-                &token,
-                &oci_ref.registry,
-                &oci_ref.path,
-                digest,
-                "application/vnd.devcontainers.layer.v1+tar",
-                &feature_dir,
-                &self.http_client,
-                &self.fs,
-                None,
-            )
-            .await?;
+                })?;
+                let digest = &manifest
+                    .layers
+                    .first()
+                    .ok_or_else(|| {
+                        log::error!(
+                            "OCI manifest for feature '{}' contains no layers",
+                            feature_ref
+                        );
+                        DevContainerError::ResourceFetchFailed
+                    })?
+                    .digest;
+                download_oci_tarball(
+                    &token,
+                    &oci_ref.registry,
+                    &oci_ref.path,
+                    digest,
+                    "application/vnd.devcontainers.layer.v1+tar",
+                    &feature_dir,
+                    &self.http_client,
+                    &self.fs,
+                    None,
+                )
+                .await?;
+            }
 
             let feature_json_path = &feature_dir.join("devcontainer-feature.json");
             if !self.fs.is_file(feature_json_path).await {
@@ -537,7 +597,7 @@ impl DevContainerManifest {
 
             let feature_manifest = FeatureManifest::new(consecutive_id, feature_dir, feature_json);
 
-            log::debug!("Downloaded OCI feature content for '{}'", feature_ref);
+            log::debug!("Prepared feature content for '{}'", feature_ref);
 
             let env_content = feature_manifest
                 .write_feature_env(&self.fs, options)
@@ -734,24 +794,30 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let privileged = dev_container.privileged.unwrap_or(false)
             || self.features.iter().any(|f| f.privileged());
 
-        let mut entrypoint_script_lines = vec![
-            "echo Container started".to_string(),
-            "trap \"exit 0\" 15".to_string(),
-        ];
+        let entrypoint_script = if dev_container.override_command == Some(false) {
+            None
+        } else {
+            let mut entrypoint_script_lines = vec![
+                "echo Container started".to_string(),
+                "trap \"exit 0\" 15".to_string(),
+            ];
 
-        for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
-            entrypoint_script_lines.push(entrypoint.clone());
-        }
-        entrypoint_script_lines.append(&mut vec![
-            "exec \"$@\"".to_string(),
-            "while sleep 1 & wait $!; do :; done".to_string(),
-        ]);
+            for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
+                entrypoint_script_lines.push(entrypoint.clone());
+            }
+            entrypoint_script_lines.append(&mut vec![
+                "exec \"$@\"".to_string(),
+                "while sleep 1 & wait $!; do :; done".to_string(),
+            ]);
+
+            Some(entrypoint_script_lines.join("\n").trim().to_string())
+        };
 
         Ok(DockerBuildResources {
             image: base_image,
             additional_mounts: mounts,
             privileged,
-            entrypoint_script: entrypoint_script_lines.join("\n").trim().to_string(),
+            entrypoint_script,
         })
     }
 
@@ -992,7 +1058,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
             let project_name = self.project_name().await?;
             self.docker_client
-                .docker_compose_build(&docker_compose_resources.files, &project_name)
+                .docker_compose_build(
+                    &docker_compose_resources.files,
+                    &project_name,
+                    dev_container.run_services.as_ref(),
+                )
                 .await?;
             (
                 self.docker_client
@@ -1085,7 +1155,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
                 let project_name = self.project_name().await?;
                 self.docker_client
-                    .docker_compose_build(&docker_compose_resources.files, &project_name)
+                    .docker_compose_build(
+                        &docker_compose_resources.files,
+                        &project_name,
+                        dev_container.run_services.as_ref(),
+                    )
                     .await?;
 
                 (
@@ -1176,7 +1250,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     Some((
                         source.clone(),
                         DockerComposeVolume {
-                            name: source.clone(),
+                            name: Some(source.clone()),
                         },
                     ))
                 } else {
@@ -1195,13 +1269,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             })
             .collect();
 
-        let mut main_service = DockerComposeService {
-            entrypoint: Some(vec![
+        let entrypoint = resources.entrypoint_script.map(|script| {
+            vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                resources.entrypoint_script,
+                script,
                 "-".to_string(),
-            ]),
+            ]
+        });
+
+        let mut main_service = DockerComposeService {
+            entrypoint,
             cap_add: Some(vec!["SYS_PTRACE".to_string()]),
             security_opt: Some(vec!["seccomp=unconfined".to_string()]),
             labels: Some(runtime_labels),
@@ -1715,6 +1793,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
+        if let Some(run_services) = self.dev_container().run_services.as_ref() {
+            command.args(run_services);
+        }
 
         let output = self
             .command_runner
@@ -1917,13 +1998,16 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.arg(app_port);
         }
 
-        command.arg("--entrypoint");
-        command.arg("/bin/sh");
-        command.arg(&build_resources.image.id);
-        command.arg("-c");
-
-        command.arg(build_resources.entrypoint_script);
-        command.arg("-");
+        if let Some(entrypoint_script) = build_resources.entrypoint_script {
+            command.arg("--entrypoint");
+            command.arg("/bin/sh");
+            command.arg(&build_resources.image.id);
+            command.arg("-c");
+            command.arg(entrypoint_script);
+            command.arg("-");
+        } else {
+            command.arg(&build_resources.image.id);
+        }
 
         Ok(command)
     }
@@ -2349,7 +2433,7 @@ struct DockerBuildResources {
     image: DockerInspect,
     additional_mounts: Vec<MountDefinition>,
     privileged: bool,
-    entrypoint_script: String,
+    entrypoint_script: Option<String>,
 }
 
 #[derive(Debug)]
@@ -2563,6 +2647,10 @@ fn extract_feature_id(feature_ref: &str) -> &str {
         Some(idx) => &without_version[idx + 1..],
         None => without_version,
     }
+}
+
+fn is_local_feature_ref(feature_ref: &str) -> bool {
+    feature_ref.starts_with("./") || feature_ref.starts_with("../")
 }
 
 /// Generates a shell command that looks up a user's passwd entry.
@@ -2836,7 +2924,7 @@ mod test {
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
             DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, resolve_compose_dockerfile,
+            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3061,6 +3149,16 @@ mod test {
         );
     }
 
+    #[test]
+    fn should_identify_local_feature_refs() {
+        assert!(is_local_feature_ref("./lsp-devtools"));
+        assert!(is_local_feature_ref("./some/nested/feature"));
+        assert!(is_local_feature_ref("../sibling-feature"));
+        assert!(!is_local_feature_ref("ghcr.io/devcontainers/features/go:1"));
+        assert!(!is_local_feature_ref("ghcr.io/user/repo/node:18.0.0"));
+        assert!(!is_local_feature_ref("https://example.com/feature.tgz"));
+    }
+
     #[gpui::test]
     async fn should_create_correct_docker_run_command(cx: &mut TestAppContext) {
         let mut metadata = HashMap::new();
@@ -3092,7 +3190,7 @@ mod test {
             },
             additional_mounts: vec![],
             privileged: false,
-            entrypoint_script: "echo Container started\n    trap \"exit 0\" 15\n    exec \"$@\"\n    while sleep 1 & wait $!; do :; done".to_string(),
+            entrypoint_script: Some("echo Container started\n    trap \"exit 0\" 15\n    exec \"$@\"\n    while sleep 1 & wait $!; do :; done".to_string()),
         };
         let docker_run_command = devcontainer_manifest.create_docker_run_command(build_resources);
 
@@ -3136,6 +3234,56 @@ mod test {
                 OsStr::new("-"),
             ]
         )
+    }
+
+    #[gpui::test]
+    async fn should_not_override_entrypoint_when_override_command_is_false(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "name": "test",
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                "overrideCommand": false
+            }"#,
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let base_image = DockerInspect {
+            id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels { metadata: None },
+                image_user: None,
+                env: Vec::new(),
+            },
+            mounts: None,
+            state: None,
+        };
+
+        let resources = devcontainer_manifest
+            .build_merged_resources(base_image)
+            .unwrap();
+        assert!(
+            resources.entrypoint_script.is_none(),
+            "overrideCommand: false must not produce an entrypoint script"
+        );
+
+        let docker_run_command = devcontainer_manifest
+            .create_docker_run_command(resources)
+            .unwrap();
+        let args: Vec<&OsStr> = docker_run_command.get_args().collect();
+        assert!(
+            !args.contains(&OsStr::new("--entrypoint")),
+            "overrideCommand: false must not pass --entrypoint to docker run"
+        );
+        assert!(
+            args.contains(&OsStr::new("mcr.microsoft.com/devcontainers/base:ubuntu")),
+            "image id must still be present in docker run command"
+        );
     }
 
     #[gpui::test]
@@ -4145,7 +4293,7 @@ ENV DOCKER_BUILDKIT=1
             volumes: HashMap::from([(
                 "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
                 DockerComposeVolume {
-                    name: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
+                    name: Some("dind-var-lib-docker-42dad4b4ca7b8ced".to_string()),
                 },
             )]),
         };
@@ -4643,6 +4791,111 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
 ENV DOCKER_BUILDKIT=1
 "#
+        );
+    }
+
+    #[gpui::test]
+    async fn test_spawns_only_requested_compose_services(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+        {
+          "name": "Devcontainer and PostgreSQL",
+          "dockerComposeFile": "docker-compose.yml",
+          "service": "devcontainer",
+          "runServices": ["devcontainer", "db"],
+          "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+          "updateRemoteUserUID": false
+        }
+        "#;
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                r#"
+version: '3.8'
+
+x-base: &base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+
+volumes:
+  postgres-data:
+
+services:
+  app:
+    <<: *base
+    ports:
+      - "3000:3000"
+
+  devcontainer:
+    <<: *base
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../..:/workspaces:cached
+
+  db:
+    image: postgres:14.1
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    env_file:
+      - .env
+        "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                r#"
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+&& apt-get -y install clang lld \
+&& apt-get autoremove -y && apt-get clean -y
+        "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        let compose_up = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.first().map(String::as_str) == Some("compose")
+                    && c.args.iter().any(|a| a == "up")
+            })
+            .expect("docker compose up command recorded");
+        assert!(
+            compose_up.args.ends_with(&[
+                "up".to_string(),
+                "-d".to_string(),
+                "devcontainer".to_string(),
+                "db".to_string(),
+            ]),
+            "compose up should target only the requested service, got: {:?}",
+            compose_up.args
         );
     }
 
@@ -5154,6 +5407,116 @@ chmod +x ./install.sh
                     ),
                 ])
         }))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_spawns_devcontainer_with_local_feature(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-local-feature-test",
+              "image": "test_image:latest",
+              "features": {
+                "./lsp-devtools": {
+                  "version": "0.1.0"
+                }
+              }
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .insert_tree(
+                format!("{TEST_PROJECT_PATH}/.devcontainer/lsp-devtools"),
+                serde_json::json!({
+                    "devcontainer-feature.json": r#"{
+                        "id": "lsp-devtools",
+                        "version": "0.1.0",
+                        "name": "LSP Devtools",
+                        "options": {
+                            "version": {
+                                "type": "string",
+                                "default": "latest"
+                            }
+                        }
+                    }"#,
+                    "install.sh": "#!/bin/sh\nset -e\necho 'Installing lsp-devtools'",
+                }),
+            )
+            .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+
+        let feature_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
+            })
+            .expect("Dockerfile.extended should be generated");
+        let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
+
+        assert!(
+            feature_dockerfile.contains("lsp-devtools_0"),
+            "Dockerfile.extended should reference the local feature. Got:\n{}",
+            feature_dockerfile
+        );
+
+        let install_wrapper = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "devcontainer-features-install.sh")
+                    && f.to_str().is_some_and(|s| s.contains("/lsp-devtools_"))
+            })
+            .expect("Install wrapper should be generated for local feature");
+        let install_wrapper = test_dependencies.fs.load(install_wrapper).await.unwrap();
+        assert!(
+            install_wrapper.contains("./lsp-devtools"),
+            "Install wrapper should reference the local feature path. Got:\n{}",
+            install_wrapper
+        );
+
+        let feature_env = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "devcontainer-features.env")
+                    && f.to_str().is_some_and(|s| s.contains("/lsp-devtools_"))
+            })
+            .expect("Feature env file should be generated for local feature");
+        let feature_env = test_dependencies.fs.load(feature_env).await.unwrap();
+        assert!(
+            feature_env.contains("VERSION=0.1.0"),
+            "Feature env should contain user-provided version override. Got:\n{}",
+            feature_env
+        );
+
+        let install_sh = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "install.sh")
+                    && f.to_str().is_some_and(|s| s.contains("/lsp-devtools_"))
+            })
+            .expect("install.sh should be copied from the local feature directory");
+        let install_sh = test_dependencies.fs.load(install_sh).await.unwrap();
+        assert!(
+            install_sh.contains("Installing lsp-devtools"),
+            "install.sh should have the original content. Got:\n{}",
+            install_sh
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -5821,6 +6184,19 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                     name: None,
                     services: HashMap::from([
                         (
+                            "devcontainer".to_string(),
+                            DockerComposeService {
+                                image: Some("test_image:latest".to_string()),
+                                volumes: vec![MountDefinition {
+                                    source: Some("../..".to_string()),
+                                    target: "/workspaces".to_string(),
+                                    mount_type: Some("bind".to_string()),
+                                }],
+                                command: vec!["sleep".to_string(), "infinity".to_string()],
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "app".to_string(),
                             DockerComposeService {
                                 build: Some(DockerComposeServiceBuild {
@@ -5946,6 +6322,7 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             &self,
             _config_files: &Vec<PathBuf>,
             _project_name: &str,
+            _services: Option<&Vec<String>>,
         ) -> Result<(), DevContainerError> {
             Ok(())
         }

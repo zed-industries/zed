@@ -174,7 +174,6 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
 
@@ -357,9 +356,7 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            cx.bind_keys(
-                settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
-            );
+            cx.bind_keys(settings::KeymapFile::load_asset_cached(os_keymap, cx).unwrap());
             language_model::LanguageModelRegistry::test(cx);
         });
 
@@ -586,20 +583,19 @@ impl TestServer {
                 http_port: 0,
                 database_url: "".into(),
                 database_max_connections: 0,
-                api_token: "".into(),
                 livekit_server: None,
                 livekit_key: None,
                 livekit_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                zed_cloud_internal_api_key: "test-internal-api-key".into(),
                 blob_store_url: None,
                 blob_store_region: None,
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
                 zed_client_checksum_seed: None,
-                seed_path: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
@@ -658,11 +654,9 @@ impl TestClient {
     }
 
     pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
-        UserId::from_proto(
-            self.app_state
-                .user_store
-                .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
-        )
+        UserId::from_proto(self.app_state.user_store.read_with(cx, |user_store, _| {
+            user_store.current_user().unwrap().legacy_id
+        }))
     }
 
     pub async fn wait_for_current_user(&self, cx: &TestAppContext) {
