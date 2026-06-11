@@ -7,7 +7,9 @@
 //!
 //! The current policy is: enabled iff the user has the `sandboxing` feature
 //! flag turned on, the project is local, the platform has an integration, and
-//! the user has not chosen to always run outside the sandbox.
+//! the user has not turned sandboxing off entirely (the `disabled` sandbox
+//! setting; the `allow_unsandboxed` grant only auto-approves commands that
+//! explicitly request to run unsandboxed and doesn't turn the sandbox off).
 //!
 //! Naming note: this module is about agent terminal sandboxing specifically.
 //! Other agent operations (e.g. file edits) are gated separately.
@@ -29,9 +31,7 @@ pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
 pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
     sandboxing_enabled(cx)
         && project.is_local()
-        && !AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .allow_unsandboxed
+        && !AgentSettings::get_global(cx).sandbox_permissions.disabled
         && cfg!(any(
             target_os = "macos",
             target_os = "linux",
@@ -277,10 +277,8 @@ mod tests {
         let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(true, false, &[]));
         let persistent = SandboxPermissions {
-            allow_network: false,
-            allow_fs_write_all: false,
-            allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/build")],
+            ..Default::default()
         };
 
         assert!(
@@ -296,10 +294,8 @@ mod tests {
     fn persistent_all_access_covers_concrete_writes() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
-            allow_network: false,
             allow_fs_write_all: true,
-            allow_unsandboxed: false,
-            write_paths: Vec::new(),
+            ..Default::default()
         };
 
         assert!(grants.covers_with_persistent(&request(false, false, &["/anywhere"]), &persistent));
@@ -311,10 +307,8 @@ mod tests {
     fn persistent_unsandboxed_covers_unsandboxed_requests_only() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
-            allow_network: false,
-            allow_fs_write_all: false,
             allow_unsandboxed: true,
-            write_paths: Vec::new(),
+            ..Default::default()
         };
 
         assert!(grants.covers_with_persistent(&unsandboxed_request(), &persistent));
@@ -353,9 +347,8 @@ mod tests {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
             allow_network: true,
-            allow_fs_write_all: false,
-            allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/always")],
+            ..Default::default()
         };
 
         let effective = grants.effective_with_persistent(&request(false, false, &[]), &persistent);

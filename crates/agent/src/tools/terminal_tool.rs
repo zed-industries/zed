@@ -481,7 +481,10 @@ async fn run_terminal_tool(
                 .await
                 .map_err(|e| e.to_string())?
         }
-        Err(error) => return Err(error.to_string()),
+        // `{error:#}` keeps the context chain: bad-request errors from the
+        // WSL sandbox machinery put the actionable detail (which path, why)
+        // in the inner error.
+        Err(error) => return Err(format!("{error:#}")),
     };
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
@@ -624,8 +627,16 @@ fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
     }
 }
 
+/// Whether a terminal-creation error means the Windows WSL sandboxing
+/// *environment* is unavailable (WSL missing, no usable `bwrap`, ...), in
+/// which case the user is offered the option of turning sandboxing off.
+///
+/// Bad-request errors from the same machinery — a nonexistent write path,
+/// paths mixing WSL distros — deliberately don't carry this marker; those
+/// are returned to the model, which can fix the request and retry, rather
+/// than prompting for a globally persistent remedy.
 fn is_windows_wsl_sandbox_error(error: &str) -> bool {
-    error.contains("Windows sandboxing via WSL is unavailable")
+    error.contains(sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX)
 }
 
 async fn prompt_to_turn_off_windows_sandboxing(
@@ -2563,6 +2574,25 @@ mod tests {
         let title =
             sandbox_approval_title(&sandbox_request(false, false, &["/a", "/b", "/c", "/d"]));
         assert_eq!(title, "Allow write access to 4 paths?");
+    }
+
+    #[test]
+    fn test_wsl_sandbox_error_detection_only_matches_environment_errors() {
+        // Environment-unavailable errors carry the shared marker prefix and
+        // trigger the "turn off sandboxing" prompt...
+        assert!(is_windows_wsl_sandbox_error(&format!(
+            "{}: Bubblewrap (`bwrap`) is not installed in the default WSL distro",
+            sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX
+        )));
+        // ...while bad-request errors (model-fixable) must not, even though
+        // they mention WSL sandboxing.
+        assert!(!is_windows_wsl_sandbox_error(
+            "failed to map writable path `C:\\missing` into WSL: Windows sandboxing via WSL \
+             can only grant existing files or directories: C:\\missing"
+        ));
+        assert!(!is_windows_wsl_sandbox_error(
+            "cannot sandbox a command whose paths mix WSL distros `Ubuntu` and `Debian`"
+        ));
     }
 
     #[test]

@@ -18,6 +18,20 @@ pub mod macos_seatbelt;
 #[cfg(target_os = "windows")]
 pub mod windows_wsl;
 
+/// Marker prefix for [`windows_wsl`] errors that mean the sandboxing
+/// *environment* is unavailable (WSL missing or failing to start, no usable
+/// `bwrap`, the probe/path-resolution protocol breaking down) — as opposed
+/// to per-request errors such as a writable path that doesn't exist, which
+/// never carry this prefix.
+///
+/// The agent matches on this prefix to decide whether a failed sandboxed
+/// command should offer the user the option of turning sandboxing off
+/// (an environment that can't sandbox at all) or simply report the error
+/// back to the model (a fixable bad request). Defined here rather than in
+/// [`windows_wsl`] so non-Windows builds of the agent can still reference
+/// it.
+pub const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
+
 /// Per-command relaxations of the default sandbox.
 ///
 /// All-false is the default, fully-sandboxed run. Setting any field

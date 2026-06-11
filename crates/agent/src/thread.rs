@@ -4854,13 +4854,19 @@ impl ToolCallEventStream {
             .effective_with_persistent(request, persistent)
     }
 
+    /// Persistently turn terminal sandboxing off entirely (the `disabled`
+    /// sandbox setting). Deliberately distinct from the `allow_unsandboxed`
+    /// grant, which only auto-approves commands that explicitly request
+    /// `unsandboxed: true` while keeping the sandbox on for everything else.
     pub(crate) fn turn_off_sandboxing_always(&self, cx: &AsyncApp) {
-        let request = SandboxRequest {
-            unsandboxed: true,
-            ..Default::default()
+        let Some(fs) = self.fs.clone() else {
+            return;
         };
-        self.sandbox_grants.borrow_mut().record(&request);
-        Self::persist_sandbox_always_permission(&request, self.fs.clone(), cx);
+        cx.update(|cx| {
+            update_settings_file(fs, cx, |settings, _| {
+                settings.agent.get_or_insert_default().disable_sandbox();
+            });
+        });
     }
 
     /// Prompts the user to choose between an explicit set of actions and

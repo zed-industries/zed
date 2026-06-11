@@ -8,6 +8,19 @@
 //! to the conventional `/mnt/<drive>/...` mapping if that fails) and use the
 //! user's default WSL distro unless a WSL UNC path in the request pins a
 //! specific distro.
+//!
+//! Errors fall into two classes the agent treats differently:
+//!
+//! * **Environment unavailable** — WSL missing or failing to start, no
+//!   usable `bwrap`, or the probe/path-resolution stdout protocol breaking
+//!   down. These are prefixed with
+//!   [`WSL_SANDBOX_UNAVAILABLE_PREFIX`](crate::WSL_SANDBOX_UNAVAILABLE_PREFIX)
+//!   and prompt the user with the option of turning sandboxing off, since no
+//!   sandboxed command can succeed in such an environment.
+//! * **Bad request** — a specific path that doesn't exist or can't be mapped
+//!   into WSL, or a request mixing distros. These carry no prefix and are
+//!   reported back to the model, which can fix the request and retry;
+//!   they must never suggest turning sandboxing off globally.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,14 +30,22 @@ use smol::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-use crate::SandboxPermissions;
-
-const WSL_SANDBOX_ERROR_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
+use crate::{SandboxPermissions, WSL_SANDBOX_UNAVAILABLE_PREFIX};
 
 /// Exit code the environment probe script uses to signal that `bwrap` is not
 /// installed, distinguishing that from WSL itself failing to start a shell.
 /// Chosen to be unlikely to collide with `wsl.exe`'s own failure codes.
 const BWRAP_MISSING_EXIT_CODE: i32 = 41;
+
+/// Exit code the environment probe script uses to signal that `bwrap` is
+/// installed but failed the sandbox smoke test — typically because the
+/// distro restricts unprivileged user namespaces (e.g. Ubuntu 24.04's
+/// default AppArmor policy), which every namespace flag we pass depends on.
+const BWRAP_UNUSABLE_EXIT_CODE: i32 = 42;
+
+/// Prefix of the probe script's single result line, so it can be picked out
+/// of any stdout noise printed by the login shell's profile scripts.
+const PROBE_RESULT_PREFIX: &str = "zed-wsl-probe:";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct WslPath {
@@ -64,11 +85,6 @@ impl PathMapping {
     }
 }
 
-/// Whether an error came from the Windows WSL sandbox setup path.
-pub fn is_wsl_sandbox_error(error: &anyhow::Error) -> bool {
-    error.to_string().contains(WSL_SANDBOX_ERROR_PREFIX)
-}
-
 /// Wrap a Linux process invocation so it runs under Bubblewrap inside WSL.
 ///
 /// `program` and `args` must name a Linux executable and Linux argv, not a
@@ -96,24 +112,22 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
     cwd: Option<&Path>,
     env: &HashMap<String, String, S>,
 ) -> Result<(String, Vec<String>)> {
-    let cwd_mapping = match cwd {
-        Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
-            format!(
-                "{WSL_SANDBOX_ERROR_PREFIX}: failed to map terminal cwd `{}` into WSL",
-                cwd.display()
-            )
-        })?),
-        None => None,
-    };
+    // Mapping failures are bad requests (a path that doesn't exist or has a
+    // shape WSL can't address), not environment problems, so no
+    // `WSL_SANDBOX_UNAVAILABLE_PREFIX` here.
+    let cwd_mapping =
+        match cwd {
+            Some(cwd) => Some(directory_to_wsl(cwd).with_context(|| {
+                format!("failed to map terminal cwd `{}` into WSL", cwd.display())
+            })?),
+            None => None,
+        };
 
     let writable_mappings = writable_paths
         .iter()
         .map(|path| {
             path_to_wsl(path).with_context(|| {
-                format!(
-                    "{WSL_SANDBOX_ERROR_PREFIX}: failed to map writable path `{}` into WSL",
-                    path.display()
-                )
+                format!("failed to map writable path `{}` into WSL", path.display())
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -122,7 +136,7 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
     let wsl_exe = wsl_exe_path();
     ensure!(
         wsl_exe.is_file(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: WSL (`wsl.exe`) was not found at `{}`",
+        "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: WSL (`wsl.exe`) was not found at `{}`",
         wsl_exe.display()
     );
     let environment = probe_environment(&wsl_exe, distro.as_deref())?;
@@ -151,7 +165,10 @@ pub fn wrap_invocation<S: std::hash::BuildHasher>(
     if let Some(cwd) = &cwd {
         wsl_args.extend(["--cd".to_string(), cwd.clone()]);
     }
-    wsl_args.extend(["--exec".to_string(), "bwrap".to_string()]);
+    // Use the absolute path the probe validated: `wsl --exec` searches only
+    // the default WSL PATH, which may not include a profile-managed location
+    // where the probe's login shell found `bwrap`.
+    wsl_args.extend(["--exec".to_string(), environment.bwrap_path.clone()]);
     wsl_args.extend(build_bwrap_args(
         &writable_paths,
         permissions,
@@ -176,9 +193,12 @@ fn select_distro(
             continue;
         };
         match distro.as_deref() {
+            // A bad request, not an environment problem: the model (or
+            // project layout) asked for paths spanning two distros, which a
+            // single bwrap invocation can't serve.
             Some(distro) => ensure!(
                 distro == path_distro,
-                "{WSL_SANDBOX_ERROR_PREFIX}: cannot mix WSL distros `{}` and `{}`",
+                "cannot sandbox a command whose paths mix WSL distros `{}` and `{}`",
                 distro,
                 path_distro
             ),
@@ -189,22 +209,52 @@ fn select_distro(
 }
 
 /// What [`probe_environment`] learned about a WSL distro.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct EnvironmentProbe {
     /// Whether the WSL interop socket directory (`/run/WSL`) exists and so
     /// must (and can) be masked — see [`build_bwrap_args`].
     mask_interop_dir: bool,
+    /// Absolute path of the `bwrap` binary the smoke test validated. The real
+    /// invocation must exec this exact path: `wsl --exec` searches only the
+    /// default WSL PATH, so a bare `bwrap` could miss (or differ from) the
+    /// binary the probe's login shell found.
+    bwrap_path: String,
+}
+
+/// Shell script run by [`probe_environment`]. Resolves `bwrap` to an absolute
+/// path (exit [`BWRAP_MISSING_EXIT_CODE`] if absent), then smoke-tests a real
+/// minimal sandbox (exit [`BWRAP_UNUSABLE_EXIT_CODE`] on failure) using the
+/// same mount and namespace flags as [`build_bwrap_args`] — presence isn't
+/// enough, because unprivileged user namespaces can be disabled by the
+/// distro's kernel, sysctl, or AppArmor policy (notably Ubuntu 24.04, the
+/// current default WSL distro), in which case `bwrap` exists but every
+/// sandboxed command would fail. The interop mask is included in the smoke
+/// test when `/run/WSL` exists so the exact mount we later perform is
+/// exercised too. On success, one [`PROBE_RESULT_PREFIX`]-marked result line
+/// reports the interop state and the resolved `bwrap` path.
+fn probe_script() -> String {
+    format!(
+        "bwrap_path=$(command -v bwrap) || exit {BWRAP_MISSING_EXIT_CODE}; \
+         if [ -d /run/WSL ]; then interop=interop; mask='--tmpfs /run/WSL'; \
+         else interop=no-interop; mask=''; fi; \
+         \"$bwrap_path\" --ro-bind / / --tmpfs /tmp $mask --dev /dev --proc /proc \
+         --unshare-net --unshare-user --unshare-ipc --unshare-uts --unshare-pid \
+         --unshare-cgroup-try --die-with-parent -- true >/dev/null \
+         || exit {BWRAP_UNUSABLE_EXIT_CODE}; \
+         printf '{PROBE_RESULT_PREFIX} %s %s\\n' \"$interop\" \"$bwrap_path\""
+    )
 }
 
 /// Probe a distro's sandbox environment in one `wsl.exe` round-trip: confirm
-/// a shell starts, confirm `bwrap` is installed, and report whether the
+/// a shell starts, confirm `bwrap` is installed *and can actually set up an
+/// unprivileged sandbox* (see [`probe_script`]), and report whether the
 /// interop socket directory exists.
 ///
 /// Successful results are cached per distro for the life of the process —
 /// like `linux_bubblewrap::is_available`, the answers can't realistically
 /// change while Zed runs. Failures are deliberately *not* cached so a user
-/// who installs `bwrap` after seeing the error can retry the command without
-/// restarting Zed.
+/// who installs `bwrap` (or lifts a user-namespace restriction) after seeing
+/// the error can retry the command without restarting Zed.
 fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<EnvironmentProbe> {
     static CACHE: OnceLock<Mutex<HashMap<Option<String>, EnvironmentProbe>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -215,17 +265,13 @@ fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<Environment
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&key)
     {
-        return Ok(*probe);
+        return Ok(probe.clone());
     }
 
-    // A missing `bwrap` exits with the distinctive code; the interop marker
-    // on stdout reports whether `/run/WSL` exists. A login shell (`-lc`) is
-    // used so a `bwrap` reachable only through a profile-managed PATH is
-    // still found.
-    let script = format!(
-        "command -v bwrap >/dev/null || exit {BWRAP_MISSING_EXIT_CODE}; \
-         [ -d /run/WSL ] && printf interop; exit 0"
-    );
+    // A login shell (`-lc`) is used so a `bwrap` reachable only through a
+    // profile-managed PATH is still found; the resolved absolute path is
+    // reported back so the real invocation execs the same binary.
+    let script = probe_script();
     let output = run_wsl_command(
         wsl_exe,
         distro,
@@ -234,25 +280,73 @@ fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<Environment
     )?;
     if output.status.code() == Some(BWRAP_MISSING_EXIT_CODE) {
         bail!(
-            "{WSL_SANDBOX_ERROR_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
+            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
             wsl_distro_label(distro)
+        );
+    }
+    if output.status.code() == Some(BWRAP_UNUSABLE_EXIT_CODE) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        bail!(
+            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: Bubblewrap (`bwrap`) is installed in {} but could \
+             not set up a sandbox — the distro may restrict unprivileged user namespaces \
+             (as Ubuntu 24.04's default AppArmor policy does){}",
+            wsl_distro_label(distro),
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
         );
     }
     ensure!(
         output.status.success(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: failed to start a shell in {}{}",
+        "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to start a shell in {}{}",
         wsl_distro_label(distro),
         command_failure_details(output.status.code(), &output.stderr)
     );
 
-    let probe = EnvironmentProbe {
-        mask_interop_dir: String::from_utf8_lossy(&output.stdout).contains("interop"),
-    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let probe = parse_probe_output(&stdout).with_context(|| {
+        format!(
+            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: unexpected sandbox probe output from {}",
+            wsl_distro_label(distro)
+        )
+    })?;
     cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(key, probe);
+        .insert(key, probe.clone());
     Ok(probe)
+}
+
+/// Parse [`probe_script`] output: the last [`PROBE_RESULT_PREFIX`]-marked
+/// line wins, so stdout noise from login-shell profile scripts (which runs
+/// before the script body) is ignored.
+fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(PROBE_RESULT_PREFIX))
+        .with_context(|| format!("no probe result line in: {stdout:?}"))?;
+    let (interop, bwrap_path) = line
+        .trim_start()
+        .split_once(' ')
+        .with_context(|| format!("malformed probe result line: {line:?}"))?;
+    let mask_interop_dir = match interop {
+        "interop" => true,
+        "no-interop" => false,
+        _ => bail!("malformed probe result line: {line:?}"),
+    };
+    ensure!(
+        bwrap_path.starts_with('/'),
+        "`bwrap` resolved to {bwrap_path:?} rather than an absolute path; a shell \
+         alias or function named `bwrap` cannot be run with `wsl --exec`"
+    );
+    Ok(EnvironmentProbe {
+        mask_interop_dir,
+        bwrap_path: bwrap_path.to_string(),
+    })
 }
 
 /// Shell script that resolves and existence-checks paths in a single WSL
@@ -367,7 +461,7 @@ fn resolve_uncached_paths(
     let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths")?;
     ensure!(
         output.status.success(),
-        "{WSL_SANDBOX_ERROR_PREFIX}: failed to resolve sandbox paths in {}{}",
+        "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to resolve sandbox paths in {}{}",
         wsl_distro_label(distro),
         command_failure_details(output.status.code(), &output.stderr)
     );
@@ -375,7 +469,7 @@ fn resolve_uncached_paths(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let resolved = parse_path_resolution_output(&stdout, mappings.len()).with_context(|| {
         format!(
-            "{WSL_SANDBOX_ERROR_PREFIX}: failed to resolve sandbox paths in {}",
+            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to resolve sandbox paths in {}",
             wsl_distro_label(distro)
         )
     })?;
@@ -394,9 +488,12 @@ fn resolve_uncached_paths(
                     resolved.path
                 );
             }
+            // A bad request (the path simply isn't there), not an
+            // environment problem — the model can create it or fix the path
+            // and retry, so no `WSL_SANDBOX_UNAVAILABLE_PREFIX`.
             ensure!(
                 resolved.exists,
-                "{WSL_SANDBOX_ERROR_PREFIX}: mapped {description} `{}` does not exist in {}",
+                "mapped {description} `{}` does not exist in {}",
                 resolved.path,
                 wsl_distro_label(distro)
             );
@@ -486,7 +583,9 @@ fn run_wsl_command(
     command.args(args).stdin(Stdio::null());
 
     smol::block_on(command.output()).with_context(|| {
-        format!("{WSL_SANDBOX_ERROR_PREFIX}: failed to invoke WSL while trying to {description}")
+        format!(
+            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to invoke WSL while trying to {description}"
+        )
     })
 }
 
@@ -772,6 +871,76 @@ mod tests {
     }
 
     #[test]
+    fn probe_output_reports_interop_and_bwrap_path() {
+        let probe = parse_probe_output("zed-wsl-probe: interop /usr/bin/bwrap\n").unwrap();
+        assert_eq!(
+            probe,
+            EnvironmentProbe {
+                mask_interop_dir: true,
+                bwrap_path: "/usr/bin/bwrap".to_string(),
+            }
+        );
+
+        let probe =
+            parse_probe_output("zed-wsl-probe: no-interop /home/me/.nix-profile/bin/bwrap\n")
+                .unwrap();
+        assert_eq!(
+            probe,
+            EnvironmentProbe {
+                mask_interop_dir: false,
+                bwrap_path: "/home/me/.nix-profile/bin/bwrap".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn probe_output_ignores_profile_noise_even_mentioning_interop() {
+        // Login-shell profile scripts run before the probe body and may print
+        // arbitrary text; only the marked result line counts.
+        let probe = parse_probe_output(
+            "welcome to my shell, interop fans\nzed-wsl-probe: no-interop /usr/bin/bwrap\n",
+        )
+        .unwrap();
+        assert!(!probe.mask_interop_dir);
+    }
+
+    #[test]
+    fn probe_output_rejects_missing_or_malformed_result_line() {
+        assert!(parse_probe_output("").is_err());
+        assert!(parse_probe_output("profile noise only\n").is_err());
+        assert!(parse_probe_output("zed-wsl-probe: interop\n").is_err());
+        assert!(parse_probe_output("zed-wsl-probe: maybe /usr/bin/bwrap\n").is_err());
+    }
+
+    #[test]
+    fn probe_output_rejects_non_absolute_bwrap_path() {
+        // `command -v` reports a bare name for shell functions and aliases,
+        // which `wsl --exec` could never run.
+        assert!(parse_probe_output("zed-wsl-probe: interop bwrap\n").is_err());
+    }
+
+    #[test]
+    fn probe_script_smoke_tests_the_namespaces_the_real_invocation_uses() {
+        // Presence isn't enough: unprivileged user namespaces can be
+        // restricted (e.g. Ubuntu 24.04's AppArmor policy), so the probe must
+        // actually exercise the namespace flags `build_bwrap_args` emits.
+        let script = probe_script();
+        for flag in [
+            "--unshare-user",
+            "--unshare-net",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--unshare-pid",
+            "--unshare-cgroup-try",
+            "--ro-bind / /",
+        ] {
+            assert!(script.contains(flag), "probe script must contain {flag}");
+        }
+        assert!(script.contains("exit 41"));
+        assert!(script.contains("exit 42"));
+    }
+
+    #[test]
     fn bwrap_denies_network_by_default() {
         let args = build_bwrap_args(
             &["/home/me/project".to_string()],
@@ -960,6 +1129,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(distro.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn bad_request_errors_do_not_claim_sandboxing_is_unavailable() {
+        // Mixed distros and missing/unmappable paths are model-fixable bad
+        // requests. Only environment errors may carry the prefix, because the
+        // agent uses it to offer the (globally persistent) "turn off
+        // sandboxing" prompt.
+        let mixed_distros = select_distro(
+            Some(&PathMapping::Wsl(WslPath {
+                distro: Some("Ubuntu".to_string()),
+                path: "/home/me".to_string(),
+            })),
+            &[PathMapping::Wsl(WslPath {
+                distro: Some("Debian".to_string()),
+                path: "/home/me".to_string(),
+            })],
+        )
+        .unwrap_err();
+        assert!(!format!("{mixed_distros:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
+
+        let missing_path =
+            path_to_wsl(Path::new(r"C:\zed-test\definitely\does\not\exist-2769")).unwrap_err();
+        assert!(!format!("{missing_path:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
+
+        let unmappable_cwd = directory_to_wsl(Path::new(r"\\server\share\project")).unwrap_err();
+        assert!(!format!("{unmappable_cwd:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
     }
 
     #[test]
