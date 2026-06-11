@@ -595,6 +595,9 @@ pub struct GlobalWatcher {
     // two mutexes because calling watcher.add triggers watcher.event, which needs watchers.
     native_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
     poll_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
+
+    #[cfg(test)]
+    pause_before_unwatch: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
 impl GlobalWatcher {
@@ -671,6 +674,12 @@ impl GlobalWatcher {
             return;
         };
         drop(state);
+
+        #[cfg(test)]
+        if let Some(pause) = self.pause_before_unwatch.lock().as_ref() {
+            pause();
+        }
+
         self.unwatch(&path, mode).log_err();
     }
 
@@ -803,6 +812,8 @@ fn global_watcher() -> &'static GlobalWatcher {
         }),
         native_watcher: Mutex::new(None),
         poll_watcher: Mutex::new(None),
+        #[cfg(test)]
+        pause_before_unwatch: Mutex::new(None),
     })
 }
 
@@ -879,6 +890,7 @@ mod tests {
         watched_paths: HashSet<PathBuf>,
         watch_calls: Vec<PathBuf>,
         unwatch_calls: Vec<PathBuf>,
+        failed_unwatch_calls: Vec<PathBuf>,
         fail_with_watch_limit: bool,
     }
 
@@ -903,6 +915,7 @@ mod tests {
             if backend.watched_paths.remove(&path) {
                 Ok(())
             } else {
+                backend.failed_unwatch_calls.push(path);
                 Err(notify::Error::generic("path was not watched"))
             }
         }
@@ -934,6 +947,7 @@ mod tests {
                     Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
                 }),
             ),
+            pause_before_unwatch: Mutex::new(None),
         }
     }
 
@@ -967,6 +981,77 @@ mod tests {
         let backend = backend.lock();
         assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
         assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
+    }
+
+    #[test]
+    fn concurrent_remove_and_add_leave_backend_watching() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(backend.clone()), None);
+        let path = Arc::<Path>::from(Path::new("/repo"));
+
+        let first_registration = watcher
+            .add(path.clone(), WatcherMode::Native, |_| {})
+            .expect("add first watch")
+            .expect("first watch registered");
+
+        let (reached_gate_tx, reached_gate_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+        *watcher.pause_before_unwatch.lock() = Some(Box::new(move || {
+            reached_gate_tx.send(()).expect("signal gate reached");
+            resume_rx.recv().expect("wait for resume");
+        }));
+
+        let second_registration = std::thread::scope(|scope| {
+            let remover = scope.spawn(|| watcher.remove(first_registration));
+
+            reached_gate_rx
+                .recv()
+                .expect("remove unregistered the path and reached the gate");
+
+            let second_registration = watcher
+                .add(path.clone(), WatcherMode::Native, |_| {})
+                .expect("add second watch")
+                .expect("second watch registered");
+
+            {
+                let backend = backend.lock();
+                assert_eq!(
+                    backend.watch_calls,
+                    vec![path.to_path_buf(), path.to_path_buf()]
+                );
+                assert_eq!(backend.unwatch_calls, Vec::<PathBuf>::new());
+            }
+
+            resume_tx.send(()).expect("resume remove");
+            remover.join().expect("remove thread finished");
+            second_registration
+        });
+
+        let state_says_watched = {
+            let mut state = watcher.state.lock();
+            state
+                .path_registrations(WatcherMode::Native)
+                .get(path.as_ref())
+                .is_some_and(|registration| registration.has_os_watcher)
+        };
+        let backend_is_watching = backend.lock().watched_paths.contains(path.as_ref());
+
+        *watcher.pause_before_unwatch.lock() = None;
+        watcher.remove(second_registration);
+
+        let backend = backend.lock();
+        assert_eq!(
+            backend.failed_unwatch_calls,
+            Vec::<PathBuf>::new(),
+            "backend was asked to unwatch a path it was not watching, meaning the \
+             stale unwatch from the concurrent remove deleted the fresh watch"
+        );
+        assert!(
+            state_says_watched && backend_is_watching,
+            "registration state and backend desynced after concurrent remove/add: \
+             state has_os_watcher={state_says_watched}, backend watching={backend_is_watching}"
+        );
+        assert!(backend.watched_paths.is_empty());
     }
 
     #[test]
