@@ -7989,6 +7989,20 @@ impl Editor {
         ))
     }
 
+    fn code_action(
+        &mut self,
+        action: &crate::actions::CodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        let project = self.project.clone()?;
+        let kind = CodeActionKind::from(action.kind.clone());
+        Some(self.perform_code_action_kind(project, kind, window, cx))
+    }
+
     fn perform_code_action_kind(
         &mut self,
         project: Entity<Project>,
