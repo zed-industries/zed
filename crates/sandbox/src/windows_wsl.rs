@@ -26,7 +26,7 @@ const WSL_SANDBOX_ERROR_PREFIX: &str = "Windows sandboxing via WSL is unavailabl
 /// Chosen to be unlikely to collide with `wsl.exe`'s own failure codes.
 const BWRAP_MISSING_EXIT_CODE: i32 = 41;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct WslPath {
     distro: Option<String>,
     path: String,
@@ -39,9 +39,9 @@ struct WslPath {
 /// (`/etc/wsl.conf` can move the `/mnt` root), so they are translated with
 /// `wslpath` inside the distro — but a distro can only be chosen after every
 /// path has been parsed (WSL UNC paths pin one), hence this two-stage shape:
-/// parse structurally first, then resolve native paths via
-/// [`resolve_path_mapping`] once the distro is known.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// parse structurally first, then resolve native paths via [`resolve_paths`]
+/// once the distro is known.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum PathMapping {
     Wsl(WslPath),
     NativeDrive {
@@ -279,25 +279,80 @@ struct ResolvedPath {
     exists: bool,
 }
 
-/// Resolve path mappings into final WSL paths and confirm they exist, in a
-/// single `wsl.exe` round-trip. Native drive-letter paths are translated
-/// with `wslpath -u` inside the chosen distro so its actual automount
-/// configuration is honored, falling back to the structural `/mnt/<drive>`
-/// mapping when translation fails (e.g. a distro without `wslpath`); a wrong
-/// fallback is still caught by the existence check.
+/// Resolve path mappings into final WSL paths and confirm they exist.
+/// Native drive-letter paths are translated with `wslpath -u` inside the
+/// chosen distro so its actual automount configuration is honored, falling
+/// back to the structural `/mnt/<drive>` mapping when translation fails
+/// (e.g. a distro without `wslpath`); a wrong fallback is still caught by
+/// the existence check.
+///
+/// Successful resolutions are memoized per `(distro, mapping)` for the life
+/// of the process, so a steady-state command whose paths have all been seen
+/// before resolves with zero `wsl.exe` round-trips; at most one round-trip
+/// handles all cache misses ([`resolve_uncached_paths`]). A hit reuses the
+/// translation — which only changes if the distro's automount configuration
+/// is edited and the distro restarted — and also skips the WSL-side
+/// existence re-check. That staleness is acceptable: native and UNC paths
+/// are still stat'ed on the Windows side on every command (see
+/// [`path_to_wsl`] / [`directory_to_wsl`]), and if a cached path disappears
+/// mid-session bwrap fails closed on the missing bind source rather than
+/// running the command unsandboxed. Failures are not cached, so a missing
+/// path can be created and retried.
 ///
 /// Each mapping is paired with a human-readable description used in errors.
-/// The returned paths are in the same order as `mappings`. A non-login shell
-/// runs the script so profile scripts can't pollute the stdout protocol.
+/// The returned paths are in the same order as `mappings`.
 fn resolve_paths(
     wsl_exe: &Path,
     distro: Option<&str>,
     mappings: &[(PathMapping, &str)],
 ) -> Result<Vec<String>> {
-    if mappings.is_empty() {
-        return Ok(Vec::new());
+    type ResolutionCache = HashMap<Option<String>, HashMap<PathMapping, String>>;
+    static CACHE: OnceLock<Mutex<ResolutionCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+
+    let distro_key = distro.map(str::to_string);
+    let mut resolved: Vec<Option<String>> = {
+        let cache = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let per_distro = cache.get(&distro_key);
+        mappings
+            .iter()
+            .map(|(mapping, _)| per_distro.and_then(|cached| cached.get(mapping)).cloned())
+            .collect()
+    };
+
+    let misses: Vec<usize> = (0..mappings.len())
+        .filter(|&index| resolved[index].is_none())
+        .collect();
+    if !misses.is_empty() {
+        let miss_mappings: Vec<&(PathMapping, &str)> =
+            misses.iter().map(|&index| &mappings[index]).collect();
+        let miss_resolved = resolve_uncached_paths(wsl_exe, distro, &miss_mappings)?;
+        let mut cache = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let per_distro = cache.entry(distro_key).or_default();
+        for (&index, path) in misses.iter().zip(miss_resolved) {
+            per_distro.insert(mappings[index].0.clone(), path.clone());
+            resolved[index] = Some(path);
+        }
     }
 
+    resolved
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .context("bug: a path mapping was left unresolved")
+}
+
+/// Resolve and existence-check mappings that weren't in the cache, in a
+/// single `wsl.exe` round-trip. A non-login shell runs the script so profile
+/// scripts can't pollute the stdout protocol.
+fn resolve_uncached_paths(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    mappings: &[&(PathMapping, &str)],
+) -> Result<Vec<String>> {
     let mut args = vec![
         "--exec".to_string(),
         "sh".to_string(),
@@ -306,7 +361,9 @@ fn resolve_paths(
         // argv[0] for the script; the path triples follow as "$@".
         "zed-resolve-paths".to_string(),
     ];
-    args.extend(path_resolution_args(mappings.iter().map(|(m, _)| m)));
+    args.extend(path_resolution_args(
+        mappings.iter().map(|(mapping, _)| mapping),
+    ));
     let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths")?;
     ensure!(
         output.status.success(),
