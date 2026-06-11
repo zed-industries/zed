@@ -966,6 +966,43 @@ impl Editor {
         self.select_to_syntax_nodes(window, cx, true);
     }
 
+    pub fn select_inside_enclosing_bracket(
+        &mut self,
+        _: &SelectInsideEnclosingBracket,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.move_offsets_with(&mut |snapshot, selection| {
+                let Some(enclosing_bracket_ranges) =
+                    snapshot.enclosing_bracket_ranges(selection.start..selection.end)
+                else {
+                    return;
+                };
+
+                let mut best = None;
+                let mut best_length = usize::MAX;
+
+                for (open, close) in enclosing_bracket_ranges {
+                    let inside = open.end..close.start;
+                    if inside == (selection.start..selection.end) {
+                        continue;
+                    }
+
+                    let length = close.end - open.start;
+                    if length < best_length {
+                        best_length = length;
+                        best = Some(inside);
+                    }
+                }
+
+                if let Some(inside) = best {
+                    selection.set_head_tail(inside.end, inside.start, SelectionGoal::None);
+                }
+            })
+        });
+    }
+
     pub fn move_to_enclosing_bracket(
         &mut self,
         _: &MoveToEnclosingBracket,

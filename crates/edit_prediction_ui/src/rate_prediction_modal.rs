@@ -1,13 +1,14 @@
 use buffer_diff::BufferDiff;
+use cloud_llm_client::PredictEditsRequestTrigger;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, Inlay, MultiBuffer};
 use feature_flags::{FeatureFlag, PresenceFlag, register_feature_flag};
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
-    Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
+    Length, StyleRefinement, Task, TextStyleRefinement, Window, actions, prelude::*,
 };
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, ToOffset, ToPoint,
+    Bias, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, ToOffset, ToPoint,
     language_settings::{self, InlayHintKind},
 };
 use markdown::{Markdown, MarkdownStyle};
@@ -67,11 +68,11 @@ struct ActivePrediction {
     prediction: EditPrediction,
     feedback_editor: Entity<Editor>,
     expected_buffer: Entity<Buffer>,
-    expected_editable_range: Option<Range<Anchor>>,
     expected_editor: Entity<Editor>,
-    expected_diff_editor: Entity<Editor>,
-    expected_patch_preview: bool,
+    _expected_buffer_subscription: gpui::Subscription,
     formatted_inputs: Entity<Markdown>,
+    _predicted_diff_task: Task<()>,
+    expected_diff_task: Task<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -304,54 +305,19 @@ impl RatePredictionsModal {
         self.select_completion(completion, true, window, cx);
     }
 
-    fn update_diff_editor(
-        diff_editor: &Entity<Editor>,
-        new_buffer: Entity<Buffer>,
+    fn update_buffer_diff(
+        diff: &Entity<BufferDiff>,
+        new_buffer_snapshot: BufferSnapshot,
         old_buffer_snapshot: BufferSnapshot,
-        visible_range: Range<Point>,
-        cx: &mut Context<Self>,
-    ) {
-        diff_editor.update(cx, |editor, cx| {
-            let new_buffer_snapshot = new_buffer.read(cx).snapshot();
-            let new_buffer_id = new_buffer_snapshot.remote_id();
-            let language = new_buffer_snapshot.language().cloned();
-            let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
-            diff.update(cx, |diff, cx| {
-                let update = diff.update_diff(
-                    new_buffer_snapshot.text.clone(),
-                    Some(old_buffer_snapshot.text().into()),
-                    Some(true),
-                    language,
-                    cx,
-                );
-                cx.spawn(async move |diff, cx| {
-                    let update = update.await;
-                    if let Some(task) = diff
-                        .update(cx, |diff, cx| {
-                            diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
-                        })
-                        .ok()
-                    {
-                        task.await;
-                    }
-                })
-                .detach();
-            });
-
-            editor.disable_header_for_buffer(new_buffer_id, cx);
-            editor.buffer().update(cx, |multibuffer, cx| {
-                multibuffer.clear(cx);
-                multibuffer.set_excerpts_for_buffer(new_buffer, [visible_range], 0, cx);
-                multibuffer.add_diff(diff, cx);
-            });
-        });
-    }
-
-    fn editable_range_for_prediction(prediction: &EditPrediction) -> Option<Range<Anchor>> {
-        prediction
-            .editable_range
-            .clone()
-            .or_else(|| Some(prediction.edits.first()?.0.start..prediction.edits.last()?.0.end))
+        cx: &mut App,
+    ) -> Task<()> {
+        diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                Some(old_buffer_snapshot.text().into()),
+                new_buffer_snapshot.text,
+                cx,
+            )
+        })
     }
 
     fn insert_editable_region_markers(
@@ -471,23 +437,55 @@ impl RatePredictionsModal {
                 return;
             }
 
-            let editable_range = Self::editable_range_for_prediction(&prediction);
+            let editable_range = prediction.editable_range.clone().or_else(|| {
+                Some(prediction.edits.first()?.0.start..prediction.edits.last()?.0.end)
+            });
             let predicted_buffer = prediction.edit_preview.build_result_buffer(cx);
             let predicted_buffer_snapshot = predicted_buffer.read(cx).snapshot();
             let visible_range = prediction
                 .edit_preview
                 .compute_visible_range(&prediction.edits)
+                .or_else(|| {
+                    editable_range.as_ref().map(|range| {
+                        range.start.to_point(&prediction.snapshot)
+                            ..range.end.to_point(&prediction.snapshot)
+                    })
+                })
                 .unwrap_or(Point::zero()..Point::zero());
-            let start = Point::new(visible_range.start.row.saturating_sub(5), 0);
-            let end =
-                Point::new(visible_range.end.row + 5, 0).min(predicted_buffer_snapshot.max_point());
-            Self::update_diff_editor(
-                &self.diff_editor,
-                predicted_buffer.clone(),
-                prediction.snapshot.clone(),
-                start..end,
-                cx,
-            );
+            let visible_range_with_context =
+                Point::new(visible_range.start.row.saturating_sub(5), 0)
+                    ..Point::new(visible_range.end.row.saturating_add(5), 0)
+                        .min(predicted_buffer_snapshot.max_point());
+            let predicted_diff_task = self.diff_editor.update(cx, |editor, cx| {
+                let predicted_buffer_id = predicted_buffer_snapshot.remote_id();
+                let diff = cx.new(|cx| {
+                    BufferDiff::new(
+                        &predicted_buffer_snapshot.text,
+                        predicted_buffer_snapshot.language().cloned(),
+                        predicted_buffer.read(cx).language_registry(),
+                        cx,
+                    )
+                });
+                let predicted_diff_task = Self::update_buffer_diff(
+                    &diff,
+                    predicted_buffer_snapshot.clone(),
+                    prediction.snapshot.clone(),
+                    cx,
+                );
+
+                editor.disable_header_for_buffer(predicted_buffer_id, cx);
+                editor.buffer().update(cx, |multibuffer, cx| {
+                    multibuffer.clear(cx);
+                    multibuffer.set_excerpts_for_buffer(
+                        predicted_buffer.clone(),
+                        [visible_range_with_context],
+                        0,
+                        cx,
+                    );
+                    multibuffer.add_diff(diff, cx);
+                });
+                predicted_diff_task
+            });
 
             if let Some(editable_range) = editable_range.as_ref() {
                 Self::insert_editable_region_markers(
@@ -621,7 +619,21 @@ impl RatePredictionsModal {
                     range.start.to_point(&expected_buffer_snapshot)
                         ..range.end.to_point(&expected_buffer_snapshot)
                 })
-                .unwrap_or_else(|| visible_range.clone());
+                .unwrap_or(visible_range);
+            let expected_diff = cx.new(|cx| {
+                BufferDiff::new(
+                    &expected_buffer_snapshot.text,
+                    expected_buffer_snapshot.language().cloned(),
+                    expected_buffer.read(cx).language_registry(),
+                    cx,
+                )
+            });
+            let expected_diff_task = Self::update_buffer_diff(
+                &expected_diff,
+                expected_buffer_snapshot.clone(),
+                prediction.snapshot.clone(),
+                cx,
+            );
             let expected_editor = cx.new(|cx| {
                 let multibuffer = cx.new(|cx| {
                     let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
@@ -631,12 +643,14 @@ impl RatePredictionsModal {
                         0,
                         cx,
                     );
+                    multibuffer.add_diff(expected_diff.clone(), cx);
                     multibuffer
                 });
                 let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
                 let expected_buffer_id = expected_buffer.read(cx).remote_id();
                 editor.disable_header_for_buffer(expected_buffer_id, cx);
                 editor.disable_inline_diagnostics();
+                editor.set_expand_all_diff_hunks(cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);
@@ -644,14 +658,6 @@ impl RatePredictionsModal {
                 editor.set_show_breakpoints(false, cx);
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);
-                editor
-            });
-            let expected_diff_editor = cx.new(|cx| {
-                let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadOnly));
-                let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
-                editor.disable_inline_diagnostics();
-                editor.set_expand_all_diff_hunks(cx);
-                editor.set_show_git_diff_gutter(false, cx);
                 editor
             });
             if let Some(expected_editable_range) = expected_editable_range.as_ref() {
@@ -668,6 +674,27 @@ impl RatePredictionsModal {
                     cx,
                 );
             }
+
+            let expected_buffer_subscription = cx.subscribe(&expected_buffer, {
+                let expected_diff = expected_diff.clone();
+                let original_snapshot = prediction.snapshot.clone();
+                move |this, buffer, event, cx| match event {
+                    language::BufferEvent::Edited { .. }
+                    | language::BufferEvent::LanguageChanged(_)
+                    | language::BufferEvent::Reparsed => {
+                        let task = Self::update_buffer_diff(
+                            &expected_diff,
+                            buffer.read(cx).snapshot(),
+                            original_snapshot.clone(),
+                            cx,
+                        );
+                        if let Some(active_prediction) = this.active_prediction.as_mut() {
+                            active_prediction.expected_diff_task = task;
+                        }
+                    }
+                    _ => {}
+                }
+            });
 
             self.active_prediction = Some(ActivePrediction {
                 prediction,
@@ -692,10 +719,10 @@ impl RatePredictionsModal {
                     editor
                 }),
                 expected_buffer,
-                expected_editable_range,
                 expected_editor,
-                expected_diff_editor,
-                expected_patch_preview: false,
+                _expected_buffer_subscription: expected_buffer_subscription,
+                _predicted_diff_task: predicted_diff_task,
+                expected_diff_task,
                 formatted_inputs: cx.new(|cx| {
                     Markdown::new(
                         formatted_inputs.into(),
@@ -746,57 +773,10 @@ impl RatePredictionsModal {
             )
     }
 
-    fn toggle_expected_patch_preview(&mut self, cx: &mut Context<Self>) {
-        if let Some(active_prediction) = &mut self.active_prediction {
-            if active_prediction.expected_patch_preview {
-                active_prediction.expected_patch_preview = false;
-            } else {
-                let expected_buffer_snapshot =
-                    active_prediction.expected_buffer.read(cx).snapshot();
-                let visible_range = active_prediction
-                    .prediction
-                    .edit_preview
-                    .compute_visible_range(&active_prediction.prediction.edits)
-                    .unwrap_or(Point::zero()..Point::zero());
-                let start = Point::new(visible_range.start.row.saturating_sub(5), 0);
-                let end = Point::new(visible_range.end.row + 5, 0)
-                    .min(expected_buffer_snapshot.max_point());
-
-                Self::update_diff_editor(
-                    &active_prediction.expected_diff_editor,
-                    active_prediction.expected_buffer.clone(),
-                    active_prediction.prediction.snapshot.clone(),
-                    start..end,
-                    cx,
-                );
-                if let Some(expected_editable_range) =
-                    active_prediction.expected_editable_range.as_ref()
-                {
-                    let expected_buffer_snapshot =
-                        active_prediction.expected_buffer.read(cx).snapshot();
-                    Self::insert_editable_region_markers(
-                        &active_prediction.expected_diff_editor,
-                        &active_prediction.expected_buffer,
-                        expected_editable_range
-                            .start
-                            .to_offset(&expected_buffer_snapshot)
-                            ..expected_editable_range
-                                .end
-                                .to_offset(&expected_buffer_snapshot),
-                        cx,
-                    );
-                }
-                active_prediction.expected_patch_preview = true;
-            }
-            cx.notify();
-        }
-    }
-
     fn render_suggested_edits(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
         let bg_color = cx.theme().colors().editor_background;
         let border_color = cx.theme().colors().border;
         let active_prediction = self.active_prediction.as_ref()?;
-        let expected_patch_preview = active_prediction.expected_patch_preview;
 
         Some(
             v_flex()
@@ -840,22 +820,6 @@ impl RatePredictionsModal {
                                 .gap_2()
                                 .border_b_1()
                                 .border_color(border_color)
-                                .child(
-                                    Button::new(
-                                        "expected-patch-preview",
-                                        if expected_patch_preview {
-                                            "Edit"
-                                        } else {
-                                            "Preview"
-                                        },
-                                    )
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener(
-                                        |this, _, _window, cx| {
-                                            this.toggle_expected_patch_preview(cx);
-                                        },
-                                    )),
-                                )
                                 .child(Label::new("Expected Patch").size(LabelSize::Small)),
                         )
                         .child(
@@ -866,14 +830,7 @@ impl RatePredictionsModal {
                                 .min_h_0()
                                 .overflow_scroll()
                                 .whitespace_nowrap()
-                                .child(if expected_patch_preview {
-                                    active_prediction
-                                        .expected_diff_editor
-                                        .clone()
-                                        .into_any_element()
-                                } else {
-                                    active_prediction.expected_editor.clone().into_any_element()
-                                }),
+                                .child(active_prediction.expected_editor.clone()),
                         ),
                 ),
         )
@@ -1186,6 +1143,28 @@ impl RatePredictionsModal {
                         (false, true) => (IconName::File, Color::Muted, "No Edits Produced"),
                         (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
                     };
+                let (trigger_icon, trigger_tooltip) = match completion.trigger {
+                    PredictEditsRequestTrigger::Testing => (IconName::Debug, "Testing"),
+                    PredictEditsRequestTrigger::Diagnostics => {
+                        (IconName::ToolDiagnostics, "Diagnostics")
+                    }
+                    PredictEditsRequestTrigger::DiagnosticNavigation => {
+                        (IconName::ArrowRight, "Diagnostic Navigation")
+                    }
+                    PredictEditsRequestTrigger::Cli => (IconName::Terminal, "CLI"),
+                    PredictEditsRequestTrigger::Explicit => (IconName::Person, "Explicit"),
+                    PredictEditsRequestTrigger::BufferEdit => (IconName::Pencil, "Buffer Edit"),
+                    PredictEditsRequestTrigger::LSPCompletionAccepted => {
+                        (IconName::Code, "LSP Completion Accepted")
+                    }
+                    PredictEditsRequestTrigger::PredictionAccepted => {
+                        (IconName::ZedPredict, "Prediction Accepted")
+                    }
+                    PredictEditsRequestTrigger::PredictionPartiallyAccepted => {
+                        (IconName::CheckDouble, "Prediction Partially Accepted")
+                    }
+                    PredictEditsRequestTrigger::Other => (IconName::CircleHelp, "Other"),
+                };
 
                 let file = completion.buffer.read(cx).file();
                 let file_name = file
@@ -1206,6 +1185,11 @@ impl RatePredictionsModal {
                             .gap_3()
                             .child(Icon::new(icon_name).color(icon_color).size(IconSize::Small))
                             .child(
+                                Icon::new(trigger_icon)
+                                    .color(Color::Muted)
+                                    .size(IconSize::XSmall),
+                            )
+                            .child(
                                 v_flex().child(
                                     h_flex()
                                         .gap_1()
@@ -1220,7 +1204,9 @@ impl RatePredictionsModal {
                                 ),
                             ),
                     )
-                    .tooltip(Tooltip::text(tooltip_text))
+                    .tooltip(Tooltip::text(format!(
+                        "{tooltip_text} • Trigger: {trigger_tooltip}"
+                    )))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select_completion(Some(completion.clone()), true, window, cx);
                     }))
@@ -1396,6 +1382,7 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
                 documentation: None,
                 source: CompletionSource::Custom,
                 icon_path: None,
+                icon_color: None,
                 match_start: None,
                 snippet_deduplication_key: None,
                 insert_text_mode: None,

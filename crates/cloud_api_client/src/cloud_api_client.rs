@@ -157,7 +157,7 @@ impl CloudApiClient {
     async fn create_llm_token(
         &self,
         system_id: Option<String>,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<CreateLlmTokenResponse, ClientApiError> {
         let request_builder = Request::builder()
             .method(Method::POST)

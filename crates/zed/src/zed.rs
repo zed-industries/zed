@@ -65,12 +65,14 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
-    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, InvalidSettingsError, KeybindSource,
+    KeymapFile, KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore,
+    VIM_KEYMAP_PATH, initial_local_debug_tasks_content, initial_project_settings_content,
+    initial_tasks_content, update_settings_file,
 };
 use sidebar::Sidebar;
+#[cfg(debug_assertions)]
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{
     borrow::Cow,
@@ -156,6 +158,15 @@ actions!(
     ]
 );
 
+#[cfg(debug_assertions)]
+actions!(
+    dev,
+    [
+        /// Show an error on the workspace level.
+        ShowWorkspaceError
+    ]
+);
+
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -186,15 +197,22 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
-    cx.on_action(|_: &OpenLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
-            open_log_file(workspace, window, cx);
+
+    // When Zed logs to stdout rather than the log file, avoid registering
+    // handlers for both `OpenLog` and `RevealLogInFileManager`, as the log file
+    // does not exist in that scenario and these actions would error.
+    if !crate::stdout_is_a_pty() {
+        cx.on_action(|_: &OpenLog, cx| {
+            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                open_log_file(workspace, window, cx);
+            });
+        })
+        .on_action(|_: &workspace::RevealLogInFileManager, cx| {
+            cx.reveal_path(paths::log_file().as_path());
         });
-    })
-    .on_action(|_: &workspace::RevealLogInFileManager, cx| {
-        cx.reveal_path(paths::log_file().as_path());
-    })
-    .on_action(|_: &zed_actions::OpenLicenses, cx| {
+    }
+
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -891,7 +909,7 @@ fn register_actions(
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
-                urls: vec![action.url.clone()],
+                urls: vec![String::from(&*action.url)],
                 ..Default::default()
             })
         })
@@ -909,7 +927,7 @@ fn register_actions(
                 }
                 Err(e) => {
                     workspace.show_error(
-                        &anyhow::anyhow!(
+                        format!(
                             "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
                             action.url
                         ),
@@ -929,7 +947,12 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window.unwrap_or_else(|| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    )
+                }),
                 window,
                 cx,
             );
@@ -1293,6 +1316,43 @@ fn register_actions(
     }
 
     workspace.register_action(sidebar::dump_workspace_info);
+
+    #[cfg(debug_assertions)]
+    workspace.register_action(|workspace, _: &ShowWorkspaceError, _, cx| {
+        struct DebugError;
+        struct SecondDebugError;
+
+        impl WorkspaceError for DebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static("This is an error.")
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Warning
+            }
+
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
+            }
+        }
+
+        impl WorkspaceError for SecondDebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static("This is some error to ignore.")
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Error
+            }
+
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
+            }
+        }
+
+        workspace.show_error(DebugError, cx);
+        workspace.show_error(SecondDebugError, cx);
+    });
 }
 
 fn initialize_pane(
@@ -1485,7 +1545,7 @@ fn open_about_window(cx: &mut App) {
                                         window.remove_window();
                                     }))
                                     .child(
-                                        Button::new("ok", "Ok")
+                                        Button::new("ok", "OK")
                                             .full_width()
                                             .style(ButtonStyle::OutlinedGhost)
                                             .toggle_state(ok_is_focused)

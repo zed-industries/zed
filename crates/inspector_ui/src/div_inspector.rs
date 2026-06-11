@@ -667,6 +667,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     match_start: None,
                     snippet_deduplication_key: None,
                     icon_path: None,
+                    icon_color: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())
                     }),
