@@ -109,6 +109,12 @@ pub trait LanguageModel: Send + Sync {
             .find(|effort_level| effort_level.is_default)
     }
 
+    /// Whether this model supports provider-side automatic context
+    /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
+    fn supports_server_side_compaction(&self) -> bool {
+        false
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 
@@ -195,7 +201,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..
                                 }) => None,
-                                Ok(LanguageModelCompletionEvent::Compaction { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::Compaction(_)) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None

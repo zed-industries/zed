@@ -1063,7 +1063,7 @@ fn into_copilot_chat(
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
                         | MessageContent::Image(_)
-                        | MessageContent::Compaction { .. } => None,
+                        | MessageContent::Compaction(_) => None,
                     }) {
                         buffer.push_str(string);
                     }

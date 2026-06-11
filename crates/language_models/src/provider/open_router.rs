@@ -444,7 +444,7 @@ pub fn into_open_router(
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Compaction { .. } => {}
+                MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {

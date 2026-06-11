@@ -2915,7 +2915,7 @@ impl Thread {
                 | LanguageModelCompletionEvent::ToolUse(_)
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
                 | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::Compaction { .. } => {}
+                | LanguageModelCompletionEvent::Compaction(_) => {}
             }
         }
 
@@ -3117,7 +3117,7 @@ impl Thread {
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
-            Started | Queued { .. } | Compaction { .. } => {}
+            Started | Queued { .. } | Compaction(_) => {}
         }
 
         Ok(None)
@@ -4328,7 +4328,7 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Compaction { .. } => 0,
+            | MessageContent::Compaction(_) => 0,
         })
         .sum()
 }
@@ -4365,7 +4365,7 @@ fn truncate_user_message_to_byte_budget(
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Compaction { .. } => {}
+            | MessageContent::Compaction(_) => {}
         }
     }
 

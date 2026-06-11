@@ -766,6 +766,7 @@ mod tests {
                         supports_thinking: false,
                         supports_disabling_thinking: false,
                         supports_fast_mode: false,
+                        supports_server_side_compaction: false,
                         supported_effort_levels: Vec::new(),
                         supports_streaming_tools: false,
                         supports_parallel_tool_calls: false,
