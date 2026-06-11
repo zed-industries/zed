@@ -1715,6 +1715,36 @@ mod tests {
             adapter
                 .label_for_completion(
                     &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "sync_all(…)".to_string(),
+                        filter_text: Some("sync_allfsync".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(
+                                "pub fn sync_all(&self) -> io::Result<()>".to_string()
+                            ),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "pub fn sync_all(&self) -> io::Result<()>".to_string(),
+                7..15,
+                vec![
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..15, HighlightId::new(2)),
+                    (30..36, HighlightId::new(0))
+                ],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
                         kind: Some(lsp::CompletionItemKind::FIELD),
                         label: "inner_value".to_string(),
                         filter_text: Some("value".to_string()),
