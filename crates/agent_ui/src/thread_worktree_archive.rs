@@ -171,7 +171,7 @@ pub fn build_root_plan(
     // is what distinguishes a Zed-created worktree from one the user manually
     // created under the same directory layout.
     let worktrees_base = worktrees_base_for_repo(&main_repo_path, linked_snapshot.path_style, cx)?;
-    if !path.starts_with(&worktrees_base) || !linked_snapshot.is_zed_managed_worktree {
+    if !linked_snapshot.is_zed_managed_worktree || !path.starts_with(&worktrees_base) {
         return None;
     }
 
