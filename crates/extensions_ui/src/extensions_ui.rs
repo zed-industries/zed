@@ -132,7 +132,12 @@ pub fn init(cx: &mut App) {
                             Err(err) => {
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
-                                        workspace.show_portal_error(err.to_string(), cx);
+                                        workspace.show_error(
+                                            workspace::workspace_error::PortalError::new(
+                                                err.to_string(),
+                                            ),
+                                            cx,
+                                        );
                                     })
                                     .ok();
                                 return None;
@@ -149,10 +154,10 @@ pub fn init(cx: &mut App) {
                                 log::error!("Failed to install dev extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
+                                        // NOTE: using `anyhow::context` here ends up not printing
+                                        // the error
                                         workspace.show_error(
-                                            // NOTE: using `anyhow::context` here ends up not printing
-                                            // the error
-                                            &format!("Failed to install dev extension: {}", err),
+                                            format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
                                     })
@@ -1772,7 +1777,7 @@ impl Render for ExtensionsPage {
                     let scroll_handle = &self.list;
                     this.child(
                         uniform_list("entries", count, cx.processor(Self::render_extensions))
-                            .flex_grow()
+                            .flex_grow_1()
                             .pb_4()
                             .track_scroll(scroll_handle),
                     )

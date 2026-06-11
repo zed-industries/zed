@@ -17,6 +17,7 @@ mod manifest;
 pub mod modeline;
 mod outline;
 pub mod proto;
+mod runnable;
 mod syntax_map;
 mod task_context;
 mod text_diff;
@@ -62,6 +63,7 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
+pub use runnable::{ResolvedRunnable, RunnableMatchCapture, RunnableRange, RunnableResolver};
 use semver::Version;
 use serde_json::Value;
 use settings::WorktreeId;
@@ -77,7 +79,7 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
+pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
     text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
@@ -106,7 +108,7 @@ pub use syntax_map::{
     OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
 };
 pub use text::{AnchorRangeExt, LineEnding};
-pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
+pub use tree_sitter::{Node, Parser, QueryCapture, Tree, TreeCursor};
 
 pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings::SoftWrap {
     match value {
@@ -608,7 +610,7 @@ pub trait LspInstaller {
     type BinaryVersion;
     fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> impl Future<Output = Option<LanguageServerBinary>> {
@@ -617,7 +619,7 @@ pub trait LspInstaller {
 
     fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> impl Future<Output = Result<Self::BinaryVersion>>;
@@ -684,7 +686,7 @@ where
         delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
         let latest_version = self
-            .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
+            .fetch_latest_server_version(delegate, pre_release, cx)
             .await?;
 
         if let Some(binary) = cx
@@ -730,7 +732,7 @@ where
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self
-                    .check_if_user_installed(delegate.as_ref(), toolchain, &mut cx)
+                    .check_if_user_installed(&delegate, toolchain, &mut cx)
                     .await
             {
                 log::info!(
@@ -1400,7 +1402,7 @@ impl LspInstaller for FakeLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -1409,7 +1411,7 @@ impl LspInstaller for FakeLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {

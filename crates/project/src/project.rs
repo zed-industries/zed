@@ -89,9 +89,9 @@ use gpui::{
     Task, TaskExt, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
-    ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
+    Buffer, BufferEditSource, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain,
+    ToolchainMetadata, ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
 use lsp::{
@@ -410,7 +410,9 @@ pub enum Event {
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
-    BufferEdited,
+    BufferEdited {
+        source: BufferEditSource,
+    },
 }
 
 pub struct AgentLocationChanged;
@@ -555,6 +557,9 @@ pub struct Completion {
     pub source: CompletionSource,
     /// A path to an icon for this completion that is shown in the menu.
     pub icon_path: Option<SharedString>,
+    /// An optional color to tint this completion's icon with in the menu.
+    /// When `None`, the menu's default muted color is used.
+    pub icon_color: Option<Hsla>,
     /// Text starting here and ending at the cursor will be used as the query for filtering this completion.
     ///
     /// If None, the start of the surrounding word is used.
@@ -3215,6 +3220,19 @@ impl Project {
     }
 
     #[ztracing::instrument(skip_all)]
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_staged_diff(buffer, cx))
+    }
+
+    #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3810,8 +3828,8 @@ impl Project {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited { .. }) {
-            cx.emit(Event::BufferEdited);
+        if let BufferEvent::Edited { source } = event {
+            cx.emit(Event::BufferEdited { source: *source });
         }
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -3949,10 +3967,16 @@ impl Project {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         only_restart_servers: HashSet<LanguageServerSelector>,
+        clear_stopped: bool,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_servers, cx)
+            lsp_store.restart_language_servers_for_buffers(
+                buffers,
+                only_restart_servers,
+                clear_stopped,
+                cx,
+            )
         })
     }
 
