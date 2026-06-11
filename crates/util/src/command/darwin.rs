@@ -553,6 +553,8 @@ fn invalid_input_error() -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+
     use super::*;
     use futures_lite::AsyncWriteExt;
 
