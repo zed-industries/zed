@@ -1119,7 +1119,7 @@ dependencies = [
 [[package]]
 name = "async-process"
 version = "2.5.0"
-source = "git+https://github.com/zed-industries/async-process.git?rev=052ec1bba1ceeccbf1e0a57a94f3a3b32f37b44f#052ec1bba1ceeccbf1e0a57a94f3a3b32f37b44f"
+source = "git+https://github.com/zed-industries/async-process.git?rev=0b6d6713570af61806e1e5cb40e0f757cb93fd9d#0b6d6713570af61806e1e5cb40e0f757cb93fd9d"
 dependencies = [
  "async-channel 2.5.0",
  "async-io",
