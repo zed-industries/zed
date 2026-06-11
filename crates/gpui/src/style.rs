@@ -375,6 +375,10 @@ pub enum TextOverflow {
     /// displaying the provided string at the beginning (e.g., "…ong text here").
     /// Typically more adequate for file paths where the end is more important than the beginning.
     TruncateStart(SharedString),
+    /// Truncate the text in the middle when it doesn't fit, preserving both the start and end
+    /// of the string (e.g., "long fi…name.rs"). Useful for filenames where both the prefix
+    /// and the extension are important context.
+    TruncateMiddle(SharedString),
 }
 
 /// How to align text within the element
