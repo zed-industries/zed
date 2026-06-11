@@ -4827,20 +4827,27 @@ impl ThreadView {
             }
         });
 
-        // When rendered as the right half of the split button next to the
-        // thinking toggle, only the right corners are rounded.
         let trigger = if standalone {
-            ButtonLike::new("effort-selector-trigger")
+            ButtonLike::new("effort-selector-trigger").child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::ThinkingMode)
+                            .size(IconSize::Small)
+                            .color(label_color),
+                    )
+                    .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                    .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+            )
         } else {
             ButtonLike::new_rounded_right("effort-selector-trigger")
+                .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
         };
 
         PopoverMenu::new("effort-selector")
             .trigger_with_tooltip(
-                trigger
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    .child(Label::new(label).size(LabelSize::Small).color(label_color))
-                    .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+                trigger.selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 tooltip,
             )
             .menu(move |window, cx| {
