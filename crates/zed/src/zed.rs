@@ -946,6 +946,7 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                     prompt: None,
+                    directory: None,
                 },
                 action.create_new_window.unwrap_or_else(|| {
                     matches!(
@@ -967,6 +968,7 @@ fn register_actions(
                     directories,
                     multiple: true,
                     prompt: None,
+                    directory: None,
                 },
                 true,
                 window,
@@ -989,6 +991,7 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                     prompt: None,
+                    directory: None,
                 },
                 DirectoryLister::Project(workspace.project().clone()),
                 window,

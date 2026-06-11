@@ -19,6 +19,7 @@ pub fn clone_and_open(
         directories: true,
         multiple: false,
         prompt: Some("Select as Repository Destination".into()),
+        directory: None,
     });
 
     window

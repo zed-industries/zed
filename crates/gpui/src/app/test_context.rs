@@ -1128,6 +1128,7 @@ mod tests {
                 directories: true,
                 multiple: true,
                 prompt: None,
+                directory: None,
             })
         });
         assert!(cx.did_prompt_for_paths());
@@ -1153,6 +1154,7 @@ mod tests {
                 files: true,
                 directories: false,
                 multiple: false,
+                directory: None,
                 prompt: None,
             })
         });

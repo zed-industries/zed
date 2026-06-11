@@ -346,16 +346,28 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                     "Open File"
                 };
 
-                let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                let request_builder = ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(gpui::SharedString::as_str))
                     .multiple(options.multiple)
-                    .directory(options.directories)
-                    .send()
-                    .await
-                {
+                    .directory(options.directories);
+
+                let request_builder = match options.directory.as_deref() {
+                    Some(directory) => match request_builder.current_folder(directory) {
+                        Ok(request_builder) => request_builder,
+                        Err(error) => {
+                            let _ = done_tx.send(Err(anyhow!(
+                                "failed to set initial folder for open dialog: {error}"
+                            )));
+                            return;
+                        }
+                    },
+                    None => request_builder,
+                };
+
+                let request = match request_builder.send().await {
                     Ok(request) => request,
                     Err(err) => {
                         let result = match err {

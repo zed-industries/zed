@@ -725,11 +725,15 @@ fn prompt_and_open_paths(
 pub fn prompt_for_open_path_and_open(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
-    options: PathPromptOptions,
+    mut options: PathPromptOptions,
     create_new_window: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    if options.directory.is_none() {
+        options.directory = last_open_dialog_directory(workspace, cx);
+    }
+    let kvp = db::kvp::KeyValueStore::global(cx);
     let paths = workspace.prompt_for_open_path(
         options,
         DirectoryLister::Local(workspace.project().clone(), app_state.fs.clone()),
@@ -741,6 +745,21 @@ pub fn prompt_for_open_path_and_open(
         let Some(paths) = paths.await.log_err().flatten() else {
             return;
         };
+        // Remember the directory containing the selection so the next dialog
+        // opens beside it (e.g. next to sibling project directories).
+        if let Some(directory) = paths
+            .first()
+            .and_then(|path| path.parent())
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .filter(|directory| !directory.is_empty())
+        {
+            cx.background_spawn(async move {
+                kvp.write_kvp(LAST_OPEN_DIRECTORY_KEY.to_string(), directory)
+                    .await
+                    .log_err();
+            })
+            .detach();
+        }
         if !create_new_window {
             if let Some(handle) = multi_workspace_handle {
                 if let Some(task) = handle
@@ -766,6 +785,38 @@ pub fn prompt_for_open_path_and_open(
     .detach();
 }
 
+const LAST_OPEN_DIRECTORY_KEY: &str = "last_open_directory";
+
+/// Determines which directory the system "open" dialog should start in:
+/// the directory the user last opened from, falling back to the parent of a
+/// visible worktree root (so sibling projects are visible) and finally the
+/// home directory.
+fn last_open_dialog_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    if let Some(stored) = db::kvp::KeyValueStore::global(cx)
+        .read_kvp(LAST_OPEN_DIRECTORY_KEY)
+        .log_err()
+        .flatten()
+        .filter(|directory| !directory.is_empty())
+    {
+        return Some(PathBuf::from(stored));
+    }
+
+    workspace
+        .most_recent_active_path(cx)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .find_map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    worktree.as_local()?.abs_path().parent().map(Path::to_path_buf)
+                })
+        })
+        .or_else(std::env::home_dir)
+}
+
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
@@ -783,6 +834,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     directories: true,
                     multiple: true,
                     prompt: None,
+                    directory: None,
                 },
                 action.create_new_window.unwrap_or_else(|| {
                     matches!(
@@ -803,6 +855,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     directories,
                     multiple: true,
                     prompt: None,
+                    directory: None,
                 },
                 true,
                 cx,
@@ -3865,6 +3918,7 @@ impl Workspace {
                 directories: true,
                 multiple: true,
                 prompt: None,
+                directory: None,
             },
             DirectoryLister::Project(self.project.clone()),
             window,

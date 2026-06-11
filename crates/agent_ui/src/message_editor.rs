@@ -1623,6 +1623,7 @@ impl MessageEditor {
             directories: false,
             multiple: true,
             prompt: Some("Select Images".into()),
+            directory: None,
         });
 
         window

@@ -1152,6 +1152,23 @@ fn file_open_dialog(
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
         }
 
+        if let Some(directory) = options.directory.as_ref()
+            && !directory.as_os_str().is_empty()
+            && let Some(full_path) = directory
+                .canonicalize()
+                .context("failed to canonicalize directory")
+                .log_err()
+        {
+            let full_path = SanitizedPath::new(&full_path);
+            let full_path_string = full_path.to_string();
+            let path_item: IShellItem =
+                SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)?;
+            folder_dialog
+                .SetFolder(&path_item)
+                .context("failed to set dialog folder")
+                .log_err();
+        }
+
         if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);

@@ -300,6 +300,7 @@ pub fn init(cx: &mut App) {
                     directories: true,
                     multiple: false,
                     prompt: None,
+                    directory: None,
                 },
                 DirectoryLister::Local(
                     workspace.project().clone(),
@@ -2074,6 +2075,7 @@ fn open_local_project(
                 directories: true,
                 multiple: true,
                 prompt: None,
+                directory: None,
             },
             DirectoryLister::Local(
                 workspace.project().clone(),
