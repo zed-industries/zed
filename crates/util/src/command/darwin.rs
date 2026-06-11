@@ -460,12 +460,18 @@ fn spawn_posix_spawn(
             current_dir_cstr.as_ptr(),
         ))?;
 
+        // With POSIX_SPAWN_CLOEXEC_DEFAULT, any fd without a file action is
+        // closed in the child, so inheriting a stdio fd requires an explicit
+        // addinherit_np action; without one the child's fd 0/1/2 would start
+        // out closed and could be silently reused by its first open().
         if let Some(fd) = &stdin_read {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
                 fd.as_raw_fd(),
                 libc::STDIN_FILENO,
             ))?;
+        }
+        if stdin_read.is_some() || stdin_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDIN_FILENO,
@@ -478,6 +484,8 @@ fn spawn_posix_spawn(
                 fd.as_raw_fd(),
                 libc::STDOUT_FILENO,
             ))?;
+        }
+        if stdout_write.is_some() || stdout_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDOUT_FILENO,
@@ -490,6 +498,8 @@ fn spawn_posix_spawn(
                 fd.as_raw_fd(),
                 libc::STDERR_FILENO,
             ))?;
+        }
+        if stderr_write.is_some() || stderr_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDERR_FILENO,
