@@ -32,8 +32,6 @@ use std::mem::MaybeUninit;
 
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
-#[cfg(feature = "test-support")]
-use git::repository::ZED_MANAGED_WORKTREE_MARKER;
 use git::repository::{GitRepository, RealGitRepository};
 use is_executable::IsExecutable;
 use rope::Rope;
@@ -1338,6 +1336,7 @@ struct FakeFsState {
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
     file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
+    remove_dir_errors: std::collections::HashMap<PathBuf, String>,
 }
 
 #[cfg(feature = "test-support")]
@@ -1657,6 +1656,7 @@ impl FakeFs {
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
                 trash: Vec::new(),
                 file_to_create_before_watch_add: None,
+                remove_dir_errors: Default::default(),
             })),
         });
 
@@ -2113,12 +2113,6 @@ impl FakeFs {
             false,
         )
         .unwrap();
-        self.write_file_internal(
-            worktrees_entry_dir.join(ZED_MANAGED_WORKTREE_MARKER),
-            b"created-by-zed\n".to_vec(),
-            false,
-        )
-        .unwrap();
 
         // Create the worktree checkout directory with a .git file pointing back.
         self.create_dir(&worktree.path).await.unwrap();
@@ -2405,6 +2399,14 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// Makes subsequent `remove_dir` calls for `path` fail with `message`.
+    pub fn set_remove_dir_error(&self, path: impl AsRef<Path>, message: String) {
+        self.state
+            .lock()
+            .remove_dir_errors
+            .insert(normalize_path(path.as_ref()), message);
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
@@ -2547,6 +2549,9 @@ impl FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
+        if let Some(message) = self.state.lock().remove_dir_errors.get(&path) {
+            anyhow::bail!("{message}");
+        }
         let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().context("cannot remove the root")?;
 

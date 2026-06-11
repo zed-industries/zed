@@ -78,7 +78,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -320,7 +320,6 @@ pub struct RepositorySnapshot {
     /// that common directory is a bare repository, there may be no main
     /// worktree path to derive from it.
     pub common_dir_abs_path: Arc<Path>,
-    pub is_zed_managed_worktree: bool,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub branch_list: Arc<[Branch]>,
@@ -703,6 +702,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_create_worktree);
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
+        client.add_entity_request_handler(Self::handle_worktree_created_at);
         client.add_entity_request_handler(Self::handle_get_head_sha);
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
@@ -2847,6 +2847,26 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_worktree_created_at(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitWorktreeCreatedAt>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitWorktreeCreatedAtResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let worktree_path = PathBuf::from(envelope.payload.worktree_path);
+
+        let created_at = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.worktree_created_at(worktree_path)
+            })
+            .await??;
+
+        Ok(proto::GitWorktreeCreatedAtResponse {
+            created_at: created_at.map(Into::into),
+        })
+    }
+
     async fn handle_get_head_sha(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitGetHeadSha>,
@@ -4556,7 +4576,6 @@ impl RepositorySnapshot {
             repository_dir_abs_path,
             dot_git_abs_path,
             common_dir_abs_path,
-            is_zed_managed_worktree: false,
             work_directory_abs_path,
             branch: None,
             branch_list: Arc::from([]),
@@ -4612,7 +4631,6 @@ impl RepositorySnapshot {
                 self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
             common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
-            is_zed_managed_worktree: self.is_zed_managed_worktree,
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
@@ -4700,7 +4718,6 @@ impl RepositorySnapshot {
                 self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
             common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
-            is_zed_managed_worktree: self.is_zed_managed_worktree,
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
@@ -7494,6 +7511,34 @@ impl Repository {
         )
     }
 
+    /// Returns the creation time of a linked worktree's git metadata
+    /// directory. See [`GitRepository::worktree_created_at`]. For remote
+    /// projects the stat runs on the remote host, where the worktree's
+    /// filesystem lives.
+    pub fn worktree_created_at(
+        &mut self,
+        worktree_path: PathBuf,
+    ) -> oneshot::Receiver<Result<Option<SystemTime>>> {
+        let id = self.id;
+        self.send_job("worktree_created_at", None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.worktree_created_at(worktree_path).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitWorktreeCreatedAt {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            worktree_path: worktree_path.to_string_lossy().to_string(),
+                        })
+                        .await?;
+                    Ok(response.created_at.map(SystemTime::from))
+                }
+            }
+        })
+    }
+
     pub fn create_worktree_detached(
         &mut self,
         path: PathBuf,
@@ -8133,7 +8178,6 @@ impl Repository {
         if let Some(common_dir_abs_path) = &update.common_dir_abs_path {
             self.snapshot.common_dir_abs_path = Path::new(common_dir_abs_path.as_str()).into();
         }
-        self.snapshot.is_zed_managed_worktree = update.is_zed_managed_worktree;
 
         let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
         let new_head_commit = update
@@ -9903,17 +9947,8 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move { backend.worktrees().await.log_err().unwrap_or_default() }
     };
-    let is_zed_managed_worktree_future = {
-        let backend = backend.clone();
-        async move { backend.is_zed_managed_worktree().await }
-    };
-    let (branches, head_commit, all_worktrees, is_zed_managed_worktree) = futures::future::join4(
-        branches_future,
-        head_commit_future,
-        worktrees_future,
-        is_zed_managed_worktree_future,
-    )
-    .await;
+    let (branches, head_commit, all_worktrees) =
+        futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
     log::debug!("fetched branches, head commit, worktrees");
 
     let BranchesScanResult {
@@ -9950,7 +9985,6 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
-            is_zed_managed_worktree,
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };

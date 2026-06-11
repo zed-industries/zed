@@ -132,7 +132,6 @@ message UpdateRepository {
   optional string repository_dir_abs_path = 19;
   optional string common_dir_abs_path = 20;
   optional string branch_list_error = 21;
-  bool is_zed_managed_worktree = 22;
 }
 
 message RemoveRepository {
@@ -665,6 +664,16 @@ message GitRenameWorktree {
   uint64 repository_id = 2;
   string old_path = 3;
   string new_path = 4;
+}
+
+message GitWorktreeCreatedAt {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string worktree_path = 3;
+}
+
+message GitWorktreeCreatedAtResponse {
+  optional Timestamp created_at = 1;
 }
 
 message RunGitHook {
