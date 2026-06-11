@@ -94,12 +94,10 @@ impl BlameIndicator {
             .status_bar_blame
             .show_commit_summary;
 
-        self.current_blame = entry
-            .filter(|entry| !entry.sha.is_zero())
-            .map(|entry| {
-                let relative = blame_entry_relative_timestamp(&entry);
-                Self::format_blame(&entry, &relative, show_summary)
-            });
+        self.current_blame = entry.filter(|entry| !entry.sha.is_zero()).map(|entry| {
+            let relative = blame_entry_relative_timestamp(&entry);
+            Self::format_blame(&entry, &relative, show_summary)
+        });
     }
 
     fn format_blame(entry: &BlameEntry, relative: &str, show_summary: bool) -> SharedString {
