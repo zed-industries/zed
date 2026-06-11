@@ -1081,6 +1081,7 @@ pub struct Editor {
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    pending_blame_hover_observation: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -2292,6 +2293,7 @@ impl Editor {
             }),
             blame: None,
             blame_subscription: None,
+            pending_blame_hover_observation: None,
 
             bookmark_store,
             breakpoint_store,
