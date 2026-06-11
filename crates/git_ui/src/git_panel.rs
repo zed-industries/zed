@@ -1315,6 +1315,19 @@ impl GitPanel {
         }
     }
 
+    /// If: `selected_entry > entry_count`
+    ///
+    /// Then: select last entry
+    ///
+    /// Assumes: git panel `entry_count` is the most relevant and won't be changed further
+    fn select_last_entry_if_out_of_bounds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(idx) = self.selected_entry
+            && idx > self.entry_count
+        {
+            self.select_last(&menu::SelectLast, window, cx);
+        }
+    }
+
     fn focus_changes_list(
         &mut self,
         _: &FocusChanges,
@@ -3925,6 +3938,7 @@ impl GitPanel {
         }
 
         self.select_first_entry_if_none(window, cx);
+        self.select_last_entry_if_out_of_bounds(window, cx);
 
         let suggested_commit_message = self.suggest_commit_message(cx);
         let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
