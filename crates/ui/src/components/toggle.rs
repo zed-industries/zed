@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, KeybindingKeystroke, Keystroke,
-    Styled, Window, div, hsla, prelude::*,
+    Role, Styled, Toggled, Window, div, hsla, prelude::*,
 };
 use std::{rc::Rc, sync::Arc};
 
@@ -347,6 +347,7 @@ pub struct Switch {
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
     tab_index: Option<isize>,
+    aria_label: Option<SharedString>,
 }
 
 impl Switch {
@@ -364,6 +365,7 @@ impl Switch {
             key_binding: None,
             color: SwitchColor::default(),
             tab_index: None,
+            aria_label: None,
         }
     }
 
@@ -422,6 +424,13 @@ impl Switch {
         self.tab_index = Some(tab_index.into());
         self
     }
+
+    /// Sets the label announced by assistive technology.
+    /// Defaults to the switch's visible label, if any.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
 }
 
 impl RenderOnce for Switch {
@@ -447,6 +456,7 @@ impl RenderOnce for Switch {
 
         let group_id = format!("switch_group_{:?}", self.id);
         let label = self.label;
+        let aria_label = self.aria_label.or_else(|| label.clone());
 
         let switch = div()
             .id((self.id.clone(), "switch"))
@@ -499,6 +509,13 @@ impl RenderOnce for Switch {
 
         h_flex()
             .id(self.id)
+            .role(Role::Switch)
+            .when_some(aria_label, |this, label| this.aria_label(label))
+            .aria_toggled(match self.toggle_state {
+                ToggleState::Selected => Toggled::True,
+                ToggleState::Indeterminate => Toggled::Mixed,
+                ToggleState::Unselected => Toggled::False,
+            })
             .cursor_pointer()
             .gap(DynamicSpacing::Base06.rems(cx))
             .when(self.full_width, |this| this.w_full().justify_between())

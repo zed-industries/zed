@@ -1225,6 +1225,27 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the step by which assistive technology should expect the numeric
+    /// value of this element to change (e.g. when incrementing a spin button).
+    fn aria_numeric_value_step(mut self, step: f64) -> Self {
+        self.interactivity().aria_numeric_value_step = Some(step);
+        self
+    }
+
+    /// Set the string value of this element, e.g. the text content of a simple
+    /// text input.
+    fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_value = Some(value.into());
+        self
+    }
+
+    /// Set the placeholder text reported to assistive technology for this
+    /// element, shown when a text input is empty.
+    fn aria_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_placeholder = Some(placeholder.into());
+        self
+    }
+
     /// Set the minimum numeric value for this element.
     fn aria_min_numeric_value(mut self, value: f64) -> Self {
         self.interactivity().aria_min_numeric_value = Some(value);
@@ -1869,6 +1890,9 @@ pub struct Interactivity {
     pub(crate) aria_numeric_value: Option<f64>,
     pub(crate) aria_min_numeric_value: Option<f64>,
     pub(crate) aria_max_numeric_value: Option<f64>,
+    pub(crate) aria_numeric_value_step: Option<f64>,
+    pub(crate) aria_value: Option<SharedString>,
+    pub(crate) aria_placeholder: Option<SharedString>,
     pub(crate) aria_orientation: Option<accesskit::Orientation>,
     pub(crate) aria_level: Option<usize>,
     pub(crate) aria_position_in_set: Option<usize>,
@@ -3075,6 +3099,15 @@ impl Interactivity {
         if let Some(value) = self.aria_max_numeric_value {
             node.set_max_numeric_value(value);
         }
+        if let Some(step) = self.aria_numeric_value_step {
+            node.set_numeric_value_step(step);
+        }
+        if let Some(value) = &self.aria_value {
+            node.set_value(value.to_string());
+        }
+        if let Some(placeholder) = &self.aria_placeholder {
+            node.set_placeholder(placeholder.to_string());
+        }
         if let Some(orientation) = self.aria_orientation {
             node.set_orientation(orientation);
         }
@@ -4178,5 +4211,28 @@ mod tests {
             .unwrap();
 
         assert!(active_tooltip.borrow().is_none());
+    }
+
+    #[test]
+    fn test_write_a11y_info_string_and_numeric_properties() {
+        let mut interactivity = Interactivity::default();
+        interactivity.aria_label = Some("Buffer Font Size".into());
+        interactivity.aria_value = Some("15".into());
+        interactivity.aria_placeholder = Some("Search".into());
+        interactivity.aria_numeric_value = Some(15.0);
+        interactivity.aria_min_numeric_value = Some(6.0);
+        interactivity.aria_max_numeric_value = Some(72.0);
+        interactivity.aria_numeric_value_step = Some(1.0);
+
+        let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+        interactivity.write_a11y_info(&mut node);
+
+        assert_eq!(node.label(), Some("Buffer Font Size"));
+        assert_eq!(node.value(), Some("15"));
+        assert_eq!(node.placeholder(), Some("Search"));
+        assert_eq!(node.numeric_value(), Some(15.0));
+        assert_eq!(node.min_numeric_value(), Some(6.0));
+        assert_eq!(node.max_numeric_value(), Some(72.0));
+        assert_eq!(node.numeric_value_step(), Some(1.0));
     }
 }

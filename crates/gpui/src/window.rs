@@ -1303,6 +1303,8 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        let initial_window_title = titlebar.as_ref().and_then(|titlebar| titlebar.title.clone());
+
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
@@ -1361,8 +1363,12 @@ impl Window {
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
+            let mut initial_root_node = accesskit::Node::new(accesskit::Role::Window);
+            if let Some(title) = &initial_window_title {
+                initial_root_node.set_label(title.to_string());
+            }
             let initial_tree = accesskit::TreeUpdate {
-                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
+                nodes: vec![(ROOT_NODE_ID, initial_root_node)],
                 tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
                 tree_id: accesskit::TreeId::ROOT,
                 focus: ROOT_NODE_ID,
@@ -1744,7 +1750,11 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
+            a11y: A11y::new(
+                a11y_active_flag,
+                accessibility_force_disabled,
+                initial_window_title,
+            ),
         })
     }
 
@@ -2335,6 +2345,7 @@ impl Window {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
+        self.a11y.set_window_title(title.to_string());
     }
 
     /// Sets the position of the macOS traffic light buttons.

@@ -1230,16 +1230,19 @@ impl TitleBar {
                 }
             });
 
-            ButtonLike::new("user-menu").child(
-                h_flex()
-                    .when_some(business_organization, |this, organization| {
-                        this.gap_2()
-                            .child(Label::new(&organization.name).size(LabelSize::Small))
-                    })
-                    .children(avatar),
-            )
+            ButtonLike::new("user-menu")
+                .aria_label("User menu")
+                .child(
+                    h_flex()
+                        .when_some(business_organization, |this, organization| {
+                            this.gap_2()
+                                .child(Label::new(&organization.name).size(LabelSize::Small))
+                        })
+                        .children(avatar),
+                )
         } else {
             ButtonLike::new("user-menu")
+                .aria_label("User menu")
                 .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
         };
 

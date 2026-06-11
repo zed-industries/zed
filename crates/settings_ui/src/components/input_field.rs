@@ -1,14 +1,17 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{AnyElement, ElementId, Focusable, TextStyleRefinement};
+use gpui::{
+    AccessibleAction, AnyElement, ElementId, Focusable, Role, TextStyleRefinement,
+    accesskit::ActionData,
+};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
 
 #[derive(IntoElement)]
 pub struct SettingsInputField {
-    id: Option<ElementId>,
+    id: ElementId,
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
     confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
@@ -19,12 +22,19 @@ pub struct SettingsInputField {
     clear_on_confirm: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
+    aria_label: Option<SharedString>,
 }
 
 impl SettingsInputField {
-    pub fn new() -> Self {
+    /// Creates a new input field.
+    ///
+    /// The `id` must be unique among sibling elements: it keys the underlying
+    /// editor's state across frames and identifies this field in the
+    /// accessibility tree. Derive it from data unique to the setting being
+    /// edited (e.g. its JSON path).
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            id: None,
+            id: id.into(),
             initial_text: None,
             placeholder: None,
             confirm: None,
@@ -35,12 +45,8 @@ impl SettingsInputField {
             clear_on_confirm: false,
             action_slot: None,
             color: None,
+            aria_label: None,
         }
-    }
-
-    pub fn with_id(mut self, id: impl Into<ElementId>) -> Self {
-        self.id = Some(id.into());
-        self
     }
 
     pub fn with_initial_text(mut self, initial_text: String) -> Self {
@@ -95,6 +101,13 @@ impl SettingsInputField {
         self.color = Some(color);
         self
     }
+
+    /// Sets the label announced by assistive technology.
+    /// Defaults to the placeholder text, if any.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
 }
 
 impl RenderOnce for SettingsInputField {
@@ -109,81 +122,46 @@ impl RenderOnce for SettingsInputField {
             ..Default::default()
         };
 
-        let first_render_initial_text = window.use_state(cx, |_, _| self.initial_text.clone());
+        let first_render_initial_text =
+            window.use_keyed_state((self.id.clone(), "first-render-initial-text"), cx, |_, _| {
+                self.initial_text.clone()
+            });
 
-        let editor = if let Some(id) = self.id {
-            window.use_keyed_state(id, cx, {
-                let initial_text = self.initial_text.clone();
-                let placeholder = self.placeholder;
-                let mut confirm = self.confirm.clone();
+        let editor = window.use_keyed_state((self.id.clone(), "editor"), cx, {
+            let initial_text = self.initial_text.clone();
+            let placeholder = self.placeholder;
+            let mut confirm = self.confirm.clone();
 
-                move |window, cx| {
-                    let mut editor = Editor::single_line(window, cx);
-                    let editor_focus_handle = editor.focus_handle(cx);
-                    if let Some(text) = initial_text {
-                        editor.set_text(text, window, cx);
-                    }
-
-                    if let Some(confirm) = confirm.take()
-                        && !self.display_confirm_button
-                        && !self.display_clear_button
-                        && !self.clear_on_confirm
-                    {
-                        cx.on_focus_out(
-                            &editor_focus_handle,
-                            window,
-                            move |editor, _, window, cx| {
-                                let text = Some(editor.text(cx));
-                                confirm(text, window, cx);
-                            },
-                        )
-                        .detach();
-                    }
-
-                    if let Some(placeholder) = placeholder {
-                        editor.set_placeholder_text(placeholder, window, cx);
-                    }
-                    editor.set_text_style_refinement(styles);
-                    editor
+            move |window, cx| {
+                let mut editor = Editor::single_line(window, cx);
+                let editor_focus_handle = editor.focus_handle(cx);
+                if let Some(text) = initial_text {
+                    editor.set_text(text, window, cx);
                 }
-            })
-        } else {
-            window.use_state(cx, {
-                let initial_text = self.initial_text.clone();
-                let placeholder = self.placeholder;
-                let mut confirm = self.confirm.clone();
 
-                move |window, cx| {
-                    let mut editor = Editor::single_line(window, cx);
-                    let editor_focus_handle = editor.focus_handle(cx);
-                    if let Some(text) = initial_text {
-                        editor.set_text(text, window, cx);
-                    }
-
-                    if let Some(confirm) = confirm.take()
-                        && !self.display_confirm_button
-                        && !self.display_clear_button
-                        && !self.clear_on_confirm
-                    {
-                        cx.on_focus_out(
-                            &editor_focus_handle,
-                            window,
-                            move |editor, _, window, cx| {
-                                let text = Some(editor.text(cx));
-                                confirm(text, window, cx);
-                            },
-                        )
-                        .detach();
-                    }
-
-                    if let Some(placeholder) = placeholder {
-                        editor.set_placeholder_text(placeholder, window, cx);
-                    }
-                    editor.set_text_style_refinement(styles);
-                    editor
+                if let Some(confirm) = confirm.take()
+                    && !self.display_confirm_button
+                    && !self.display_clear_button
+                    && !self.clear_on_confirm
+                {
+                    cx.on_focus_out(
+                        &editor_focus_handle,
+                        window,
+                        move |editor, _, window, cx| {
+                            let text = Some(editor.text(cx));
+                            confirm(text, window, cx);
+                        },
+                    )
+                    .detach();
                 }
-            })
-        };
+
+                if let Some(placeholder) = placeholder {
+                    editor.set_placeholder_text(placeholder, window, cx);
+                }
+                editor.set_text_style_refinement(styles);
+                editor
+            }
+        });
 
         // When settings change externally (e.g. editing settings.json), the page
         // re-renders but use_keyed_state returns the cached editor with stale text.
@@ -219,10 +197,42 @@ impl RenderOnce for SettingsInputField {
         let display_confirm_button = self.display_confirm_button;
         let display_clear_button = self.display_clear_button;
         let confirm_for_button = self.confirm.clone();
-        let is_editor_empty = editor.read(cx).text(cx).trim().is_empty();
+        let editor_text = editor.read(cx).text(cx);
+        let is_editor_empty = editor_text.trim().is_empty();
         let is_editor_focused = editor.read(cx).is_focused(window);
 
+        let aria_label = self
+            .aria_label
+            .or_else(|| self.placeholder.map(SharedString::new_static));
+
         h_flex()
+            .id(self.id.clone())
+            .role(Role::TextInput)
+            .when_some(aria_label, |this, label| this.aria_label(label))
+            .aria_value(editor_text)
+            .when_some(self.placeholder, |this, placeholder| {
+                this.aria_placeholder(placeholder)
+            })
+            .on_a11y_action(AccessibleAction::SetValue, {
+                let weak_editor = editor.downgrade();
+                let confirm = self.confirm.clone();
+                move |data, window, cx| {
+                    let Some(ActionData::Value(text)) = data else {
+                        return;
+                    };
+                    let Some(editor) = weak_editor.upgrade() else {
+                        return;
+                    };
+                    let text = text.to_string();
+                    editor.update(cx, |editor, cx| {
+                        editor.set_text(text.clone(), window, cx);
+                    });
+                    if let Some(confirm) = confirm.as_ref() {
+                        let new_value = (!text.is_empty()).then_some(text);
+                        confirm(new_value, window, cx);
+                    }
+                }
+            })
             .group("settings-input-field-editor")
             .relative()
             .py_1()
@@ -254,6 +264,7 @@ impl RenderOnce for SettingsInputField {
                                 IconButton::new("clear-button", IconName::Close)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
+                                    .aria_label("Clear")
                                     .tooltip(Tooltip::text("Clear"))
                                     .on_click(move |_, window, cx| {
                                         let Some(editor) = weak_editor_for_clear.upgrade() else {
@@ -273,6 +284,7 @@ impl RenderOnce for SettingsInputField {
                                 IconButton::new("confirm-button", IconName::Check)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Success)
+                                    .aria_label("Confirm")
                                     .tooltip(Tooltip::text("Enter to Confirm"))
                                     .on_click(move |_, window, cx| {
                                         let Some(confirm) = confirm_for_button.as_ref() else {

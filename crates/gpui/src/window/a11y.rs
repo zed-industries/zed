@@ -86,7 +86,7 @@
 //! [`NodeId`]: accesskit::NodeId
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
-use crate::{App, Bounds, FocusId, Pixels, Window};
+use crate::{App, Bounds, FocusId, Pixels, SharedString, Window};
 use accesskit::{Action, NodeId, TreeUpdate};
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -132,10 +132,17 @@ pub(crate) struct A11y {
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    /// The window's title, used to label the root node so assistive
+    /// technology can tell windows apart.
+    window_title: Option<SharedString>,
 }
 
 impl A11y {
-    pub(crate) fn new(active_flag: Arc<AtomicBool>, force_disabled: bool) -> Self {
+    pub(crate) fn new(
+        active_flag: Arc<AtomicBool>,
+        force_disabled: bool,
+        window_title: Option<SharedString>,
+    ) -> Self {
         Self {
             force_disabled,
             active_flag,
@@ -144,7 +151,12 @@ impl A11y {
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
+            window_title,
         }
+    }
+
+    pub(crate) fn set_window_title(&mut self, title: impl Into<SharedString>) {
+        self.window_title = Some(title.into());
     }
 
     /// Ensures that [`Self::is_active`] returns up to date information.
@@ -164,26 +176,12 @@ impl A11y {
         self.focus_ids.clear();
         self.node_bounds.clear();
         self.action_listeners.clear();
-        self.nodes.begin_frame();
+        self.nodes.begin_frame(self.window_title.as_ref());
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
-        let tree_update = self.nodes.finalize();
-
-        // Zed currently doesn't set any a11y APIs on *any* UI elements, so a
-        // tree with nodes other than the root indicates a bug in the
-        // `TreeUpdate`-producing logic.
-        //
-        // Remove this when adding aria attributes.
-        if tree_update.nodes.len() > 1 {
-            log::warn!(
-                "expected an empty a11y tree update (only the root node), but got {} nodes; Zed has no accessible UI elements yet",
-                tree_update.nodes.len()
-            );
-        }
-
-        tree_update
+        self.nodes.finalize()
     }
 }
 
@@ -248,7 +246,7 @@ impl A11yNodeBuilder {
     }
 
     /// Push the root node to start a new frame.
-    fn begin_frame(&mut self) {
+    fn begin_frame(&mut self, window_title: Option<&SharedString>) {
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
@@ -257,7 +255,10 @@ impl A11yNodeBuilder {
         {
             self.has_set_focus = false;
         }
-        let root_node = accesskit::Node::new(accesskit::Role::Window);
+        let mut root_node = accesskit::Node::new(accesskit::Role::Window);
+        if let Some(title) = window_title {
+            root_node.set_label(title.to_string());
+        }
 
         self.ids_stack.push(ROOT_NODE_ID);
         self.nodes_stack.push(root_node);

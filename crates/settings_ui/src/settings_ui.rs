@@ -10,11 +10,12 @@ use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
+    Focusable, Global, KeyContext, ListState, ReadGlobal as _, Role, ScrollHandle, Stateful,
     Subscription, Task, Tiling, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window,
     WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px,
     uniform_list,
 };
+use heck::ToTitleCase as _;
 
 use language::Buffer;
 use platform_title_bar::PlatformTitleBar;
@@ -1122,6 +1123,7 @@ impl SettingsPageItem {
                                 ("sub-page".into(), sub_page_link.title.clone()),
                                 "Configure",
                             )
+                            .aria_label(format!("Configure {}", sub_page_link.title))
                             .tab_index(0_isize)
                             .end_icon(
                                 Icon::new(IconName::ChevronRight)
@@ -1292,6 +1294,8 @@ fn render_settings_item(
 
     h_flex()
         .id(setting_item.title)
+        .role(Role::Group)
+        .aria_label(SharedString::new_static(setting_item.title))
         .min_w_0()
         .justify_between()
         .child(
@@ -1318,6 +1322,7 @@ fn render_settings_item(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
                                         .icon_color(Color::Muted)
                                         .icon_size(IconSize::Small)
+                                        .aria_label("Reset to Default")
                                         .tooltip(Tooltip::text("Reset to Default"))
                                         .on_click({
                                             move |_, window, cx| {
@@ -1422,6 +1427,7 @@ fn render_settings_item_link(
                 .icon_color(link_icon_color)
                 .icon_size(IconSize::Small)
                 .shape(IconButtonShape::Square)
+                .aria_label("Copy Link")
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
                     this.on_click(cx.listener(move |this, _, _, cx| {
@@ -2692,6 +2698,9 @@ impl SettingsWindow {
         let edit_in_json_id = SharedString::new(format!("edit-in-json-{}", selected_file_ix));
 
         h_flex()
+            .id("settings-ui-files-header")
+            .role(Role::Group)
+            .aria_label("Settings File")
             .w_full()
             .gap_1()
             .justify_between()
@@ -2829,8 +2838,11 @@ impl SettingsWindow {
     //     }
     // }
 
-    fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
+    fn render_search(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
+            .id("settings-ui-search")
+            .role(Role::SearchInput)
+            .aria_label("Search Settings")
             .py_1()
             .px_1p5()
             .mb_3()
@@ -3000,6 +3012,9 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
+                    .id("settings-ui-nav")
+                    .role(Role::Tree)
+                    .aria_label("Settings Navigation")
                     .flex_1()
                     .overflow_hidden()
                     .track_focus(&self.navbar_focus_handle.focus_handle(cx))
@@ -3373,7 +3388,11 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
         let current_page_index = self.current_page_index();
-        let mut page_content = v_flex().id("settings-ui-page").size_full();
+        let mut page_content = v_flex()
+            .id("settings-ui-page")
+            .role(Role::Group)
+            .aria_label("Settings Content")
+            .size_full();
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
         let has_no_results = self.visible_page_items().next().is_none() && has_active_search;
@@ -4614,6 +4633,12 @@ fn update_project_setting_file(
     Ok(())
 }
 
+/// Derives a human-readable label for assistive technology from a setting's
+/// JSON path, e.g. `"buffer_font_size"` becomes `"Buffer Font Size"`.
+fn a11y_label_for_json_path(json_path: Option<&'static str>) -> Option<SharedString> {
+    json_path.map(|path| SharedString::from(path.to_title_case()))
+}
+
 struct CurrentSettingsValue<'a, T> {
     value: &'a T,
     disabled: bool,
@@ -4652,8 +4677,13 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let initial_text = initial_text.filter(|s| !s.as_ref().is_empty());
 
-    SettingsInputField::new()
+    // The JSON path uniquely identifies the setting this field edits, making
+    // it a stable, collision-free element ID within the page.
+    SettingsInputField::new(field.json_path.unwrap_or("settings-text-field"))
         .tab_index(0)
+        .when_some(a11y_label_for_json_path(field.json_path), |editor, label| {
+            editor.aria_label(label)
+        })
         .when_some(initial_text, |editor, text| {
             editor.with_initial_text(text.as_ref().to_string())
         })
@@ -4698,6 +4728,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
+        .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+            this.aria_label(label)
+        })
         .disabled(disabled)
         .on_click({
             move |state, window, cx| {
@@ -4731,6 +4764,9 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     NumberField::new(id, value, window, cx)
         .mode(NumberFieldMode::Edit, cx)
         .tab_index(0_isize)
+        .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+            this.aria_label(label)
+        })
         .on_change({
             move |value, window, cx| {
                 let value = *value;
@@ -4787,6 +4823,9 @@ where
             .log_err(); // todo(settings_ui) don't log err
         }
     })
+    .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+        this.aria_label(label)
+    })
     .disabled(disabled)
     .tab_index(0)
     .title_case(should_do_titlecase)
@@ -4795,6 +4834,7 @@ where
 
 fn render_picker_trigger_button(id: SharedString, label: SharedString) -> Button {
     Button::new(id, label)
+        .aria_role(Role::ComboBox)
         .tab_index(0_isize)
         .style(ButtonStyle::Outlined)
         .size(ButtonSize::Medium)
@@ -4803,6 +4843,24 @@ fn render_picker_trigger_button(id: SharedString, label: SharedString) -> Button
                 .size(IconSize::Small)
                 .color(Color::Muted),
         )
+}
+
+/// Wires the Expand/Collapse accessibility actions on a picker trigger button to
+/// the popover handle, so assistive technology can open and close the picker
+/// (used by UIA on Windows and AX on macOS; Linux/AT-SPI uses the click action).
+fn wire_picker_trigger_a11y<M: gpui::ManagedView>(
+    button: Button,
+    handle: ui::PopoverMenuHandle<M>,
+) -> Button {
+    let show_handle = handle.clone();
+    let hide_handle = handle;
+    button
+        .on_a11y_action(gpui::accesskit::Action::Expand, move |_, window, cx| {
+            show_handle.show(window, cx);
+        })
+        .on_a11y_action(gpui::accesskit::Action::Collapse, move |_, _window, cx| {
+            hide_handle.hide(cx);
+        })
 }
 
 fn render_font_picker(
@@ -4818,10 +4876,18 @@ fn render_font_picker(
         .cloned()
         .map_or_else(|| SharedString::default(), |value| value.into_gpui());
 
+    let handle = ui::PopoverMenuHandle::default();
     PopoverMenu::new("font-picker")
-        .trigger(render_picker_trigger_button(
-            "font_family_picker_trigger".into(),
-            current_value.clone(),
+        .trigger(wire_picker_trigger_a11y(
+            render_picker_trigger_button(
+                "font_family_picker_trigger".into(),
+                current_value.clone(),
+            )
+            .when_some(
+                a11y_label_for_json_path(field.json_path),
+                |this, label| this.aria_label(format!("{}: {}", label, current_value.clone())),
+            ),
+            handle.clone(),
         ))
         .menu(move |window, cx| {
             let file = file.clone();
@@ -4852,7 +4918,7 @@ fn render_font_picker(
             x: px(0.0),
             y: px(2.0),
         })
-        .with_handle(ui::PopoverMenuHandle::default())
+        .with_handle(handle)
         .into_any_element()
 }
 
@@ -4869,10 +4935,18 @@ fn render_theme_picker(
         .map(|theme_name| theme_name.0.into())
         .unwrap_or_else(|| cx.theme().name.clone());
 
+    let handle = ui::PopoverMenuHandle::default();
     PopoverMenu::new("theme-picker")
-        .trigger(render_picker_trigger_button(
-            "theme_picker_trigger".into(),
-            current_value.clone(),
+        .trigger(wire_picker_trigger_a11y(
+            render_picker_trigger_button(
+                "theme_picker_trigger".into(),
+                current_value.clone(),
+            )
+            .when_some(
+                a11y_label_for_json_path(field.json_path),
+                |this, label| this.aria_label(format!("{}: {}", label, current_value.clone())),
+            ),
+            handle.clone(),
         ))
         .menu(move |window, cx| {
             Some(cx.new(|cx| {
@@ -4906,7 +4980,7 @@ fn render_theme_picker(
             x: px(0.0),
             y: px(2.0),
         })
-        .with_handle(ui::PopoverMenuHandle::default())
+        .with_handle(handle)
         .into_any_element()
 }
 
@@ -4923,10 +4997,18 @@ fn render_icon_theme_picker(
         .map(|theme_name| theme_name.0.into())
         .unwrap_or_else(|| cx.theme().name.clone());
 
+    let handle = ui::PopoverMenuHandle::default();
     PopoverMenu::new("icon-theme-picker")
-        .trigger(render_picker_trigger_button(
-            "icon_theme_picker_trigger".into(),
-            current_value.clone(),
+        .trigger(wire_picker_trigger_a11y(
+            render_picker_trigger_button(
+                "icon_theme_picker_trigger".into(),
+                current_value.clone(),
+            )
+            .when_some(
+                a11y_label_for_json_path(field.json_path),
+                |this, label| this.aria_label(format!("{}: {}", label, current_value.clone())),
+            ),
+            handle.clone(),
         ))
         .menu(move |window, cx| {
             Some(cx.new(|cx| {
@@ -4960,7 +5042,7 @@ fn render_icon_theme_picker(
             x: px(0.0),
             y: px(2.0),
         })
-        .with_handle(ui::PopoverMenuHandle::default())
+        .with_handle(handle)
         .into_any_element()
 }
 
