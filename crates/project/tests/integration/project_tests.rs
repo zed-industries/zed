@@ -4124,6 +4124,99 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
     );
 }
 
+// Regression test for https://github.com/zed-industries/zed/issues/59041:
+// when an open file is edited outside the editor, the buffer reloads and the
+// language server must be told about the save so disk-based diagnostics (e.g.
+// rust-analyzer's flycheck, which only re-runs on `didSave`) refresh instead of
+// going stale until the next manual save.
+#[gpui::test]
+async fn test_external_reload_notifies_language_server_of_save(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({ "main.rs": "fn main() { let x = 5_f64 > 5; }" }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let save_count = Arc::new(atomic::AtomicUsize::new(0));
+    let closure_save_count = save_count.clone();
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                let save_count = closure_save_count.clone();
+                fake_server.handle_notification::<lsp::notification::DidSaveTextDocument, _>(
+                    move |_, _| {
+                        save_count.fetch_add(1, atomic::Ordering::SeqCst);
+                    },
+                );
+            })),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // A clean buffer edited outside the editor reloads, and that reload should
+    // be reported to the server as a save so flycheck re-runs.
+    let saves_before = save_count.load(atomic::Ordering::SeqCst);
+    fs.save(
+        path!("/dir/main.rs").as_ref(),
+        &"fn main() { let x = 5_f64 > 5_f64; }".into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(
+        save_count.load(atomic::Ordering::SeqCst),
+        saves_before + 1,
+        "a clean external reload should notify the language server of a save"
+    );
+
+    // With unsaved local edits, the buffer must not auto-reload nor report a
+    // phantom save: the in-memory contents no longer match disk.
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "// wip\n")], None, cx));
+    cx.executor().run_until_parked();
+    let saves_before_dirty = save_count.load(atomic::Ordering::SeqCst);
+    fs.save(
+        path!("/dir/main.rs").as_ref(),
+        &"fn main() {}".into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(
+        save_count.load(atomic::Ordering::SeqCst),
+        saves_before_dirty,
+        "a dirty buffer must not be reloaded or reported as saved on external change"
+    );
+}
+
 #[gpui::test]
 async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     init_test(cx);
