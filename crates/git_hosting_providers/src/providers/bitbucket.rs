@@ -10,6 +10,7 @@ use itertools::Itertools as _;
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -253,6 +254,32 @@ impl GitHostingProvider for Bitbucket {
                 .as_deref(),
         );
         permalink
+    }
+
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let ParsedGitRemote { owner, repo } = remote;
+        if self.is_self_hosted() {
+            let mut url = self
+                .base_url()
+                .join(&format!("projects/{owner}/repos/{repo}/pull-requests"))
+                .ok()?;
+            url.set_query(Some(&format!(
+                "create&sourceBranch={}",
+                encode(&format!("refs/heads/{source_branch}"))
+            )));
+            Some(url)
+        } else {
+            let mut url = self
+                .base_url()
+                .join(&format!("{owner}/{repo}/pull-requests/new"))
+                .ok()?;
+            url.set_query(Some(&format!("source={}", encode(source_branch))));
+            Some(url)
+        }
     }
 
     fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
@@ -587,6 +614,42 @@ mod tests {
         assert_eq!(
             pr.url.as_str(),
             "https://bitbucket.company.com/projects/zed-industries/repos/zed/pull-requests/123"
+        );
+    }
+
+    #[test]
+    fn test_build_bitbucket_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let bitbucket = Bitbucket::public_instance();
+        let url = bitbucket
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://bitbucket.org/zed-industries/zed/pull-requests/new?source=feature%2Fnew-feature"
+        );
+    }
+
+    #[test]
+    fn test_build_bitbucket_self_hosted_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let bitbucket =
+            Bitbucket::from_remote_url("https://bitbucket.company.com/zed-industries/zed.git")
+                .unwrap();
+        let url = bitbucket
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://bitbucket.company.com/projects/zed-industries/repos/zed/pull-requests?create&sourceBranch=refs%2Fheads%2Ffeature%2Fnew-feature"
         );
     }
 }
