@@ -431,7 +431,7 @@ impl LspAdapter for RustLspAdapter {
                     let runs = language.highlight_text(&source, 0..function_signature.len());
                     mk_label(
                         function_signature.to_owned(),
-                        &|| match_.range().start - 3..match_.range().end - 1,
+                        &|| match_.range().start + 3..match_.range().end - 1,
                         runs,
                     )
                 } else if let Some((prefix, suffix)) = fn_prefixed {
