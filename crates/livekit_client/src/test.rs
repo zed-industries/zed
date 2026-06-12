@@ -148,7 +148,9 @@ impl TestServer {
         let room_name = claims.video.room.unwrap();
 
         if self.revoked_identities.lock().contains(&identity.0) {
-            anyhow::bail!("signal failure: client error: 401 Unauthorized - invalid token: revoked");
+            anyhow::bail!(
+                "signal failure: client error: 401 Unauthorized - invalid token: revoked"
+            );
         }
 
         let mut server_rooms = self.rooms.lock();
