@@ -485,13 +485,17 @@ message Envelope {
     SearchCommitsResponse search_commits_response = 450;
     GetInitialGraphData get_initial_graph_data = 451;
     GetInitialGraphDataResponse get_initial_graph_data_response = 452;
+    GetDocumentLinks get_document_links = 453;
+    GetDocumentLinksResponse get_document_links_response = 454;
+    ResolveDocumentLink resolve_document_link = 455;
+    ResolveDocumentLinkResponse resolve_document_link_response = 456;
 
-    PrepareCallHierarchy prepare_call_hierarchy = 453;
-    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 454;
-    GetIncomingCalls get_incoming_calls = 455;
-    GetIncomingCallsResponse get_incoming_calls_response = 456;
-    GetOutgoingCalls get_outgoing_calls = 457;
-    GetOutgoingCallsResponse get_outgoing_calls_response = 458; // current max
+    PrepareCallHierarchy prepare_call_hierarchy = 457;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 458;
+    GetIncomingCalls get_incoming_calls = 459;
+    GetIncomingCallsResponse get_incoming_calls_response = 460;
+    GetOutgoingCalls get_outgoing_calls = 461;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 462; // current max
   }
 
   reserved 87 to 88;

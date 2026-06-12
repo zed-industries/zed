@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
-use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, io::BufReader};
+use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, io::BufReader};
 use sha2::{Digest, Sha256};
 
 use crate::{HttpClient, github::AssetKind};
@@ -68,6 +68,64 @@ pub async fn download_server_binary(
     Ok(())
 }
 
+pub async fn download_server_raw_binary(
+    http_client: &dyn HttpClient,
+    url: &str,
+    digest: Option<&str>,
+    destination_path: &Path,
+    binary_file_name: &str,
+) -> Result<(), anyhow::Error> {
+    log::info!("downloading raw binary from {url}");
+    let Some(destination_parent) = destination_path.parent() else {
+        anyhow::bail!("destination path has no parent: {destination_path:?}");
+    };
+
+    let staging_path = staging_dir_path(destination_parent)?;
+    let result = async {
+        let mut response = http_client
+            .get(url, Default::default(), true)
+            .await
+            .with_context(|| format!("downloading release from {url}"))?;
+
+        let binary_path = staging_path.join(binary_file_name);
+        let mut writer = HashingWriter {
+            writer: async_fs::File::create(&binary_path)
+                .await
+                .with_context(|| format!("creating a file {binary_path:?} for {url}"))?,
+            hasher: Sha256::new(),
+        };
+        futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
+            .await
+            .with_context(|| format!("saving binary contents from {url}"))?;
+        let asset_sha_256 = writer
+            .finish()
+            .await
+            .with_context(|| format!("flushing binary contents for {url}"))?;
+
+        if let Some(expected_sha_256) = digest {
+            anyhow::ensure!(
+                asset_sha_256 == expected_sha_256,
+                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
+            );
+        }
+
+        util::fs::make_file_executable(&binary_path)
+            .await
+            .with_context(|| format!("marking {binary_path:?} as executable"))?;
+        finalize_download(&staging_path, destination_path).await
+    }
+    .await;
+
+    if let Err(err) = result {
+        if let Err(err) = async_fs::remove_dir_all(&staging_path).await {
+            log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
+        }
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 async fn extract_to_staging(
     body: impl AsyncRead + Unpin,
     digest: Option<&str>,
@@ -117,15 +175,17 @@ async fn extract_to_staging(
     Ok(())
 }
 
+fn staging_dir_path(parent: &Path) -> Result<PathBuf> {
+    let dir = tempfile::Builder::new()
+        .prefix(".tmp-github-download-")
+        .tempdir_in(parent)
+        .with_context(|| format!("creating staging directory in {parent:?}"))?;
+    Ok(dir.keep())
+}
+
 fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
     match asset_kind {
-        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
-            let dir = tempfile::Builder::new()
-                .prefix(".tmp-github-download-")
-                .tempdir_in(parent)
-                .with_context(|| format!("creating staging directory in {parent:?}"))?;
-            Ok(dir.keep())
-        }
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => staging_dir_path(parent),
         AssetKind::Gz => {
             let path = tempfile::Builder::new()
                 .prefix(".tmp-github-download-")
@@ -261,6 +321,22 @@ struct HashingWriter<W: AsyncWrite + Unpin> {
     hasher: Sha256,
 }
 
+impl<W: AsyncWrite + Unpin> HashingWriter<W> {
+    /// Closes and drops the inner writer, returning the hex SHA-256 digest of
+    /// everything written.
+    ///
+    /// Taking `self` by value guarantees the writer is dropped before this
+    /// returns. For file writers this releases the OS handle, which Windows
+    /// requires before an ancestor directory can be renamed or deleted; note
+    /// that closing alone is not enough, as `async_fs::File` holds its handle
+    /// until dropped.
+    async fn finish(mut self) -> std::io::Result<String> {
+        self.writer.close().await?;
+        drop(self.writer);
+        Ok(format!("{:x}", self.hasher.finalize()))
+    }
+}
+
 impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -288,5 +364,103 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::result::Result<(), std::io::Error>> {
         Pin::new(&mut self.writer).poll_close(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AsyncBody, Response};
+    use futures::future::BoxFuture;
+    use http::HeaderValue;
+    use url::Url;
+
+    struct StaticResponseClient {
+        body: Vec<u8>,
+    }
+
+    impl HttpClient for StaticResponseClient {
+        fn send(
+            &self,
+            _req: http::Request<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            let body = self.body.clone();
+            Box::pin(async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(body))
+                    .unwrap())
+            })
+        }
+
+        fn user_agent(&self) -> Option<&HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+    }
+
+    #[test]
+    fn downloads_raw_binary_into_destination_dir() {
+        futures::executor::block_on(async {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("v_1");
+            let contents = b"#!/bin/sh\necho hello\n".to_vec();
+            let expected_sha_256 = format!("{:x}", Sha256::digest(&contents));
+            let client = StaticResponseClient { body: contents };
+
+            download_server_raw_binary(
+                &client,
+                "https://example.com/agent-binary",
+                Some(&expected_sha_256),
+                &destination_path,
+                "agent-binary",
+            )
+            .await
+            .unwrap();
+
+            let binary_path = destination_path.join("agent-binary");
+            assert_eq!(
+                std::fs::read(&binary_path).unwrap(),
+                b"#!/bin/sh\necho hello\n"
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&binary_path)
+                    .unwrap()
+                    .permissions()
+                    .mode();
+                assert_eq!(mode & 0o111, 0o111, "binary should be executable");
+            }
+        });
+    }
+
+    #[test]
+    fn raw_binary_digest_mismatch_cleans_up_staging() {
+        futures::executor::block_on(async {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let destination_path = temp_dir.path().join("v_1");
+            let client = StaticResponseClient {
+                body: b"some binary".to_vec(),
+            };
+
+            let error = download_server_raw_binary(
+                &client,
+                "https://example.com/agent-binary",
+                Some("0000000000000000000000000000000000000000000000000000000000000000"),
+                &destination_path,
+                "agent-binary",
+            )
+            .await
+            .unwrap_err();
+
+            assert!(error.to_string().contains("SHA-256 mismatch"));
+            assert!(!destination_path.exists());
+            let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
+            assert_eq!(leftover_entries, 0, "staging directory should be removed");
+        });
     }
 }
