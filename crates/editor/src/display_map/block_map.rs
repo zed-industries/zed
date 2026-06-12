@@ -800,7 +800,6 @@ impl BlockMap {
             ..
         }) = companion_view
         {
-            // FIXME lw: Can we use use cursor for the `to_point` and `make_wrap_point` conversions here?
             let mut companion_edits_in_my_space: Vec<WrapEdit> = companion_edits
                 .clone()
                 .into_inner()
