@@ -12,8 +12,8 @@ use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    Action, AnyElement, App, Context, DismissEvent, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use language::{BufferSnapshot, Point};
@@ -1296,7 +1296,7 @@ impl FileFinderDelegate {
                     vec![],
                 ),
                 Match::CreateNew(project_path) => (
-                    format!("Create file: {}", project_path.path.display(path_style)),
+                    format!("Create File: {}", project_path.path.display(path_style)),
                     vec![],
                     String::from(""),
                     vec![],
@@ -1847,11 +1847,11 @@ impl PickerDelegate for FileFinderDelegate {
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
-            Match::CreateNew(_) => Icon::new(IconName::Plus)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .into_any_element(),
+            Match::CreateNew(_) => Empty.into_any_element(),
         };
+
+        let is_create_new = matches!(path_match, Match::CreateNew(_));
+
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx);
 
         let file_icon = match path_match {
@@ -1870,20 +1870,24 @@ impl PickerDelegate for FileFinderDelegate {
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .start_slot::<Icon>(file_icon)
-                .end_slot::<AnyElement>(end_icon)
                 .inset(true)
                 .toggle_state(selected)
+                .map(|this| {
+                    if is_create_new {
+                        this.start_slot(Icon::new(IconName::Plus).size(IconSize::Small))
+                    } else {
+                        this.start_slot::<Icon>(file_icon)
+                    }
+                })
                 .child(
                     h_flex()
                         .w_full()
                         .min_w_0()
-                        .overflow_hidden()
-                        .gap_2()
-                        .py_px()
-                        .child(file_name_label.truncate_middle().flex_1())
-                        .child(full_path_label.truncate_start().flex_shrink()),
-                ),
+                        .gap_1p5()
+                        .child(file_name_label.truncate_middle())
+                        .child(full_path_label.truncate_start()),
+                )
+                .end_slot::<AnyElement>(end_icon),
         )
     }
 
