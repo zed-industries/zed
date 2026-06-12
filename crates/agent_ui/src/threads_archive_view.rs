@@ -133,6 +133,7 @@ pub enum ThreadsArchiveViewEvent {
     Activate { thread: ThreadMetadata },
     CancelRestore { thread_id: ThreadId },
     Import,
+    NewThread,
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -961,6 +962,14 @@ impl ThreadsArchiveView {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(
+                        IconButton::new("new-thread", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Start New Agent Thread"))
+                            .on_click(cx.listener(|_this, _, _, cx| {
+                                cx.emit(ThreadsArchiveViewEvent::NewThread);
+                            })),
+                    )
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)

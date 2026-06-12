@@ -141,18 +141,24 @@ pub enum Model {
     KimiK2_6,
     #[serde(rename = "minimax-m2.7")]
     MiniMaxM2_7,
+    #[serde(rename = "minimax-m3")]
+    MiniMaxM3,
+    #[serde(rename = "minimax-m3-free")]
+    MiniMaxM3Free,
     #[serde(rename = "mimo-v2.5-pro")]
     MimoV2_5Pro,
     #[serde(rename = "mimo-v2.5")]
     MimoV2_5,
     #[serde(rename = "big-pickle")]
     BigPickle,
-    #[serde(rename = "nemotron-3-super-free")]
-    Nemotron3SuperFree,
+    #[serde(rename = "nemotron-3-ultra-free")]
+    Nemotron3UltraFree,
     #[serde(rename = "qwen3.5-plus")]
     Qwen3_5Plus,
     #[serde(rename = "qwen3.6-plus")]
     Qwen3_6Plus,
+    #[serde(rename = "qwen3.7-plus")]
+    Qwen3_7Plus,
     #[serde(rename = "qwen3.7-max")]
     Qwen3_7Max,
 
@@ -188,7 +194,7 @@ impl Model {
     }
 
     pub fn default_free_fast() -> Self {
-        Self::Nemotron3SuperFree
+        Self::Nemotron3UltraFree
     }
 
     pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
@@ -199,19 +205,22 @@ impl Model {
             | Self::KimiK2_6
             | Self::KimiK2_5
             | Self::MiniMaxM2_5
-            | Self::Qwen3_5Plus
+            | Self::MiniMaxM2_7
+            | Self::DeepSeekV4Flash
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::MiniMaxM2_7
-            | Self::MimoV2_5Pro
+            Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash
-            | Self::Qwen3_7Max => &[OpenCodeSubscription::Go],
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_7Max
+            | Self::MiniMaxM3 => &[OpenCodeSubscription::Go],
 
             // Free models
-            Self::Nemotron3SuperFree | Self::BigPickle => &[OpenCodeSubscription::Free],
+            Self::Nemotron3UltraFree | Self::BigPickle | Self::MiniMaxM3Free => {
+                &[OpenCodeSubscription::Free]
+            }
 
             // Custom models get their subscription from settings, not from here
             Self::Custom { .. } => &[],
@@ -264,13 +273,16 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::MiniMaxM2_7 => "minimax-m2.7",
+            Self::MiniMaxM3 => "minimax-m3",
             Self::MimoV2_5Pro => "mimo-v2.5-pro",
             Self::MimoV2_5 => "mimo-v2.5",
             Self::Qwen3_5Plus => "qwen3.5-plus",
             Self::Qwen3_6Plus => "qwen3.6-plus",
+            Self::Qwen3_7Plus => "qwen3.7-plus",
             Self::Qwen3_7Max => "qwen3.7-max",
             Self::BigPickle => "big-pickle",
-            Self::Nemotron3SuperFree => "nemotron-3-super-free",
+            Self::Nemotron3UltraFree => "nemotron-3-ultra-free",
+            Self::MiniMaxM3Free => "minimax-m3-free",
 
             Self::Custom { name, .. } => name,
         }
@@ -319,13 +331,16 @@ impl Model {
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
+            Self::MiniMaxM3 => "MiniMax M3",
             Self::MimoV2_5Pro => "MiMo V2.5 Pro",
             Self::MimoV2_5 => "MiMo V2.5",
             Self::Qwen3_5Plus => "Qwen3.5 Plus",
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
+            Self::Qwen3_7Plus => "Qwen3.7 Plus",
             Self::Qwen3_7Max => "Qwen3.7 Max",
             Self::BigPickle => "Big Pickle",
-            Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
+            Self::Nemotron3UltraFree => "Nemotron 3 Ultra Free",
+            Self::MiniMaxM3Free => "MiniMax M3 Free",
 
             Self::Custom {
                 name, display_name, ..
@@ -375,7 +390,9 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => ApiProtocol::Google,
 
-            Self::Qwen3_7Max => ApiProtocol::Anthropic,
+            Self::Qwen3_7Max | Self::Qwen3_7Plus => ApiProtocol::Anthropic,
+
+            Self::MiniMaxM3 | Self::MiniMaxM3Free => ApiProtocol::Anthropic,
 
             Self::Glm5
             | Self::Glm5_1
@@ -389,7 +406,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::BigPickle
-            | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
+            | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -405,7 +422,9 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::Glm5
             | Self::Glm5_1
-            | Self::Nemotron3SuperFree
+            | Self::MiniMaxM2_5
+            | Self::MiniMaxM2_7
+            | Self::Nemotron3UltraFree
             | Self::BigPickle => true,
 
             Self::Custom {
@@ -446,6 +465,8 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
+            Self::MiniMaxM3 => 512_000,
+            Self::MiniMaxM3Free => 200_000,
             Self::MiniMaxM2_5 => 204_800,
             Self::Glm5 | Self::Glm5_1 => {
                 if subscription == OpenCodeSubscription::Go {
@@ -458,10 +479,17 @@ impl Model {
             Self::GrokBuild0_1 => 256_000,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
-            Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
-            Self::Qwen3_7Max => 1_000_000,
+            Self::Qwen3_5Plus => 262_144,
+            Self::Qwen3_6Plus => {
+                if subscription == OpenCodeSubscription::Go {
+                    1_000_000
+                } else {
+                    262_144
+                }
+            }
+            Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
             Self::BigPickle => 200_000,
-            Self::Nemotron3SuperFree => 204_800,
+            Self::Nemotron3UltraFree => 1_000_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -503,6 +531,8 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
+            Self::MiniMaxM3 => Some(131_072),
+            Self::MiniMaxM3Free => Some(32_000),
             Self::MiniMaxM2_5 => {
                 if subscription == OpenCodeSubscription::Go {
                     Some(65_536)
@@ -520,9 +550,11 @@ impl Model {
             Self::BigPickle => Some(32_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::GrokBuild0_1 => Some(256_000),
-            Self::Qwen3_7Max | Self::Qwen3_6Plus | Self::Qwen3_5Plus => Some(65_536),
+            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
+                Some(65_536)
+            }
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
-            Self::Nemotron3SuperFree => Some(128_000),
+            Self::Nemotron3UltraFree => Some(128_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
 
             Self::Custom {
@@ -578,7 +610,10 @@ impl Model {
             | Self::GrokBuild0_1
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
-            | Self::Qwen3_6Plus => true,
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_7Plus
+            | Self::MiniMaxM3
+            | Self::MiniMaxM3Free => true,
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
@@ -590,7 +625,7 @@ impl Model {
             | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
             | Self::BigPickle
-            | Self::Nemotron3SuperFree => false,
+            | Self::Nemotron3UltraFree => false,
 
             Self::Custom { protocol, .. } => matches!(
                 protocol,
@@ -611,7 +646,7 @@ impl Model {
                 ReasoningEffort::XHigh,
             ]),
 
-            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
+            Self::Nemotron3UltraFree | Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
