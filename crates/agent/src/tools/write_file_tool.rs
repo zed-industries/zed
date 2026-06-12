@@ -852,6 +852,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_interrupted_edit_discard_restores_buffer(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old content\n"})).await;
+        let (mut sender, input) = ToolInput::<WriteFileToolInput>::test();
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| write_tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({ "path": "root/file.txt" }));
+        cx.run_until_parked();
+        sender.send_partial(json!({ "path": "root/file.txt", "content": "new content\n" }));
+        cx.run_until_parked();
+
+        receiver.expect_update_fields().await;
+        let diff = receiver.expect_diff().await;
+        diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Pending(_))));
+
+        // Interrupt the edit. The diff gets finalized, but the action log
+        // still tracks the buffer, keeping it alive.
+        drop(task);
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, _| assert!(matches!(diff, Diff::Finalized(_))));
+
+        let project_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer = diff
+            .read_with(cx, |diff, _| diff.buffer())
+            .expect("finalized diff should still resolve the buffer retained by the action log");
+        assert_eq!(buffer, project_buffer);
+
+        // Simulate the "Discard Interrupted Edit" button, which restores the
+        // base text into the live buffer.
+        let base_text = diff.read_with(cx, |diff, _| diff.base_text().clone());
+        buffer.update(cx, |buffer, cx| buffer.set_text(base_text.as_ref(), cx));
+        assert_eq!(
+            project_buffer.read_with(cx, |buffer, _| buffer.text()),
+            "old content\n"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_create_content_streamed(cx: &mut TestAppContext) {
         let (write_tool, project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"dir": {}})).await;

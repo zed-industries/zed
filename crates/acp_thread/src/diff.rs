@@ -1,6 +1,6 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
@@ -79,6 +79,7 @@ impl Diff {
             multibuffer,
             path,
             base_text,
+            project_buffer: new_buffer.downgrade(),
             new_buffer,
             _update_diff: task,
         })
@@ -133,11 +134,13 @@ impl Diff {
         }
     }
 
-    /// Returns the buffer being edited (for pending diffs) or the snapshot buffer (for finalized diffs).
-    pub fn buffer(&self) -> &Entity<Buffer> {
+    /// Returns the buffer being edited, if it still exists. Finalized diffs
+    /// only hold a weak reference to it, so that they don't keep project
+    /// buffers alive for the lifetime of the thread.
+    pub fn buffer(&self) -> Option<Entity<Buffer>> {
         match self {
-            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer,
-            Self::Finalized(FinalizedDiff { new_buffer, .. }) => new_buffer,
+            Self::Pending(PendingDiff { new_buffer, .. }) => Some(new_buffer.clone()),
+            Self::Finalized(FinalizedDiff { project_buffer, .. }) => project_buffer.upgrade(),
         }
     }
 
@@ -286,31 +289,35 @@ impl PendingDiff {
             }
         });
 
-        let update_diff = cx.spawn(async move |this, cx| {
-            let buffer_diff = buffer_diff.await?;
-            this.update(cx, |this, cx| {
-                this.multibuffer().update(cx, |multibuffer, cx| {
-                    let path_key = PathKey::for_buffer(&buffer, cx);
-                    multibuffer.clear(cx);
-                    multibuffer.set_excerpts_for_path(
-                        path_key,
-                        buffer,
-                        ranges,
-                        excerpt_context_lines(cx),
-                        cx,
-                    );
-                    multibuffer.add_diff(buffer_diff.clone(), cx);
-                });
+        let update_diff = cx.spawn({
+            let buffer = buffer.clone();
+            async move |this, cx| {
+                let buffer_diff = buffer_diff.await?;
+                this.update(cx, |this, cx| {
+                    this.multibuffer().update(cx, |multibuffer, cx| {
+                        let path_key = PathKey::for_buffer(&buffer, cx);
+                        multibuffer.clear(cx);
+                        multibuffer.set_excerpts_for_path(
+                            path_key,
+                            buffer,
+                            ranges,
+                            excerpt_context_lines(cx),
+                            cx,
+                        );
+                        multibuffer.add_diff(buffer_diff.clone(), cx);
+                    });
 
-                cx.notify();
-            })
+                    cx.notify();
+                })
+            }
         });
 
         FinalizedDiff {
             path,
             base_text: self.base_text.clone(),
             multibuffer: self.multibuffer.clone(),
-            new_buffer: self.new_buffer.clone(),
+            new_buffer: buffer,
+            project_buffer: self.new_buffer.downgrade(),
             _update_diff: update_diff,
         }
     }
@@ -373,7 +380,11 @@ impl PendingDiff {
 pub struct FinalizedDiff {
     path: String,
     base_text: Arc<str>,
+    /// A detached snapshot of the buffer's contents at finalization time, not
+    /// the project buffer that was edited.
     new_buffer: Entity<Buffer>,
+    /// The original project buffer that was edited, used for discarding failed partial edits.
+    project_buffer: WeakEntity<Buffer>,
     multibuffer: Entity<MultiBuffer>,
     _update_diff: Task<Result<()>>,
 }
@@ -412,5 +423,32 @@ mod tests {
             buffer.set_text("HELLO!", cx);
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_finalize_releases_buffer(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("hello!", cx));
+        let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("HELLO!", cx);
+        });
+        cx.run_until_parked();
+
+        diff.update(cx, |diff, cx| diff.finalize(cx));
+        cx.run_until_parked();
+
+        let weak_buffer = buffer.downgrade();
+        drop(buffer);
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert!(
+            weak_buffer.upgrade().is_none(),
+            "finalized diff should not keep the project buffer alive"
+        );
+
+        diff.read_with(cx, |diff, cx| {
+            assert!(diff.buffer().is_none());
+            assert_eq!(diff.multibuffer().read(cx).snapshot(cx).text(), "HELLO!");
+        });
     }
 }
