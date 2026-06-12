@@ -425,6 +425,8 @@ enum ExtensionManifestValidationError {
     MissingRepository,
     #[error("extension manifest repository is not a valid URL: {0}")]
     InvalidRepository(String),
+    #[error("repository is hosted on an unknown git hosting provider: {host}")]
+    UnknownGitHostingProvider { host: String },
     #[error(
         "extension manifest must not provide language model providers, \
         as these are currently unsupported"
@@ -436,8 +438,19 @@ enum ExtensionManifestValidationError {
     RepositoryUnsuccessfulStatus { url: String, status: u16 },
 }
 
+/// The set of git hosting providers whose repositories are accepted for
+/// published extensions.
+const ALLOWED_REPOSITORY_HOSTING_PROVIDERS: &[&str] = &[
+    "codeberg.org",
+    "git.disroot.org",
+    "github.com",
+    "gitlab.com",
+    "tangled.org",
+];
+
 /// Validates the contents of an extension manifest, including verifying that the
-/// repository URL is a valid URL that is reachable.
+/// repository URL is a valid URL, hosted on a known git hosting provider, and
+/// reachable.
 async fn validate_extension_manifest(
     http_client: &dyn HttpClient,
     manifest: &ExtensionManifest,
@@ -472,10 +485,20 @@ async fn validate_extension_manifest(
     let repository_url = repository
         .parse::<Url>()
         .map_err(|_| ExtensionManifestValidationError::InvalidRepository(repository.to_string()))?;
-    if repository_url.host_str().is_none() {
+    let Some(host) = repository_url.host_str() else {
         return Err(ExtensionManifestValidationError::InvalidRepository(
             repository.to_string(),
         ));
+    };
+    if !ALLOWED_REPOSITORY_HOSTING_PROVIDERS
+        .iter()
+        .any(|allowed_host| allowed_host.eq_ignore_ascii_case(host))
+    {
+        return Err(
+            ExtensionManifestValidationError::UnknownGitHostingProvider {
+                host: host.to_string(),
+            },
+        );
     }
 
     if !manifest.language_model_providers.is_empty() {
@@ -835,6 +858,23 @@ mod tests {
             Err(ExtensionManifestValidationError::InvalidRepository(
                 "not-a-valid-url".to_string()
             )),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_unknown_git_hosting_provider() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            repository: Some("https://example.com/some-org/some-repo".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(
+                ExtensionManifestValidationError::UnknownGitHostingProvider {
+                    host: "example.com".to_string(),
+                }
+            ),
         );
     }
 
