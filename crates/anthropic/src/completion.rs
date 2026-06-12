@@ -3,8 +3,9 @@ use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     FallbackCredit, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
+    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, Role, StopReason,
+    TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -14,7 +15,7 @@ use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
     CacheTtl, ContentDelta, Event, FallbackModel, ImageSource, Message, RequestContent,
     ResponseContent, StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent,
-    ToolResultPart, Usage,
+    ToolResultPart, Usage, completion_error_from_anthropic, completion_error_from_anthropic_api,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -334,15 +335,17 @@ pub struct AnthropicEventMapper {
     usage: Usage,
     stop_reason: StopReason,
     fallback_credit: Option<FallbackCredit>,
+    provider_name: LanguageModelProviderName,
 }
 
 impl AnthropicEventMapper {
-    pub fn new() -> Self {
+    pub fn new(provider_name: LanguageModelProviderName) -> Self {
         Self {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
             fallback_credit: None,
+            provider_name,
         }
     }
 
@@ -354,7 +357,10 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
+                Err(error) => vec![Err(completion_error_from_anthropic(
+                    error,
+                    self.provider_name.clone(),
+                ))],
             })
         })
     }
@@ -516,7 +522,10 @@ impl AnthropicEventMapper {
                 events
             }
             Event::Error { error } => {
-                vec![Err(error.into())]
+                vec![Err(completion_error_from_anthropic_api(
+                    error,
+                    self.provider_name.clone(),
+                ))]
             }
             _ => Vec::new(),
         }
@@ -566,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_fallback_blocks_are_mapped_to_completion_events() {
-        let mut mapper = AnthropicEventMapper::new();
+        let mut mapper = AnthropicEventMapper::new(LanguageModelProviderName("anthropic".into()));
         let events = mapper.map_event(Event::ContentBlockStart {
             index: 0,
             content_block: ResponseContent::Fallback {
@@ -626,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_refusal_with_credit_token_emits_credit_event_before_stop() {
-        let mut mapper = AnthropicEventMapper::new();
+        let mut mapper = AnthropicEventMapper::new(LanguageModelProviderName("anthropic".into()));
         let events = mapper.map_event(Event::MessageDelta {
             delta: MessageDelta {
                 stop_reason: Some("refusal".to_string()),

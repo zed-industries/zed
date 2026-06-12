@@ -400,7 +400,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new();
+                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
                         Ok(mapper.map_stream(events).boxed())
                     })
                     .await
