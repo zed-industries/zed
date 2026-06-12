@@ -747,14 +747,12 @@ impl Render for DeleteBranchTooltip {
             )
             .into_any_element()
         } else {
-            Tooltip::with_meta_in(
+            crate::delete_tooltip_with_force_hint(
                 "Delete Branch",
-                Some(&branch_picker::DeleteBranch),
-                "Hold alt to force delete",
+                &branch_picker::DeleteBranch,
                 &self.focus_handle,
                 cx,
             )
-            .into_any_element()
         }
     }
 }

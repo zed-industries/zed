@@ -413,14 +413,12 @@ impl Render for DeleteWorktreeTooltip {
             )
             .into_any_element()
         } else {
-            Tooltip::with_meta_in(
+            crate::delete_tooltip_with_force_hint(
                 "Delete Worktree",
-                Some(&DeleteWorktree),
-                "Hold alt to force delete",
+                &DeleteWorktree,
                 &self.focus_handle,
                 cx,
             )
-            .into_any_element()
         }
     }
 }

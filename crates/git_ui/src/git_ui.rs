@@ -3,8 +3,9 @@ use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
 use ui::{
-    Color, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render,
-    Styled, StyledExt, div, h_flex, rems, v_flex,
+    Color, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding,
+    ParentElement, Render, Styled, StyledExt, div, h_flex, rems, render_modifiers,
+    tooltip_container, v_flex,
 };
 use workspace::{Toast, notifications::NotificationId};
 
@@ -16,8 +17,8 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, TaskExt, Window,
+    Action, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Modifiers, SharedString, Subscription, Task, TaskExt, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
@@ -67,6 +68,51 @@ pub fn get_provider_icon(name: &str) -> IconName {
         "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
     }
+}
+
+// Renders the force-delete hint with the modifier shown as a platform key glyph
+// (⌥ on macOS, "Alt" elsewhere) instead of spelling it out, matching how the
+// rest of Zed presents modifier hints.
+fn delete_tooltip_with_force_hint(
+    title: impl Into<SharedString>,
+    action: &dyn Action,
+    focus_handle: &FocusHandle,
+    cx: &mut App,
+) -> AnyElement {
+    let title = title.into();
+    let key_binding = KeyBinding::for_action_in(action, focus_handle, cx);
+    let modifier_size = TextSize::Small.rems(cx);
+    tooltip_container(cx, move |this, _| {
+        this.child(
+            h_flex()
+                .gap_4()
+                .justify_between()
+                .child(div().max_w_72().child(title))
+                .child(key_binding),
+        )
+        .child(
+            h_flex()
+                .gap_0p5()
+                .child(
+                    Label::new("Hold")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .children(render_modifiers(
+                    &Modifiers::alt(),
+                    PlatformStyle::platform(),
+                    Some(Color::Muted),
+                    Some(modifier_size.into()),
+                    false,
+                ))
+                .child(
+                    Label::new("to force delete")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+        )
+    })
+    .into_any_element()
 }
 
 pub fn init(cx: &mut App) {
