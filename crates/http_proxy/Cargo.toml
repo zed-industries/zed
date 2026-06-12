@@ -12,5 +12,9 @@ workspace = true
 path = "src/http_proxy.rs"
 
 [dependencies]
+anyhow.workspace = true
 idna.workspace = true
+percent-encoding.workspace = true
+proxyvars.workspace = true
 thiserror.workspace = true
+url.workspace = true

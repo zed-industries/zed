@@ -8546,8 +8546,12 @@ dependencies = [
 name = "http_proxy"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "idna",
+ "percent-encoding",
+ "proxyvars",
  "thiserror 2.0.17",
+ "url",
 ]
 
 [[package]]
@@ -14276,6 +14280,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proxyvars"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7285bf1ae9f4d28cd9b1100c9a3aab55263ec0aa44e4d439593e528fc1dc1e05"
+dependencies = [
+ "http 1.3.1",
+ "ipnet",
 ]
 
 [[package]]
