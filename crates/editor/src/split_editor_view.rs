@@ -170,7 +170,11 @@ impl RenderOnce for SplitEditorView {
         let state_for_drag = self.split_state.downgrade();
         let state_for_drop = self.split_state.downgrade();
 
-        let buffer_headers = SplitBufferHeadersElement::new(rhs_editor.clone(), self.style.clone());
+        let buffer_headers = SplitBufferHeadersElement::new(
+            lhs_editor.clone(),
+            rhs_editor.clone(),
+            self.style.clone(),
+        );
 
         let lhs_editor_for_order = lhs_editor;
         let rhs_editor_for_order = rhs_editor;
@@ -232,13 +236,18 @@ impl RenderOnce for SplitEditorView {
 }
 
 struct SplitBufferHeadersElement {
-    editor: Entity<Editor>,
+    lhs_editor: Entity<Editor>,
+    rhs_editor: Entity<Editor>,
     style: EditorStyle,
 }
 
 impl SplitBufferHeadersElement {
-    fn new(editor: Entity<Editor>, style: EditorStyle) -> Self {
-        Self { editor, style }
+    fn new(lhs_editor: Entity<Editor>, rhs_editor: Entity<Editor>, style: EditorStyle) -> Self {
+        Self {
+            lhs_editor,
+            rhs_editor,
+            style,
+        }
     }
 }
 
@@ -383,14 +392,14 @@ impl SplitBufferHeadersElement {
         let line_height = window.line_height();
 
         let snapshot = self
-            .editor
+            .rhs_editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let scroll_position = snapshot.scroll_position();
 
         // Compute right margin to avoid overlapping the scrollbar
         let content_bounds = self.content_bounds(bounds, cx);
         let available_width = (content_bounds.size.width
-            - self.editor.read(cx).last_right_margin())
+            - self.rhs_editor.read(cx).last_right_margin())
         .max(Pixels::ZERO);
 
         let visible_height_in_lines = content_bounds.size.height / line_height;
@@ -455,12 +464,13 @@ impl SplitBufferHeadersElement {
     }
 
     fn content_bounds(&self, bounds: Bounds<Pixels>, cx: &App) -> Bounds<Pixels> {
-        let horizontal_scrollbar_height = self
-            .editor
-            .read(cx)
-            .last_visible_horizontal_scrollbar()
+        // Left hand side and right hand side horizontal scrollbars are
+        // independent, so we clip the bottom if either is visible.
+        let horizontal_scrollbar_height =
+            (self.lhs_editor.read(cx).last_visible_horizontal_scrollbar()
+                || self.rhs_editor.read(cx).last_visible_horizontal_scrollbar())
             .then_some(self.style.scrollbar_width)
-            .unwrap_or_default();
+            .unwrap_or(Pixels::ZERO);
 
         Bounds::new(
             bounds.origin,
@@ -476,7 +486,7 @@ impl SplitBufferHeadersElement {
         snapshot: &EditorSnapshot,
         cx: &App,
     ) -> (HashSet<BufferId>, HashMap<BufferId, Anchor>) {
-        let editor = self.editor.read(cx);
+        let editor = self.rhs_editor.read(cx);
         let all_selections = editor
             .selections
             .all::<crate::Point>(&snapshot.display_snapshot);
@@ -560,7 +570,7 @@ impl SplitBufferHeadersElement {
             )
             .child(
                 render_buffer_header(
-                    &self.editor,
+                    &self.rhs_editor,
                     excerpt,
                     false,
                     selected,
@@ -643,7 +653,7 @@ impl SplitBufferHeadersElement {
             );
 
             let mut header = render_buffer_header(
-                &self.editor,
+                &self.rhs_editor,
                 excerpt,
                 is_folded,
                 selected,
