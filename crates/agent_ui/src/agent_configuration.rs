@@ -1558,9 +1558,7 @@ fn remove_compatible_provider(settings: &mut SettingsContent, provider_id: &str)
         .as_mut()
         .and_then(|providers| providers.remove(provider_id))
         .is_some();
-    if !removed_from_openai
-        && let Some(providers) = language_models.anthropic_compatible.as_mut()
-    {
+    if !removed_from_openai && let Some(providers) = language_models.anthropic_compatible.as_mut() {
         providers.remove(provider_id);
     }
 }
