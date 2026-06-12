@@ -38070,6 +38070,164 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_columnar_selection_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The middle row contains a 2-byte char (ã) before the dragged column. A
+    // column selection that uses byte columns directly puts the ã row's
+    // selection at a different visual position than the ASCII rows; anchoring
+    // in x pixels keeps all rows at the same character offset.
+    cx.set_state(indoc! {"
+        ˇabcde
+        abcde
+        aãcde
+        abcde
+        abcde
+    "});
+
+    // Drag column-wise from (row 0, col 0) past the ã column on every row.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «abcdˇ»e
+        «abcdˇ»e
+        «aãcdˇ»e
+        «abcdˇ»e
+        «abcdˇ»e
+    "});
+
+    // Control: drag stops before the ã column, where byte columns and x
+    // positions agree.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aˇ»bcde
+        «aˇ»bcde
+        «aˇ»ãcde
+        «aˇ»bcde
+        «aˇ»bcde
+    "});
+}
+
+#[gpui::test]
+async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇaaaaaaaaaa
+        bb
+        cccccccccc
+    "});
+
+    // Drag from the start of the long first row to a point past the EOL of
+    // the short second row: the mouse handlers encode that as the nearest
+    // valid position (1, 2) plus an unclipped goal column of 8. The rectangle
+    // must keep tracking the mouse x on the long row instead of collapsing to
+    // the short row's width.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(1), 2),
+                goal_column: 8,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aaaaaaaaˇ»aa
+        «bbˇ»
+        cccccccccc
+    "});
+
+    // Starting the drag past the EOL of the short row must anchor that edge
+    // of the rectangle at the click position, not at the short row's EOL.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(1), 2),
+                goal_column: 8,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(2), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        aaaaaaaaaa
+        bb
+        cccc«ˇcccc»cc
+    "});
+}
+
+#[gpui::test]
 async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
