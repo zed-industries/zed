@@ -17,9 +17,10 @@ use crate::{
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
     TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
     transparent_black,
 };
+
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -116,6 +117,17 @@ struct WindowInvalidatorInner {
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
+    pub frame_dirty: FrameDirtyAccumulator,
+}
+
+/// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
+/// frame profiler. Tracks when the current frame first became dirty and how
+/// many invalidations were coalesced into it. Only populated while
+/// `profiler::frame_trace_enabled()` is set.
+#[derive(Default)]
+struct FrameDirtyAccumulator {
+    dirty_at: Option<Instant>,
+    invalidations: u64,
 }
 
 #[derive(Clone)]
@@ -131,6 +143,7 @@ impl WindowInvalidator {
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
+                frame_dirty: FrameDirtyAccumulator::default(),
             })),
         }
     }
@@ -140,6 +153,7 @@ impl WindowInvalidator {
         inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            Self::record_frame_dirty(&mut inner);
             inner.dirty = true;
             cx.push_effect(Effect::Notify { emitter: entity });
             true
@@ -157,6 +171,7 @@ impl WindowInvalidator {
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
+            Self::record_frame_dirty(&mut inner);
         }
     }
 
@@ -166,6 +181,17 @@ impl WindowInvalidator {
 
     pub fn update_count(&self) -> usize {
         self.inner.borrow().update_count
+    }
+
+    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
+        if profiler::frame_trace_enabled() {
+            inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+            inner.frame_dirty.invalidations += 1;
+        }
+    }
+
+    fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
+        mem::take(&mut self.inner.borrow_mut().frame_dirty)
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -2311,6 +2337,12 @@ impl Window {
         self.platform_window.set_title(title);
     }
 
+    /// Sets the position of the macOS traffic light buttons.
+    #[cfg(target_os = "macos")]
+    pub fn set_traffic_light_position(&self, position: Point<Pixels>) {
+        self.platform_window.set_traffic_light_position(position);
+    }
+
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);
@@ -2569,6 +2601,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // Drain unconditionally so a stale first-invalidation timestamp can't
+        // leak into a later frame across enable/disable of frame tracing.
+        let frame_dirty = self.invalidator.take_frame_dirty();
+        let draw_started_at = profiler::frame_trace_enabled().then(Instant::now);
+
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
         let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
@@ -2662,6 +2699,16 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
+        if let Some(draw_start) = draw_started_at {
+            profiler::record_frame_timing(profiler::FrameTiming {
+                window_id: self.handle.window_id(),
+                dirty_at: frame_dirty.dirty_at,
+                invalidations: frame_dirty.invalidations,
+                draw_start,
+                draw_end: Instant::now(),
+            });
+        }
+
         ArenaClearNeeded::new(&cx.element_arena)
     }
 
@@ -2694,6 +2741,18 @@ impl Window {
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    /// Presents the most recently drawn frame if it hasn't been presented yet.
+    ///
+    /// Benchmarks drive drawing synchronously rather than through a platform
+    /// frame-request loop, so they call this after each measured update to
+    /// submit the frame like production presentation would.
+    #[cfg(feature = "bench")]
+    pub fn present_if_needed(&mut self) {
+        if self.needs_present.get() {
+            self.present();
+        }
     }
 
     /// Returns a snapshot of the current input-latency histograms.
@@ -4963,7 +5022,9 @@ impl Window {
             .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
+                profiler::update_running_action(action, cx);
                 listener(action.as_any(), DispatchPhase::Capture, cx);
+                profiler::save_action_timing();
                 if !cx.propagate_event {
                     break;
                 }
@@ -4993,7 +5054,9 @@ impl Window {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
+                    profiler::update_running_action(action, cx);
                     listener(any_action, DispatchPhase::Capture, self, cx);
+                    profiler::save_action_timing();
 
                     if !cx.propagate_event {
                         return;
@@ -5013,7 +5076,9 @@ impl Window {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    profiler::update_running_action(action, cx);
                     listener(any_action, DispatchPhase::Bubble, self, cx);
+                    profiler::save_action_timing();
 
                     if !cx.propagate_event {
                         return;
@@ -5030,7 +5095,9 @@ impl Window {
             for listener in global_listeners.iter().rev() {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
+                profiler::update_running_action(action, cx);
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
+                profiler::save_action_timing();
                 if !cx.propagate_event {
                     break;
                 }

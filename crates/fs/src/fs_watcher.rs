@@ -430,6 +430,10 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
+        if !watcher_logging_rate_limited() {
+            log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
+        }
+
         path_events.retain(|path_event| path_event.path != watched_root);
         path_events.push(PathEvent {
             path: watched_root.to_path_buf(),
@@ -438,6 +442,28 @@ fn push_notify_event(
     }
     log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
+}
+
+fn watcher_logging_rate_limited() -> bool {
+    static LAST_WARN: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
+    let Some((ref mut started, ref mut emitted)) = *LAST_WARN.lock() else {
+        *LAST_WARN.lock() = Some((Instant::now(), 0));
+        return false;
+    };
+
+    if started.elapsed().as_secs() < 1 {
+        if *emitted < 20 {
+            log::warn!("filesystem watcher lost sync for many files, not logging more");
+            return true;
+        } else {
+            *emitted += 1;
+        }
+    } else {
+        *emitted = 0;
+        *started = Instant::now()
+    }
+
+    true
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -700,7 +726,14 @@ impl GlobalWatcher {
             return Ok(());
         }
 
-        let watcher = notify::recommended_watcher(handle_native_event)?;
+        // CORE excludes Access events, which Zed discards anyway. Without this,
+        // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
+        // file read in a watched directory would queue events, increasing the
+        // risk of queue overflows (and thus full rescans) under read-heavy
+        // workloads like grep or language server indexing.
+        let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+        let watcher =
+            <notify::RecommendedWatcher as notify::Watcher>::new(handle_native_event, config)?;
         *self.native_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }

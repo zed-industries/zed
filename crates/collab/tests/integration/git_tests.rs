@@ -11,7 +11,7 @@ use git::{
     repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree as GitWorktree},
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
-use git_graph::GitGraph;
+use git_ui::git_graph::GitGraph;
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
 use gpui::{
     AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
@@ -763,11 +763,9 @@ async fn test_remote_git_graph_data_and_search(
         .await;
     cx_a.update(|cx| {
         git_ui::init(cx);
-        git_graph::init(cx);
     });
     cx_b.update(|cx| {
         git_ui::init(cx);
-        git_graph::init(cx);
     });
     let active_call_a = cx_a.read(ActiveCall::global);
 
@@ -781,7 +779,7 @@ async fn test_remote_git_graph_data_and_search(
 
     let search_query = "graph search match";
     let mut rng = StdRng::seed_from_u64(7);
-    let commits = git_graph::generate_random_commit_dag(&mut rng, 12, true);
+    let commits = git_ui::git_graph::generate_random_commit_dag(&mut rng, 12, true);
 
     let dot_git = Path::new(path!("/project/.git"));
     client_a.fs().set_graph_commits(dot_git, commits.clone());

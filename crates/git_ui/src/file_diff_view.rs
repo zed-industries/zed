@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, HighlightedText, LanguageRegistry};
+use language::{Buffer, HighlightedText};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
@@ -53,9 +53,8 @@ impl FileDiffView {
             let new_buffer = project
                 .update(cx, |project, cx| project.open_local_buffer(&new_path, cx))
                 .await?;
-            let languages = project.update(cx, |project, _| project.languages().clone());
 
-            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, languages, cx).await?;
+            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_entity = cx.entity();
@@ -108,6 +107,7 @@ impl FileDiffView {
                 editor.start_temporary_diff_override();
             });
             splittable.disable_diff_hunk_controls(cx);
+            splittable.set_render_diff_hunks_as_unstaged(cx);
             splittable
         });
 
@@ -154,13 +154,11 @@ impl FileDiffView {
                     diff.update(cx, |diff, cx| {
                         diff.set_base_text(
                             Some(old_snapshot.text().as_str().into()),
-                            old_snapshot.language().cloned(),
                             new_snapshot.text.clone(),
                             cx,
                         )
                     })
-                    .await
-                    .ok();
+                    .await;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -170,36 +168,30 @@ impl FileDiffView {
 }
 
 #[ztracing::instrument(skip_all)]
-async fn build_buffer_diff(
+pub(crate) async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
-    language_registry: Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
     let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let language_registry = new_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
-    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                new_buffer_snapshot.text.clone(),
-                Some(old_buffer_snapshot.text().into()),
-                Some(true),
-                new_buffer_snapshot.language().cloned(),
-                cx,
-            )
-        })
-        .await;
+    let diff = cx.new(|cx| {
+        BufferDiff::new(
+            &new_buffer_snapshot.text,
+            new_buffer_snapshot.language().cloned(),
+            language_registry,
+            cx,
+        )
+    });
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(
-            new_buffer_snapshot.language().cloned(),
-            Some(language_registry),
+        diff.set_base_text(
+            Some(old_buffer_snapshot.text().into()),
+            new_buffer_snapshot.text.clone(),
             cx,
-        );
-        diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
+        )
     })
     .await;
 

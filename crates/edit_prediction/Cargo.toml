@@ -35,6 +35,7 @@ edit_prediction_metrics = { workspace = true, features = ["tree-sitter"] }
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 itertools.workspace = true

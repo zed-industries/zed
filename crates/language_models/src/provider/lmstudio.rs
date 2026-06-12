@@ -1,11 +1,10 @@
 use anyhow::{Result, anyhow};
-use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Subscription, Task, TaskExt};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -21,7 +20,10 @@ pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use ui::{
     ButtonLike, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip, prelude::*,
 };
@@ -44,6 +46,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct LmStudioSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -84,11 +87,18 @@ impl State {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
         let api_key = self.api_key_state.key(&api_url);
+        let extra_headers = settings.custom_headers.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models =
-                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
+            let models = get_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                None,
+                &extra_headers,
+            )
+            .await?;
 
             let mut models: Vec<lmstudio::Model> = models
                 .into_iter()
@@ -447,9 +457,13 @@ impl LmStudioLanguageModel {
         Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = LmStudioLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = AllLanguageModelSettings::get_global(cx)
+                .lmstudio
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -458,6 +472,7 @@ impl LmStudioLanguageModel {
                 &api_url,
                 api_key.as_deref(),
                 request,
+                &extra_headers,
             )
             .await?;
             Ok(stream)
