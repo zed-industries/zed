@@ -469,6 +469,11 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: InlineBlameSettings,
+    /// Whether or not to show git blame data for the current line
+    /// in the status bar.
+    ///
+    /// Default: { enabled: false }
+    pub status_bar_blame: StatusBarBlameSettings,
     /// Git blame settings.
     pub blame: BlameSettings,
     /// Which information to show in the branch picker.
@@ -548,6 +553,19 @@ pub struct InlineBlameSettings {
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
+    pub show_commit_summary: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StatusBarBlameSettings {
+    /// Whether or not to show git blame data for the current line
+    /// as an item in the status bar.
+    ///
+    /// Default: false
+    pub enabled: bool,
+    /// Whether to show commit summary as part of the status bar blame.
+    ///
+    /// Default: true
     pub show_commit_summary: bool,
 }
 
@@ -667,6 +685,13 @@ impl Settings for ProjectSettings {
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
+                }
+            },
+            status_bar_blame: {
+                let status_bar = git.status_bar_blame.unwrap();
+                StatusBarBlameSettings {
+                    enabled: status_bar.enabled.unwrap(),
+                    show_commit_summary: status_bar.show_commit_summary.unwrap(),
                 }
             },
             blame: {

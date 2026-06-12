@@ -1765,6 +1765,18 @@ impl Editor {
         })
     }
 
+    /// The status bar blame indicator reads from the same blame state as
+    /// inline blame, so blame must run even when nothing renders inline.
+    pub(super) fn ensure_git_blame_for_status_bar(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if ProjectSettings::get_global(cx).git.status_bar_blame.enabled && self.blame.is_none() {
+            self.start_git_blame(false, window, cx);
+        }
+    }
+
     fn start_git_blame(
         &mut self,
         user_triggered: bool,

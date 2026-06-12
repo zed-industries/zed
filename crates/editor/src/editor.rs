@@ -128,6 +128,7 @@ pub use split::{SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
+use ::git::blame::BlameEntry;
 use ::git::status::FileStatus;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -2491,6 +2492,8 @@ impl Editor {
 
             if editor.git_blame_inline_enabled {
                 editor.start_git_blame_inline(false, window, cx);
+            } else {
+                editor.ensure_git_blame_for_status_bar(window, cx);
             }
 
             editor.go_to_active_debug_line(window, cx);
@@ -2831,6 +2834,18 @@ impl Editor {
 
     pub fn workspace(&self) -> Option<Entity<Workspace>> {
         self.workspace.as_ref()?.0.upgrade()
+    }
+
+    /// Returns the git blame entry for the given multibuffer row if blame data is
+    /// available. Exposes the public `BlameEntry` so that outside crates (e.g. the
+    /// status bar blame indicator can query blame.
+    pub fn blame_entry_for_row(&self, row: MultiBufferRow, cx: &mut App) -> Option<BlameEntry> {
+        let blame = self.blame.as_ref()?;
+        let row_info = self.buffer.read(cx).read(cx).row_infos(row).next()?;
+        blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+            .map(|(_buffer_id, entry)| entry)
     }
 
     /// Detaches a task and shows an error notification in the workspace if available,
@@ -9607,6 +9622,8 @@ impl Editor {
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
             }
+
+            self.ensure_git_blame_for_status_bar(window, cx);
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
             if self.minimap_visibility != MinimapVisibility::Disabled {

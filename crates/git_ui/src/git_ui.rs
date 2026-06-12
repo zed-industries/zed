@@ -30,6 +30,7 @@ use zed_actions;
 use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
+mod blame_indicator;
 pub mod branch_picker;
 mod commit_modal;
 pub mod commit_tooltip;
@@ -53,6 +54,7 @@ pub mod worktree_names;
 pub mod worktree_picker;
 pub mod worktree_service;
 
+pub use blame_indicator::BlameIndicator;
 pub use conflict_view::MergeConflictIndicator;
 
 pub fn get_provider_icon(name: &str) -> IconName {

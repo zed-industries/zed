@@ -533,6 +533,11 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// Whether or not to show git blame data for the current line
+    /// in the status bar.
+    ///
+    /// Default: { enabled: false }
+    pub status_bar_blame: Option<StatusBarBlameSettings>,
     /// Git blame settings.
     pub blame: Option<BlameSettings>,
     /// Which information to show in the branch picker.
@@ -641,6 +646,21 @@ pub struct InlineBlameSettings {
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
+    pub show_commit_summary: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct StatusBarBlameSettings {
+    /// Whether or not to show git blame data for the current line
+    /// as an item in the status bar.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Whether to show commit summary as part of the status bar blame.
+    ///
+    /// Default: true
     pub show_commit_summary: Option<bool>,
 }
 
