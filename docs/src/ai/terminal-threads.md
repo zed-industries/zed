@@ -58,7 +58,30 @@ A plain string runs the command inside the shell, so when it exits you are dropp
 }
 ```
 
-When spawned directly, the Terminal Thread closes when the program exits. If the program fails before you have interacted with it (for example, it exits with an error at startup), the thread stays open so you can read the error. In both forms, the command does not run when an existing Terminal Thread is restored after restarting Zed.
+When spawned directly, the Terminal Thread closes when the program exits. If the program fails before you have interacted with it (for example, it exits with an error at startup), the thread stays open so you can read the error. In both forms, the command does not run when an existing Terminal Thread is restored after restarting Zed — unless you configure a resume command.
+
+## Resuming Agent Sessions {#resuming-agent-sessions}
+
+In both commands, the `{session_id}` placeholder is replaced with the Terminal Thread's unique id. Combined with `agent.terminal_resume_command`, this lets restored Terminal Threads resume the same agent session instead of opening a plain shell. For example, with Claude Code:
+
+```json [settings]
+{
+  "agent": {
+    "terminal_command": "claude --session-id {session_id}",
+    "terminal_resume_command": "claude --resume {session_id}"
+  }
+}
+```
+
+New Terminal Threads start the agent with the thread's id as the session id. When Zed restarts and restores the thread, the resume command runs with the same id, so the agent picks up the conversation where it left off — even with multiple threads in the same directory. The resume command takes the same string or `program`/`args` forms as `terminal_command`.
+
+For harnesses that cannot accept a session id at launch, omit the placeholder and use a "continue latest session" command instead, such as `"terminal_resume_command": "pi --continue"`. This resumes the most recent session in the thread's working directory.
+
+Notes on resume behavior:
+
+- The resume command only runs for threads that actually ran the terminal command; plain-shell threads restore as plain shells.
+- The current settings are used at restore time, so changing `terminal_command` or `terminal_resume_command` affects how previously created threads resume.
+- Closing a Terminal Thread deletes it; only threads still in the Threads Sidebar are restored.
 
 ## Terminal Thread Titles {#terminal-thread-titles}
 

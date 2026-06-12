@@ -53,6 +53,7 @@ pub struct TerminalThreadMetadata {
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub working_directory: Option<PathBuf>,
+    pub launch_program: Option<String>,
 }
 
 impl TerminalThreadMetadata {
@@ -445,20 +446,25 @@ struct TerminalThreadMetadataDb(ThreadSafeConnection);
 impl Domain for TerminalThreadMetadataDb {
     const NAME: &str = stringify!(TerminalThreadMetadataDb);
 
-    const MIGRATIONS: &[&str] = &[sql!(
-        CREATE TABLE IF NOT EXISTS sidebar_terminal_threads(
-            terminal_id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            custom_title TEXT,
-            created_at TEXT NOT NULL,
-            working_directory TEXT,
-            folder_paths TEXT,
-            folder_paths_order TEXT,
-            main_worktree_paths TEXT,
-            main_worktree_paths_order TEXT,
-            remote_connection TEXT
-        ) STRICT;
-    )];
+    const MIGRATIONS: &[&str] = &[
+        sql!(
+            CREATE TABLE IF NOT EXISTS sidebar_terminal_threads(
+                terminal_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                custom_title TEXT,
+                created_at TEXT NOT NULL,
+                working_directory TEXT,
+                folder_paths TEXT,
+                folder_paths_order TEXT,
+                main_worktree_paths TEXT,
+                main_worktree_paths_order TEXT,
+                remote_connection TEXT
+            ) STRICT;
+        ),
+        sql!(
+            ALTER TABLE sidebar_terminal_threads ADD COLUMN launch_program TEXT;
+        ),
+    ];
 }
 
 db::static_connection!(TerminalThreadMetadataDb, []);
@@ -468,7 +474,7 @@ impl TerminalThreadMetadataDb {
         self.select::<TerminalThreadMetadata>(
             "SELECT terminal_id, title, custom_title, created_at, \
             working_directory, folder_paths, folder_paths_order, main_worktree_paths, \
-            main_worktree_paths_order, remote_connection \
+            main_worktree_paths_order, remote_connection, launch_program \
             FROM sidebar_terminal_threads \
             ORDER BY created_at DESC",
         )?()
@@ -502,10 +508,11 @@ impl TerminalThreadMetadataDb {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize terminal thread remote connection")?;
+        let launch_program = row.launch_program.clone();
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_terminal_threads(terminal_id, title, custom_title, created_at, working_directory, folder_paths, folder_paths_order, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+            let sql = "INSERT INTO sidebar_terminal_threads(terminal_id, title, custom_title, created_at, working_directory, folder_paths, folder_paths_order, main_worktree_paths, main_worktree_paths_order, remote_connection, launch_program) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
                        ON CONFLICT(terminal_id) DO UPDATE SET \
                            title = excluded.title, \
                            custom_title = excluded.custom_title, \
@@ -515,7 +522,8 @@ impl TerminalThreadMetadataDb {
                            folder_paths_order = excluded.folder_paths_order, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection";
+                           remote_connection = excluded.remote_connection, \
+                           launch_program = excluded.launch_program";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&terminal_id, 1)?;
             i = stmt.bind(&title, i)?;
@@ -526,7 +534,8 @@ impl TerminalThreadMetadataDb {
             i = stmt.bind(&folder_paths_order, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
-            stmt.bind(&remote_connection, i)?;
+            i = stmt.bind(&remote_connection, i)?;
+            stmt.bind(&launch_program, i)?;
             stmt.exec()
         })
         .await
@@ -562,6 +571,7 @@ impl Column for TerminalThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (launch_program, next): (Option<String>, i32) = Column::column(statement, next)?;
 
         let folder_paths = folder_paths_str
             .map(|paths| {
@@ -601,6 +611,7 @@ impl Column for TerminalThreadMetadata {
                 worktree_paths,
                 remote_connection,
                 working_directory: working_directory.map(PathBuf::from),
+                launch_program,
             },
             next,
         ))
@@ -630,6 +641,7 @@ mod tests {
             worktree_paths,
             remote_connection: None,
             working_directory: None,
+            launch_program: None,
         }
     }
 
@@ -720,5 +732,70 @@ mod tests {
                 old_main_paths.paths()
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_launch_program_round_trips_through_db(_cx: &mut TestAppContext) {
+        let db = TerminalThreadMetadataDb(
+            db::open_test_db::<TerminalThreadMetadataDb>(
+                "test_launch_program_round_trips_through_db",
+            )
+            .await,
+        );
+
+        let mut row = metadata(
+            "Dev Server",
+            WorktreePaths::from_path_lists(
+                PathList::new(&[Path::new("/repo")]),
+                PathList::new(&[Path::new("/repo-feature")]),
+            )
+            .unwrap(),
+        );
+        row.launch_program = Some("claude".to_string());
+        db.save(row.clone()).await.unwrap();
+
+        let rows = db.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].terminal_id, row.terminal_id);
+        assert_eq!(rows[0].launch_program, Some("claude".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_launch_program_migration_preserves_existing_rows(_cx: &mut TestAppContext) {
+        struct OldTerminalThreadMetadataDb;
+        impl Domain for OldTerminalThreadMetadataDb {
+            const NAME: &str = TerminalThreadMetadataDb::NAME;
+            const MIGRATIONS: &[&str] = &[TerminalThreadMetadataDb::MIGRATIONS[0]];
+        }
+
+        let db_name = "test_launch_program_migration_preserves_existing_rows";
+        let old_db = db::open_test_db::<OldTerminalThreadMetadataDb>(db_name).await;
+        let terminal_id = TerminalId::new();
+        old_db
+            .write({
+                let terminal_id = terminal_id.to_key_string();
+                let created_at = Utc::now().to_rfc3339();
+                move |conn| {
+                    let mut stmt = Statement::prepare(
+                        conn,
+                        "INSERT INTO sidebar_terminal_threads(terminal_id, title, created_at) \
+                         VALUES (?1, ?2, ?3)",
+                    )?;
+                    let mut i = stmt.bind(&terminal_id, 1)?;
+                    i = stmt.bind(&"Old Thread", i)?;
+                    stmt.bind(&created_at, i)?;
+                    stmt.exec()
+                }
+            })
+            .await
+            .unwrap();
+
+        let db = TerminalThreadMetadataDb(
+            db::open_test_db::<TerminalThreadMetadataDb>(db_name).await,
+        );
+        let rows = db.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].terminal_id, terminal_id);
+        assert_eq!(rows[0].launch_program, None);
     }
 }

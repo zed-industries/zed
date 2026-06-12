@@ -330,9 +330,15 @@ pub struct AgentSettingsContent {
     /// Command to run automatically in new terminal threads in the agent panel.
     /// A plain string (e.g. `"harness"`) runs inside the shell; an object with
     /// `program` and optional `args` spawns the program directly without a shell.
+    /// The placeholder `{session_id}` is replaced with the thread's unique id.
     ///
     /// Default: none
     pub terminal_command: Option<AgentTerminalCommand>,
+    /// Command to run when restoring a terminal thread that previously ran the
+    /// terminal command. Takes the same forms as `terminal_command`.
+    ///
+    /// Default: none
+    pub terminal_resume_command: Option<AgentTerminalCommand>,
     /// Minimum number of lines of height the agent message editor should have.
     ///
     /// Default: 4

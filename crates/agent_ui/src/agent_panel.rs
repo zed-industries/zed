@@ -181,6 +181,58 @@ impl fmt::Display for TerminalId {
     }
 }
 
+const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
+
+fn substitute_session_id(
+    command: AgentTerminalCommand,
+    terminal_id: TerminalId,
+) -> AgentTerminalCommand {
+    let session_id = terminal_id.to_key_string();
+    match command {
+        AgentTerminalCommand::InShell(command) => {
+            AgentTerminalCommand::InShell(command.replace(SESSION_ID_PLACEHOLDER, &session_id))
+        }
+        AgentTerminalCommand::Direct { program, args } => AgentTerminalCommand::Direct {
+            program: program.replace(SESSION_ID_PLACEHOLDER, &session_id),
+            args: args
+                .into_iter()
+                .map(|arg| arg.replace(SESSION_ID_PLACEHOLDER, &session_id))
+                .collect(),
+        },
+    }
+}
+
+fn normalize_terminal_command(
+    command: Option<AgentTerminalCommand>,
+) -> Option<AgentTerminalCommand> {
+    match command {
+        Some(AgentTerminalCommand::InShell(command)) if command.trim().is_empty() => None,
+        Some(AgentTerminalCommand::Direct { program, .. }) if program.trim().is_empty() => None,
+        command => command,
+    }
+}
+
+fn launch_program_of(command: &AgentTerminalCommand) -> Option<String> {
+    match command {
+        AgentTerminalCommand::InShell(command) => command
+            .split_whitespace()
+            .next()
+            .map(|program| program.to_string()),
+        AgentTerminalCommand::Direct { program, .. } => Some(program.clone()),
+    }
+}
+
+fn resume_command_for_restore(
+    metadata: &TerminalThreadMetadata,
+    resume_command: Option<&AgentTerminalCommand>,
+) -> Option<AgentTerminalCommand> {
+    if metadata.launch_program.is_none() {
+        return None;
+    }
+    let command = normalize_terminal_command(resume_command.cloned())?;
+    Some(substitute_session_id(command, metadata.terminal_id))
+}
+
 #[derive(Clone, Debug)]
 pub struct AgentPanelTerminalInfo {
     pub id: TerminalId,
@@ -979,6 +1031,7 @@ struct AgentTerminal {
     last_known_terminal_title: String,
     last_observed_program: Option<String>,
     working_directory: Option<PathBuf>,
+    launch_program: Option<String>,
     created_at: DateTime<Utc>,
     has_notification: bool,
     notification_windows: Vec<WindowHandle<AgentNotification>>,
@@ -1933,14 +1986,19 @@ impl AgentPanel {
         }
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
         let working_directory = self.terminal_working_directory(workspace, cx);
-        let initial_command = AgentSettings::get_global(cx).terminal_command.clone();
+        let terminal_id = TerminalId::new();
+        let initial_command =
+            normalize_terminal_command(AgentSettings::get_global(cx).terminal_command.clone())
+                .map(|command| substitute_session_id(command, terminal_id));
+        let launch_program = initial_command.as_ref().and_then(launch_program_of);
         self.spawn_terminal(
-            TerminalId::new(),
+            terminal_id,
             working_directory,
             None,
             None,
             None,
             initial_command,
+            launch_program,
             true,
             true,
             source,
@@ -1995,6 +2053,7 @@ impl AgentPanel {
         initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         initial_command: Option<AgentTerminalCommand>,
+        launch_program: Option<String>,
         select: bool,
         focus: bool,
         source: AgentThreadSource,
@@ -2058,6 +2117,7 @@ impl AgentPanel {
                     custom_title,
                     initial_title,
                     created_at,
+                    launch_program,
                     select,
                     focus,
                     source,
@@ -2078,6 +2138,7 @@ impl AgentPanel {
         custom_title: Option<SharedString>,
         initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
+        launch_program: Option<String>,
         select: bool,
         focus: bool,
         source: AgentThreadSource,
@@ -2134,6 +2195,7 @@ impl AgentPanel {
             last_known_terminal_title,
             last_observed_program: None,
             working_directory,
+            launch_program,
             created_at: created_at.unwrap_or_else(Utc::now),
             has_notification: false,
             notification_windows: Vec::new(),
@@ -2313,6 +2375,7 @@ impl AgentPanel {
             worktree_paths: project.worktree_paths(cx),
             remote_connection: project.remote_connection_options(cx),
             working_directory: terminal.working_directory.clone(),
+            launch_program: terminal.launch_program.clone(),
         })
     }
 
@@ -2337,13 +2400,18 @@ impl AgentPanel {
         self.pending_terminal_spawn = Some(metadata.terminal_id);
         let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
         let initial_title = Self::terminal_restore_initial_title(&metadata);
+        let initial_command = resume_command_for_restore(
+            &metadata,
+            AgentSettings::get_global(cx).terminal_resume_command.as_ref(),
+        );
         self.spawn_terminal(
             metadata.terminal_id,
             working_directory,
             metadata.custom_title.clone(),
             initial_title,
             Some(metadata.created_at),
-            None,
+            initial_command,
+            metadata.launch_program,
             true,
             focus,
             source,
@@ -5148,7 +5216,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let initial_command = AgentSettings::get_global(cx).terminal_command.clone();
+        let initial_command =
+            normalize_terminal_command(AgentSettings::get_global(cx).terminal_command.clone())
+                .map(|command| substitute_session_id(command, terminal_id));
+        let launch_program = initial_command.as_ref().and_then(launch_program_of);
         self.spawn_terminal(
             terminal_id,
             working_directory,
@@ -5156,6 +5227,7 @@ impl AgentPanel {
             None,
             None,
             initial_command,
+            launch_program,
             true,
             false,
             source,
@@ -5173,12 +5245,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let launch_program =
+            normalize_terminal_command(AgentSettings::get_global(cx).terminal_command.clone())
+                .as_ref()
+                .and_then(launch_program_of);
         if let Err(error) = self.insert_display_only_terminal(
             terminal_id,
             working_directory,
             None,
             None,
             None,
+            launch_program,
             true,
             false,
             source,
@@ -6697,6 +6774,7 @@ impl AgentPanel {
             Some(SharedString::from(title.into())),
             None,
             None,
+            None,
             focus,
             focus,
             AgentThreadSource::AgentPanel,
@@ -6733,6 +6811,7 @@ impl AgentPanel {
             metadata.custom_title.clone(),
             initial_title,
             Some(metadata.created_at),
+            metadata.launch_program,
             true,
             focus,
             source,
@@ -6749,6 +6828,7 @@ impl AgentPanel {
         custom_title: Option<SharedString>,
         initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
+        launch_program: Option<String>,
         select: bool,
         focus: bool,
         source: AgentThreadSource,
@@ -6783,6 +6863,7 @@ impl AgentPanel {
             custom_title,
             initial_title,
             created_at,
+            launch_program,
             select,
             focus,
             source,
@@ -6852,6 +6933,112 @@ mod tests {
         assert!(is_known_terminal_agent_command("codex"));
         assert!(!is_known_terminal_agent_command("cargo"));
         assert!(!is_known_terminal_agent_command("internal-agent"));
+    }
+
+    #[test]
+    fn test_substitute_session_id() {
+        let terminal_id = TerminalId::new();
+        let session_id = terminal_id.to_key_string();
+
+        assert_eq!(
+            substitute_session_id(
+                AgentTerminalCommand::InShell("claude --session-id {session_id}".to_string()),
+                terminal_id,
+            ),
+            AgentTerminalCommand::InShell(format!("claude --session-id {session_id}"))
+        );
+        assert_eq!(
+            substitute_session_id(
+                AgentTerminalCommand::Direct {
+                    program: "claude".to_string(),
+                    args: vec!["--resume".to_string(), "{session_id}".to_string()],
+                },
+                terminal_id,
+            ),
+            AgentTerminalCommand::Direct {
+                program: "claude".to_string(),
+                args: vec!["--resume".to_string(), session_id],
+            }
+        );
+        assert_eq!(
+            substitute_session_id(
+                AgentTerminalCommand::InShell("claude".to_string()),
+                terminal_id,
+            ),
+            AgentTerminalCommand::InShell("claude".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_terminal_command() {
+        assert_eq!(normalize_terminal_command(None), None);
+        assert_eq!(
+            normalize_terminal_command(Some(AgentTerminalCommand::InShell("  ".to_string()))),
+            None
+        );
+        assert_eq!(
+            normalize_terminal_command(Some(AgentTerminalCommand::Direct {
+                program: "".to_string(),
+                args: vec!["--resume".to_string()],
+            })),
+            None
+        );
+        assert_eq!(
+            normalize_terminal_command(Some(AgentTerminalCommand::InShell("claude".to_string()))),
+            Some(AgentTerminalCommand::InShell("claude".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_launch_program_of() {
+        assert_eq!(
+            launch_program_of(&AgentTerminalCommand::InShell(
+                "claude --continue".to_string()
+            )),
+            Some("claude".to_string())
+        );
+        assert_eq!(
+            launch_program_of(&AgentTerminalCommand::Direct {
+                program: "claude".to_string(),
+                args: vec!["--continue".to_string()],
+            }),
+            Some("claude".to_string())
+        );
+        assert_eq!(
+            launch_program_of(&AgentTerminalCommand::InShell("  ".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn test_resume_command_for_restore() {
+        let resume_command =
+            AgentTerminalCommand::InShell("claude --resume {session_id}".to_string());
+        let mut metadata = TerminalThreadMetadata {
+            terminal_id: TerminalId::new(),
+            title: "Claude".into(),
+            custom_title: None,
+            created_at: Utc::now(),
+            worktree_paths: WorktreePaths::default(),
+            remote_connection: None,
+            working_directory: None,
+            launch_program: Some("claude".to_string()),
+        };
+
+        assert_eq!(
+            resume_command_for_restore(&metadata, Some(&resume_command)),
+            Some(AgentTerminalCommand::InShell(format!(
+                "claude --resume {}",
+                metadata.terminal_id.to_key_string()
+            )))
+        );
+        assert_eq!(resume_command_for_restore(&metadata, None), None);
+
+        metadata.launch_program = None;
+        assert_eq!(
+            resume_command_for_restore(&metadata, Some(&resume_command)),
+            None
+        );
     }
 
     #[test]
@@ -7321,6 +7508,7 @@ mod tests {
             worktree_paths: project.read_with(cx, |project, cx| project.worktree_paths(cx)),
             remote_connection: None,
             working_directory: None,
+            launch_program: None,
         };
         assert_eq!(metadata.working_directory, None);
 
@@ -7414,6 +7602,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            launch_program: None,
         };
         panel
             .update_in(&mut cx, |panel, window, cx| {
@@ -7434,6 +7623,52 @@ mod tests {
                 read_global_last_created_entry_kind(&KeyValueStore::global(cx)),
                 Some(AgentPanelEntryKind::Thread),
                 "restoring a terminal should not change the global new-entry default"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restored_terminal_preserves_launch_program_in_metadata(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            TerminalThreadMetadataStore::init_global(cx);
+        });
+
+        let metadata = TerminalThreadMetadata {
+            terminal_id: TerminalId::new(),
+            title: "Restored Terminal".into(),
+            custom_title: None,
+            created_at: Utc::now(),
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/project",
+            )])),
+            remote_connection: None,
+            working_directory: None,
+            launch_program: Some("claude".to_string()),
+        };
+        let terminal_id = metadata.terminal_id;
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.restore_test_terminal(
+                    metadata,
+                    true,
+                    AgentThreadSource::AgentPanel,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .expect("test terminal should be restored");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel
+                    .terminal_metadata(terminal_id, cx)
+                    .expect("restored terminal should have metadata")
+                    .launch_program,
+                Some("claude".to_string()),
+                "rebuilding metadata on persist should keep the launch program"
             );
         });
     }
@@ -8829,6 +9064,7 @@ mod tests {
                     Some("Terminal".into()),
                     None,
                     None,
+                    None,
                     true,
                     true,
                     AgentThreadSource::AgentPanel,
@@ -9466,6 +9702,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            launch_program: None,
         };
 
         panel.update_in(&mut cx, |panel, window, cx| {
@@ -9517,6 +9754,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            launch_program: None,
         };
 
         panel.update_in(&mut cx, |panel, window, cx| {

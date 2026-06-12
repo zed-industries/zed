@@ -8095,6 +8095,45 @@ fn ai_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Terminal Resume Command",
+                description: "Command to run when restoring a terminal thread that previously ran the terminal command, e.g. to resume an agent session after restarting Zed. The `{session_id}` placeholder is replaced with the thread's unique id.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.terminal_resume_command"),
+                    pick: |settings_content| {
+                        match settings_content
+                            .agent
+                            .as_ref()?
+                            .terminal_resume_command
+                            .as_ref()
+                        {
+                            Some(settings::AgentTerminalCommand::InShell(command)) => {
+                                Some(command)
+                            }
+                            _ => None,
+                        }
+                        .or(DEFAULT_EMPTY_STRING)
+                    },
+                    write: |settings_content, value, _| {
+                        let agent = settings_content.agent.get_or_insert_default();
+                        let value = value.filter(|command| !command.is_empty());
+                        // Don't erase a configured `Direct` command via the empty text field.
+                        if value.is_none()
+                            && matches!(
+                                agent.terminal_resume_command,
+                                Some(settings::AgentTerminalCommand::Direct { .. })
+                            )
+                        {
+                            return;
+                        }
+                        agent.terminal_resume_command =
+                            value.map(settings::AgentTerminalCommand::InShell);
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Use Modifier To Send",
                 description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages.",
                 field: Box::new(SettingField {
