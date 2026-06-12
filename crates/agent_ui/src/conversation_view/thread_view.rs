@@ -7694,7 +7694,11 @@ impl ThreadView {
                                                         .discarded_partial_edits
                                                         .contains(&tool_call_id);
 
-                                                    this.when(!is_discarded, |this| {
+                                                    let diff_data = diff.read(cx);
+                                                    let buffer =
+                                                        diff_data.buffer().filter(|_| !is_discarded);
+
+                                                    this.when_some(buffer, |this, buffer| {
                                                         this.child(
                                                             IconButton::new(
                                                                 ("discard-partial-edit", entry_ix),
@@ -7717,8 +7721,6 @@ impl ThreadView {
                                                                     let base_text = diff_data
                                                                         .base_text()
                                                                         .clone();
-                                                                    let buffer =
-                                                                        diff_data.buffer().clone();
                                                                     buffer.update(
                                                                         cx,
                                                                         |buffer, cx| {
