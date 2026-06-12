@@ -25,7 +25,7 @@ pub struct Paste {
     #[serde(default)]
     before: bool,
     #[serde(default)]
-    preserve_clipboard: bool,
+    pub(crate) preserve_clipboard: bool,
 }
 
 impl Vim {
@@ -832,6 +832,41 @@ mod test {
                 ˇsomething else
                 the lazy dog"},
             Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_editor_paste_visual_preserves_system_clipboard(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox ˇjumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        // Put known content on the system clipboard
+        cx.write_to_clipboard(ClipboardItem::new_string("from clipboard".to_string()));
+
+        // Select "jumps" in visual mode, then editor::Paste (Cmd-V / Ctrl-V)
+        cx.simulate_keystrokes("v i w");
+        cx.dispatch_action(editor::actions::Paste);
+
+        // The selected text should be replaced with clipboard content
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox from clipboarˇd over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        // System clipboard must still hold the original value, not "jumps"
+        assert_eq!(
+            cx.read_from_clipboard().map(|item| item.text().unwrap()),
+            Some("from clipboard".into()),
         );
     }
 

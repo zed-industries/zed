@@ -22,11 +22,11 @@ mod ui_density;
 
 use std::sync::Arc;
 
-use derive_more::{Deref, DerefMut};
 use gpui::BorrowAppContext;
 use gpui::Global;
 use gpui::{
-    App, AssetSource, Hsla, Pixels, SharedString, WindowAppearance, WindowBackgroundAppearance, px,
+    App, AssetSource, Hsla, Pixels, SharedString, Styled, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, px,
 };
 use serde::Deserialize;
 
@@ -49,6 +49,28 @@ pub const DEFAULT_DARK_THEME: &str = "One Dark";
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
 /// Defines window shadow size for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
+
+/// Styling helpers for elements that follow client-side window decorations.
+pub trait ClientDecorationsExt: Styled {
+    /// Rounds each corner whose two adjacent edges are both untiled.
+    fn rounded_client_corners(mut self, tiling: Tiling) -> Self {
+        if !tiling.top && !tiling.left {
+            self = self.rounded_tl(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        if !tiling.top && !tiling.right {
+            self = self.rounded_tr(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        if !tiling.bottom && !tiling.left {
+            self = self.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        if !tiling.bottom && !tiling.right {
+            self = self.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        self
+    }
+}
+
+impl<T: Styled> ClientDecorationsExt for T {}
 
 /// The appearance of the theme.
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
@@ -129,8 +151,16 @@ impl ActiveTheme for App {
 }
 
 /// The appearance of the system.
-#[derive(Debug, Clone, Copy, Deref)]
+#[derive(Debug, Clone, Copy)]
 pub struct SystemAppearance(pub Appearance);
+
+impl std::ops::Deref for SystemAppearance {
+    type Target = Appearance;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Default for SystemAppearance {
     fn default() -> Self {
@@ -138,8 +168,22 @@ impl Default for SystemAppearance {
     }
 }
 
-#[derive(Deref, DerefMut, Default)]
+#[derive(Default)]
 struct GlobalSystemAppearance(SystemAppearance);
+
+impl std::ops::DerefMut for GlobalSystemAppearance {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl std::ops::Deref for GlobalSystemAppearance {
+    type Target = SystemAppearance;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Global for GlobalSystemAppearance {}
 

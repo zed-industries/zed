@@ -24,6 +24,11 @@ async fn test_core_channels(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
+    // Subscribe to channels (simulates opening the collab panel)
+    client_a.initialize_channel_store(cx_a);
+    client_b.initialize_channel_store(cx_b);
+    executor.run_until_parked();
+
     let channel_a_id = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
@@ -290,6 +295,11 @@ async fn test_core_channels(
 
     server.allow_connections();
     executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
+    // Re-subscribe to channels after reconnection (simulates collab panel re-rendering)
+    client_a.initialize_channel_store(cx_a);
+    executor.run_until_parked();
+
     assert_channels(
         client_a.channel_store(),
         cx_a,
@@ -304,7 +314,7 @@ async fn test_core_channels(
 #[track_caller]
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {
     assert_eq!(
-        participants.iter().map(|p| p.id).collect::<Vec<_>>(),
+        participants.iter().map(|p| p.legacy_id).collect::<Vec<_>>(),
         expected_partitipants
     );
 }
@@ -317,7 +327,7 @@ fn assert_members_eq(
     assert_eq!(
         members
             .iter()
-            .map(|member| (member.user.id, member.role, member.kind))
+            .map(|member| (member.user.legacy_id, member.role, member.kind))
             .collect::<Vec<_>>(),
         expected_members
     );
@@ -354,6 +364,72 @@ async fn test_joining_channel_ancestor_member(
             .await
             .is_ok()
     );
+}
+
+#[gpui::test]
+async fn test_channel_call_recovers_from_livekit_connect_failure(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    client_a.initialize_channel_store(cx_a);
+
+    let channel_id = server
+        .make_channel("zed", None, (&client_a, cx_a), &mut [])
+        .await;
+
+    // Simulate LiveKit rejecting the token issued for this join. In
+    // production this happens when the collab server's stale connection
+    // cleanup (`leave_room_for_session`) calls `remove_participant` for this
+    // user's identity just before issuing a new token for the same identity
+    // and room (e.g. rejoining a channel right after an abrupt disconnect or
+    // restart): LiveKit Cloud revokes the freshly issued token and the
+    // client's initial connection fails with "401 invalid token: revoked".
+    let identity = client_a.user_id().unwrap().to_string();
+    server
+        .test_livekit_server
+        .set_token_revoked(&identity, true);
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    active_call_a
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    // The collab server considers user A a participant in the call...
+    let room_a =
+        cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a.read(|cx| {
+        client_a.channel_store().read_with(cx, |channels, _| {
+            assert_participants_eq(
+                channels.channel_participants(channel_id),
+                &[client_a.user_id().unwrap()],
+            );
+        })
+    });
+    // ...but the LiveKit connection failed, so they have no audio.
+    cx_a.read(|cx| room_a.read_with(cx, |room, cx| assert!(!room.is_connected(cx))));
+
+    // Once LiveKit accepts the user's tokens again, the client should
+    // re-establish its LiveKit connection instead of silently staying in the
+    // call without audio.
+    server
+        .test_livekit_server
+        .set_token_revoked(&identity, false);
+    executor.advance_clock(RECONNECT_TIMEOUT);
+    executor.run_until_parked();
+    cx_a.read(|cx| {
+        room_a.read_with(cx, |room, cx| {
+            assert!(
+                room.is_connected(cx),
+                "client should have re-established its LiveKit connection"
+            )
+        })
+    });
 }
 
 #[gpui::test]
@@ -1249,7 +1325,7 @@ async fn test_guest_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_a);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     });
 }
 
@@ -1310,7 +1386,7 @@ async fn test_invite_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_b_id);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     })
 }
 

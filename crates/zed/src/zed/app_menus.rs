@@ -121,19 +121,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     },
                     workspace::Open::default(),
                 ),
-                MenuItem::action(
-                    "Open Recent...",
-                    zed_actions::OpenRecent {
-                        create_new_window: false,
-                    },
-                ),
-                MenuItem::action(
-                    "Open Remote...",
-                    zed_actions::OpenRemote {
-                        create_new_window: false,
-                        from_existing_connection: false,
-                    },
-                ),
+                MenuItem::action("Open Recent…", zed_actions::OpenRecent::default()),
+                MenuItem::action("Open Remote…", zed_actions::OpenRemote::default()),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::separator(),
@@ -165,7 +154,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
-                MenuItem::action("Find in Project", workspace::DeploySearch::find()),
+                MenuItem::action("Find in Project", workspace::DeploySearch::default()),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",

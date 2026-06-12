@@ -36,7 +36,7 @@ linked_edit_characters = ["."]
 
 [overrides.element]
 line_comments = { remove = true }
-block_comment = { start = "{/* ", prefix = "", end = "*/}", tab_size = 0 }
+block_comment = { start = "{/* ", prefix = "", end = "*/}", tab_size = 1 }
 opt_into_language_servers = ["emmet-language-server"]
 
 [overrides.string]

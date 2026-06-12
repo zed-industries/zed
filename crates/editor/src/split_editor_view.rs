@@ -2,8 +2,8 @@ use std::cmp;
 
 use collections::{HashMap, HashSet};
 use gpui::{
-    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, Context, Corner, DragMoveEvent,
-    Element, Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
+    AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, Context, DragMoveEvent, Element,
+    Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
     linear_color_stop, linear_gradient, point, px, size,
 };
@@ -208,7 +208,7 @@ impl RenderOnce for SplitEditorView {
                     .child(
                         div()
                             .id("split-editor-left")
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .min_w_0()
                             .h_full()
                             .flex_basis(DefiniteLength::Fraction(left_ratio))
@@ -219,7 +219,7 @@ impl RenderOnce for SplitEditorView {
                     .child(
                         div()
                             .id("split-editor-right")
-                            .flex_shrink()
+                            .flex_shrink_1()
                             .min_w_0()
                             .h_full()
                             .flex_basis(DefiniteLength::Fraction(right_ratio))
@@ -462,8 +462,7 @@ impl SplitBufferHeadersElement {
             .then_some(self.style.scrollbar_width)
             .unwrap_or_default();
 
-        Bounds::from_corner_and_size(
-            Corner::TopLeft,
+        Bounds::new(
             bounds.origin,
             size(
                 bounds.size.width,

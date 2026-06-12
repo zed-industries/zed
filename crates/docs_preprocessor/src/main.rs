@@ -3,7 +3,7 @@ use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
-use settings::{KeymapFile, SettingsStore};
+use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
@@ -336,17 +336,28 @@ fn is_missing_action(name: &str) -> bool {
     actions_available() && find_action_by_name(name).is_none()
 }
 
-// Find the binding in reverse order, as the last binding takes precedence.
+// Find the last binding (in keymap order) for the given action.
+// Exact action matches are preferred over parameterized variants.
 fn find_binding_in_keymap(keymap: &KeymapFile, action: &str) -> Option<String> {
-    keymap.sections().rev().find_map(|section| {
-        section.bindings().rev().find_map(|(keystroke, a)| {
-            if name_for_action(a.to_string()) == action {
-                Some(keystroke.to_string())
-            } else {
-                None
-            }
+    let find = |predicate: &dyn Fn(&str) -> bool| {
+        keymap.sections().rev().find_map(|section| {
+            section.bindings().rev().find_map(|(keystroke, a)| {
+                if predicate(&a.to_string()) {
+                    Some(keystroke.to_string())
+                } else {
+                    None
+                }
+            })
         })
-    })
+    };
+
+    // Look for exact match
+    if let Some(binding) = find(&|a| a == action) {
+        return Some(binding);
+    }
+
+    // Look for parameterized match
+    find(&|a| name_for_action(a.to_string()) == action)
 }
 
 fn find_binding(os: Os, action: &str) -> Option<String> {
@@ -369,7 +380,18 @@ fn find_binding_with_overlay(
 }
 
 fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let settings_schema = SettingsStore::json_schema(&Default::default());
+    let params = SettingsJsonSchemaParams {
+        language_names: &[],
+        font_names: &[],
+        theme_names: &[],
+        icon_theme_names: &[],
+        lsp_adapter_names: &[],
+        action_names: &[],
+        action_documentation: &HashMap::default(),
+        deprecations: &HashMap::default(),
+        deprecation_messages: &HashMap::default(),
+    };
+    let settings_schema = SettingsStore::json_schema(&params);
     let settings_validator = jsonschema::validator_for(&settings_schema)
         .expect("failed to compile settings JSON schema");
 
@@ -657,6 +679,12 @@ fn handle_postprocessing() -> Result<()> {
         .to_string();
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
     let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
+    let docs_channel = std::env::var("DOCS_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    let noindex = if docs_channel == "nightly" || docs_channel == "preview" {
+        "<meta name=\"robots\" content=\"noindex, nofollow\">"
+    } else {
+        ""
+    };
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -727,6 +755,7 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#description#", meta_description);
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
+        let contents = contents.replace("#noindex#", noindex);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
@@ -860,4 +889,69 @@ fn keymap_schema_for_actions(
         &deprecations,
         &deprecation_messages,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_find_binding_prefers_exact_match_over_parameterized() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            {
+                "bindings": {
+                    "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+                }
+            }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
+        assert_eq!(binding.as_deref(), Some("ctrl-tab"));
+    }
+
+    #[test]
+    fn test_find_binding_falls_back_to_parameterized_match() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            {
+                "bindings": {
+                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+                }
+            }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
+        assert_eq!(binding.as_deref(), Some("ctrl-shift-tab"));
+    }
+
+    #[test]
+    fn test_find_binding_prefers_exact_match_regardless_of_order() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            {
+                "bindings": {
+                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
+                    "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher"
+                }
+            }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
+        assert_eq!(binding.as_deref(), Some("ctrl-tab"));
+    }
+
+    #[test]
+    fn test_find_binding_later_section_overrides_earlier() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            { "bindings": { "ctrl-a": "some::Action" } },
+            { "bindings": { "ctrl-b": "some::Action" } }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "some::Action");
+        assert_eq!(binding.as_deref(), Some("ctrl-b"));
+    }
 }

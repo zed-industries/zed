@@ -17,4 +17,5 @@ brackets = [
 ]
 collapsed_placeholder = " /* ... */ "
 debuggers = ["CodeLLDB", "GDB"]
+block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
 documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }

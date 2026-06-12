@@ -5,7 +5,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, SharedString, Stateful, Window};
-use language::{Edit, HighlightId, Point};
+use language::{Edit, HighlightId, LanguageAwareStyling, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -707,7 +707,10 @@ impl FoldSnapshot {
     pub fn text(&self) -> String {
         self.chunks(
             FoldOffset(MultiBufferOffset(0))..self.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         )
         .map(|c| c.text)
@@ -909,7 +912,7 @@ impl FoldSnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<FoldOffset>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         highlights: Highlights<'a>,
     ) -> FoldChunks<'a> {
         let mut transform_cursor = self
@@ -954,7 +957,10 @@ impl FoldSnapshot {
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
         self.chunks(
             start.to_offset(self)..self.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         )
         .flat_map(|chunk| chunk.text.chars())
@@ -964,7 +970,10 @@ impl FoldSnapshot {
     pub fn chunks_at(&self, start: FoldPoint) -> FoldChunks<'_> {
         self.chunks(
             start.to_offset(self)..self.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         )
     }
@@ -2131,7 +2140,14 @@ mod tests {
                 let text = &expected_text[start.0.0..end.0.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false, Highlights::default())
+                        .chunks(
+                            start..end,
+                            LanguageAwareStyling {
+                                tree_sitter: false,
+                                diagnostics: false,
+                            },
+                            Highlights::default()
+                        )
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,
@@ -2303,7 +2319,10 @@ mod tests {
         // Get all chunks and verify their bitmaps
         let chunks = snapshot.chunks(
             FoldOffset(MultiBufferOffset(0))..FoldOffset(snapshot.len().0),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         );
 
