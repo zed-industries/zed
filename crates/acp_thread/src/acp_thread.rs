@@ -1364,6 +1364,11 @@ struct RunningTurn {
     send_task: Task<()>,
 }
 
+struct SharedBufferSnapshot {
+    snapshot: text::BufferSnapshot,
+    _release_observer: Subscription,
+}
+
 pub struct AcpThread {
     session_id: acp::SessionId,
     work_dirs: Option<PathList>,
@@ -1376,7 +1381,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
     update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
-    shared_buffers: HashMap<Entity<Buffer>, text::BufferSnapshot>,
+    shared_buffers: HashMap<WeakEntity<Buffer>, SharedBufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
@@ -2474,8 +2479,7 @@ impl AcpThread {
 
                 for location in resolved_locations.iter().flatten() {
                     let snapshot = location.buffer.read(cx).text_snapshot();
-                    this.shared_buffers
-                        .insert(location.buffer.clone(), snapshot);
+                    this.record_shared_buffer(location.buffer.clone(), snapshot, cx);
                 }
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
@@ -3164,6 +3168,31 @@ impl AcpThread {
         })
     }
 
+    /// Records the buffer state the agent last observed, so that future
+    /// writes can be diffed against it. The buffer is held weakly and the
+    /// entry is pruned when the buffer entity is released.
+    fn record_shared_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        snapshot: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let weak_buffer = buffer.downgrade();
+        let release_observer = cx.observe_release(&buffer, {
+            let weak_buffer = weak_buffer.clone();
+            move |this, _buffer, _cx| {
+                this.shared_buffers.remove(&weak_buffer);
+            }
+        });
+        self.shared_buffers.insert(
+            weak_buffer,
+            SharedBufferSnapshot {
+                snapshot,
+                _release_observer: release_observer,
+            },
+        );
+    }
+
     pub fn read_text_file(
         &self,
         path: PathBuf,
@@ -3194,8 +3223,8 @@ impl AcpThread {
             });
 
             let snapshot = buffer.update(cx, |buffer, _| buffer.text_snapshot());
-            this.update(cx, |this, _| {
-                this.shared_buffers.insert(buffer.clone(), snapshot.clone());
+            this.update(cx, |this, cx| {
+                this.record_shared_buffer(buffer.clone(), snapshot.clone(), cx);
             })?;
 
             let max_point = snapshot.max_point();
@@ -3247,8 +3276,8 @@ impl AcpThread {
             let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
-                    .get(&buffer)
-                    .cloned()
+                    .get(&buffer.downgrade())
+                    .map(|shared| shared.snapshot.clone())
                     .unwrap_or_else(|| buffer.read(cx).text_snapshot())
             })?;
             let edits = cx
@@ -3279,12 +3308,12 @@ impl AcpThread {
                 });
             }
 
-            let format_on_save = cx.update(|cx| {
+            let (format_on_save, new_snapshot) = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
                 });
 
-                let format_on_save = buffer.update(cx, |buffer, cx| {
+                let (format_on_save, new_snapshot) = buffer.update(cx, |buffer, cx| {
                     buffer.start_transaction();
                     buffer.edit(edits, None, cx);
                     buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
@@ -3292,13 +3321,25 @@ impl AcpThread {
                     let settings =
                         language::language_settings::LanguageSettings::for_buffer(buffer, cx);
 
-                    settings.format_on_save != FormatOnSave::Off
+                    (
+                        settings.format_on_save != FormatOnSave::Off,
+                        buffer.text_snapshot(),
+                    )
                 });
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
-                format_on_save
+                (format_on_save, new_snapshot)
             });
+
+            // Refresh the snapshot the agent last saw, so that a subsequent write
+            // without a re-read is diffed against the result of this write rather
+            // than the agent's original read. The snapshot is taken before
+            // format-on-save runs, so formatter changes are treated like
+            // concurrent user edits and preserved by the next write's diff.
+            this.update(cx, |this, cx| {
+                this.record_shared_buffer(buffer.clone(), new_snapshot, cx);
+            })?;
 
             if format_on_save {
                 let format_task = project.update(cx, |project, cx| {
@@ -4301,6 +4342,131 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_writing_twice_without_rereading(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (worktree, pathbuf) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), pathbuf), cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, cx)
+            })
+            .await
+            .unwrap();
+        thread
+            .update(cx, |thread, cx| {
+                thread.write_text_file(
+                    path!("/tmp/foo").into(),
+                    "one\ntwo\nthree\nfour\n".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        // The user edits the buffer after the agent's first write.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "zero\n".to_string())], None, cx);
+        });
+
+        // The agent reverts its first write without re-reading. The write must
+        // be diffed against the first write's result (not the original read,
+        // which would produce an empty diff), while still preserving the
+        // user's concurrent edit.
+        thread
+            .update(cx, |thread, cx| {
+                thread.write_text_file(
+                    path!("/tmp/foo").into(),
+                    "one\ntwo\nthree\n".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "zero\none\ntwo\nthree\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_shared_buffers_dont_retain_buffer_entities(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (worktree, pathbuf) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), pathbuf), cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let weak_buffer = buffer.downgrade();
+        thread.update(cx, |thread, cx| {
+            let snapshot = buffer.read(cx).text_snapshot();
+            thread.record_shared_buffer(buffer.clone(), snapshot, cx);
+            assert!(thread.shared_buffers.contains_key(&weak_buffer));
+        });
+
+        cx.run_until_parked();
+        drop(buffer);
+        cx.update(|_| {});
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|_| weak_buffer.upgrade()).is_none(),
+            "shared_buffers should not keep the buffer entity alive"
+        );
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                !thread.shared_buffers.contains_key(&weak_buffer),
+                "shared_buffers entry should be pruned when the buffer is released"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_reading_from_line(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4600,6 +4766,27 @@ mod tests {
             .unwrap();
 
         let skill_path = std::path::PathBuf::from(path!("/tmp/skills/test-skill/SKILL.md"));
+
+        // Mirror the real write_file tool flow: an agent that reports this tool
+        // call would have opened and edited the buffer, registering it with the
+        // action log. That strong handle is what keeps the buffer (and its
+        // single-file worktree) alive for the thread's lifetime; shared_buffers
+        // only holds it weakly.
+        let buffer = thread
+            .update(cx, |thread, cx| {
+                thread
+                    .project()
+                    .update(cx, |project, cx| project.open_local_buffer(&skill_path, cx))
+            })
+            .await
+            .unwrap();
+        thread.update(cx, |thread, cx| {
+            thread.action_log().update(cx, |action_log, cx| {
+                action_log.buffer_edited(buffer.clone(), cx);
+            });
+        });
+        drop(buffer);
+
         thread
             .update(cx, |thread, cx| {
                 thread.handle_session_update(
