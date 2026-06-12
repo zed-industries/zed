@@ -1082,23 +1082,23 @@ impl Vim {
     ) -> Range<Point> {
         let visible_range = editor.multi_buffer_visible_range(display_snapshot, cx);
         if editor.visible_line_count().is_some() || visible_range.start != visible_range.end {
-            visible_range
-        } else {
-            let scroll_position = snapshot.scroll_position();
-            let top_row = scroll_position.y.floor().max(0.0) as u32;
-            let visible_rows = display_snapshot
-                .max_point()
-                .row()
-                .0
-                .saturating_sub(top_row)
-                .saturating_add(1);
-            let start_display_point = DisplayPoint::new(DisplayRow(top_row), 0);
-            let end_display_point =
-                DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
-
-            display_snapshot.display_point_to_point(start_display_point, Bias::Left)
-                ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
+            return visible_range;
         }
+
+        let scroll_position = snapshot.scroll_position();
+        let top_row = scroll_position.y.floor().max(0.0) as u32;
+        let visible_rows = display_snapshot
+            .max_point()
+            .row()
+            .0
+            .saturating_sub(top_row)
+            .saturating_add(1);
+        let start_display_point = DisplayPoint::new(DisplayRow(top_row), 0);
+        let end_display_point =
+            DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
+
+        display_snapshot.display_point_to_point(start_display_point, Bias::Left)
+            ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
     }
 
     pub(crate) fn jump_ui_context(
