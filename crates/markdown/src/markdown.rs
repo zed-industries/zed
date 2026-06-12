@@ -1307,12 +1307,12 @@ impl MarkdownElement {
                 .unwrap_or_else(|| self.style.link.clone());
             builder.push_text_style(self.style.inline_code.clone());
             builder.push_text_style(link_style);
-            builder.push_text(text, range);
+            builder.push_code_span_text(text, range);
             builder.pop_text_style();
             builder.pop_text_style();
         } else {
             builder.push_text_style(self.style.inline_code.clone());
-            builder.push_text(text, range);
+            builder.push_code_span_text(text, range);
             builder.pop_text_style();
         }
     }
@@ -2991,6 +2991,7 @@ struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
     source_mappings: Vec<SourceMapping>,
+    code_span_boundaries: Vec<CodeSpanBoundary>,
 }
 
 struct ListStackEntry {
@@ -3224,6 +3225,17 @@ impl MarkdownElementBuilder {
         }
     }
 
+    fn push_code_span_text(&mut self, text: &str, source_range: Range<usize>) {
+        let source_end = source_range.end;
+        self.push_text(text, source_range);
+        self.pending_line
+            .code_span_boundaries
+            .push(CodeSpanBoundary {
+                rendered_index: self.pending_line.text.len(),
+                source_index: source_end,
+            });
+    }
+
     fn trim_trailing_newline(&mut self) {
         if self.pending_line.text.ends_with('\n') {
             self.pending_line
@@ -3305,6 +3317,7 @@ impl MarkdownElementBuilder {
                 rendered_index: 0,
                 source_index: source_range.start,
             }],
+            code_span_boundaries: Vec::new(),
             source_end: source_range.end,
             language: None,
             text_align: TextAlign::Left,
@@ -3329,6 +3342,7 @@ impl MarkdownElementBuilder {
         self.rendered_lines.push(RenderedLine {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
+            code_span_boundaries: line.code_span_boundaries,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
@@ -3353,6 +3367,7 @@ impl MarkdownElementBuilder {
 struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
+    code_span_boundaries: Vec<CodeSpanBoundary>,
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
@@ -3495,7 +3510,14 @@ impl RenderedLine {
                 out_of_bounds = true;
             }
         };
-        let source_index = self.source_index_for_rendered_index(line_rendered_index);
+        let source_index = self
+            .code_span_boundaries
+            .iter()
+            .find(|boundary| boundary.rendered_index == line_rendered_index)
+            .map_or_else(
+                || self.source_index_for_rendered_index(line_rendered_index),
+                |boundary| boundary.source_index,
+            );
         if out_of_bounds {
             Err(source_index)
         } else {
@@ -3506,6 +3528,12 @@ impl RenderedLine {
 
 #[derive(Copy, Clone, Debug, Default)]
 struct SourceMapping {
+    rendered_index: usize,
+    source_index: usize,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct CodeSpanBoundary {
     rendered_index: usize,
     source_index: usize,
 }
@@ -4341,6 +4369,56 @@ mod tests {
         // which extract directly from the source. With the bug, this would be 5..10
         // which includes the closing backtick at position 9.
         assert_eq!(word_range, 5..9);
+    }
+
+    #[gpui::test]
+    fn test_inline_code_character_selection_boundary_excludes_closing_backtick(
+        cx: &mut TestAppContext,
+    ) {
+        let markdown = "Run `history | tail -n N` now";
+        let rendered = render_markdown(markdown, cx);
+        let Some(code_start) = markdown.find("history") else {
+            panic!("test markdown should contain inline code text");
+        };
+        let code_end = code_start + "history | tail -n N".len();
+        let Some((position, _)) = rendered.position_for_source_index(code_end) else {
+            panic!("inline code end should have a rendered position");
+        };
+
+        let source_index = match rendered.source_index_for_position(position) {
+            Ok(index) | Err(index) => index,
+        };
+
+        assert_eq!(source_index, code_end);
+        assert_eq!(&markdown[code_start..source_index], "history | tail -n N");
+    }
+
+    #[gpui::test]
+    fn test_inline_code_character_selection_boundary_preserves_opening_backtick_when_crossed(
+        cx: &mut TestAppContext,
+    ) {
+        let markdown = "something_`history`";
+        let rendered = render_markdown(markdown, cx);
+        let Some(code_start) = markdown.find("history") else {
+            panic!("test markdown should contain inline code text");
+        };
+        let code_end = code_start + "history".len();
+        let Some((code_start_position, _)) = rendered.position_for_source_index(code_start) else {
+            panic!("inline code start should have a rendered position");
+        };
+        let Some((code_end_position, _)) = rendered.position_for_source_index(code_end) else {
+            panic!("inline code end should have a rendered position");
+        };
+
+        let code_start_index = match rendered.source_index_for_position(code_start_position) {
+            Ok(index) | Err(index) => index,
+        };
+        let code_end_index = match rendered.source_index_for_position(code_end_position) {
+            Ok(index) | Err(index) => index,
+        };
+
+        assert_eq!(&markdown[code_start_index..code_end_index], "history");
+        assert_eq!(&markdown[..code_end_index], "something_`history");
     }
 
     #[gpui::test]
