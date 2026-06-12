@@ -2306,6 +2306,82 @@ impl Buffer {
         self.edit([(offset..len, "\n")], None, cx);
     }
 
+    /// Like [`remove_trailing_whitespace`](Self::remove_trailing_whitespace), but only removes
+    /// trailing whitespace on lines whose row falls within one of the given `modified_rows` ranges.
+    pub fn remove_trailing_whitespace_in_ranges(
+        &self,
+        modified_rows: &[Range<u32>],
+        cx: &App,
+    ) -> Task<Diff> {
+        let old_text = self.as_rope().clone();
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        let modified_rows = modified_rows.to_vec();
+        cx.background_spawn(async move {
+            let ranges = trailing_whitespace_ranges_in_rows(&old_text, &modified_rows);
+            let empty = Arc::<str>::from("");
+            Diff {
+                base_version,
+                line_ending,
+                edits: ranges
+                    .into_iter()
+                    .map(|range| (range, empty.clone()))
+                    .collect(),
+            }
+        })
+    }
+
+    /// Like [`ensure_final_newline`](Self::ensure_final_newline), but only applies the fix when
+    /// the last line's row falls within one of the given `modified_rows` ranges. Returns an empty
+    /// [`Diff`] when the last line is not in any modified range.
+    pub fn ensure_final_newline_in_range(
+        &self,
+        modified_rows: &[Range<u32>],
+        cx: &App,
+    ) -> Task<Diff> {
+        let len = self.len();
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        let last_row = self.max_point().row;
+
+        let last_row_is_modified = modified_rows.iter().any(|r| r.contains(&last_row));
+        if len == 0 || !last_row_is_modified {
+            return Task::ready(Diff {
+                base_version,
+                line_ending,
+                edits: Vec::new(),
+            });
+        }
+
+        let old_text = self.as_rope().clone();
+        cx.background_spawn(async move {
+            let mut offset = len;
+            for chunk in old_text.reversed_chunks_in_range(0..len) {
+                let non_whitespace_len = chunk
+                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                    .len();
+                offset -= chunk.len();
+                offset += non_whitespace_len;
+                if non_whitespace_len != 0 {
+                    if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
+                        return Diff {
+                            base_version,
+                            line_ending,
+                            edits: Vec::new(),
+                        };
+                    }
+                    break;
+                }
+            }
+            let newline: Arc<str> = Arc::from("\n");
+            Diff {
+                base_version,
+                line_ending,
+                edits: vec![(offset..len, newline)],
+            }
+        })
+    }
+
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
@@ -6132,6 +6208,57 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
     }
 
     if !prev_chunk_trailing_whitespace_range.is_empty() {
+        ranges.push(prev_chunk_trailing_whitespace_range);
+    }
+
+    ranges
+}
+
+/// Like [`trailing_whitespace_ranges`], but only returns ranges for lines whose
+/// row falls within one of the given `row_ranges`. Performs a single pass over
+/// the rope, avoiding the quadratic cost of collecting all ranges and then filtering.
+pub fn trailing_whitespace_ranges_in_rows(
+    rope: &Rope,
+    row_ranges: &[Range<u32>],
+) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+
+    let mut offset = 0;
+    let mut current_row: u32 = 0;
+    let mut prev_row: Option<u32> = None;
+    let mut prev_chunk_trailing_whitespace_range = 0..0;
+    for chunk in rope.chunks() {
+        let mut prev_line_trailing_whitespace_range = 0..0;
+        for (i, line) in chunk.split('\n').enumerate() {
+            let line_end_offset = offset + line.len();
+            let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
+            let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
+
+            if i == 0 && trimmed_line_len == 0 {
+                trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
+            }
+            if let Some(row) = prev_row {
+                if !prev_line_trailing_whitespace_range.is_empty()
+                    && row_ranges.iter().any(|r| r.contains(&row))
+                {
+                    ranges.push(prev_line_trailing_whitespace_range);
+                }
+            }
+
+            prev_row = Some(current_row);
+            offset = line_end_offset + 1;
+            current_row += 1;
+            prev_line_trailing_whitespace_range = trailing_whitespace_range;
+        }
+
+        offset -= 1;
+        current_row -= 1;
+        prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
+    }
+
+    if !prev_chunk_trailing_whitespace_range.is_empty()
+        && row_ranges.iter().any(|r| r.contains(&current_row))
+    {
         ranges.push(prev_chunk_trailing_whitespace_range);
     }
 
