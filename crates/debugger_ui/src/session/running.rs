@@ -1,5 +1,6 @@
 pub(crate) mod breakpoint_list;
 pub(crate) mod console;
+pub(crate) mod data_frame_view;
 pub(crate) mod loaded_source_list;
 pub(crate) mod memory_view;
 pub(crate) mod module_list;
@@ -38,6 +39,7 @@ use gpui::{
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
+use data_frame_view::DataFrameView;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
     debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
@@ -89,6 +91,7 @@ pub struct RunningState {
     pub(crate) scenario: Option<DebugScenario>,
     pub(crate) scenario_context: Option<DebugScenarioContext>,
     memory_view: Entity<MemoryView>,
+    data_frame_view: Entity<DataFrameView>,
 }
 
 impl RunningState {
@@ -800,6 +803,7 @@ impl RunningState {
                 cx,
             )
         });
+        let data_frame_view = cx.new(|cx| DataFrameView::new(session.clone(), window, cx));
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
@@ -906,6 +910,7 @@ impl RunningState {
                 &project,
                 &stack_frame_list,
                 &variable_list,
+                &data_frame_view,
                 &module_list,
                 &console,
                 &breakpoint_list,
@@ -941,6 +946,7 @@ impl RunningState {
 
         Self {
             memory_view,
+            data_frame_view,
             session,
             workspace,
             project: weak_project,
@@ -1415,6 +1421,14 @@ impl RunningState {
                 host_pane,
                 cx,
             )),
+            DebuggerPaneItem::Data => Box::new(SubView::new(
+                self.data_frame_view.focus_handle(cx),
+                self.data_frame_view.clone().into(),
+                item_kind,
+                running_state,
+                host_pane,
+                cx,
+            )),
         }
     }
 
@@ -1634,6 +1648,20 @@ impl RunningState {
         pane.update(cx, |this, cx| {
             this.activate_item(variable_list_position, true, true, window, cx);
         });
+    }
+
+    pub(crate) fn show_data_frame(
+        &mut self,
+        expression: SharedString,
+        frame_id: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_pane_item(DebuggerPaneItem::Data, window, cx);
+        self.data_frame_view.update(cx, |view, cx| {
+            view.show_expression(expression, frame_id, window, cx);
+        });
+        self.activate_item(DebuggerPaneItem::Data, window, cx);
     }
 
     #[cfg(test)]
