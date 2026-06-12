@@ -998,6 +998,10 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
+    /// Spacing between outline entries in the outline panel.
+    ///
+    /// Default: comfortable
+    pub entry_spacing: Option<OutlinePanelEntrySpacing>,
     /// Whether to show file icons in the outline panel.
     ///
     /// Default: true
@@ -1037,6 +1041,29 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: 100
     pub expand_outlines_with_depth: Option<usize>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlinePanelEntrySpacing {
+    /// Comfortable spacing of entries.
+    #[default]
+    Comfortable,
+    /// The standard spacing of entries.
+    Standard,
 }
 
 #[derive(
