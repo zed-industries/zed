@@ -1704,11 +1704,38 @@ impl Editor {
         // Anchor the columnar rectangle in x pixels rather than byte columns so
         // rows with multi-byte characters (e.g. diacritics) stay visually aligned.
         let text_layout_details = self.text_layout_details(window, cx);
-        let tail_x = display_map.x_for_display_point(tail, &text_layout_details);
-        let head_x = display_map.x_for_display_point(
-            DisplayPoint::new(head.row(), goal_column),
-            &text_layout_details,
-        );
+
+        // The mouse handlers encode drags past a line's end as extra columns
+        // beyond the line length, in em layout widths (see
+        // `PositionMap::point_for_position`). `x_for_display_point` clamps at
+        // the line's width, so convert that overshoot back to pixels with the
+        // same unit to keep the rectangle tracking the mouse past short lines.
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_layout_details.editor_style.text.font());
+        let font_size = text_layout_details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(text_layout_details.rem_size);
+        let em_layout_width = text_layout_details
+            .text_system
+            .em_layout_width(font_id, font_size);
+        let x_for_unclipped_point = |point: DisplayPoint| {
+            let line_len = display_map.line_len(point.row());
+            if point.column() > line_len {
+                let eol_x = display_map.x_for_display_point(
+                    DisplayPoint::new(point.row(), line_len),
+                    &text_layout_details,
+                );
+                eol_x + em_layout_width * (point.column() - line_len) as f32
+            } else {
+                display_map.x_for_display_point(point, &text_layout_details)
+            }
+        };
+
+        let tail_x = x_for_unclipped_point(tail);
+        let head_x = x_for_unclipped_point(DisplayPoint::new(head.row(), goal_column));
         let start_x = tail_x.min(head_x);
         let end_x = tail_x.max(head_x);
         let reversed = head_x < tail_x;
@@ -1720,20 +1747,15 @@ impl Editor {
                     return None;
                 }
 
-                if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. }) {
-                    let row_eol_x = display_map.x_for_display_point(
-                        DisplayPoint::new(row, display_map.line_len(row)),
-                        &text_layout_details,
-                    );
-                    if start_x > row_eol_x {
-                        return None;
-                    }
+                let layout = display_map.layout_row(row, &text_layout_details);
+                if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })
+                    && start_x > layout.width
+                {
+                    return None;
                 }
 
-                let start_column =
-                    display_map.display_column_for_x(row, start_x, &text_layout_details);
-                let end_column =
-                    display_map.display_column_for_x(row, end_x, &text_layout_details);
+                let start_column = layout.closest_index_for_x(start_x) as u32;
+                let end_column = layout.closest_index_for_x(end_x) as u32;
 
                 let start = display_map
                     .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
