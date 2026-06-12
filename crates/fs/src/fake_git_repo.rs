@@ -1058,6 +1058,14 @@ impl GitRepository for FakeGitRepository {
         async { Ok(()) }.boxed()
     }
 
+    fn run_commit_msg_hook(
+        &self,
+        message: String,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<String>> {
+        async { Ok(message) }.boxed()
+    }
+
     fn push(
         &self,
         _branch: String,
