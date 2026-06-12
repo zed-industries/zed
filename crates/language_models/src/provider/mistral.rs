@@ -987,6 +987,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: Default::default(),
+            fallback_credit_token: None,
         };
 
         let (mistral_request, affinity) =
@@ -1023,6 +1024,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);

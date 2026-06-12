@@ -20,6 +20,7 @@ pub mod completion;
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 pub const SERVER_SIDE_FALLBACK_BETA_HEADER: &str = "server-side-fallback-2026-06-01";
+pub const FALLBACK_CREDIT_BETA_HEADER: &str = "fallback-credit-2026-06-01";
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
@@ -585,8 +586,8 @@ pub enum Role {
 pub enum RequestContent {
     #[serde(rename = "fallback")]
     Fallback {
-        from: FallbackEndpoint,
-        to: FallbackEndpoint,
+        from: FallbackModel,
+        to: FallbackModel,
     },
     #[serde(rename = "text")]
     Text {
@@ -646,8 +647,8 @@ pub enum ToolResultPart {
 pub enum ResponseContent {
     #[serde(rename = "fallback")]
     Fallback {
-        from: FallbackEndpoint,
-        to: FallbackEndpoint,
+        from: FallbackModel,
+        to: FallbackModel,
     },
     #[serde(rename = "text")]
     Text { text: String },
@@ -664,12 +665,7 @@ pub enum ResponseContent {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FallbackEndpoint {
-    pub model: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Fallback {
+pub struct FallbackModel {
     pub model: String,
 }
 
@@ -755,7 +751,12 @@ pub struct Request {
     pub max_tokens: u64,
     pub messages: Vec<Message>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fallbacks: Vec<Fallback>,
+    pub fallbacks: Vec<FallbackModel>,
+    /// Redeems a credit from a refused request so the retry on a fallback
+    /// model is billed as if the conversation had been on that model all along.
+    /// Requires the `fallback-credit-2026-06-01` beta header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_credit_token: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -874,6 +875,14 @@ pub enum ContentDelta {
 pub struct MessageDelta {
     pub stop_reason: Option<String>,
     pub stop_sequence: Option<String>,
+    #[serde(default)]
+    pub stop_details: Option<StopDetails>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StopDetails {
+    #[serde(default)]
+    pub fallback_credit_token: Option<String>,
 }
 
 #[derive(Debug)]

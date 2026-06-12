@@ -40,6 +40,9 @@ pub enum LanguageModelCompletionEvent {
         from_model: Arc<str>,
         to_model: Arc<str>,
     },
+    /// A credit carried by a refusal that can be redeemed by retrying the
+    /// refused request on a fallback model with `fallback_credit_token` set.
+    FallbackCreditToken(String),
     Text(String),
     Thinking {
         text: String,

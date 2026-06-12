@@ -1166,7 +1166,9 @@ enum CompletionError {
     #[error("max tokens")]
     MaxTokens,
     #[error("refusal")]
-    Refusal { server_side_fallback: bool },
+    Refusal {
+        fallback_credit_token: Option<String>,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -1197,6 +1199,10 @@ pub struct Thread {
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
     /// the start of each request.
     current_request_token_usage: TokenUsage,
+    /// Fallback credit carried by an in-flight refusal, stashed between the
+    /// credit token event and the refusal stop event, then redeemed on the
+    /// client-side fallback retry.
+    pending_fallback_credit_token: Option<String>,
     pending_compaction_telemetry: Option<CompactionTelemetry>,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -1331,6 +1337,7 @@ impl Thread {
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             current_request_token_usage: TokenUsage::default(),
+            pending_fallback_credit_token: None,
             pending_compaction_telemetry: None,
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
@@ -1711,6 +1718,7 @@ impl Thread {
             request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
             current_request_token_usage: TokenUsage::default(),
+            pending_fallback_credit_token: None,
             pending_compaction_telemetry: None,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
@@ -2454,14 +2462,7 @@ impl Thread {
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
                         match error.downcast::<CompletionError>() {
-                            Ok(CompletionError::Refusal {
-                                server_side_fallback,
-                            }) => {
-                                if server_side_fallback {
-                                    log::info!(
-                                        "Turn ended in refusal after server-side fallback was attempted"
-                                    );
-                                }
+                            Ok(CompletionError::Refusal { .. }) => {
                                 event_stream.send_stop(acp::StopReason::Refusal);
                                 _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
                             }
@@ -2492,6 +2493,9 @@ impl Thread {
         let mut intent = CompletionIntent::UserPrompt;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
+        // A credit from the refusal, redeemed on the fallback retry so the
+        // retry's prompt-cache writes are repriced as cache reads.
+        let mut fallback_credit_token: Option<String> = None;
         loop {
             match Self::perform_compaction_if_needed(
                 this,
@@ -2572,7 +2576,7 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
-            let (model, request) = this.update(cx, |this, cx| {
+            let (model, mut request) = this.update(cx, |this, cx| {
                 let model = refusal_fallback_model
                     .clone()
                     .or_else(|| this.model.clone())
@@ -2580,8 +2584,10 @@ impl Thread {
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
+                this.pending_fallback_credit_token = None;
                 anyhow::Ok((model, request))
             })??;
+            request.fallback_credit_token = fallback_credit_token.take();
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -2687,12 +2693,13 @@ impl Thread {
 
                 tool_results.extend(batch_result.0);
                 if let Some(err) = batch_result.1 {
-                    let is_refusal = err
-                        .downcast_ref::<CompletionError>()
-                        .is_some_and(|e| matches!(e, CompletionError::Refusal { .. }));
-                    if is_refusal {
+                    if let Some(CompletionError::Refusal {
+                        fallback_credit_token: credit_token,
+                    }) = err.downcast_ref::<CompletionError>()
+                    {
                         log::info!("Model refused request; checking for fallback model");
                         had_refusal = true;
+                        fallback_credit_token = credit_token.clone();
                         break;
                     }
                     error = Some(err.downcast()?);
@@ -2721,24 +2728,14 @@ impl Thread {
             })?;
 
             if had_refusal {
-                let server_side_fallback = this.update(cx, |this, _| {
-                    this.pending_message.as_ref().is_some_and(|message| {
-                        message
-                            .content
-                            .iter()
-                            .any(|content| matches!(content, AgentMessageContent::Fallback { .. }))
-                    })
-                })?;
-                if server_side_fallback {
-                    log::info!("Request refused after server-side fallback was already attempted");
-                    return Err(CompletionError::Refusal {
-                        server_side_fallback: true,
-                    }
-                    .into());
-                }
-
                 let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
                     let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
+                    if current_model.refusal_fallback_is_server_side() {
+                        log::info!(
+                            "Request refused after server-side fallback was already attempted"
+                        );
+                        return None;
+                    }
                     let fallback_id = match current_model.refusal_fallback_model_id() {
                         Some(id) => id,
                         None => {
@@ -2787,7 +2784,7 @@ impl Thread {
                 }
                 log::info!("Request refused with no fallback model available");
                 return Err(CompletionError::Refusal {
-                    server_side_fallback: false,
+                    fallback_credit_token: None,
                 }
                 .into());
             }
@@ -2970,6 +2967,7 @@ impl Thread {
                 }
                 LanguageModelCompletionEvent::Stop(_)
                 | LanguageModelCompletionEvent::Fallback { .. }
+                | LanguageModelCompletionEvent::FallbackCreditToken(_)
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Thinking { .. }
@@ -3122,7 +3120,10 @@ impl Thread {
             Fallback {
                 from_model,
                 to_model,
-            } => self.handle_fallback_event(from_model, to_model),
+            } => self.handle_fallback_event(from_model, to_model, event_stream, cx),
+            FallbackCreditToken(token) => {
+                self.pending_fallback_credit_token = Some(token);
+            }
             Text(new_text) => self.handle_text_event(new_text, event_stream),
             Thinking { text, signature } => {
                 self.handle_thinking_event(text, signature, event_stream)
@@ -3181,14 +3182,8 @@ impl Thread {
                 self.update_token_usage(usage, cx);
             }
             Stop(StopReason::Refusal) => {
-                let server_side_fallback = self.pending_message.as_ref().is_some_and(|message| {
-                    message
-                        .content
-                        .iter()
-                        .any(|content| matches!(content, AgentMessageContent::Fallback { .. }))
-                });
                 return Err(CompletionError::Refusal {
-                    server_side_fallback,
+                    fallback_credit_token: self.pending_fallback_credit_token.take(),
                 }
                 .into());
             }
@@ -3200,7 +3195,38 @@ impl Thread {
         Ok(None)
     }
 
-    fn handle_fallback_event(&mut self, from_model: Arc<str>, to_model: Arc<str>) {
+    fn handle_fallback_event(
+        &mut self,
+        from_model: Arc<str>,
+        to_model: Arc<str>,
+        event_stream: &ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) {
+        // Surface the server-side fallback the same way as a client-side
+        // refusal retry, so the user knows another model is responding.
+        let fallback_name = self
+            .model
+            .as_ref()
+            .and_then(|current_model| {
+                LanguageModelRegistry::global(cx)
+                    .read(cx)
+                    .available_models(cx)
+                    .find(|model| {
+                        model.provider_id() == current_model.provider_id()
+                            && model.id().0.as_ref() == to_model.as_ref()
+                    })
+            })
+            .map(|model| model.name().0.to_string())
+            .unwrap_or_else(|| to_model.to_string());
+        event_stream.send_retry(acp_thread::RetryStatus {
+            last_error: "Safety filter triggered".into(),
+            attempt: 1,
+            max_attempts: 1,
+            started_at: Instant::now(),
+            duration: Duration::MAX,
+            meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
+        });
+
         let last_message = self.pending_message();
         last_message.content.push(AgentMessageContent::Fallback {
             from_model: from_model.to_string(),
@@ -3793,6 +3819,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
+            fallback_credit_token: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -6054,7 +6081,8 @@ mod tests {
     }
 
     #[test]
-    fn agent_message_to_request_preserves_fallback_boundary_and_strips_invalid_prefix_blocks() {
+    fn test_agent_message_to_request_preserves_fallback_boundary_and_strips_invalid_prefix_blocks()
+    {
         let dropped_tool_use = LanguageModelToolUse {
             id: LanguageModelToolUseId::from("dropped".to_string()),
             name: Arc::from("dropped_tool"),

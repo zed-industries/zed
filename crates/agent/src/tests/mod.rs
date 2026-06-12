@@ -3036,6 +3036,10 @@ async fn test_refusal(cx: &mut TestAppContext) {
     });
 
     // If the model refuses to continue, the thread should remove all the messages after the last user message.
+    // A credit token accompanying the refusal is forfeited when no fallback model is available.
+    fake_model.send_last_completion_stream_event(
+        LanguageModelCompletionEvent::FallbackCreditToken("credit-token".to_string()),
+    );
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::Refusal));
     let events = events.collect::<Vec<_>>().await;

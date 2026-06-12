@@ -274,6 +274,7 @@ impl TerminalInlineAssistant {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed: None,
+                fallback_credit_token: None,
             }
         }))
     }

@@ -376,6 +376,10 @@ pub struct LanguageModelRequest {
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
     pub speed: Option<Speed>,
+    /// A fallback credit token from a refused request, redeemed by retrying
+    /// the same request on a fallback model. Reprices the retry's prompt-cache
+    /// writes as if the conversation had been on that model all along.
+    pub fallback_credit_token: Option<String>,
 }
 
 #[derive(

@@ -551,6 +551,7 @@ impl CodegenAlternative {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed: None,
+                fallback_credit_token: None,
             }
         }))
     }
@@ -631,6 +632,7 @@ impl CodegenAlternative {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed: None,
+                fallback_credit_token: None,
             }
         }))
     }

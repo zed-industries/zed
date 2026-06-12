@@ -70,6 +70,13 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// Whether requests to this model already retry refusals on a fallback
+    /// model server-side. When true, a refusal means the server-side fallback
+    /// chain was exhausted, so no client-side retry should be attempted.
+    fn refusal_fallback_is_server_side(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
@@ -192,6 +199,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Fallback { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::FallbackCreditToken(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..

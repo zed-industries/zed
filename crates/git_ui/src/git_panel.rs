@@ -2822,6 +2822,7 @@ impl GitPanel {
                     thinking_allowed: false,
                     thinking_effort: None,
                     speed: None,
+                    fallback_credit_token: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);

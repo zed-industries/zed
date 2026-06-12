@@ -1190,6 +1190,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        fallback_credit_token: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

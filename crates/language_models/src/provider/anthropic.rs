@@ -31,46 +31,16 @@ fn append_anthropic_beta_header(
     beta_headers: Option<String>,
     beta_header: &'static str,
 ) -> Option<String> {
-    let mut headers = beta_headers
-        .as_deref()
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|header| !header.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-
-    if !headers.iter().any(|header| header == beta_header) {
-        headers.push(beta_header.to_string());
-    }
-
-    if headers.is_empty() {
-        None
-    } else {
-        Some(headers.join(","))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn append_anthropic_beta_header_preserves_existing_headers_without_duplicates() {
-        assert_eq!(
-            append_anthropic_beta_header(
-                Some("fast-mode-2026-02-01, server-side-fallback-2026-06-01".to_string()),
-                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
-            ),
-            Some("fast-mode-2026-02-01,server-side-fallback-2026-06-01".to_string())
-        );
-        assert_eq!(
-            append_anthropic_beta_header(
-                Some("fast-mode-2026-02-01".to_string()),
-                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
-            ),
-            Some("fast-mode-2026-02-01,server-side-fallback-2026-06-01".to_string())
-        );
+    match beta_headers {
+        Some(headers)
+            if headers
+                .split(',')
+                .any(|header| header.trim() == beta_header) =>
+        {
+            Some(headers)
+        }
+        Some(headers) => Some(format!("{headers},{beta_header}")),
+        None => Some(beta_header.to_string()),
     }
 }
 
@@ -443,14 +413,26 @@ impl AnthropicModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
-        let beta_headers = if request.fallbacks.is_empty() {
-            self.model.beta_headers()
-        } else {
-            append_anthropic_beta_header(
-                self.model.beta_headers(),
+        let mut beta_headers = self.model.beta_headers();
+        // Echoed `fallback` content blocks from an earlier server-side fallback
+        // are only valid under the same beta header, so opt in whenever the
+        // request contains one, even if this request names no fallbacks itself.
+        let has_fallback_content = request.messages.iter().any(|message| {
+            message
+                .content
+                .iter()
+                .any(|content| matches!(content, anthropic::RequestContent::Fallback { .. }))
+        });
+        if !request.fallbacks.is_empty() || has_fallback_content {
+            beta_headers = append_anthropic_beta_header(
+                beta_headers,
                 anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
-            )
-        };
+            );
+        }
+        if request.fallback_credit_token.is_some() {
+            beta_headers =
+                append_anthropic_beta_header(beta_headers, anthropic::FALLBACK_CREDIT_BETA_HEADER);
+        }
 
         async move {
             let Some(api_key) = api_key else {
@@ -525,6 +507,10 @@ impl LanguageModel for AnthropicModel {
         }
     }
 
+    fn refusal_fallback_is_server_side(&self) -> bool {
+        self.refusal_fallback_model_id().is_some()
+    }
+
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
         self.model
             .supported_effort_levels
@@ -590,9 +576,9 @@ impl LanguageModel for AnthropicModel {
         if !self.model.supports_speed {
             request.speed = None;
         }
-        if request.model.starts_with(anthropic::FABLE_MODEL_ID_PREFIX) {
-            request.fallbacks = vec![anthropic::Fallback {
-                model: anthropic::FABLE_FALLBACK_MODEL_ID.to_string(),
+        if let Some(fallback_model) = self.refusal_fallback_model_id() {
+            request.fallbacks = vec![anthropic::FallbackModel {
+                model: fallback_model.to_string(),
             }];
         }
         let request = self.stream_completion(request, cx);
@@ -742,5 +728,32 @@ impl Render for ConfigurationView {
                 })
                 .into_any_element()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_append_anthropic_beta_header_preserves_existing_headers_without_duplicates() {
+        assert_eq!(
+            append_anthropic_beta_header(None, anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER),
+            Some("server-side-fallback-2026-06-01".to_string())
+        );
+        assert_eq!(
+            append_anthropic_beta_header(
+                Some("fast-mode-2026-02-01".to_string()),
+                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
+            ),
+            Some("fast-mode-2026-02-01,server-side-fallback-2026-06-01".to_string())
+        );
+        assert_eq!(
+            append_anthropic_beta_header(
+                Some("fast-mode-2026-02-01, server-side-fallback-2026-06-01".to_string()),
+                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
+            ),
+            Some("fast-mode-2026-02-01, server-side-fallback-2026-06-01".to_string())
+        );
     }
 }

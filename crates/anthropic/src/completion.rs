@@ -67,8 +67,8 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             from_model,
             to_model,
         } => Some(RequestContent::Fallback {
-            from: crate::FallbackEndpoint { model: from_model },
-            to: crate::FallbackEndpoint { model: to_model },
+            from: crate::FallbackModel { model: from_model },
+            to: crate::FallbackModel { model: to_model },
         }),
         MessageContent::Text(text) => {
             let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
@@ -269,6 +269,7 @@ pub fn into_anthropic(
         messages: new_messages,
         max_tokens: max_output_tokens,
         fallbacks: Vec::new(),
+        fallback_credit_token: request.fallback_credit_token,
         system,
         // Opt into Anthropic's automatic prompt caching for the conversation
         // tail. Omitting `ttl` uses the default (short) TTL, which refreshes
@@ -331,6 +332,7 @@ pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
+    fallback_credit_token: Option<String>,
 }
 
 impl AnthropicEventMapper {
@@ -339,6 +341,7 @@ impl AnthropicEventMapper {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
+            fallback_credit_token: None,
         }
     }
 
@@ -490,12 +493,20 @@ impl AnthropicEventMapper {
                         }
                     };
                 }
+                if let Some(stop_details) = delta.stop_details {
+                    self.fallback_credit_token = stop_details.fallback_credit_token;
+                }
                 vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
                     convert_usage(&self.usage),
                 ))]
             }
             Event::MessageStop => {
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+                let mut events = Vec::new();
+                if let Some(token) = self.fallback_credit_token.take() {
+                    events.push(Ok(LanguageModelCompletionEvent::FallbackCreditToken(token)));
+                }
+                events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+                events
             }
             Event::Error { error } => {
                 vec![Err(error.into())]
@@ -552,10 +563,10 @@ mod tests {
         let events = mapper.map_event(Event::ContentBlockStart {
             index: 0,
             content_block: ResponseContent::Fallback {
-                from: crate::FallbackEndpoint {
+                from: crate::FallbackModel {
                     model: "claude-fable-5".to_string(),
                 },
-                to: crate::FallbackEndpoint {
+                to: crate::FallbackModel {
                     model: "claude-opus-4-8".to_string(),
                 },
             },
@@ -583,16 +594,8 @@ mod tests {
                 cache: false,
                 reasoning_details: None,
             }],
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            stop: vec![],
-            temperature: None,
-            tools: vec![],
-            tool_choice: None,
             thinking_allowed: true,
-            thinking_effort: None,
-            speed: None,
+            ..Default::default()
         };
 
         let mut anthropic_request = into_anthropic(
@@ -603,7 +606,7 @@ mod tests {
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
         );
-        anthropic_request.fallbacks = vec![crate::Fallback {
+        anthropic_request.fallbacks = vec![crate::FallbackModel {
             model: "claude-opus-4-8".to_string(),
         }];
 
@@ -612,6 +615,36 @@ mod tests {
             serialized.get("fallbacks"),
             Some(&json!([{ "model": "claude-opus-4-8" }]))
         );
+    }
+
+    #[test]
+    fn test_refusal_with_credit_token_emits_credit_event_before_stop() {
+        let mut mapper = AnthropicEventMapper::new();
+        let events = mapper.map_event(Event::MessageDelta {
+            delta: crate::MessageDelta {
+                stop_reason: Some("refusal".to_string()),
+                stop_sequence: None,
+                stop_details: Some(crate::StopDetails {
+                    fallback_credit_token: Some("credit-token".to_string()),
+                }),
+            },
+            usage: Usage::default(),
+        });
+        assert!(
+            events
+                .iter()
+                .all(|event| matches!(event, Ok(LanguageModelCompletionEvent::UsageUpdate(_))))
+        );
+
+        let events = mapper.map_event(Event::MessageStop);
+        let [
+            Ok(LanguageModelCompletionEvent::FallbackCreditToken(token)),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)),
+        ] = events.as_slice()
+        else {
+            panic!("expected a credit token event followed by a refusal stop, got {events:?}");
+        };
+        assert_eq!(token, "credit-token");
     }
 
     #[test]
@@ -650,6 +683,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -754,6 +788,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -811,6 +846,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("xhigh".into()),
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -862,6 +898,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -899,6 +936,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             speed: None,
+            fallback_credit_token: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,
