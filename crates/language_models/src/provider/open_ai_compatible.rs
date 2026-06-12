@@ -258,6 +258,12 @@ impl OpenAiCompatibleLanguageModel {
     }
 }
 
+fn supports_selectable_thinking_effort(model: &AvailableModel) -> bool {
+    model
+        .reasoning_effort
+        .is_some_and(|effort| effort != open_ai::ReasoningEffort::None)
+}
+
 impl LanguageModel for OpenAiCompatibleLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -302,6 +308,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
     fn supports_streaming_tools(&self) -> bool {
         true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        supports_selectable_thinking_effort(&self.model)
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -369,5 +379,40 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             }
             .boxed()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn available_model(reasoning_effort: Option<open_ai::ReasoningEffort>) -> AvailableModel {
+        AvailableModel {
+            name: "custom-model".to_string(),
+            display_name: None,
+            max_tokens: 128_000,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            reasoning_effort,
+            capabilities: ModelCapabilities {
+                chat_completions: false,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn configured_reasoning_effort_supports_thinking() {
+        assert!(supports_selectable_thinking_effort(&available_model(Some(
+            open_ai::ReasoningEffort::High
+        ))));
+    }
+
+    #[test]
+    fn missing_or_none_reasoning_effort_does_not_support_thinking() {
+        assert!(!supports_selectable_thinking_effort(&available_model(None)));
+        assert!(!supports_selectable_thinking_effort(&available_model(
+            Some(open_ai::ReasoningEffort::None)
+        )));
     }
 }
