@@ -5,7 +5,7 @@ use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, SearchResults, WorktreeSettings,
+    Project, ProjectPath, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -205,34 +205,38 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
-                    (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
-                }) else {
+                let (Some((path, project_path)), mut parse_status) =
+                    buffer.read_with(cx, |buffer, cx| {
+                        (
+                            buffer.file().map(|file| {
+                                (
+                                    file.full_path(cx),
+                                    ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    },
+                                )
+                            }),
+                            buffer.parse_status(),
+                        )
+                    })
+                else {
                     continue;
                 };
 
-                let project_path = project
-                    .read_with(cx, |project, cx| project.find_project_path(&path, cx))
-                    .ok()
-                    .flatten();
-
                 // Check if this file should be excluded based on its worktree settings
-                if let Some(project_path) = &project_path {
-                    if cx.update(|cx| {
-                        let worktree_settings = WorktreeSettings::get(Some(project_path.into()), cx);
-                        worktree_settings.is_path_excluded(&project_path.path)
-                            || worktree_settings.is_path_private(&project_path.path)
-                    }) {
-                        continue;
-                    }
+                if cx.update(|cx| {
+                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                    worktree_settings.is_path_excluded(&project_path.path)
+                        || worktree_settings.is_path_private(&project_path.path)
+                }) {
+                    continue;
                 }
 
-                let abs_path = project_path.and_then(|project_path| {
-                    project
-                        .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
-                        .ok()
-                        .flatten()
-                });
+                let abs_path = project
+                    .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
+                    .ok()
+                    .flatten();
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await.map_err(|e| e.to_string())?;
