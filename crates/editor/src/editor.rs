@@ -1096,8 +1096,16 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     last_position_map: Option<Rc<PositionMap>>,
+    /// The right margin (vertical scrollbar + minimap width) the editor was
+    /// last laid out with, updated on every prepaint.
+    /// Used later in the frame by `SplitBufferHeadersElement` to shrink the
+    /// width available to buffer headers.
     last_right_margin: Pixels,
-    last_visible_horizontal_scrollbar: bool,
+    /// Whether the horizontal scrollbar was laid out as visible during the last
+    /// prepaint.
+    /// Used by `SplitBufferHeadersElement` to clip buffer headers so they don't
+    /// paint over the scrollbar.
+    last_horizontal_scrollbar_visible: bool,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
@@ -2267,7 +2275,7 @@ impl Editor {
             last_bounds: None,
             last_position_map: None,
             last_right_margin: Pixels::ZERO,
-            last_visible_horizontal_scrollbar: false,
+            last_horizontal_scrollbar_visible: false,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -2682,8 +2690,8 @@ impl Editor {
         self.last_right_margin
     }
 
-    pub(crate) fn last_visible_horizontal_scrollbar(&self) -> bool {
-        self.last_visible_horizontal_scrollbar
+    pub(crate) fn last_horizontal_scrollbar_visible(&self) -> bool {
+        self.last_horizontal_scrollbar_visible
     }
 
     pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {

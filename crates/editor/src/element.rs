@@ -9284,7 +9284,7 @@ impl Element for EditorElement {
                     self.editor.update(cx, |editor, _| {
                         editor.last_position_map = Some(position_map.clone());
                         editor.last_right_margin = right_margin;
-                        editor.last_visible_horizontal_scrollbar = visible_horizontal_scrollbar;
+                        editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
                     });
 
                     EditorLayout {

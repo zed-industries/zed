@@ -467,8 +467,8 @@ impl SplitBufferHeadersElement {
         // Left hand side and right hand side horizontal scrollbars are
         // independent, so we clip the bottom if either is visible.
         let horizontal_scrollbar_height =
-            (self.lhs_editor.read(cx).last_visible_horizontal_scrollbar()
-                || self.rhs_editor.read(cx).last_visible_horizontal_scrollbar())
+            (self.lhs_editor.read(cx).last_horizontal_scrollbar_visible()
+                || self.rhs_editor.read(cx).last_horizontal_scrollbar_visible())
             .then_some(self.style.scrollbar_width)
             .unwrap_or(Pixels::ZERO);
 
