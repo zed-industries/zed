@@ -85,24 +85,26 @@
           (#eq? @_key_type "string"))
       ]
       body: (literal_value
-        [
+        ([
           (literal_element
             (literal_value
-              (keyed_element
+              ((keyed_element
                 (literal_element
                   (identifier) @_field_name)
                 (literal_element
                   [
                     (interpreted_string_literal) @run @_table_test_case_name
                     (raw_string_literal) @run @_table_test_case_name
-                  ]))))
+                  ]))
+                ","?)+))
           (keyed_element
             (literal_element
               [
                 (interpreted_string_literal) @run @_table_test_case_name
                 (raw_string_literal) @run @_table_test_case_name
               ]))
-        ]))))
+        ] @run_item
+          ","?)+))))
   (for_statement
     (range_clause
       left: (expression_list
@@ -127,8 +129,7 @@
                 (selector_expression
                   operand: (identifier) @_tc_var
                   (#eq? @_tc_var @_loop_var_inner)
-                  field: (field_identifier) @_field_check
-                  (#eq? @_field_check @_field_name))
+                  field: (field_identifier) @_field_check)
                 (identifier) @_arg_var
                 (#eq? @_arg_var @_loop_var_outer)
               ]
@@ -162,24 +163,26 @@
           (#eq? @_key_type "string"))
       ]
       body: (literal_value
-        [
+        ([
           (literal_element
             (literal_value
-              (keyed_element
+              ((keyed_element
                 (literal_element
                   (identifier) @_field_name)
                 (literal_element
                   [
                     (interpreted_string_literal) @run @_table_test_case_name
                     (raw_string_literal) @run @_table_test_case_name
-                  ]))))
+                  ]))
+                ","?)+))
           (keyed_element
             (literal_element
               [
                 (interpreted_string_literal) @run @_table_test_case_name
                 (raw_string_literal) @run @_table_test_case_name
               ]))
-        ])))
+        ] @run_item
+          ","?)+)))
   body: (block
     (statement_list
       (expression_statement
@@ -194,8 +197,7 @@
               (selector_expression
                 operand: (identifier) @_tc_var
                 (#eq? @_tc_var @_loop_var_inner)
-                field: (field_identifier) @_field_check
-                (#eq? @_field_check @_field_name))
+                field: (field_identifier) @_field_check)
               (identifier) @_arg_var
               (#eq? @_arg_var @_loop_var_outer)
             ]

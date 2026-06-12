@@ -1,7 +1,8 @@
 use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
-    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
+    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString,
+    WindowBackgroundAppearance, pulsating_between,
 };
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -35,10 +36,12 @@ pub struct ThreadItemWorktreeInfo {
 pub struct ThreadItem {
     id: ElementId,
     icon: IconName,
+    icon_char: Option<SharedString>,
     icon_color: Option<Color>,
     icon_visible: bool,
     custom_icon_from_external_svg: Option<SharedString>,
     title: SharedString,
+    title_slot: Option<AnyElement>,
     title_label_color: Option<Color>,
     title_generating: bool,
     highlight_positions: Vec<usize>,
@@ -49,6 +52,7 @@ pub struct ThreadItem {
     focused: bool,
     hovered: bool,
     rounded: bool,
+    is_truncated: bool,
     added: Option<usize>,
     removed: Option<usize>,
     project_paths: Option<Arc<[PathBuf]>>,
@@ -67,10 +71,12 @@ impl ThreadItem {
         Self {
             id: id.into(),
             icon: IconName::ZedAgent,
+            icon_char: None,
             icon_color: None,
             icon_visible: true,
             custom_icon_from_external_svg: None,
             title: title.into(),
+            title_slot: None,
             title_label_color: None,
             title_generating: false,
             highlight_positions: Vec::new(),
@@ -81,6 +87,7 @@ impl ThreadItem {
             focused: false,
             hovered: false,
             rounded: false,
+            is_truncated: true,
             added: None,
             removed: None,
             project_paths: None,
@@ -102,6 +109,13 @@ impl ThreadItem {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = icon;
+        self
+    }
+
+    /// Renders the given character in place of the icon. Takes precedence over
+    /// [`Self::icon`] and [`Self::custom_icon_from_external_svg`].
+    pub fn icon_char(mut self, icon_char: impl Into<SharedString>) -> Self {
+        self.icon_char = Some(icon_char.into());
         self
     }
 
@@ -137,6 +151,11 @@ impl ThreadItem {
 
     pub fn title_label_color(mut self, color: Color) -> Self {
         self.title_label_color = Some(color);
+        self
+    }
+
+    pub fn title_slot(mut self, element: impl IntoElement) -> Self {
+        self.title_slot = Some(element.into_any_element());
         self
     }
 
@@ -200,6 +219,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn is_truncated(mut self, is_truncated: bool) -> Self {
+        self.is_truncated = is_truncated;
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -227,6 +251,11 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
+        // The fade gradient paints a solid color over the title to blend it into
+        // the row background, but a transparent window has no opaque surface to
+        // fade into, so it renders as a visible patch; truncate the title instead.
+        let opaque_window =
+            cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
         let sidebar_base_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
@@ -248,7 +277,7 @@ impl RenderOnce for ThreadItem {
         let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
             .width(px(64.0))
             .right(px(-10.0))
-            .gradient_stop(0.75)
+            .gradient_stop(0.7)
             .group_name("thread-item");
 
         let separator_color = Color::Custom(color.text_muted.opacity(0.4));
@@ -269,12 +298,21 @@ impl RenderOnce for ThreadItem {
                 .when(!icon_visible, |this| this.invisible())
         };
         let icon_color = self.icon_color.unwrap_or(Color::Muted);
-        let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
+        let agent_icon = if let Some(icon_char) = self.icon_char {
+            Label::new(icon_char)
+                .size(LabelSize::Small)
+                .color(icon_color)
+                .into_any_element()
+        } else if let Some(custom_svg) = self.custom_icon_from_external_svg {
             Icon::from_external_svg(custom_svg)
                 .color(icon_color)
                 .size(IconSize::Small)
+                .into_any_element()
         } else {
-            Icon::new(self.icon).color(icon_color).size(IconSize::Small)
+            Icon::new(self.icon)
+                .color(icon_color)
+                .size(IconSize::Small)
+                .into_any_element()
         };
 
         let status_icon = if self.status == AgentThreadStatus::Error {
@@ -317,7 +355,9 @@ impl RenderOnce for ThreadItem {
         let title = self.title;
         let highlight_positions = self.highlight_positions;
 
-        let title_label = if self.title_generating {
+        let title_label = if let Some(title_slot) = self.title_slot {
+            title_slot
+        } else if self.title_generating {
             Label::new(title)
                 .color(Color::Muted)
                 .with_animation(
@@ -331,10 +371,12 @@ impl RenderOnce for ThreadItem {
         } else if highlight_positions.is_empty() {
             Label::new(title)
                 .when_some(self.title_label_color, |label, color| label.color(color))
+                .when(!opaque_window, |label| label.truncate())
                 .into_any_element()
         } else {
             HighlightedLabel::new(title, highlight_positions)
                 .when_some(self.title_label_color, |label, color| label.color(color))
+                .when(!opaque_window, |label| label.truncate())
                 .into_any_element()
         };
 
@@ -403,6 +445,7 @@ impl RenderOnce for ThreadItem {
                 h_flex()
                     .min_w_0()
                     .w_full()
+                    .h_6()
                     .gap_2()
                     .justify_between()
                     .child(
@@ -414,24 +457,28 @@ impl RenderOnce for ThreadItem {
                             .child(icon)
                             .child(title_label),
                     )
-                    .child(gradient_overlay)
+                    .when(self.is_truncated && opaque_window, |this| {
+                        this.child(gradient_overlay)
+                    })
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
-                            let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
-                                .width(px(80.0))
-                                .right(px(8.))
-                                .gradient_stop(0.80)
-                                .group_name("thread-item");
-
                             this.child(
                                 h_flex()
                                     .relative()
                                     .pr_1p5()
+                                    .when(opaque_window, |this| {
+                                        this.child(
+                                            GradientFade::new(base_bg, hover_bg, hover_bg)
+                                                .width(px(120.0))
+                                                .right(px(8.))
+                                                .gradient_stop(0.90)
+                                                .group_name("thread-item"),
+                                        )
+                                    })
+                                    .child(slot)
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
-                                    })
-                                    .child(overlay)
-                                    .child(slot),
+                                    }),
                             )
                         })
                     }),
@@ -447,7 +494,6 @@ impl RenderOnce for ThreadItem {
                                     Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)),
                                 ),
                             )
-                            // .child(dot_separator())
                         })
                         .when(
                             has_project_name || has_project_paths || has_worktree,
@@ -593,7 +639,12 @@ impl Component for ThreadItem {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A row representing an agent thread in a list, showing its title, status, \
+        timestamp, and contextual metadata such as worktree and branch information."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let color = cx.theme().colors();
         let bg = color
             .title_bar_background
@@ -930,10 +981,8 @@ impl Component for ThreadItem {
             ),
         ];
 
-        Some(
-            example_group(thread_item_examples)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(thread_item_examples)
+            .vertical()
+            .into_any_element()
     }
 }

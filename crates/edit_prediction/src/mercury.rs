@@ -50,6 +50,7 @@ impl Mercury {
             events,
             related_files,
             debug_tx,
+            trigger,
             ..
         }: EditPredictionModelInput,
         credentials_provider: Arc<dyn CredentialsProvider>,
@@ -147,6 +148,7 @@ impl Mercury {
                 tools: vec![],
                 prompt_cache_key: None,
                 reasoning_effort: None,
+                service_tier: None,
             };
 
             let buf = serde_json::to_vec(&request_body)?;
@@ -254,6 +256,7 @@ impl Mercury {
                     Some(editable_range),
                     inputs,
                     None,
+                    trigger,
                     cx.background_executor().now() - request_start,
                     cx,
                 )

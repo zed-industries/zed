@@ -184,6 +184,9 @@ impl Editor {
             .range_to_buffer_ranges(visible_range)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer_snapshot, buffer_offset_range, excerpt_range)| {
+                (buffer_snapshot.clone(), buffer_offset_range, excerpt_range)
+            })
             .collect()
     }
 
@@ -592,6 +595,7 @@ impl Editor {
                 match_start: None,
                 snippet_deduplication_key: None,
                 icon_path: None,
+                icon_color: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
                     word_range,
@@ -599,6 +603,7 @@ impl Editor {
                 },
                 insert_text_mode: Some(InsertTextMode::AS_IS),
                 confirm: None,
+                group: None,
             }));
 
             completions.extend(
@@ -776,7 +781,8 @@ impl Editor {
 
         let candidate_id = {
             let entries = completions_menu.entries.borrow();
-            let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            let entry = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            let mat = entry.as_match()?;
             if self.show_edit_predictions_in_menu() {
                 self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
             }
@@ -909,7 +915,13 @@ impl Editor {
                 });
             }
             linked_edits.apply(cx);
-            editor.refresh_edit_prediction(true, false, window, cx);
+            editor.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::LSPCompletionAccepted,
+                window,
+                cx,
+            );
         });
         self.invalidate_autoclose_regions(
             &self.selections.disjoint_anchors_arc(),
@@ -1337,6 +1349,7 @@ fn snippet_completions(
                         filter_range: 0..matching_prefix.len(),
                     },
                     icon_path: None,
+                    icon_color: None,
                     documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                         single_line: snippet.name.clone().into(),
                         plain_text: snippet
@@ -1348,6 +1361,7 @@ fn snippet_completions(
                     confirm: None,
                     match_start: Some(start),
                     snippet_deduplication_key: Some((snippet_index, prefix_index)),
+                    group: None,
                 }
             }));
         }
