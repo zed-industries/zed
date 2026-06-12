@@ -1245,7 +1245,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             let path_prefix = if include_root_name {
                                 worktree.read(cx).root_name().into()
                             } else {
-                                RelPath::empty().into()
+                                RelPath::empty_arc()
                             };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
@@ -1500,6 +1500,11 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     command.requires_argument && argument.is_none();
                                 let group = show_section_headers.then(|| command.group());
 
+                                let icon_path = (command.category
+                                    == Some(acp_thread::CommandCategory::Native)
+                                    && command.name.as_ref() == agent::COMPACT_COMMAND_NAME)
+                                    .then(|| IconName::Compact.path().into());
+
                                 Completion {
                                     replace_range: source_range.clone(),
                                     new_text,
@@ -1510,7 +1515,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         ),
                                     ),
                                     source: project::CompletionSource::Custom,
-                                    icon_path: None,
+                                    icon_path,
                                     icon_color: None,
                                     match_start: None,
                                     snippet_deduplication_key: None,
@@ -2138,9 +2143,9 @@ pub(crate) fn search_files(
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
                         .map(|wt| wt.read(cx).root_name().into())
-                        .unwrap_or_else(|| RelPath::empty().into())
+                        .unwrap_or_else(|| RelPath::empty_arc())
                 } else {
-                    RelPath::empty().into()
+                    RelPath::empty_arc()
                 };
 
                 FileMatch {
@@ -2162,7 +2167,7 @@ pub(crate) fn search_files(
             let path_prefix: Arc<RelPath> = if include_root_name {
                 worktree.root_name().into()
             } else {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             };
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {
@@ -2458,9 +2463,7 @@ fn build_slash_item_label(
     };
     let mut builder = CodeLabelBuilder::default();
     builder.push_str(name, None);
-    // Two spaces gives a touch of breathing room between the name and
-    // the muted source label.
-    builder.push_str("  ", None);
+    builder.push_str(" ", None);
     builder.push_str(source, source_highlight_id);
     // The filter range defaults to the entire label after `build()`,
     // which would let the source text participate in fuzzy filtering.

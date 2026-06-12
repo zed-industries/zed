@@ -1,6 +1,8 @@
 use ai_onboarding::YoungAccountBanner;
-use anyhow::Result;
-use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
+use anyhow::{Result, anyhow};
+use client::{
+    Client, RefreshLlmTokenListener, TelemetrySettings, UserStore, global_llm_token, zed_urls,
+};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
@@ -52,6 +54,8 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
+            let organization_id =
+                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
             client
                 .cached_llm_token(&llm_api_token, organization_id)
                 .await
@@ -65,9 +69,19 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
+            let organization_id =
+                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
             client
                 .refresh_llm_token(&llm_api_token, organization_id)
                 .await
+        })
+    }
+
+    fn has_data_retention_consent(&self, cx: &impl AppContext) -> bool {
+        cx.read_global(|settings_store: &SettingsStore, _| {
+            settings_store
+                .get::<TelemetrySettings>(None)
+                .anthropic_retention
         })
     }
 }
@@ -332,7 +346,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                         | client::Status::Reauthenticated
                         | client::Status::Connected { .. }
                 ) {
-                    return Err(AuthenticateError::Other(anyhow::anyhow!(
+                    return Err(AuthenticateError::Other(anyhow!(
                         "sign-in did not complete: {current_status:?}"
                     )));
                 }
@@ -750,6 +764,7 @@ mod tests {
                         supports_tools: true,
                         supports_images: false,
                         supports_thinking: false,
+                        supports_disabling_thinking: false,
                         supports_fast_mode: false,
                         supported_effort_levels: Vec::new(),
                         supports_streaming_tools: false,

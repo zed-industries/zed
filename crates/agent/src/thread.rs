@@ -10,14 +10,12 @@ use crate::{
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
-use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
-use zed_env_vars::{EnvVar, env_var};
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, COMPACTION_PROMPT, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -70,16 +68,11 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
-const AGENT_COMPACTION_REMAINING_TOKEN_BUDGET: u64 = 40_000;
-
 /// Auto-compaction is only available for models whose context window is at least
 /// this large. For smaller models there isn't enough headroom for a compaction
 /// pass to be worthwhile, so we leave the thread uncompacted and let the UI warn
 /// the user instead.
 pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
-
-static AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR: std::sync::LazyLock<EnvVar> =
-    env_var!("AGENT_COMPACTION_REMAINING_TOKEN_BUDGET");
 
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
@@ -834,6 +827,10 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    ToolCallAuthorizationResolved {
+        tool_call_id: acp::ToolCallId,
+        outcome: acp_thread::SelectedPermissionOutcome,
+    },
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
@@ -1110,6 +1107,25 @@ pub struct ToolCallAuthorization {
     pub kind: acp_thread::AuthorizationKind,
 }
 
+fn auto_resolve_permission_outcome(
+    options: &acp_thread::PermissionOptions,
+    is_allow: bool,
+) -> Result<acp_thread::SelectedPermissionOutcome> {
+    let kind = if is_allow {
+        acp::PermissionOptionKind::AllowOnce
+    } else {
+        acp::PermissionOptionKind::RejectOnce
+    };
+    let option = options
+        .first_option_of_kind(kind)
+        .ok_or_else(|| anyhow!("permission prompt has no auto-resolution option"))?;
+
+    Ok(acp_thread::SelectedPermissionOutcome::new(
+        option.option_id.clone(),
+        option.kind,
+    ))
+}
+
 #[derive(Debug, thiserror::Error)]
 enum CompletionError {
     #[error("max tokens")]
@@ -1146,6 +1162,7 @@ pub struct Thread {
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
     /// the start of each request.
     current_request_token_usage: TokenUsage,
+    pending_compaction_telemetry: Option<CompactionTelemetry>,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
@@ -1279,6 +1296,7 @@ impl Thread {
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             current_request_token_usage: TokenUsage::default(),
+            pending_compaction_telemetry: None,
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
                 cx.foreground_executor()
@@ -1413,11 +1431,17 @@ impl Thread {
                     );
                     match info {
                         CompactionInfo::Summary(summary) => {
-                            stream.send_context_compaction(compaction_id.clone());
+                            stream.send_context_compaction(
+                                compaction_id.clone(),
+                                acp_thread::ContextCompactionStatus::Completed,
+                            );
                             stream.send_context_compaction_update(compaction_id.clone(), summary);
                         }
                         CompactionInfo::ProviderNative { .. } => {
-                            stream.send_context_compaction(compaction_id);
+                            stream.send_context_compaction(
+                                compaction_id,
+                                acp_thread::ContextCompactionStatus::Completed,
+                            );
                         }
                     }
                 }
@@ -1433,6 +1457,13 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
+        // A tool call left only with the canceled sentinel produced nothing useful
+        // (the sentinel is model-facing only, and is inserted exactly when a tool
+        // had no real result). Don't replay it into the UI at all.
+        if tool_result.is_some_and(Self::is_canceled_tool_result) {
+            return;
+        }
+
         let output = tool_result
             .as_ref()
             .and_then(|result| result.output.clone());
@@ -1528,6 +1559,18 @@ impl Thread {
                 .raw_output(output),
             None,
         );
+    }
+
+    /// A canceled tool result carries only the model-facing `TOOL_CANCELED_MESSAGE`
+    /// sentinel (inserted exactly when a tool had no real result). It's never
+    /// meaningful to the user, so we detect it to skip replaying the tool call.
+    fn is_canceled_tool_result(tool_result: &LanguageModelToolResult) -> bool {
+        tool_result.is_error
+            && matches!(
+                tool_result.content.as_slice(),
+                [LanguageModelToolResultContent::Text(text)]
+                    if text.as_ref() == TOOL_CANCELED_MESSAGE
+            )
     }
 
     fn tool_result_content_for_replay(
@@ -1632,6 +1675,7 @@ impl Thread {
             request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
             current_request_token_usage: TokenUsage::default(),
+            pending_compaction_telemetry: None,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
@@ -2225,6 +2269,10 @@ impl Thread {
             (model, request)
         });
 
+        if compaction.is_some() {
+            self.pending_compaction_telemetry = self.build_compaction_telemetry("manual", cx);
+        }
+
         self.clear_summary();
         cx.notify();
 
@@ -2252,13 +2300,27 @@ impl Thread {
                 // If we were cancelled, `cancel()` already took `running_turn`
                 // (possibly for a new turn), so leave it alone.
                 if *cancellation_rx.borrow() {
+                    this.update(cx, |this, _| {
+                        this.emit_compaction_telemetry_outcome("canceled", None)
+                    })
+                    .log_err();
                     return;
                 }
 
                 match result {
+                    // On success, the telemetry event is deferred until the next
+                    // completion reports usage (see `handle_completion_event`),
+                    // so we leave `pending_compaction_telemetry` in place here.
                     Ok(_) => event_stream.send_stop(acp::StopReason::EndTurn),
                     Err(error) => {
                         log::error!("Manual compaction failed: {:?}", error);
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome(
+                                "failed",
+                                Some(error.to_string()),
+                            )
+                        })
+                        .log_err();
                         event_stream.send_error(error);
                     }
                 }
@@ -2385,37 +2447,79 @@ impl Thread {
     ) -> Result<()> {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
+        // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
+        let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
         loop {
-            if cx.update(|cx| cx.has_flag::<HandoffFeatureFlag>()) {
-                match Self::perform_compaction_if_needed(
-                    this,
-                    event_stream,
-                    cancellation_rx.clone(),
-                    cx,
-                )
-                .await
-                {
-                    Ok(ControlFlow::Continue(())) => {}
-                    Ok(ControlFlow::Break(())) => return Ok(()),
-                    Err(error) => {
-                        log::error!("Compaction failed: {}", error);
-                        match error.downcast::<LanguageModelCompletionError>() {
-                            Ok(error) => {
-                                match Self::retry_completion_error(
-                                    this,
-                                    event_stream,
-                                    &mut cancellation_rx,
-                                    error,
-                                    attempt,
-                                    cx,
-                                )
-                                .await?
-                                {
-                                    ControlFlow::Break(()) => return Ok(()),
-                                    ControlFlow::Continue(()) => continue,
+            match Self::perform_compaction_if_needed(
+                this,
+                event_stream,
+                cancellation_rx.clone(),
+                cx,
+            )
+            .await
+            {
+                // On success the telemetry event is deferred until the
+                // completion below reports usage, so we can record an
+                // accurate post-compaction context size (see
+                // `handle_completion_event`).
+                Ok(ControlFlow::Continue(())) => {}
+                Ok(ControlFlow::Break(())) => {
+                    this.update(cx, |this, _| {
+                        this.emit_compaction_telemetry_outcome("canceled", None)
+                    })?;
+                    return Ok(());
+                }
+                Err(error) => {
+                    log::error!("Compaction failed: {}", error);
+                    let error_message = error.to_string();
+                    match error.downcast::<LanguageModelCompletionError>() {
+                        Ok(error) => {
+                            attempt += 1;
+                            match Self::retry_completion_error(
+                                this,
+                                event_stream,
+                                &mut cancellation_rx,
+                                error,
+                                attempt,
+                                cx,
+                            )
+                            .await
+                            {
+                                Ok(ControlFlow::Break(())) => {
+                                    this.update(cx, |this, _| {
+                                        this.emit_compaction_telemetry_outcome("canceled", None)
+                                    })?;
+                                    return Ok(());
+                                }
+                                Ok(ControlFlow::Continue(())) => {
+                                    this.update(cx, |this, _| {
+                                        if let Some(telemetry) =
+                                            this.pending_compaction_telemetry.as_mut()
+                                        {
+                                            telemetry.retries += 1;
+                                        }
+                                    })?;
+                                    continue;
+                                }
+                                Err(retry_error) => {
+                                    this.update(cx, |this, _| {
+                                        this.emit_compaction_telemetry_outcome(
+                                            "failed",
+                                            Some(error_message),
+                                        )
+                                    })?;
+                                    return Err(retry_error);
                                 }
                             }
-                            Err(error) => return Err(error),
+                        }
+                        Err(error) => {
+                            this.update(cx, |this, _| {
+                                this.emit_compaction_telemetry_outcome(
+                                    "failed",
+                                    Some(error_message),
+                                )
+                            })?;
+                            return Err(error);
                         }
                     }
                 }
@@ -2424,10 +2528,11 @@ impl Thread {
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
+            // If a refusal fallback is active, use that model instead.
             let (model, request) = this.update(cx, |this, cx| {
-                let model = this
-                    .model
+                let model = refusal_fallback_model
                     .clone()
+                    .or_else(|| this.model.clone())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
@@ -2457,6 +2562,7 @@ impl Thread {
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
+            let mut had_refusal = false;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
@@ -2538,6 +2644,14 @@ impl Thread {
 
                 tool_results.extend(batch_result.0);
                 if let Some(err) = batch_result.1 {
+                    let is_refusal = err
+                        .downcast_ref::<CompletionError>()
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
+                    if is_refusal {
+                        log::info!("Model refused request; checking for fallback model");
+                        had_refusal = true;
+                        break;
+                    }
                     error = Some(err.downcast()?);
                     break;
                 }
@@ -2562,6 +2676,59 @@ impl Thread {
                     running_turn.streaming_tool_inputs.drain();
                 }
             })?;
+
+            if had_refusal {
+                let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
+                    let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
+                    let fallback_id = match current_model.refusal_fallback_model_id() {
+                        Some(id) => id,
+                        None => {
+                            log::info!(
+                                "Refusal fallback: no fallback configured for model {} (provider {})",
+                                current_model.id().0,
+                                current_model.provider_id()
+                            );
+                            return None;
+                        }
+                    };
+                    let provider_id = current_model.provider_id();
+                    let found = LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .available_models(cx)
+                        .find(|m| {
+                            m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
+                        });
+                    if found.is_none() {
+                        log::info!(
+                            "Refusal fallback: fallback model {}/{} not found in available models",
+                            provider_id,
+                            fallback_id
+                        );
+                    }
+                    found
+                })?;
+
+                if let Some(fallback) = maybe_fallback {
+                    log::info!("Refusal fallback: retrying with {}", fallback.id().0);
+                    let fallback_name = fallback.name().0.clone();
+                    this.update(cx, |this, cx| {
+                        this.pending_message = None;
+                        this.set_model(fallback.clone(), cx);
+                    })?;
+                    event_stream.send_retry(acp_thread::RetryStatus {
+                        last_error: "Safety filter triggered".into(),
+                        attempt: 1,
+                        max_attempts: 1,
+                        started_at: Instant::now(),
+                        duration: Duration::MAX,
+                        meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
+                    });
+                    refusal_fallback_model = Some(fallback);
+                    continue;
+                }
+                log::info!("Request refused with no fallback model available");
+                return Err(CompletionError::Refusal.into());
+            }
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
 
@@ -2658,10 +2825,15 @@ impl Thread {
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
-            let insertion_ix = this.compaction_message_target_ix()?;
+            let insertion_ix = this.compaction_message_target_ix(cx)?;
             let model = this.model.clone()?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
+            // Preserve telemetry across retries so the retry count keeps
+            // accumulating rather than resetting on each attempt.
+            if this.pending_compaction_telemetry.is_none() {
+                this.pending_compaction_telemetry = this.build_compaction_telemetry("auto", cx);
+            }
             Some((model, request, insertion_ix))
         })?
         else {
@@ -2691,7 +2863,10 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         log::debug!("Running compaction");
         let compaction_id = acp_thread::ContextCompactionId(Uuid::new_v4().to_string().into());
-        event_stream.send_context_compaction(compaction_id.clone());
+        event_stream.send_context_compaction(
+            compaction_id.clone(),
+            acp_thread::ContextCompactionStatus::InProgress,
+        );
         let stream = futures::select! {
             result = model.stream_completion(request, cx).fuse() => result,
             _ = cancellation_rx.changed().fuse() => {
@@ -2755,6 +2930,10 @@ impl Thread {
         }
 
         log::debug!("Compaction succeeded:\n{summary}");
+        event_stream.update_context_compaction_status(
+            compaction_id,
+            acp_thread::ContextCompactionStatus::Completed,
+        );
 
         this.update(cx, |this, cx| {
             let compaction = Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())));
@@ -2855,6 +3034,7 @@ impl Thread {
             max_attempts: max_attempts as usize,
             started_at: Instant::now(),
             duration: delay,
+            meta: None,
         })
     }
 
@@ -2925,6 +3105,12 @@ impl Thread {
                     cache_creation_input_tokens = usage.cache_creation_input_tokens,
                     cache_read_input_tokens = usage.cache_read_input_tokens,
                 );
+                // A successful compaction defers its telemetry until the first
+                // completion that follows it, so `tokens_after` reflects the
+                // real post-compaction context size.
+                if let Some(telemetry) = self.pending_compaction_telemetry.take() {
+                    telemetry.emit("succeeded", None, Some(total_input_tokens(usage)));
+                }
                 self.update_token_usage(usage, cx);
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
@@ -3515,7 +3701,10 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
-            thinking_allowed: self.thinking_enabled,
+            // Models that can't run with thinking disabled ignore the
+            // toggle state, which may be stale from a previously selected
+            // model that could.
+            thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
         };
@@ -3765,11 +3954,59 @@ impl Thread {
             .rposition(|message| matches!(&**message, Message::Compaction(_)))
     }
 
-    fn compaction_message_target_ix(&self) -> Option<usize> {
+    /// Captures the data for an `"Agent Compaction Completed"` telemetry event
+    /// at the moment a compaction starts. Returns `None` if there's no model.
+    fn build_compaction_telemetry(
+        &self,
+        trigger: &'static str,
+        cx: &App,
+    ) -> Option<CompactionTelemetry> {
         let model = self.model.as_ref()?;
+        let auto_compact = AgentSettings::get_global(cx).auto_compact;
+        let max_tokens = model.max_token_count();
+        let tokens_before = self
+            .latest_request_token_usage()
+            .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
+        Some(CompactionTelemetry {
+            trigger,
+            thread_id: self.id.to_string(),
+            parent_thread_id: self.parent_thread_id().map(|id| id.to_string()),
+            prompt_id: self.prompt_id.to_string(),
+            model: model.telemetry_id(),
+            model_provider: model.provider_id().to_string(),
+            thinking_effort: self.thinking_effort.clone(),
+            max_tokens,
+            tokens_before,
+            auto_compact_enabled: auto_compact.enabled,
+            auto_compact_threshold: auto_compact.threshold.to_string(),
+            auto_compact_threshold_tokens: auto_compact_threshold_token_count(
+                auto_compact.threshold,
+                max_tokens,
+            ),
+            retries: 0,
+        })
+    }
+
+    /// Emits a pending compaction telemetry event for a non-success outcome
+    /// (`"failed"` or `"canceled"`), with no post-compaction token count. A
+    /// no-op if no compaction telemetry is pending.
+    fn emit_compaction_telemetry_outcome(&mut self, status: &'static str, error: Option<String>) {
+        if let Some(telemetry) = self.pending_compaction_telemetry.take() {
+            telemetry.emit(status, error, None);
+        }
+    }
+
+    fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
+        let auto_compact = AgentSettings::get_global(cx).auto_compact;
+        if !auto_compact.enabled {
+            return None;
+        }
+
+        let model = self.model.as_ref()?;
+        let max_token_count = model.max_token_count();
         // Models with a small context window don't leave enough headroom for a
         // compaction pass; the UI warns the user about the token limit instead.
-        if model.max_token_count() < MIN_COMPACTION_CONTEXT_WINDOW {
+        if max_token_count < MIN_COMPACTION_CONTEXT_WINDOW {
             return None;
         }
         let (usage_ix, usage) = {
@@ -3796,17 +4033,8 @@ impl Thread {
         }
 
         let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
-
-        let remaining_budget = AGENT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV_VAR
-            .value
-            .as_ref()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(AGENT_COMPACTION_REMAINING_TOKEN_BUDGET);
-
-        let compaction_threshold = model
-            .max_token_count()
-            .saturating_sub(model.max_output_tokens().unwrap_or_default())
-            .saturating_sub(remaining_budget);
+        let compaction_threshold =
+            auto_compact_threshold_token_count(auto_compact.threshold, max_token_count);
         if active_tokens < compaction_threshold {
             return None;
         }
@@ -4004,10 +4232,11 @@ impl Thread {
                     max_attempts: 3,
                 })
             }
-            Other(err) if err.is::<language_model::PaymentRequiredError>() => {
-                // Retrying won't help for Payment Required errors.
-                None
-            }
+            // Retrying won't help for Payment Required errors.
+            PaymentRequired => None,
+            // Retrying won't help until the user consents to data retention
+            // or switches models.
+            DataRetentionConsentRequired { .. } => None,
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
@@ -4022,6 +4251,67 @@ fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
         .saturating_add(usage.cache_read_input_tokens)
+}
+
+fn auto_compact_threshold_token_count(
+    threshold: AutoCompactThreshold,
+    max_token_count: u64,
+) -> u64 {
+    match threshold {
+        AutoCompactThreshold::Percentage(percent) => {
+            ((max_token_count as f64) * percent).ceil() as u64
+        }
+        AutoCompactThreshold::TokensUsed(tokens) => tokens,
+        AutoCompactThreshold::TokensRemaining(tokens) => {
+            max_token_count.saturating_sub(tokens).saturating_add(1)
+        }
+    }
+}
+
+/// Snapshot of the data needed to report an `"Agent Compaction Completed"`
+/// telemetry event, captured when a compaction starts.
+struct CompactionTelemetry {
+    /// `"auto"` for threshold-triggered compaction, `"manual"` for `/compact`.
+    trigger: &'static str,
+    thread_id: String,
+    parent_thread_id: Option<String>,
+    prompt_id: String,
+    model: String,
+    model_provider: String,
+    thinking_effort: Option<String>,
+    max_tokens: u64,
+    /// Tokens in the context window immediately before compaction.
+    tokens_before: Option<u64>,
+    auto_compact_enabled: bool,
+    auto_compact_threshold: String,
+    auto_compact_threshold_tokens: u64,
+    /// Number of times the compaction request was retried before the final
+    /// outcome.
+    retries: u32,
+}
+
+impl CompactionTelemetry {
+    fn emit(self, status: &'static str, error: Option<String>, tokens_after: Option<u64>) {
+        telemetry::event!(
+            "Agent Compaction Completed",
+            trigger = self.trigger,
+            status = status,
+            error = error,
+            thread_id = self.thread_id,
+            parent_thread_id = self.parent_thread_id,
+            prompt_id = self.prompt_id,
+            model = self.model,
+            model_provider = self.model_provider,
+            thinking_effort = self.thinking_effort,
+            max_tokens = self.max_tokens,
+            tokens_before = self.tokens_before,
+            tokens_after = tokens_after,
+            auto_compact_enabled = self.auto_compact_enabled,
+            auto_compact_threshold = self.auto_compact_threshold,
+            auto_compact_threshold_tokens = self.auto_compact_threshold_tokens,
+            retries = self.retries,
+        );
+    }
 }
 
 fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
@@ -4622,14 +4912,35 @@ impl ThreadEventStream {
             .ok();
     }
 
+    fn resolve_tool_call_authorization(
+        &self,
+        tool_use_id: &LanguageModelToolUseId,
+        outcome: acp_thread::SelectedPermissionOutcome,
+    ) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ToolCallAuthorizationResolved {
+                tool_call_id: acp::ToolCallId::new(tool_use_id.to_string()),
+                outcome,
+            }))
+            .ok();
+    }
+
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
     }
 
-    fn send_context_compaction(&self, id: acp_thread::ContextCompactionId) {
+    fn send_context_compaction(
+        &self,
+        id: acp_thread::ContextCompactionId,
+        status: acp_thread::ContextCompactionStatus,
+    ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ContextCompaction(
-                acp_thread::ContextCompaction { id, summary: None },
+                acp_thread::ContextCompaction {
+                    id,
+                    status,
+                    summary: None,
+                },
             )))
             .ok();
     }
@@ -4644,6 +4955,23 @@ impl ThreadEventStream {
                 acp_thread::ContextCompactionUpdate {
                     id,
                     summary_delta: summary_delta.to_string(),
+                    status: None,
+                },
+            )))
+            .ok();
+    }
+
+    fn update_context_compaction_status(
+        &self,
+        id: acp_thread::ContextCompactionId,
+        status: acp_thread::ContextCompactionStatus,
+    ) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ContextCompactionUpdate(
+                acp_thread::ContextCompactionUpdate {
+                    id,
+                    summary_delta: String::new(),
+                    status: Some(status),
                 },
             )))
             .ok();
@@ -4763,6 +5091,11 @@ impl ToolCallEventStream {
     ) {
         self.stream
             .update_tool_call_fields(&self.tool_use_id, fields, meta);
+    }
+
+    pub fn resolve_authorization(&self, outcome: acp_thread::SelectedPermissionOutcome) {
+        self.stream
+            .resolve_tool_call_authorization(&self.tool_use_id, outcome);
     }
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
@@ -4950,6 +5283,10 @@ impl ToolCallEventStream {
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
+        let auto_allow_outcome = match auto_resolve_permission_outcome(&options, true) {
+            Ok(outcome) => outcome,
+            Err(error) => return Task::ready(Err(error)),
+        };
         cx.spawn(async move |cx| {
             let (response_tx, mut response_rx) = oneshot::channel();
             if let Err(error) = stream
@@ -5006,11 +5343,9 @@ impl ToolCallEventStream {
                             cx,
                         )) {
                             drop(response_rx);
-                            stream.update_tool_call_fields(
+                            stream.resolve_tool_call_authorization(
                                 &tool_use_id,
-                                acp::ToolCallUpdateFields::new()
-                                    .status(acp::ToolCallStatus::InProgress),
-                                None,
+                                auto_allow_outcome.clone(),
                             );
                             return Ok(());
                         }
@@ -5199,6 +5534,17 @@ impl ToolCallEventStream {
         let fs = self.fs.clone();
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
+        let auto_resolution_outcomes = if check_settings.is_some() {
+            match (
+                auto_resolve_permission_outcome(&options, true),
+                auto_resolve_permission_outcome(&options, false),
+            ) {
+                (Ok(allow), Ok(deny)) => Some((allow, deny)),
+                (Err(error), _) | (_, Err(error)) => return Task::ready(Err(error)),
+            }
+        } else {
+            None
+        };
         cx.spawn(async move |cx| {
             let (response_tx, mut response_rx) = oneshot::channel();
             if let Err(error) = stream
@@ -5227,6 +5573,9 @@ impl ToolCallEventStream {
 
                 return Self::persist_permission_outcome(&outcome, fs, cx);
             };
+            let Some((auto_allow_outcome, auto_deny_outcome)) = auto_resolution_outcomes else {
+                return Err(anyhow!("missing auto-resolution outcomes"));
+            };
 
             let (mut settings_tx, mut settings_rx) = watch::channel(());
             let _settings_subscription = cx.update(|cx| {
@@ -5254,28 +5603,24 @@ impl ToolCallEventStream {
                     }
                     _ = settings_changed.fuse() => {
                         // On auto-resolve, we dismiss the prompt UI by
-                        // replacing the tool call's `WaitingForConfirmation`
-                        // status with `InProgress` (or `Failed`). Dropping
-                        // `response_rx` closes the `oneshot` held by the
-                        // UI, so any late click by the user is a no-op.
+                        // resolving the tool call's `WaitingForConfirmation`
+                        // status with an internal selected outcome. Dropping
+                        // `response_rx` prevents the synthetic response from
+                        // being delivered back into this loop.
                         match cx.update(|cx| check_settings(cx)) {
                             ToolPermissionDecision::Allow => {
                                 drop(response_rx);
-                                stream.update_tool_call_fields(
+                                stream.resolve_tool_call_authorization(
                                     &tool_use_id,
-                                    acp::ToolCallUpdateFields::new()
-                                        .status(acp::ToolCallStatus::InProgress),
-                                    None,
+                                    auto_allow_outcome.clone(),
                                 );
                                 return Ok(());
                             }
                             ToolPermissionDecision::Deny(reason) => {
                                 drop(response_rx);
-                                stream.update_tool_call_fields(
+                                stream.resolve_tool_call_authorization(
                                     &tool_use_id,
-                                    acp::ToolCallUpdateFields::new()
-                                        .status(acp::ToolCallStatus::Failed),
-                                    None,
+                                    auto_deny_outcome.clone(),
                                 );
                                 return Err(anyhow!(reason));
                             }
@@ -5421,6 +5766,21 @@ impl ToolCallEventStreamReceiver {
             update.fields
         } else {
             panic!("Expected update fields but got: {:?}", event);
+        }
+    }
+
+    pub async fn expect_authorization_resolved(
+        &mut self,
+    ) -> (acp::ToolCallId, acp_thread::SelectedPermissionOutcome) {
+        let event = self.0.next().await;
+        if let Some(Ok(ThreadEvent::ToolCallAuthorizationResolved {
+            tool_call_id,
+            outcome,
+        })) = event
+        {
+            (tool_call_id, outcome)
+        } else {
+            panic!("Expected authorization resolved but got: {:?}", event);
         }
     }
 
@@ -5599,6 +5959,12 @@ mod tests {
         })
     }
 
+    fn set_auto_compact_settings(cx: &mut App, auto_compact: agent_settings::AutoCompactSettings) {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.auto_compact = auto_compact;
+        AgentSettings::override_global(settings, cx);
+    }
+
     #[test]
     fn test_summary_compaction_renders_for_request_and_markdown() {
         let message = Message::Compaction(CompactionInfo::Summary("Older context".into()));
@@ -5654,12 +6020,54 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_compaction_threshold_uses_latest_reported_usage(cx: &mut TestAppContext) {
+    async fn test_compaction_threshold_uses_percentage_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let user_message_id = UserMessageId::new();
 
         cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "below limit"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 899_999,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 900_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_respects_enabled_setting(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: false,
+                    threshold: AutoCompactThreshold::Percentage(0.9),
+                },
+            );
             thread.update(cx, |thread, cx| {
                 thread.set_model(model, cx);
                 thread
@@ -5673,35 +6081,77 @@ mod tests {
                     },
                 );
 
-                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
     }
 
     #[gpui::test]
-    async fn test_compaction_threshold_reserves_max_output_tokens(cx: &mut TestAppContext) {
+    async fn test_compaction_threshold_respects_token_settings(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        model.set_max_token_count(272_000);
-        model.set_max_output_tokens(Some(128_000));
         let user_message_id = UserMessageId::new();
 
         cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: AutoCompactThreshold::TokensUsed(100_000),
+                },
+            );
             thread.update(cx, |thread, cx| {
                 thread.set_model(model, cx);
                 thread.messages.push(user_text_message(
                     user_message_id.clone(),
-                    "near output-reserved limit",
+                    "fixed token limit",
                 ));
                 thread.request_token_usage.insert(
                     user_message_id.clone(),
                     language_model::TokenUsage {
-                        input_tokens: 105_000,
+                        input_tokens: 99_999,
                         ..Default::default()
                     },
                 );
 
-                assert_eq!(thread.compaction_message_target_ix(), Some(1));
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 100_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+
+                set_auto_compact_settings(
+                    cx,
+                    agent_settings::AutoCompactSettings {
+                        enabled: true,
+                        threshold: AutoCompactThreshold::TokensRemaining(20_000),
+                    },
+                );
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 980_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 980_001,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
             });
         });
     }
@@ -5728,7 +6178,7 @@ mod tests {
                     },
                 );
 
-                assert_eq!(thread.compaction_message_target_ix(), None);
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
     }
@@ -5743,7 +6193,6 @@ mod tests {
         let new_user_message_id = UserMessageId::new();
 
         cx.update(|cx| {
-            cx.update_flags(true, vec!["handoff".to_string()]);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
                 thread
@@ -5830,7 +6279,7 @@ mod tests {
                     .push(user_text_message(user_message_id.clone(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
                 // Auto-compaction would be a no-op here.
-                assert_eq!(thread.compaction_message_target_ix(), None);
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
             });
         });
 
@@ -6059,7 +6508,6 @@ mod tests {
         };
 
         cx.update(|cx| {
-            cx.update_flags(true, vec!["handoff".to_string()]);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
                 thread
@@ -6439,6 +6887,48 @@ mod tests {
                 PathBuf::from("/tmp/secret"),
             ]
         );
+    }
+
+    #[test]
+    fn test_auto_resolve_permission_outcome_uses_once_only_options() {
+        let options = acp_thread::PermissionOptions::Dropdown(vec![
+            acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("always_allow:test_tool"),
+                    "Always allow",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("always_deny:test_tool"),
+                    "Always deny",
+                    acp::PermissionOptionKind::RejectAlways,
+                ),
+                sub_patterns: vec![],
+            },
+            acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("allow"),
+                    "Allow once",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("deny"),
+                    "Deny once",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+                sub_patterns: vec![],
+            },
+        ]);
+
+        let allow = auto_resolve_permission_outcome(&options, true)
+            .expect("allow auto-resolve should use once-only option");
+        assert_eq!(allow.option_id, acp::PermissionOptionId::new("allow"));
+        assert_eq!(allow.option_kind, acp::PermissionOptionKind::AllowOnce);
+
+        let deny = auto_resolve_permission_outcome(&options, false)
+            .expect("deny auto-resolve should use once-only option");
+        assert_eq!(deny.option_id, acp::PermissionOptionId::new("deny"));
+        assert_eq!(deny.option_kind, acp::PermissionOptionKind::RejectOnce);
     }
 
     #[gpui::test]

@@ -453,7 +453,7 @@ impl ProjectPath {
     pub fn root_path(worktree_id: WorktreeId) -> Self {
         Self {
             worktree_id,
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         }
     }
 
@@ -3217,6 +3217,19 @@ impl Project {
         }
         self.git_store
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_staged_diff(buffer, cx))
     }
 
     #[ztracing::instrument(skip_all)]
@@ -6372,7 +6385,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
         } else {
-            RelPath::empty().into()
+            RelPath::empty_arc()
         }
     }
 
@@ -6447,7 +6460,7 @@ impl<'a> fuzzy_nucleo::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
         } else {
-            RelPath::empty().into()
+            RelPath::empty_arc()
         }
     }
     fn root_is_file(&self) -> bool {

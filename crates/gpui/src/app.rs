@@ -23,8 +23,8 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-#[cfg(any(test, feature = "test-support"))]
-pub use bench_context::{BenchAppContext, BenchWindowContext};
+#[cfg(feature = "bench")]
+pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
 pub use entity_map::*;
@@ -58,7 +58,7 @@ use crate::{
 };
 
 mod async_context;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "bench")]
 mod bench_context;
 mod context;
 mod entity_map;
@@ -1489,7 +1489,7 @@ impl App {
                     }
                 }
             } else {
-                #[cfg(any(test, feature = "test-support"))]
+                #[cfg(any(test, feature = "test-support", feature = "bench"))]
                 for window in self
                     .windows
                     .values()
