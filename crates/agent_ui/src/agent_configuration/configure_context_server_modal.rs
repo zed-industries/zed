@@ -307,17 +307,46 @@ fn context_server_http_input(
         |oauth| {
             let mut lines = vec![
                 String::from("\n    \"oauth\": {"),
-
                 format!("      \"client_id\": {},", serde_json::to_string(&oauth.client_id).unwrap()),
             ];
-            if let Some(client_secret) = oauth.client_secret {
+            if let Some(client_secret) = &oauth.client_secret {
                 lines.push(format!(
-                    "      \"client_secret\": {}",
-                    serde_json::to_string(&client_secret).unwrap()
+                    "      \"client_secret\": {},",
+                    serde_json::to_string(client_secret).unwrap()
                 ));
             } else {
                 lines.push(String::from(
-                    "      /// Optional client secret for confidential clients\n      // \"client_secret\": \"your-client-secret\"",
+                    "      /// Optional client secret for confidential clients\n      // \"client_secret\": \"your-client-secret\",",
+                ));
+            }
+            if let Some(authorize_url) = &oauth.authorize_url {
+                lines.push(format!(
+                    "      \"authorize_url\": {},",
+                    serde_json::to_string(authorize_url).unwrap()
+                ));
+            } else {
+                lines.push(String::from(
+                    "      /// Explicit OAuth authorization endpoint (skips .well-known discovery)\n      // \"authorize_url\": \"https://accounts.google.com/o/oauth2/v2/auth\",",
+                ));
+            }
+            if let Some(token_url) = &oauth.token_url {
+                lines.push(format!(
+                    "      \"token_url\": {},",
+                    serde_json::to_string(token_url).unwrap()
+                ));
+            } else {
+                lines.push(String::from(
+                    "      /// Explicit OAuth token endpoint\n      // \"token_url\": \"https://oauth2.googleapis.com/token\",",
+                ));
+            }
+            if let Some(scope) = &oauth.scope {
+                lines.push(format!(
+                    "      \"scope\": {}",
+                    serde_json::to_string(scope).unwrap()
+                ));
+            } else {
+                lines.push(String::from(
+                    "      /// OAuth scope(s) to request (space-separated)\n      // \"scope\": \"https://www.googleapis.com/auth/cloud-platform\"",
                 ));
             }
             lines.push(String::from("    },"));
@@ -1405,6 +1434,9 @@ mod tests {
             Some(OAuthClientSettings {
                 client_id: String::from("client-id"),
                 client_secret: Some(String::from("client-secret")),
+                authorize_url: None,
+                token_url: None,
+                scope: None,
             }),
         )));
 
@@ -1412,5 +1444,42 @@ mod tests {
         let oauth = oauth.expect("oauth should be present");
         assert_eq!(oauth.client_id, "client-id");
         assert_eq!(oauth.client_secret.as_deref(), Some("client-secret"));
+    }
+
+    #[test]
+    fn context_server_http_input_preserves_explicit_oauth_urls() {
+        let text = context_server_http_input(Some((
+            ContextServerId("gke-mcp".into()),
+            String::from("https://container.googleapis.com/mcp"),
+            HashMap::default(),
+            Some(OAuthClientSettings {
+                client_id: String::from("my-client-id.apps.googleusercontent.com"),
+                client_secret: None,
+                authorize_url: Some(String::from("https://accounts.google.com/o/oauth2/v2/auth")),
+                token_url: Some(String::from("https://oauth2.googleapis.com/token")),
+                scope: Some(String::from(
+                    "https://www.googleapis.com/auth/cloud-platform",
+                )),
+            }),
+        )));
+
+        let (id, url, _, oauth) = parse_http_input(&text).unwrap();
+        assert_eq!(id, ContextServerId("gke-mcp".into()));
+        assert_eq!(url, "https://container.googleapis.com/mcp");
+        let oauth = oauth.expect("oauth should be present");
+        assert_eq!(oauth.client_id, "my-client-id.apps.googleusercontent.com");
+        assert_eq!(oauth.client_secret, None);
+        assert_eq!(
+            oauth.authorize_url.as_deref(),
+            Some("https://accounts.google.com/o/oauth2/v2/auth")
+        );
+        assert_eq!(
+            oauth.token_url.as_deref(),
+            Some("https://oauth2.googleapis.com/token")
+        );
+        assert_eq!(
+            oauth.scope.as_deref(),
+            Some("https://www.googleapis.com/auth/cloud-platform")
+        );
     }
 }
