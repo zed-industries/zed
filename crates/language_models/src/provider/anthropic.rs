@@ -27,6 +27,53 @@ pub use settings::AnthropicAvailableModel as AvailableModel;
 const PROVIDER_ID: LanguageModelProviderId = ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ANTHROPIC_PROVIDER_NAME;
 
+fn append_anthropic_beta_header(
+    beta_headers: Option<String>,
+    beta_header: &'static str,
+) -> Option<String> {
+    let mut headers = beta_headers
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|header| !header.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    if !headers.iter().any(|header| header == beta_header) {
+        headers.push(beta_header.to_string());
+    }
+
+    if headers.is_empty() {
+        None
+    } else {
+        Some(headers.join(","))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_anthropic_beta_header_preserves_existing_headers_without_duplicates() {
+        assert_eq!(
+            append_anthropic_beta_header(
+                Some("fast-mode-2026-02-01, server-side-fallback-2026-06-01".to_string()),
+                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
+            ),
+            Some("fast-mode-2026-02-01,server-side-fallback-2026-06-01".to_string())
+        );
+        assert_eq!(
+            append_anthropic_beta_header(
+                Some("fast-mode-2026-02-01".to_string()),
+                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
+            ),
+            Some("fast-mode-2026-02-01,server-side-fallback-2026-06-01".to_string())
+        );
+    }
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
     pub api_url: String,
@@ -396,7 +443,14 @@ impl AnthropicModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
-        let beta_headers = self.model.beta_headers();
+        let beta_headers = if request.fallbacks.is_empty() {
+            self.model.beta_headers()
+        } else {
+            append_anthropic_beta_header(
+                self.model.beta_headers(),
+                anthropic::SERVER_SIDE_FALLBACK_BETA_HEADER,
+            )
+        };
 
         async move {
             let Some(api_key) = api_key else {
@@ -535,6 +589,11 @@ impl LanguageModel for AnthropicModel {
         );
         if !self.model.supports_speed {
             request.speed = None;
+        }
+        if request.model.starts_with(anthropic::FABLE_MODEL_ID_PREFIX) {
+            request.fallbacks = vec![anthropic::Fallback {
+                model: anthropic::FABLE_FALLBACK_MODEL_ID.to_string(),
+            }];
         }
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {

@@ -191,6 +191,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
+                                Ok(LanguageModelCompletionEvent::Fallback { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..

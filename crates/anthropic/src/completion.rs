@@ -26,7 +26,7 @@ pub enum AnthropicPromptCacheMode {
 
 fn set_cache_control(content: &mut RequestContent, cache_control: Option<CacheControl>) -> bool {
     match content {
-        RequestContent::RedactedThinking { .. } => false,
+        RequestContent::Fallback { .. } | RequestContent::RedactedThinking { .. } => false,
         RequestContent::Text {
             cache_control: target,
             ..
@@ -63,6 +63,13 @@ fn mark_last_cacheable_content(content: &mut [RequestContent], cache_control: Ca
 
 fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
     match content {
+        MessageContent::Fallback {
+            from_model,
+            to_model,
+        } => Some(RequestContent::Fallback {
+            from: crate::FallbackEndpoint { model: from_model },
+            to: crate::FallbackEndpoint { model: to_model },
+        }),
         MessageContent::Text(text) => {
             let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
                 text.trim_end().to_string()
@@ -261,6 +268,7 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
+        fallbacks: Vec::new(),
         system,
         // Opt into Anthropic's automatic prompt caching for the conversation
         // tail. Omitting `ttl` uses the default (short) TTL, which refreshes
@@ -356,6 +364,12 @@ impl AnthropicEventMapper {
                 index,
                 content_block,
             } => match content_block {
+                ResponseContent::Fallback { from, to } => {
+                    vec![Ok(LanguageModelCompletionEvent::Fallback {
+                        from_model: from.model.into(),
+                        to_model: to.model.into(),
+                    })]
+                }
                 ResponseContent::Text { text } => {
                     vec![Ok(LanguageModelCompletionEvent::Text(text))]
                 }
@@ -526,7 +540,79 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::AnthropicModelMode;
-    use language_model_core::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+    use language_model_core::{
+        LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRequestMessage,
+        MessageContent,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn test_fallback_blocks_are_mapped_to_completion_events() {
+        let mut mapper = AnthropicEventMapper::new();
+        let events = mapper.map_event(Event::ContentBlockStart {
+            index: 0,
+            content_block: ResponseContent::Fallback {
+                from: crate::FallbackEndpoint {
+                    model: "claude-fable-5".to_string(),
+                },
+                to: crate::FallbackEndpoint {
+                    model: "claude-opus-4-8".to_string(),
+                },
+            },
+        });
+
+        let [
+            Ok(LanguageModelCompletionEvent::Fallback {
+                from_model,
+                to_model,
+            }),
+        ] = events.as_slice()
+        else {
+            panic!("expected a fallback event, got {events:?}");
+        };
+        assert_eq!(from_model.as_ref(), "claude-fable-5");
+        assert_eq!(to_model.as_ref(), "claude-opus-4-8");
+    }
+
+    #[test]
+    fn test_fallbacks_serialize_on_request() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let mut anthropic_request = into_anthropic(
+            request,
+            "claude-fable-5".to_string(),
+            1.0,
+            4_096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
+        );
+        anthropic_request.fallbacks = vec![crate::Fallback {
+            model: "claude-opus-4-8".to_string(),
+        }];
+
+        let serialized = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(
+            serialized.get("fallbacks"),
+            Some(&json!([{ "model": "claude-opus-4-8" }]))
+        );
+    }
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -585,7 +671,7 @@ mod tests {
                 | RequestContent::Image { cache_control, .. }
                 | RequestContent::ToolUse { cache_control, .. }
                 | RequestContent::ToolResult { cache_control, .. } => *cache_control,
-                RequestContent::RedactedThinking { .. } => None,
+                RequestContent::Fallback { .. } | RequestContent::RedactedThinking { .. } => None,
             };
             assert!(
                 cache_control.is_none(),

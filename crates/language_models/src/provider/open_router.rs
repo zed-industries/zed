@@ -442,8 +442,9 @@ pub fn into_open_router(
                     &mut messages,
                     reasoning_details_for_message.clone(),
                 ),
-                MessageContent::Thinking { .. } => {}
-                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Fallback { .. }
+                | MessageContent::Thinking { .. }
+                | MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {

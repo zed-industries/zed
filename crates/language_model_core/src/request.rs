@@ -251,6 +251,10 @@ impl From<LanguageModelImage> for LanguageModelToolResultContent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
+    Fallback {
+        from_model: String,
+        to_model: String,
+    },
     Text(String),
     Thinking {
         text: String,
@@ -265,6 +269,7 @@ pub enum MessageContent {
 impl MessageContent {
     pub fn is_empty(&self) -> bool {
         match self {
+            MessageContent::Fallback { .. } => false,
             MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
             MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
             MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
@@ -301,6 +306,7 @@ impl LanguageModelRequestMessage {
         let mut buffer = String::new();
         for content in &self.content {
             match content {
+                MessageContent::Fallback { .. } => {}
                 MessageContent::Text(text) => {
                     buffer.push_str(text);
                 }

@@ -390,7 +390,7 @@ pub fn into_mistral(
                                 });
                             }
                         }
-                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
@@ -448,7 +448,7 @@ pub fn into_mistral(
                                 });
                             }
                         }
-                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
                         MessageContent::ToolUse(tool_use) => {
                             let tool_call = mistral::ToolCall {
@@ -502,7 +502,7 @@ pub fn into_mistral(
                                 });
                             }
                         }
-                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_)
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {

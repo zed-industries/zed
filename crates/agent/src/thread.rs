@@ -540,6 +540,7 @@ impl AgentMessage {
 
         for content in &self.content {
             match content {
+                AgentMessageContent::Fallback { .. } => {}
                 AgentMessageContent::Text(text) => {
                     markdown.push_str(text);
                     markdown.push('\n');
@@ -608,28 +609,52 @@ impl AgentMessage {
             cache: false,
             reasoning_details: self.reasoning_details.clone(),
         };
-        for chunk in &self.content {
+        let final_fallback_index = self
+            .content
+            .iter()
+            .rposition(|chunk| matches!(chunk, AgentMessageContent::Fallback { .. }));
+        let mut included_tool_use_ids = HashSet::default();
+
+        for (index, chunk) in self.content.iter().enumerate() {
+            let before_final_fallback =
+                final_fallback_index.is_some_and(|fallback_index| index < fallback_index);
             match chunk {
+                AgentMessageContent::Fallback {
+                    from_model,
+                    to_model,
+                } => {
+                    assistant_message
+                        .content
+                        .push(language_model::MessageContent::Fallback {
+                            from_model: from_model.clone(),
+                            to_model: to_model.clone(),
+                        });
+                }
                 AgentMessageContent::Text(text) => {
                     assistant_message
                         .content
                         .push(language_model::MessageContent::Text(text.clone()));
                 }
                 AgentMessageContent::Thinking { text, signature } => {
-                    assistant_message
-                        .content
-                        .push(language_model::MessageContent::Thinking {
-                            text: text.clone(),
-                            signature: signature.clone(),
-                        });
+                    if !before_final_fallback {
+                        assistant_message
+                            .content
+                            .push(language_model::MessageContent::Thinking {
+                                text: text.clone(),
+                                signature: signature.clone(),
+                            });
+                    }
                 }
                 AgentMessageContent::RedactedThinking(value) => {
-                    assistant_message.content.push(
-                        language_model::MessageContent::RedactedThinking(value.clone()),
-                    );
+                    if !before_final_fallback {
+                        assistant_message.content.push(
+                            language_model::MessageContent::RedactedThinking(value.clone()),
+                        );
+                    }
                 }
                 AgentMessageContent::ToolUse(tool_use) => {
-                    if self.tool_results.contains_key(&tool_use.id) {
+                    if !before_final_fallback && self.tool_results.contains_key(&tool_use.id) {
+                        included_tool_use_ids.insert(tool_use.id.clone());
                         assistant_message
                             .content
                             .push(language_model::MessageContent::ToolUse(tool_use.clone()));
@@ -646,6 +671,12 @@ impl AgentMessage {
         };
 
         for tool_result in self.tool_results.values() {
+            if final_fallback_index.is_some()
+                && !included_tool_use_ids.contains(&tool_result.tool_use_id)
+            {
+                continue;
+            }
+
             let mut tool_result = tool_result.clone();
             // Surprisingly, the API fails if we return an empty string here.
             // It thinks we are sending a tool use without a tool result.
@@ -677,6 +708,10 @@ pub struct AgentMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentMessageContent {
+    Fallback {
+        from_model: String,
+        to_model: String,
+    },
     Text(String),
     Thinking {
         text: String,
@@ -1131,7 +1166,7 @@ enum CompletionError {
     #[error("max tokens")]
     MaxTokens,
     #[error("refusal")]
-    Refusal,
+    Refusal { server_side_fallback: bool },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -1408,6 +1443,7 @@ impl Thread {
                 Message::Agent(assistant_message) => {
                     for content in &assistant_message.content {
                         match content {
+                            AgentMessageContent::Fallback { .. } => {}
                             AgentMessageContent::Text(text) => stream.send_text(text),
                             AgentMessageContent::Thinking { text, .. } => {
                                 stream.send_thinking(text)
@@ -2418,7 +2454,14 @@ impl Thread {
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
                         match error.downcast::<CompletionError>() {
-                            Ok(CompletionError::Refusal) => {
+                            Ok(CompletionError::Refusal {
+                                server_side_fallback,
+                            }) => {
+                                if server_side_fallback {
+                                    log::info!(
+                                        "Turn ended in refusal after server-side fallback was attempted"
+                                    );
+                                }
                                 event_stream.send_stop(acp::StopReason::Refusal);
                                 _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
                             }
@@ -2646,7 +2689,7 @@ impl Thread {
                 if let Some(err) = batch_result.1 {
                     let is_refusal = err
                         .downcast_ref::<CompletionError>()
-                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal { .. }));
                     if is_refusal {
                         log::info!("Model refused request; checking for fallback model");
                         had_refusal = true;
@@ -2678,6 +2721,22 @@ impl Thread {
             })?;
 
             if had_refusal {
+                let server_side_fallback = this.update(cx, |this, _| {
+                    this.pending_message.as_ref().is_some_and(|message| {
+                        message
+                            .content
+                            .iter()
+                            .any(|content| matches!(content, AgentMessageContent::Fallback { .. }))
+                    })
+                })?;
+                if server_side_fallback {
+                    log::info!("Request refused after server-side fallback was already attempted");
+                    return Err(CompletionError::Refusal {
+                        server_side_fallback: true,
+                    }
+                    .into());
+                }
+
                 let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
                     let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
                     let fallback_id = match current_model.refusal_fallback_model_id() {
@@ -2727,7 +2786,10 @@ impl Thread {
                     continue;
                 }
                 log::info!("Request refused with no fallback model available");
-                return Err(CompletionError::Refusal.into());
+                return Err(CompletionError::Refusal {
+                    server_side_fallback: false,
+                }
+                .into());
             }
 
             let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
@@ -2907,6 +2969,7 @@ impl Thread {
                     })?;
                 }
                 LanguageModelCompletionEvent::Stop(_)
+                | LanguageModelCompletionEvent::Fallback { .. }
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Thinking { .. }
@@ -3056,6 +3119,10 @@ impl Thread {
                 self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
+            Fallback {
+                from_model,
+                to_model,
+            } => self.handle_fallback_event(from_model, to_model),
             Text(new_text) => self.handle_text_event(new_text, event_stream),
             Thinking { text, signature } => {
                 self.handle_thinking_event(text, signature, event_stream)
@@ -3113,13 +3180,32 @@ impl Thread {
                 }
                 self.update_token_usage(usage, cx);
             }
-            Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
+            Stop(StopReason::Refusal) => {
+                let server_side_fallback = self.pending_message.as_ref().is_some_and(|message| {
+                    message
+                        .content
+                        .iter()
+                        .any(|content| matches!(content, AgentMessageContent::Fallback { .. }))
+                });
+                return Err(CompletionError::Refusal {
+                    server_side_fallback,
+                }
+                .into());
+            }
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
             Started | Queued { .. } => {}
         }
 
         Ok(None)
+    }
+
+    fn handle_fallback_event(&mut self, from_model: Arc<str>, to_model: Arc<str>) {
+        let last_message = self.pending_message();
+        last_message.content.push(AgentMessageContent::Fallback {
+            from_model: from_model.to_string(),
+            to_model: to_model.to_string(),
+        });
     }
 
     fn handle_text_event(&mut self, new_text: String, event_stream: &ThreadEventStream) {
@@ -4322,7 +4408,8 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             MessageContent::Text(text) => text.len(),
             MessageContent::Image(image) => image.len(),
             // These can never occur in a user message
-            MessageContent::Thinking { .. }
+            MessageContent::Fallback { .. }
+            | MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_) => 0,
@@ -4358,7 +4445,8 @@ fn truncate_user_message_to_byte_budget(
                 }
             }
             // These can never occur in a user message
-            MessageContent::Thinking { .. }
+            MessageContent::Fallback { .. }
+            | MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_) => {}
@@ -5963,6 +6051,94 @@ mod tests {
         let mut settings = AgentSettings::get_global(cx).clone();
         settings.auto_compact = auto_compact;
         AgentSettings::override_global(settings, cx);
+    }
+
+    #[test]
+    fn agent_message_to_request_preserves_fallback_boundary_and_strips_invalid_prefix_blocks() {
+        let dropped_tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("dropped".to_string()),
+            name: Arc::from("dropped_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let kept_tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("kept".to_string()),
+            name: Arc::from("kept_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(
+            dropped_tool_use.id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: dropped_tool_use.id.clone(),
+                tool_name: dropped_tool_use.name.clone(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "dropped result",
+                ))],
+                output: None,
+            },
+        );
+        tool_results.insert(
+            kept_tool_use.id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: kept_tool_use.id.clone(),
+                tool_name: kept_tool_use.name.clone(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "kept result",
+                ))],
+                output: None,
+            },
+        );
+
+        let message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Thinking {
+                    text: "drop thinking".to_string(),
+                    signature: Some("signature".to_string()),
+                },
+                AgentMessageContent::ToolUse(dropped_tool_use),
+                AgentMessageContent::Text("keep text".to_string()),
+                AgentMessageContent::Fallback {
+                    from_model: "claude-fable-5".to_string(),
+                    to_model: "claude-opus-4-8".to_string(),
+                },
+                AgentMessageContent::Thinking {
+                    text: "keep thinking".to_string(),
+                    signature: Some("fallback-signature".to_string()),
+                },
+                AgentMessageContent::ToolUse(kept_tool_use),
+            ],
+            tool_results,
+            reasoning_details: None,
+        };
+
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 2);
+        assert!(matches!(
+            &request_messages[0].content[..],
+            [
+                MessageContent::Text(text),
+                MessageContent::Fallback { from_model, to_model },
+                MessageContent::Thinking { text: thinking, .. },
+                MessageContent::ToolUse(tool_use),
+            ] if text == "keep text"
+                && from_model == "claude-fable-5"
+                && to_model == "claude-opus-4-8"
+                && thinking == "keep thinking"
+                && tool_use.id.to_string() == "kept"
+        ));
+        assert!(matches!(
+            &request_messages[1].content[..],
+            [MessageContent::ToolResult(tool_result)]
+                if tool_result.tool_use_id.to_string() == "kept"
+        ));
     }
 
     #[test]

@@ -82,7 +82,7 @@ pub fn into_open_ai(
                         }
                     }
                 }
-                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         MessagePart::Image {
@@ -335,7 +335,9 @@ fn append_message_to_response_items(
             MessageContent::Text(text) => {
                 push_response_text_part(&role, text, &mut content_parts);
             }
-            MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
+            MessageContent::Fallback { .. }
+            | MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }

@@ -36,6 +36,10 @@ pub enum LanguageModelCompletionEvent {
     },
     Started,
     Stop(StopReason),
+    Fallback {
+        from_model: Arc<str>,
+        to_model: Arc<str>,
+    },
     Text(String),
     Thinking {
         text: String,
