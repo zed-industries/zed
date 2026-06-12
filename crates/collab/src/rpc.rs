@@ -30,7 +30,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use collections::{HashMap, HashSet};
+use collections::{HashSet, TypeIdHashMap};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
@@ -313,7 +313,7 @@ pub struct Server {
     peer: Arc<Peer>,
     pub connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    handlers: HashMap<TypeId, MessageHandler>,
+    handlers: TypeIdHashMap<MessageHandler>,
     teardown: watch::Sender<bool>,
 }
 
@@ -2685,7 +2685,7 @@ async fn get_users(
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
-            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         })
@@ -2723,7 +2723,7 @@ async fn fuzzy_search_users(
         .filter(|user| user.id != session.user_id())
         .map(|user| proto::User {
             id: user.id.to_proto(),
-            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         })

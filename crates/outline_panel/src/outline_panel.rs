@@ -2567,7 +2567,7 @@ impl OutlinePanel {
                 depth,
                 annotation_range: None,
                 range: search_data.context_range.clone(),
-                text: search_data.context_text.clone(),
+                text: search_data.context_text.clone().into(),
                 source_range_for_text: search_data.context_range.clone(),
                 highlight_ranges: search_data
                     .highlights_data
@@ -4786,9 +4786,9 @@ impl OutlinePanel {
             };
 
             v_flex()
-                .flex_shrink()
+                .flex_shrink_1()
                 .size_full()
-                .child(list_contents.size_full().flex_shrink())
+                .child(list_contents.size_full().flex_shrink_1())
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle.clone())
@@ -8121,7 +8121,7 @@ outline: struct Foo  <==== selected
         // Helper function to move the cursor to the first column of a given row
         // and return the selected outline entry's text.
         let move_cursor_and_get_selection =
-            |row: u32, cx: &mut VisualTestContext| -> Option<String> {
+            |row: u32, cx: &mut VisualTestContext| -> Option<SharedString> {
                 cx.update(|window, cx| {
                     editor.update(cx, |editor, cx| {
                         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

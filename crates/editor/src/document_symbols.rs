@@ -284,7 +284,7 @@ fn highlights_from_buffer(
         .collect::<String>();
 
     let mut outline_text_highlights = Vec::new();
-    match search_text.find(outline_text) {
+    match search_text.find(outline_text.as_str()) {
         Some(start_index) => {
             let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
             let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());

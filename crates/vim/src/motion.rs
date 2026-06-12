@@ -2609,9 +2609,6 @@ fn matching(
     display_point: DisplayPoint,
     match_quotes: bool,
 ) -> DisplayPoint {
-    if !map.is_singleton() {
-        return display_point;
-    }
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
@@ -2648,6 +2645,11 @@ fn matching(
 
     let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
 
+    // The filter receives buffer-local ranges, not multibuffer offsets.
+    let buffer_offset = snapshot
+        .point_to_buffer_offset(offset)
+        .map(|(_, buffer_offset)| buffer_offset);
+
     let make_range_filter = |require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot,
               opening_range: Range<BufferOffset>,
@@ -2664,8 +2666,9 @@ fn matching(
             if require_on_bracket {
                 // Attempt to find the smallest enclosing bracket range that also contains
                 // the offset, which only happens if the cursor is currently in a bracket.
-                opening_range.contains(&BufferOffset(offset.0))
-                    || closing_range.contains(&BufferOffset(offset.0))
+                buffer_offset.is_some_and(|buffer_offset| {
+                    opening_range.contains(&buffer_offset) || closing_range.contains(&buffer_offset)
+                })
             } else {
                 true
             }
@@ -3406,7 +3409,9 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::Inlay;
+    use editor::{
+        Editor, EditorMode, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext,
+    };
     use gpui::KeyBinding;
     use indoc::indoc;
     use language::Point;
@@ -3551,6 +3556,85 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
+    }
+
+    #[gpui::test]
+    async fn test_matching_in_multibuffer(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [
+                    (
+                        "fn a() {\n    let x = 1;\n}\n",
+                        vec![Point::row_range(0..3)],
+                    ),
+                    (
+                        "fn b() {\n    let y = 2;\n}\n",
+                        vec![Point::row_range(0..3)],
+                    ),
+                ],
+                cx,
+            );
+
+            let buffer_ids = multi_buffer
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .map(|excerpt| excerpt.context.start.buffer_id)
+                .collect::<Vec<_>>();
+
+            for buffer_id in buffer_ids {
+                if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(Some(language::rust_lang()), cx);
+                    });
+                }
+            }
+
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+
+        let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+        cx.simulate_keystrokes("j j j j f {");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            fn a() {
+                let x = 1;
+            }
+            [EXCERPT]
+            fn b() ˇ{
+                let y = 2;
+            }
+            "
+        });
+
+        cx.simulate_keystrokes("%");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            fn a() {
+                let x = 1;
+            }
+            [EXCERPT]
+            fn b() {
+                let y = 2;
+            ˇ}
+            "
+        });
+
+        cx.simulate_keystrokes("%");
+        cx.assert_excerpts_with_selections(indoc! {"
+            [EXCERPT]
+            fn a() {
+                let x = 1;
+            }
+            [EXCERPT]
+            fn b() ˇ{
+                let y = 2;
+            }
+            "
+        });
     }
 
     #[gpui::test]

@@ -71,6 +71,123 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// Threshold at which agent auto-compaction runs. See
+/// [`AutoCompactSettingsContent::threshold`] for the accepted formats.
+///
+/// The canonical textual form is stored verbatim so it can round-trip through
+/// the settings UI; it is serialized back as a JSON string for percentages and
+/// as a JSON integer for token counts.
+#[derive(Clone, Debug, PartialEq, Eq, MergeFrom)]
+pub struct AutoCompactThreshold(pub String);
+
+impl From<String> for AutoCompactThreshold {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<AutoCompactThreshold> for String {
+    fn from(value: AutoCompactThreshold) -> Self {
+        value.0
+    }
+}
+
+impl AsRef<str> for AutoCompactThreshold {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for AutoCompactThreshold {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.ends_with('%') {
+            serializer.serialize_str(&self.0)
+        } else if let Ok(tokens) = self.0.parse::<i64>() {
+            serializer.serialize_i64(tokens)
+        } else {
+            serializer.serialize_str(&self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AutoCompactThreshold {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ThresholdVisitor;
+
+        impl serde::de::Visitor<'_> for ThresholdVisitor {
+            type Value = AutoCompactThreshold;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter
+                    .write_str("a percentage string like \"90%\" or an integer number of tokens")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_owned()))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+        }
+
+        deserializer.deserialize_any(ThresholdVisitor)
+    }
+}
+
+impl JsonSchema for AutoCompactThreshold {
+    fn schema_name() -> Cow<'static, str> {
+        "AutoCompactThreshold".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "string",
+                    "pattern": "^\\d+(\\.\\d+)?%$"
+                },
+                {
+                    "type": "integer"
+                }
+            ]
+        })
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct AutoCompactSettingsContent {
+    /// Whether to automatically compact the agent's context when it grows too
+    /// large, summarizing earlier messages to free up room in the model's
+    /// context window.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// The threshold at which auto-compaction runs. This is one of:
+    ///
+    /// - A percentage string ending in `%`, e.g. `"90%"`, measured against the
+    ///   model's context window. `"90%"` compacts once the context is 90% full.
+    /// - A positive integer: compaction runs once that many tokens have been
+    ///   used. For example, `100000` compacts after 100,000 tokens are used.
+    /// - A negative integer: compaction runs once that many tokens remain in
+    ///   the context window. For example, `-20000` compacts once there are
+    ///   fewer than 20,000 tokens of headroom left in the context window.
+    ///
+    /// `0` is not a valid threshold.
+    ///
+    /// Default: "90%"
+    pub threshold: Option<AutoCompactThreshold>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -84,7 +201,7 @@ pub struct AgentSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the agent panel.
     ///
-    /// Default: left
+    /// Default: left (Agentic layout), right (Classic layout)
     pub dock: Option<DockPosition>,
     /// Whether the agent panel should use flexible (proportional) sizing.
     ///
@@ -131,6 +248,9 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Custom instructions to include in the prompt when generating git commit messages.
+    /// Applied in addition to any project rules files (such as `.rules` or `AGENTS.md`).
+    pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
@@ -162,6 +282,10 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
+    /// Settings for automatic agent context compaction, which summarizes
+    /// earlier messages to free up room in the model's context window once the
+    /// context grows too large.
+    pub auto_compact: Option<AutoCompactSettingsContent>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true
@@ -211,6 +335,11 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+
+    /// Persistent sandbox permission grants for agent-run terminal commands.
+    /// These are populated when choosing "Allow always" from a sandbox
+    /// escalation prompt.
+    pub sandbox_permissions: Option<SandboxPermissionsContent>,
 }
 
 impl AgentSettingsContent {
@@ -312,6 +441,35 @@ impl AgentSettingsContent {
                 case_sensitive: None,
             });
         }
+    }
+
+    pub fn allow_sandbox_network(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_network = Some(true);
+    }
+
+    pub fn allow_sandbox_fs_write_all(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_fs_write_all = Some(true);
+    }
+
+    pub fn allow_sandbox_unsandboxed(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_unsandboxed = Some(true);
+    }
+
+    pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
+        let write_paths = &mut self
+            .sandbox_permissions
+            .get_or_insert_default()
+            .write_paths
+            .get_or_insert_default()
+            .0;
+
+        util::paths::insert_subtree(write_paths, path);
     }
 }
 
@@ -495,19 +653,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -537,19 +682,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -565,6 +697,30 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SandboxPermissionsContent {
+    /// Whether sandboxed terminal commands may always use outbound network
+    /// access without prompting.
+    /// Default: false
+    pub allow_network: Option<bool>,
+
+    /// Whether sandboxed terminal commands may always write anywhere on the
+    /// filesystem without prompting.
+    /// Default: false
+    pub allow_fs_write_all: Option<bool>,
+
+    /// Whether terminal commands may always run outside the sandbox without
+    /// prompting when they request `unsandboxed: true`.
+    /// Default: false
+    pub allow_unsandboxed: Option<bool>,
+
+    /// Directory subtrees that sandboxed terminal commands may always write
+    /// to without prompting. Paths written by Zed are absolute.
+    /// Default: []
+    pub write_paths: Option<ExtendingVec<PathBuf>>,
 }
 
 #[with_fallible_options]
@@ -831,5 +987,50 @@ mod tests {
         let always_deny = terminal_rules.always_deny.as_ref().unwrap();
         assert_eq!(always_deny.0.len(), 1);
         assert_eq!(always_deny.0[0].pattern, "^rm\\s");
+    }
+
+    #[test]
+    fn test_allow_sandbox_permissions_create_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.sandbox_permissions.is_none());
+
+        settings.allow_sandbox_network();
+        settings.allow_sandbox_fs_write_all();
+        settings.allow_sandbox_unsandboxed();
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+
+        let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
+        assert_eq!(sandbox_permissions.allow_network, Some(true));
+        assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
+        assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
+        assert_eq!(
+            sandbox_permissions
+                .write_paths
+                .as_ref()
+                .unwrap()
+                .0
+                .as_slice(),
+            &[PathBuf::from("/tmp/build")]
+        );
+    }
+
+    #[test]
+    fn test_add_sandbox_write_path_prunes_redundant_paths() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/cache"));
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/output"));
+
+        let write_paths = settings
+            .sandbox_permissions
+            .as_ref()
+            .unwrap()
+            .write_paths
+            .as_ref()
+            .unwrap()
+            .0
+            .as_slice();
+        assert_eq!(write_paths, &[PathBuf::from("/tmp/build")]);
     }
 }

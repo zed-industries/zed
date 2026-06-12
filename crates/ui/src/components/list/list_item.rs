@@ -336,7 +336,7 @@ impl RenderOnce for ListItem {
                     }))
                     .child(
                         h_flex()
-                            .flex_grow()
+                            .flex_grow_1()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
                             .gap(DynamicSpacing::Base06.rems(cx))
@@ -354,16 +354,16 @@ impl RenderOnce for ListItem {
                     .when_some(self.end_slot, |this, end_slot| {
                         this.child(match self.end_slot_visibility {
                             EndSlotVisibility::Always => {
-                                h_flex().flex_shrink().overflow_hidden().child(end_slot)
+                                h_flex().flex_shrink_1().overflow_hidden().child(end_slot)
                             }
                             EndSlotVisibility::OnHover => h_flex()
-                                .flex_shrink()
+                                .flex_shrink_1()
                                 .overflow_hidden()
                                 .visible_on_hover("list_item")
                                 .child(end_slot),
                             EndSlotVisibility::SwapOnHover(hover_slot) => h_flex()
                                 .relative()
-                                .flex_shrink()
+                                .flex_shrink_1()
                                 .child(h_flex().visible_on_hover("list_item").child(hover_slot))
                                 .child(
                                     h_flex()
