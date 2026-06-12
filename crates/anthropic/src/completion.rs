@@ -12,8 +12,9 @@ use std::str::FromStr;
 
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
-    CacheTtl, ContentDelta, Event, ImageSource, Message, RequestContent, ResponseContent,
-    StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
+    CacheTtl, ContentDelta, Event, FallbackModel, ImageSource, Message, RequestContent,
+    ResponseContent, StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent,
+    ToolResultPart, Usage,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,8 +68,8 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             from_model,
             to_model,
         } => Some(RequestContent::Fallback {
-            from: crate::FallbackModel { model: from_model },
-            to: crate::FallbackModel { model: to_model },
+            from: FallbackModel { model: from_model },
+            to: FallbackModel { model: to_model },
         }),
         MessageContent::Text(text) => {
             let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
@@ -369,8 +370,8 @@ impl AnthropicEventMapper {
             } => match content_block {
                 ResponseContent::Fallback { from, to } => {
                     vec![Ok(LanguageModelCompletionEvent::Fallback {
-                        from_model: from.model.into(),
-                        to_model: to.model.into(),
+                        from_model: from.model,
+                        to_model: to.model,
                     })]
                 }
                 ResponseContent::Text { text } => {
@@ -550,7 +551,7 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AnthropicModelMode;
+    use crate::{AnthropicModelMode, MessageDelta, StopDetails};
     use language_model_core::{
         LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRequestMessage,
         MessageContent,
@@ -563,10 +564,10 @@ mod tests {
         let events = mapper.map_event(Event::ContentBlockStart {
             index: 0,
             content_block: ResponseContent::Fallback {
-                from: crate::FallbackModel {
+                from: FallbackModel {
                     model: "claude-fable-5".to_string(),
                 },
-                to: crate::FallbackModel {
+                to: FallbackModel {
                     model: "claude-opus-4-8".to_string(),
                 },
             },
@@ -581,8 +582,8 @@ mod tests {
         else {
             panic!("expected a fallback event, got {events:?}");
         };
-        assert_eq!(from_model.as_ref(), "claude-fable-5");
-        assert_eq!(to_model.as_ref(), "claude-opus-4-8");
+        assert_eq!(from_model, "claude-fable-5");
+        assert_eq!(to_model, "claude-opus-4-8");
     }
 
     #[test]
@@ -606,7 +607,7 @@ mod tests {
             AnthropicModelMode::Default,
             AnthropicPromptCacheMode::Automatic,
         );
-        anthropic_request.fallbacks = vec![crate::FallbackModel {
+        anthropic_request.fallbacks = vec![FallbackModel {
             model: "claude-opus-4-8".to_string(),
         }];
 
@@ -621,10 +622,10 @@ mod tests {
     fn test_refusal_with_credit_token_emits_credit_event_before_stop() {
         let mut mapper = AnthropicEventMapper::new();
         let events = mapper.map_event(Event::MessageDelta {
-            delta: crate::MessageDelta {
+            delta: MessageDelta {
                 stop_reason: Some("refusal".to_string()),
                 stop_sequence: None,
-                stop_details: Some(crate::StopDetails {
+                stop_details: Some(StopDetails {
                     fallback_credit_token: Some("credit-token".to_string()),
                 }),
             },

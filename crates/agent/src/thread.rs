@@ -2587,7 +2587,12 @@ impl Thread {
                 this.pending_fallback_credit_token = None;
                 anyhow::Ok((model, request))
             })??;
+            // The retry deliberately resends the conversation as-is instead of
+            // echoing the refusal's partial output (the `fallback_has_prefill_claim`
+            // continuation shape documented for fallback credit): Zed discards
+            // partial output on refusal, so the fallback model answers from scratch.
             request.fallback_credit_token = fallback_credit_token.take();
+            let request_carried_credit_token = request.fallback_credit_token.is_some();
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -2748,12 +2753,7 @@ impl Thread {
                         }
                     };
                     let provider_id = current_model.provider_id();
-                    let found = LanguageModelRegistry::global(cx)
-                        .read(cx)
-                        .available_models(cx)
-                        .find(|m| {
-                            m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
-                        });
+                    let found = find_available_model(provider_id.clone(), fallback_id, cx);
                     if found.is_none() {
                         log::info!(
                             "Refusal fallback: fallback model {}/{} not found in available models",
@@ -2771,14 +2771,7 @@ impl Thread {
                         this.pending_message = None;
                         this.set_model(fallback.clone(), cx);
                     })?;
-                    event_stream.send_retry(acp_thread::RetryStatus {
-                        last_error: "Safety filter triggered".into(),
-                        attempt: 1,
-                        max_attempts: 1,
-                        started_at: Instant::now(),
-                        duration: Duration::MAX,
-                        meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
-                    });
+                    event_stream.send_retry(refusal_fallback_retry_status(&fallback_name));
                     refusal_fallback_model = Some(fallback);
                     continue;
                 }
@@ -2811,6 +2804,14 @@ impl Thread {
             }
 
             if let Some(error) = error {
+                // The credit is best-effort: if the API rejects the redemption
+                // (e.g. because the rebuilt request no longer matches the refused
+                // one), forfeit it and resend the same request without the token
+                // rather than surfacing an error for a request that would succeed.
+                if request_carried_credit_token && Self::is_bad_request_error(&error) {
+                    log::info!("Fallback credit token rejected; retrying without it");
+                    continue;
+                }
                 attempt += 1;
                 match Self::retry_completion_error(
                     this,
@@ -3197,8 +3198,8 @@ impl Thread {
 
     fn handle_fallback_event(
         &mut self,
-        from_model: Arc<str>,
-        to_model: Arc<str>,
+        from_model: String,
+        to_model: String,
         event_stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
@@ -3208,29 +3209,16 @@ impl Thread {
             .model
             .as_ref()
             .and_then(|current_model| {
-                LanguageModelRegistry::global(cx)
-                    .read(cx)
-                    .available_models(cx)
-                    .find(|model| {
-                        model.provider_id() == current_model.provider_id()
-                            && model.id().0.as_ref() == to_model.as_ref()
-                    })
+                find_available_model(current_model.provider_id(), &to_model, cx)
             })
             .map(|model| model.name().0.to_string())
-            .unwrap_or_else(|| to_model.to_string());
-        event_stream.send_retry(acp_thread::RetryStatus {
-            last_error: "Safety filter triggered".into(),
-            attempt: 1,
-            max_attempts: 1,
-            started_at: Instant::now(),
-            duration: Duration::MAX,
-            meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
-        });
+            .unwrap_or_else(|| to_model.clone());
+        event_stream.send_retry(refusal_fallback_retry_status(&fallback_name));
 
         let last_message = self.pending_message();
         last_message.content.push(AgentMessageContent::Fallback {
-            from_model: from_model.to_string(),
-            to_model: to_model.to_string(),
+            from_model,
+            to_model,
         });
     }
 
@@ -4253,6 +4241,23 @@ impl Thread {
         self.prompt_id = PromptId::new();
     }
 
+    /// Whether the error is the provider rejecting the request itself (HTTP
+    /// 400). After a fallback credit redemption attempt, this means the token
+    /// (or the body shape it requires) was not accepted.
+    fn is_bad_request_error(error: &LanguageModelCompletionError) -> bool {
+        use http_client::StatusCode;
+        match error {
+            LanguageModelCompletionError::BadRequestFormat { .. } => true,
+            LanguageModelCompletionError::UpstreamProviderError { status, .. } => {
+                *status == StatusCode::BAD_REQUEST
+            }
+            LanguageModelCompletionError::HttpResponseError { status_code, .. } => {
+                *status_code == StatusCode::BAD_REQUEST
+            }
+            _ => false,
+        }
+    }
+
     fn retry_strategy_for(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
         use LanguageModelCompletionError::*;
         use http_client::StatusCode;
@@ -4356,6 +4361,30 @@ impl Thread {
                 max_attempts: 2,
             }),
         }
+    }
+}
+
+fn find_available_model(
+    provider_id: LanguageModelProviderId,
+    model_id: &str,
+    cx: &App,
+) -> Option<Arc<dyn LanguageModel>> {
+    LanguageModelRegistry::global(cx)
+        .read(cx)
+        .available_models(cx)
+        .find(|model| model.provider_id() == provider_id && model.id().0.as_ref() == model_id)
+}
+
+/// The retry notification shown when a refusal is retried on a fallback
+/// model, whether the retry happens client-side or server-side.
+fn refusal_fallback_retry_status(fallback_model_name: &str) -> acp_thread::RetryStatus {
+    acp_thread::RetryStatus {
+        last_error: "Safety filter triggered".into(),
+        attempt: 1,
+        max_attempts: 1,
+        started_at: Instant::now(),
+        duration: Duration::MAX,
+        meta: Some(acp_thread::meta_with_refusal_fallback(fallback_model_name)),
     }
 }
 
