@@ -9,6 +9,7 @@ use language::{CharClassifier, CharKind};
 use text::Bias;
 
 use crate::helix::object::HelixTextObject;
+use crate::object::innermost_surrounding_pair;
 
 /// Text objects (after helix definition) that can easily be
 /// found by reading a buffer and comparing two neighboring chars
@@ -286,6 +287,59 @@ pub enum ImmediateBoundary {
     SingleQuotes,
     SquareBrackets,
     VerticalBars,
+}
+
+const PAIR_BOUNDARIES: [ImmediateBoundary; 8] = [
+    ImmediateBoundary::Parentheses,
+    ImmediateBoundary::SquareBrackets,
+    ImmediateBoundary::CurlyBrackets,
+    ImmediateBoundary::AngleBrackets,
+    ImmediateBoundary::DoubleQuotes,
+    ImmediateBoundary::SingleQuotes,
+    ImmediateBoundary::BackQuotes,
+    ImmediateBoundary::VerticalBars,
+];
+
+/// The closest surrounding pair of any type, like Helix's `m` text object.
+/// The current pair is matched via the language's bracket queries; only
+/// `next_range`/`previous_range` scan the text, since "the next pair" is not
+/// an enclosing-brackets question.
+pub struct NearestPair;
+
+impl HelixTextObject for NearestPair {
+    fn range(
+        &self,
+        map: &DisplaySnapshot,
+        relative_to: Range<DisplayPoint>,
+        around: bool,
+    ) -> Option<Range<DisplayPoint>> {
+        let pair = innermost_surrounding_pair(map, relative_to)?;
+        Some(pair.to_display_range(map, around))
+    }
+
+    fn next_range(
+        &self,
+        map: &DisplaySnapshot,
+        relative_to: Range<DisplayPoint>,
+        around: bool,
+    ) -> Option<Range<DisplayPoint>> {
+        PAIR_BOUNDARIES
+            .iter()
+            .filter_map(|pair| pair.next_range(map, relative_to.clone(), around))
+            .min_by_key(|range| range.start.to_offset(map, Bias::Left))
+    }
+
+    fn previous_range(
+        &self,
+        map: &DisplaySnapshot,
+        relative_to: Range<DisplayPoint>,
+        around: bool,
+    ) -> Option<Range<DisplayPoint>> {
+        PAIR_BOUNDARIES
+            .iter()
+            .filter_map(|pair| pair.previous_range(map, relative_to.clone(), around))
+            .max_by_key(|range| range.end.to_offset(map, Bias::Right))
+    }
 }
 
 /// A textobject whose start and end can be found from an easy-to-find
