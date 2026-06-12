@@ -2654,6 +2654,21 @@ mod tests {
         open_new, open_paths, pane,
     };
 
+    /// Uses the real Windows platform (headless) so the timer is driven by the
+    /// actual `WindowsDispatcher` and its WinRT threadpool, rather than GPUI's
+    /// test dispatcher. If the threadpool silently drops a scheduled runnable
+    /// (e.g. `ThreadPool::RunWithPriorityAsync` fails and `.log_err()` swallows
+    /// it), awaiting the timer panics with "Task polled after completion".
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_timer_on_real_windows_dispatcher() {
+        use gpui::Platform as _;
+
+        let platform = gpui_platform::current_platform(true);
+        let executor = platform.background_executor();
+        futures::executor::block_on(executor.timer(Duration::from_millis(10)));
+    }
+
     async fn flush_workspace_serialization(
         window: &WindowHandle<MultiWorkspace>,
         cx: &mut TestAppContext,
