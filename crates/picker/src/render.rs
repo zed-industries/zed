@@ -25,6 +25,12 @@ impl<D: PickerDelegate> Render for Picker<D> {
             self.shape = Shape::centered_and_relative(pos, window);
         }
 
+        let layout = self
+            .preview
+            .as_ref()
+            .map(|preview| preview.layout)
+            .unwrap_or(PreviewLayout::Hidden);
+
         let content = match &self.preview {
             Some(
                 preview @ Preview {
@@ -63,11 +69,11 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     })
                     .child(content),
             )
-            .child(self.render_resize::<Left>(window, cx))
-            .child(self.render_resize::<Right>(window, cx))
-            .child(self.render_resize::<Bottom>(window, cx))
-            .child(self.render_resize::<LeftCorner>(window, cx))
-            .child(self.render_resize::<RightCorner>(window, cx))
+            .child(self.render_resize(Left, window, cx))
+            .child(self.render_resize(Right(layout), window, cx))
+            .child(self.render_resize(Bottom(layout), window, cx))
+            .child(self.render_resize(LeftCorner(layout), window, cx))
+            .child(self.render_resize(RightCorner(layout), window, cx))
     }
 }
 
@@ -270,7 +276,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
-                .child(self.render_resize::<Middle>(window, cx))
+                .child(self.render_resize(Middle(preview.layout), window, cx))
                 .child(
                     div()
                         .h(self.shape.preview_height(preview, window))
@@ -295,7 +301,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
-                .child(self.render_resize::<Middle>(window, cx))
+                .child(self.render_resize(Middle(preview.layout), window, cx))
                 .child(
                     div()
                         .w(self.shape.preview_width(preview, window))
