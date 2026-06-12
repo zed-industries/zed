@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::AsyncApp;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -358,6 +359,20 @@ struct ParsedSpanEdit {
     cursor_offset_in_new_text: Option<usize>,
 }
 
+/// A unit of edit addressing when parsing model output: one related-file
+/// excerpt, or several excerpts of the same file merged because their row
+/// ranges touch. Contiguous excerpts render seamlessly in the prompt (no
+/// `...` separator between them), so the model can't see the boundary and
+/// may legitimately span a single edit across it.
+struct ParseSnippet<'a> {
+    file_ix: usize,
+    first_excerpt_ix: usize,
+    last_excerpt_ix: usize,
+    end_row: u32,
+    text: Cow<'a, str>,
+    markers: Vec<(String, usize)>,
+}
+
 struct RelatedFileCursor {
     file_ix: usize,
     excerpt_ix: usize,
@@ -417,8 +432,9 @@ impl TeacherJumpsPrompt {
             .context("example is missing prompt inputs")?;
 
         let marker_table = hashed_regions::build_marker_table(prompt_inputs);
+        let snippets = Self::merge_contiguous_snippets(prompt_inputs, marker_table)?;
         let mut marker_index: HashMap<&str, (usize, usize)> = HashMap::new();
-        for (snippet_ix, snippet) in marker_table.iter().enumerate() {
+        for (snippet_ix, snippet) in snippets.iter().enumerate() {
             for (id, offset) in &snippet.markers {
                 marker_index.insert(id.as_str(), (snippet_ix, *offset));
             }
@@ -446,25 +462,37 @@ impl TeacherJumpsPrompt {
 
             if start_snippet != end_snippet {
                 return Err(anyhow!(
-                    "markers `{start_id}` and `{end_id}` belong to different context snippets"
+                    "markers `{start_id}` and `{end_id}` belong to different context snippets \
+                     that are not contiguous excerpts of the same file"
                 ));
             }
-            if start_byte >= end_byte {
+            // Equal offsets are allowed: adjacent markers (the seam between
+            // two merged contiguous excerpts) bound an empty span, which
+            // expresses a pure insertion at that point.
+            if start_byte > end_byte {
                 return Err(anyhow!(
                     "start marker `{start_id}` must come before end marker `{end_id}`"
                 ));
             }
 
-            let snippet_text = Self::snippet_text(prompt_inputs, &marker_table[start_snippet])?;
+            let snippet_text = snippets[start_snippet].text.as_ref();
             let old_span = &snippet_text[start_byte..end_byte];
 
             let cursor_in_span = raw_new_span.find(Self::USER_CURSOR_MARKER);
             let mut new_span = raw_new_span.replace(Self::USER_CURSOR_MARKER, "");
-            if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
-                new_span.push('\n');
-            }
-            if !old_span.ends_with('\n') && new_span.ends_with('\n') {
-                new_span.pop();
+            if old_span.is_empty() {
+                // Insertion at a marker position, which is always a line
+                // start: inserted content must be complete lines.
+                if !new_span.is_empty() && !new_span.ends_with('\n') {
+                    new_span.push('\n');
+                }
+            } else {
+                if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
+                    new_span.push('\n');
+                }
+                if !old_span.ends_with('\n') && new_span.ends_with('\n') {
+                    new_span.pop();
+                }
             }
 
             // A replacement that reproduces the start of the span verbatim and
@@ -507,7 +535,7 @@ impl TeacherJumpsPrompt {
         let mut actual_cursor = None;
 
         for &snippet_ix in &snippet_order {
-            let snippet = &marker_table[snippet_ix];
+            let snippet = &snippets[snippet_ix];
             let mut snippet_edits: Vec<&ParsedSpanEdit> = edits
                 .iter()
                 .filter(|edit| edit.snippet_ix == snippet_ix)
@@ -519,9 +547,13 @@ impl TeacherJumpsPrompt {
                 }
             }
 
-            let old_text = Self::snippet_text(prompt_inputs, snippet)?;
-            let (path, start_row) =
-                Self::snippet_path_and_start_row(example, prompt_inputs, snippet)?;
+            let old_text = snippet.text.as_ref();
+            let (path, start_row) = Self::snippet_path_and_start_row(
+                example,
+                prompt_inputs,
+                snippet.file_ix,
+                snippet.first_excerpt_ix,
+            )?;
 
             let mut new_text = String::new();
             let mut position = 0;
@@ -565,39 +597,78 @@ impl TeacherJumpsPrompt {
         Ok((diff_output, actual_cursor))
     }
 
-    fn snippet_text<'a>(
-        prompt_inputs: &'a ZetaPromptInput,
-        snippet: &SnippetMarkers,
-    ) -> Result<&'a str> {
+    /// Group the marker table into parse snippets, merging excerpts of the
+    /// same file whose row ranges touch. The marker table is ordered by
+    /// (file, excerpt), matching the prompt rendering order.
+    fn merge_contiguous_snippets(
+        prompt_inputs: &ZetaPromptInput,
+        marker_table: Vec<SnippetMarkers>,
+    ) -> Result<Vec<ParseSnippet<'_>>> {
         let related_files = prompt_inputs
             .related_files
             .as_deref()
             .context("prompt inputs are missing related files")?;
-        let file = related_files
-            .get(snippet.file_ix)
-            .context("related file index out of range")?;
-        let excerpt = file
-            .excerpts
-            .get(snippet.excerpt_ix)
-            .context("related excerpt index out of range")?;
-        Ok(excerpt.text.as_ref())
+        let mut snippets: Vec<ParseSnippet> = Vec::new();
+        for snippet in marker_table {
+            let file = related_files
+                .get(snippet.file_ix)
+                .context("related file index out of range")?;
+            let excerpt = file
+                .excerpts
+                .get(snippet.excerpt_ix)
+                .context("related excerpt index out of range")?;
+            if let Some(last) = snippets.last_mut()
+                && last.file_ix == snippet.file_ix
+                && last.last_excerpt_ix + 1 == snippet.excerpt_ix
+                && last.end_row == excerpt.row_range.start
+            {
+                let text = last.text.to_mut();
+                // The prompt renders a newline between adjacent excerpts
+                // when the first doesn't end with one, so the model saw one
+                // there.
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                let base = text.len();
+                text.push_str(&excerpt.text);
+                last.markers.extend(
+                    snippet
+                        .markers
+                        .into_iter()
+                        .map(|(id, offset)| (id, base + offset)),
+                );
+                last.last_excerpt_ix = snippet.excerpt_ix;
+                last.end_row = excerpt.row_range.end;
+            } else {
+                snippets.push(ParseSnippet {
+                    file_ix: snippet.file_ix,
+                    first_excerpt_ix: snippet.excerpt_ix,
+                    last_excerpt_ix: snippet.excerpt_ix,
+                    end_row: excerpt.row_range.end,
+                    text: Cow::Borrowed(excerpt.text.as_ref()),
+                    markers: snippet.markers,
+                });
+            }
+        }
+        Ok(snippets)
     }
 
     fn snippet_path_and_start_row(
         example: &Example,
         prompt_inputs: &ZetaPromptInput,
-        snippet: &SnippetMarkers,
+        file_ix: usize,
+        excerpt_ix: usize,
     ) -> Result<(std::path::PathBuf, u32)> {
         let related_files = prompt_inputs
             .related_files
             .as_deref()
             .context("prompt inputs are missing related files")?;
         let file = related_files
-            .get(snippet.file_ix)
+            .get(file_ix)
             .context("related file index out of range")?;
         let excerpt = file
             .excerpts
-            .get(snippet.excerpt_ix)
+            .get(excerpt_ix)
             .context("related excerpt index out of range")?;
         Ok((
             Self::related_file_patch_path(example.spec.cursor_path.as_ref(), file.path.as_ref()),
@@ -1327,6 +1398,110 @@ mod tests {
         let response = format!("Removing alpha.\n\n`````\n{start_tag}\n{end_tag}\n`````\n");
         let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
         assert!(patch.contains("-fn alpha() {"), "patch: {patch}");
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_span_across_contiguous_excerpts() {
+        // Two excerpts of src/lib.rs with touching row ranges (5..8 and
+        // 8..11) render seamlessly in the prompt, so the model may span a
+        // single edit across the excerpt boundary.
+        let example = make_example(
+            "fn main() {}\n",
+            0,
+            &[(
+                "src/lib.rs",
+                &[
+                    ("fn a() {\n    one();\n}\n", 5),
+                    ("fn b() {\n    two();\n}\n", 8),
+                ],
+            )],
+        );
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        assert_eq!(marker_table.len(), 3);
+        let start_tag = hashed_regions::marker_tag(&marker_table[1].markers[0].0);
+        let last_markers = &marker_table[2].markers;
+        let end_tag = hashed_regions::marker_tag(&last_markers[last_markers.len() - 1].0);
+
+        let response = format!(
+            "Renaming both.\n\n`````\n{start_tag}\nfn a() {{\n    uno();\n}}\nfn b() {{\n    dos();\n}}\n{end_tag}\n`````\n"
+        );
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+
+        assert!(patch.contains("+    uno();"), "patch: {patch}");
+        assert!(patch.contains("+    dos();"), "patch: {patch}");
+        assert_eq!(patch.matches("--- a/src/lib.rs").count(), 1);
+        // Hunk rows are file-absolute (merged region starts at 0-based row 5).
+        assert!(patch.contains("@@ -6,"), "patch: {patch}");
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_insertion_at_contiguous_excerpt_seam() {
+        // The two markers at the seam between contiguous excerpts map to the
+        // same merged offset; bracketing them expresses a pure insertion.
+        let example = make_example(
+            "fn main() {}\n",
+            0,
+            &[(
+                "src/lib.rs",
+                &[
+                    ("fn a() {\n    one();\n}\n", 5),
+                    ("fn b() {\n    two();\n}\n", 8),
+                ],
+            )],
+        );
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        assert_eq!(marker_table.len(), 3);
+        let first_markers = &marker_table[1].markers;
+        let start_tag = hashed_regions::marker_tag(&first_markers[first_markers.len() - 1].0);
+        let end_tag = hashed_regions::marker_tag(&marker_table[2].markers[0].0);
+
+        let response = format!(
+            "Adding a function between a and b.\n\n`````\n{start_tag}\nfn between() {{}}\n{end_tag}\n`````\n"
+        );
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+
+        assert!(patch.contains("+fn between() {}"), "patch: {patch}");
+        assert!(
+            !patch.contains("-\n"),
+            "patch should be pure insertion: {patch}"
+        );
+        // Insertion lands between the excerpts (after 0-based row 7).
+        assert!(patch.contains("@@ -6,"), "patch: {patch}");
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_rejects_span_across_gapped_excerpts() {
+        // Same file, but the excerpts don't touch (5..8 and 20..23): rows in
+        // between were never shown to the model, so a span across them is
+        // invalid.
+        let example = make_example(
+            "fn main() {}\n",
+            0,
+            &[(
+                "src/lib.rs",
+                &[
+                    ("fn a() {\n    one();\n}\n", 5),
+                    ("fn b() {\n    two();\n}\n", 20),
+                ],
+            )],
+        );
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        assert_eq!(marker_table.len(), 3);
+        let start_tag = hashed_regions::marker_tag(&marker_table[1].markers[0].0);
+        let last_markers = &marker_table[2].markers;
+        let end_tag = hashed_regions::marker_tag(&last_markers[last_markers.len() - 1].0);
+
+        let response = format!(
+            "Renaming both.\n\n`````\n{start_tag}\nfn a() {{\n    uno();\n}}\nfn b() {{\n    dos();\n}}\n{end_tag}\n`````\n"
+        );
+        let error = TeacherJumpsPrompt::parse(&example, &response).unwrap_err();
+        assert!(
+            error.to_string().contains("different context snippets"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
