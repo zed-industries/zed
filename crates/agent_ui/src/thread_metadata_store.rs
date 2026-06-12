@@ -59,6 +59,9 @@ impl Column for ThreadId {
 
 const THREAD_REMOTE_CONNECTION_MIGRATION_KEY: &str = "thread-metadata-remote-connection-backfill";
 const THREAD_ID_MIGRATION_KEY: &str = "thread-metadata-thread-id-backfill";
+/// Key under which the set of pinned thread ids is persisted (as a JSON array)
+/// in the global key-value store.
+const PINNED_THREADS_KEY: &str = "agent-pinned-threads";
 
 /// List all sidebar thread metadata from an arbitrary SQLite connection.
 ///
@@ -503,6 +506,9 @@ pub struct ThreadMetadataStore {
     threads_by_paths: HashMap<PathList, HashSet<ThreadId>>,
     threads_by_main_paths: HashMap<PathList, HashSet<ThreadId>>,
     threads_by_session: HashMap<acp::SessionId, ThreadId>,
+    /// Thread ids the user has pinned to the top of the sidebar. Persisted to
+    /// the key-value store under [`PINNED_THREADS_KEY`].
+    pinned: HashSet<ThreadId>,
     reload_task: Option<Shared<Task<()>>>,
     conversation_subscriptions: HashMap<gpui::EntityId, Subscription>,
     pending_thread_ops_tx: async_channel::Sender<DbOperation>,
@@ -880,6 +886,67 @@ impl ThreadMetadataStore {
         self.in_flight_archives.remove(&thread_id);
     }
 
+    /// Whether the given thread is pinned to the top of the sidebar.
+    pub fn is_pinned(&self, thread_id: &ThreadId) -> bool {
+        self.pinned.contains(thread_id)
+    }
+
+    /// Whether any thread is currently pinned.
+    pub fn has_pinned(&self) -> bool {
+        !self.pinned.is_empty()
+    }
+
+    /// Pins or unpins a thread, persisting the change to the key-value store.
+    pub fn set_pinned(&mut self, thread_id: ThreadId, pinned: bool, cx: &mut Context<Self>) {
+        let changed = if pinned {
+            self.pinned.insert(thread_id)
+        } else {
+            self.pinned.remove(&thread_id)
+        };
+        if !changed {
+            return;
+        }
+        self.persist_pinned(cx);
+        cx.notify();
+    }
+
+    /// Toggles the pinned state of a thread.
+    pub fn toggle_pinned(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        let pinned = !self.is_pinned(&thread_id);
+        self.set_pinned(thread_id, pinned, cx);
+    }
+
+    fn load_pinned(&mut self, cx: &mut Context<Self>) {
+        let kvp = KeyValueStore::global(cx);
+        cx.spawn(async move |this, cx| {
+            let Some(raw) = kvp.read_kvp(PINNED_THREADS_KEY).log_err().flatten() else {
+                return;
+            };
+            let Some(ids) = serde_json::from_str::<HashSet<ThreadId>>(&raw).log_err() else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.pinned = ids;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn persist_pinned(&self, cx: &mut Context<Self>) {
+        let kvp = KeyValueStore::global(cx);
+        let Some(serialized) = serde_json::to_string(&self.pinned).log_err() else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            kvp.write_kvp(PINNED_THREADS_KEY.to_string(), serialized)
+                .await
+                .log_err();
+        })
+        .detach();
+    }
+
     /// Returns `true` if any unarchived thread other than `thread_id`
     /// references `path` in its folder paths. Used to determine whether a
     /// worktree can safely be removed from disk.
@@ -1241,6 +1308,7 @@ impl ThreadMetadataStore {
             threads_by_paths: HashMap::default(),
             threads_by_main_paths: HashMap::default(),
             threads_by_session: HashMap::default(),
+            pinned: HashSet::default(),
             reload_task: None,
             conversation_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
@@ -1248,6 +1316,7 @@ impl ThreadMetadataStore {
             _db_operations_task,
         };
         let _ = this.reload(cx);
+        this.load_pinned(cx);
         this
     }
 

@@ -972,6 +972,12 @@ mod tests {
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),
+            thread_group_by: Default::default(),
+            thread_list_display: agent_settings::ThreadListDisplaySettings {
+                show_timestamp: true,
+                show_branch: true,
+                show_diff_stats: true,
+            },
             thinking_display: Default::default(),
         };
 

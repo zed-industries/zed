@@ -71,6 +71,34 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// How threads in the agent sidebar's thread list are grouped.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadGroupBy {
+    /// Group threads by the workspace (project group) they belong to.
+    #[default]
+    Workspace,
+    /// Group threads by when they were last updated (Today, Yesterday, This
+    /// Week, etc.). This matches the dedicated thread history view.
+    Updated,
+    /// Group threads by their current status (running, waiting, completed,
+    /// etc.).
+    Status,
+}
+
 /// Threshold at which agent auto-compaction runs. See
 /// [`AutoCompactSettingsContent::threshold`] for the accepted formats.
 ///
@@ -188,6 +216,26 @@ pub struct AutoCompactSettingsContent {
     pub threshold: Option<AutoCompactThreshold>,
 }
 
+/// Controls which metadata is shown for each thread in the agent sidebar's
+/// thread list.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadListDisplaySettingsContent {
+    /// Whether to show each thread's last-updated timestamp.
+    ///
+    /// Default: true
+    pub show_timestamp: Option<bool>,
+    /// Whether to show the git branch / linked-worktree chips for each thread.
+    ///
+    /// Default: true
+    pub show_branch: Option<bool>,
+    /// Whether to show the diff stats (added/removed line counts) for each
+    /// thread.
+    ///
+    /// Default: true
+    pub show_diff_stats: Option<bool>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -211,6 +259,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// How threads in the agent sidebar's thread list are grouped.
+    ///
+    /// Default: workspace
+    pub thread_group_by: Option<ThreadGroupBy>,
+    /// Controls which metadata is shown for each thread in the sidebar's
+    /// thread list.
+    pub thread_list_display: Option<ThreadListDisplaySettingsContent>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -349,6 +404,10 @@ impl AgentSettingsContent {
 
     pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
         self.sidebar_side = Some(position);
+    }
+
+    pub fn set_thread_group_by(&mut self, group_by: ThreadGroupBy) {
+        self.thread_group_by = Some(group_by);
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {

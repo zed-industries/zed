@@ -184,6 +184,17 @@ fn assert_remote_project_integration_sidebar_state(
                     terminal.metadata.title
                 );
             }
+            ListEntry::SectionHeader { label, .. } => {
+                panic!(
+                    "unexpected sidebar section header while simulating remote project integration flicker: label=`{}`",
+                    label
+                );
+            }
+            ListEntry::SeeMore { hidden_count, .. } => {
+                panic!(
+                    "unexpected `See more` row while simulating remote project integration flicker: hidden={hidden_count}"
+                );
+            }
         }
     }
 
@@ -571,6 +582,12 @@ fn visible_entries_as_strings(
                         };
                         format!("{} [{}]{}", icon, label, selected)
                     }
+                    ListEntry::SectionHeader {
+                        label, is_collapsed, ..
+                    } => {
+                        let icon = if *is_collapsed { ">" } else { "v" };
+                        format!("{} #{}#{}", icon, label, selected)
+                    }
                     ListEntry::Thread(thread) => {
                         let title = thread.metadata.display_title();
                         let worktree = format_linked_worktree_chips(&thread.worktrees);
@@ -598,6 +615,9 @@ fn visible_entries_as_strings(
                         let title = terminal.metadata.display_title();
                         let worktree = format_linked_worktree_chips(&terminal.worktrees);
                         format!("  {title}{worktree}{selected}")
+                    }
+                    ListEntry::SeeMore { hidden_count, .. } => {
+                        format!("  see {hidden_count} more{selected}")
                     }
                 }
             })
@@ -795,6 +815,9 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppContext) {
     // A regression test to ensure that restoring a serialized archive view does not panic.
+    // The active view is now derived from the global `thread_group_by` setting rather than
+    // the per-window serialized state, so restore only needs to apply the width without
+    // panicking; selecting the `Updated` grouping mode is what switches to the archive view.
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -816,13 +839,417 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
     });
     cx.run_until_parked();
 
-    // After the deferred `show_archive` runs, the view should be Archive.
+    // Restore applies the width but no longer forces the archive view.
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(sidebar.width, px(400.0));
+    });
+
+    // Selecting the `Updated` grouping mode regroups the native thread list
+    // into recency sections; it no longer switches to a separate archive view.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.set_thread_group_by(settings::ThreadGroupBy::Updated, window, cx);
+    });
+    cx.run_until_parked();
+
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(sidebar.view, SidebarView::Archive(_)),
-            "expected sidebar view to be Archive after restore, got ThreadList"
+            matches!(sidebar.view, SidebarView::ThreadList),
+            "all grouping modes render in the native thread list"
         );
     });
+}
+
+#[gpui::test]
+async fn test_updated_grouping_renders_section_headers(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Hi there!".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    cx.run_until_parked();
+
+    // Switch to the `Updated` grouping mode.
+    cx.update(|_window, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.thread_group_by = settings::ThreadGroupBy::Updated;
+        AgentSettings::override_global(settings, cx);
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.schedule_update_entries(false, cx);
+    });
+    cx.run_until_parked();
+
+    // The saved thread is dated in 2024, so it falls into the `Older` recency
+    // section. There should be no workspace project headers in this mode.
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        lines.iter().any(|line| line.contains("#Older#")),
+        "expected an `Older` recency section header, got {lines:?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with("v [") || line.starts_with("> [")),
+        "expected no project headers in `Updated` mode, got {lines:?}"
+    );
+
+    // Collapsing the section hides its threads.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.toggle_section_collapsed(&"updated:older".into(), cx);
+    });
+    cx.run_until_parked();
+
+    let collapsed = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        collapsed.iter().any(|line| line.contains("> #Older#")),
+        "expected the collapsed `Older` section header, got {collapsed:?}"
+    );
+    assert_eq!(
+        collapsed.len(),
+        1,
+        "collapsing the only section should hide all of its threads, got {collapsed:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_and_expand_all_in_section_mode(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Hi there!".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    cx.run_until_parked();
+
+    cx.update(|_window, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.thread_group_by = settings::ThreadGroupBy::Updated;
+        AgentSettings::override_global(settings, cx);
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.schedule_update_entries(false, cx);
+    });
+    cx.run_until_parked();
+
+    // "Collapse All" must work in section modes, not just workspace mode.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_all_groups_expanded(false, cx);
+    });
+    cx.run_until_parked();
+    let collapsed = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        collapsed.iter().any(|line| line.contains("> #Older#")),
+        "expected `Collapse All` to collapse the section, got {collapsed:?}"
+    );
+    assert_eq!(
+        collapsed.len(),
+        1,
+        "expected `Collapse All` to hide every thread, got {collapsed:?}"
+    );
+
+    // "Expand All" must re-expand it.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_all_groups_expanded(true, cx);
+    });
+    cx.run_until_parked();
+    let expanded = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        expanded.iter().any(|line| line.contains("v #Older#")),
+        "expected `Expand All` to expand the section, got {expanded:?}"
+    );
+    assert!(
+        expanded.len() > 1,
+        "expected `Expand All` to reveal the section's threads, got {expanded:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_workspace_group_truncates_with_see_more(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.update(|_window, cx| {
+        AgentRegistryStore::init_test_global(cx, vec![]);
+    });
+
+    // Create more historical threads than the per-group limit so the group is
+    // truncated. Distinct timestamps keep the order deterministic.
+    let total = GROUP_THREAD_LIMIT + 3;
+    for i in 0..total {
+        let session_id = acp::SessionId::new(Arc::from(format!("thread-{i}")));
+        let timestamp =
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i as u32).unwrap();
+        save_thread_metadata(
+            session_id,
+            Some(format!("Thread {i}").into()),
+            timestamp,
+            Some(timestamp),
+            None,
+            &project,
+            cx,
+        );
+    }
+    cx.run_until_parked();
+
+    // Only the first `GROUP_THREAD_LIMIT` threads show, plus a "See more" row.
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    let thread_lines = lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("Thread "))
+        .count();
+    assert_eq!(
+        thread_lines, GROUP_THREAD_LIMIT,
+        "expected the group to be truncated to the limit, got {lines:?}"
+    );
+    let hidden = total - GROUP_THREAD_LIMIT;
+    assert!(
+        lines.iter().any(|line| line.contains(&format!("see {hidden} more"))),
+        "expected a `See more` row for the hidden threads, got {lines:?}"
+    );
+
+    // Expanding the group via "See more" reveals every thread.
+    let key = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar.contents.entries.iter().find_map(|entry| match entry {
+            ListEntry::SeeMore { key, .. } => Some(key.clone()),
+            _ => None,
+        })
+        .expect("expected a See more entry")
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.show_all_in_group(&key, cx);
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    let thread_lines = lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("Thread "))
+        .count();
+    assert_eq!(
+        thread_lines, total,
+        "expected all threads to show after `See more`, got {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("see ")),
+        "expected the `See more` row to disappear once expanded, got {lines:?}"
+    );
+
+    // Collapsing then reopening the group resets the "See more" expansion, so
+    // it returns to the truncated set.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_group_expanded(&key, false, cx);
+        sidebar.update_entries(cx);
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_group_expanded(&key, true, cx);
+        sidebar.update_entries(cx);
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    let thread_lines = lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("Thread "))
+        .count();
+    assert_eq!(
+        thread_lines, GROUP_THREAD_LIMIT,
+        "expected reopening a collapsed group to return to the truncated set, got {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_pinned_threads_surface_in_pinned_section(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Hi there!".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    cx.run_until_parked();
+
+    let thread_id = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread) => Some(thread.metadata.thread_id),
+                _ => None,
+            })
+            .expect("sidebar should have a thread entry")
+    });
+
+    // Pinning moves the thread into a top "Pinned" section (workspace mode).
+    cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.set_pinned(thread_id, true, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        lines.first().is_some_and(|line| line.contains("#Pinned#")),
+        "expected a `Pinned` section at the top, got {lines:?}"
+    );
+    assert!(
+        lines.len() >= 2,
+        "expected the pinned thread to appear under the Pinned section, got {lines:?}"
+    );
+
+    // Collapsing the pinned thread's workspace group must NOT remove the
+    // Pinned section (regression: collapsing the group hid the pinned thread).
+    let group_key = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .expect("expected a project header")
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_group_expanded(&group_key, false, cx);
+        sidebar.update_entries(cx);
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        lines.first().is_some_and(|line| line.contains("#Pinned#")),
+        "expected the Pinned section to survive collapsing the group, got {lines:?}"
+    );
+    assert!(
+        lines.len() >= 2,
+        "expected the pinned thread to remain visible after collapse, got {lines:?}"
+    );
+
+    // Unpinning removes the Pinned section.
+    cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.set_pinned(thread_id, false, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !lines.iter().any(|line| line.contains("#Pinned#")),
+        "expected the Pinned section to disappear after unpinning, got {lines:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_pinned_thread_survives_section_collapse(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.update(|_window, cx| {
+        AgentRegistryStore::init_test_global(cx, vec![]);
+    });
+
+    // Two historical threads (both fall in the "Older" recency bucket).
+    for i in 0..2 {
+        let session_id = acp::SessionId::new(Arc::from(format!("thread-{i}")));
+        let timestamp =
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i as u32).unwrap();
+        save_thread_metadata(
+            session_id,
+            Some(format!("Thread {i}").into()),
+            timestamp,
+            Some(timestamp),
+            None,
+            &project,
+            cx,
+        );
+    }
+    cx.run_until_parked();
+
+    // Pin one of the threads.
+    let pinned_id = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread) => Some(thread.metadata.thread_id),
+                _ => None,
+            })
+            .expect("expected a thread entry")
+    });
+    cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.set_pinned(pinned_id, true, cx);
+        });
+    });
+
+    // Switch to the `Updated` (section) grouping mode.
+    cx.update(|_window, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.thread_group_by = settings::ThreadGroupBy::Updated;
+        AgentSettings::override_global(settings, cx);
+    });
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.schedule_update_entries(false, cx);
+    });
+    cx.run_until_parked();
+
+    // The pinned thread lives in the Pinned section, not the "Older" recency
+    // bucket; the unpinned thread is under "Older".
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        lines.first().is_some_and(|line| line.contains("#Pinned#")),
+        "expected a Pinned section at the top, got {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("#Older#")),
+        "expected an Older section for the unpinned thread, got {lines:?}"
+    );
+
+    // Collapsing the "Older" recency section must NOT remove the Pinned section.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.toggle_section_collapsed(&"updated:older".into(), cx);
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        lines.first().is_some_and(|line| line.contains("#Pinned#")),
+        "expected the Pinned section to survive collapsing a recency section, got {lines:?}"
+    );
+    assert!(
+        lines.len() >= 2,
+        "expected the pinned thread to remain visible, got {lines:?}"
+    );
 }
 
 #[gpui::test]
@@ -4926,7 +5353,10 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
                     thread.metadata.thread_id,
                     thread.metadata.display_title(),
                 )),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::SectionHeader { .. }
+                | ListEntry::Terminal(_)
+                | ListEntry::SeeMore { .. } => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -5012,7 +5442,10 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .iter()
             .find_map(|entry| match entry {
                 ListEntry::Thread(thread) => Some(thread),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::SectionHeader { .. }
+                | ListEntry::Terminal(_)
+                | ListEntry::SeeMore { .. } => None,
             })
             .expect("renamed thread should match the search");
         let title = thread.metadata.display_title();
@@ -5051,7 +5484,10 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .enumerate()
             .find_map(|(ix, entry)| match entry {
                 ListEntry::Thread(thread) => Some((ix, thread.metadata.thread_id)),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::SectionHeader { .. }
+                | ListEntry::Terminal(_)
+                | ListEntry::SeeMore { .. } => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -7099,6 +7535,17 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     panic!(
                         "unexpected sidebar terminal while opening linked worktree thread: title=`{}`",
                         terminal.metadata.title
+                    );
+                }
+                ListEntry::SectionHeader { label, .. } => {
+                    panic!(
+                        "unexpected sidebar section header while opening linked worktree thread: label=`{}`",
+                        label
+                    );
+                }
+                ListEntry::SeeMore { hidden_count, .. } => {
+                    panic!(
+                        "unexpected `See more` row while opening linked worktree thread: hidden={hidden_count}"
                     );
                 }
             }
