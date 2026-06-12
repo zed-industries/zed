@@ -1876,10 +1876,13 @@ impl PickerDelegate for FileFinderDelegate {
                 .toggle_state(selected)
                 .child(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .overflow_hidden()
                         .gap_2()
                         .py_px()
-                        .child(file_name_label)
-                        .child(full_path_label),
+                        .child(file_name_label.truncate_middle().flex_1())
+                        .child(full_path_label.truncate_start().flex_shrink()),
                 ),
         )
     }

@@ -197,15 +197,22 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
-    cx.on_action(|_: &OpenLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
-            open_log_file(workspace, window, cx);
+
+    // When Zed logs to stdout rather than the log file, avoid registering
+    // handlers for both `OpenLog` and `RevealLogInFileManager`, as the log file
+    // does not exist in that scenario and these actions would error.
+    if !crate::stdout_is_a_pty() {
+        cx.on_action(|_: &OpenLog, cx| {
+            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                open_log_file(workspace, window, cx);
+            });
+        })
+        .on_action(|_: &workspace::RevealLogInFileManager, cx| {
+            cx.reveal_path(paths::log_file().as_path());
         });
-    })
-    .on_action(|_: &workspace::RevealLogInFileManager, cx| {
-        cx.reveal_path(paths::log_file().as_path());
-    })
-    .on_action(|_: &zed_actions::OpenLicenses, cx| {
+    }
+
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,

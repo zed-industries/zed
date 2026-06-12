@@ -684,7 +684,10 @@ impl Render for AgentDiffPane {
             .on_action(cx.listener(Self::reject))
             .on_action(cx.listener(Self::reject_all))
             .on_action(cx.listener(Self::keep_all))
-            .bg(cx.theme().colors().editor_background)
+            // Only paint the background for the empty state. When the diff editor
+            // is shown it already paints `editor_background`; painting it again
+            // here double-composites into a darker patch on transparent windows.
+            .when(is_empty, |el| el.bg(cx.theme().colors().editor_background))
             .flex()
             .items_center()
             .justify_center()
@@ -756,6 +759,9 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+    // Drop shadows render as a dark halo on transparent windows.
+    let opaque_window =
+        cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
     h_flex()
         .h(line_height)
@@ -770,7 +776,7 @@ fn render_diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
-        .shadow_md()
+        .when(opaque_window, |this| this.shadow_md())
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
                 .disabled(is_created_file)
