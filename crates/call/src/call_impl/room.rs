@@ -1855,8 +1855,19 @@ fn spawn_room_connection(
                 return;
             };
             match rejoin.await {
-                Ok(Some(new_connection_info)) => connection_info = new_connection_info,
-                Ok(None) => {}
+                Ok(Some(new_connection_info)) => {
+                    log::info!(
+                        "refreshed LiveKit connection info (token changed: {})",
+                        new_connection_info.token != connection_info.token
+                    );
+                    connection_info = new_connection_info;
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "server returned no fresh LiveKit connection info; \
+                         retrying with the existing token"
+                    );
+                }
                 Err(error) => {
                     log::error!("failed to refresh LiveKit connection info: {error:#}");
                 }
