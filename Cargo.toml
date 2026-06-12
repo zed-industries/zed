@@ -635,7 +635,16 @@ nix = "0.29"
 nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
-objc2-app-kit = { version = "0.3", default-features = false, features = [ "NSGraphics" ] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSButton",
+    "NSControl",
+    "NSGraphics",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+    "objc2-core-foundation",
+] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
