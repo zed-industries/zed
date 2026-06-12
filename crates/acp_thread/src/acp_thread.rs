@@ -507,7 +507,7 @@ impl ToolCall {
         }
 
         if let Some(status) = status {
-            self.status = status.into();
+            self.update_acp_status(status);
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
@@ -588,6 +588,31 @@ impl ToolCall {
             self.raw_output = Some(raw_output);
         }
         Ok(())
+    }
+
+    fn update_status(&mut self, status: ToolCallStatus) {
+        match status {
+            ToolCallStatus::Pending => self.update_acp_status(acp::ToolCallStatus::Pending),
+            ToolCallStatus::InProgress => self.update_acp_status(acp::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => self.update_acp_status(acp::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => self.update_acp_status(acp::ToolCallStatus::Failed),
+            status @ (ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled) => self.status = status,
+        }
+    }
+
+    fn update_acp_status(&mut self, status: acp::ToolCallStatus) {
+        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status
+            && matches!(
+                status,
+                acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
+            )
+        {
+            *current_status = status;
+        } else {
+            self.status = status.into();
+        }
     }
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
@@ -698,7 +723,7 @@ pub enum SelectedPermissionParams {
     Terminal { patterns: Vec<String> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SelectedPermissionOutcome {
     pub option_id: acp::PermissionOptionId,
     pub option_kind: acp::PermissionOptionKind,
@@ -764,6 +789,7 @@ pub enum ToolCallStatus {
     Pending,
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
+        current_status: acp::ToolCallStatus,
         options: PermissionOptions,
         respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
         kind: AuthorizationKind,
@@ -788,6 +814,26 @@ impl From<acp::ToolCallStatus> for ToolCallStatus {
             acp::ToolCallStatus::Completed => Self::Completed,
             acp::ToolCallStatus::Failed => Self::Failed,
             _ => Self::Pending,
+        }
+    }
+}
+
+impl ToolCallStatus {
+    fn as_acp_status(&self) -> Option<acp::ToolCallStatus> {
+        match self {
+            ToolCallStatus::Pending => Some(acp::ToolCallStatus::Pending),
+            ToolCallStatus::WaitingForConfirmation { current_status, .. } => Some(*current_status),
+            ToolCallStatus::InProgress => Some(acp::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => Some(acp::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => Some(acp::ToolCallStatus::Failed),
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled => None,
+        }
+    }
+
+    fn status_after_permission_grant(status: acp::ToolCallStatus) -> ToolCallStatus {
+        match ToolCallStatus::from(status) {
+            ToolCallStatus::Pending => ToolCallStatus::InProgress,
+            status => status,
         }
     }
 }
@@ -2331,7 +2377,7 @@ impl AcpThread {
                 &self.terminals,
                 cx,
             )?;
-            call.status = status;
+            call.update_status(status);
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -2482,7 +2528,13 @@ impl AcpThread {
     ) -> Result<Task<RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
+        let current_status = self
+            .tool_call(&tool_call.tool_call_id)
+            .and_then(|(_, tool_call)| tool_call.status.as_acp_status())
+            .or(tool_call.fields.status)
+            .unwrap_or(acp::ToolCallStatus::Pending);
         let status = ToolCallStatus::WaitingForConfirmation {
+            current_status,
             options,
             respond_tx: tx,
             kind,
@@ -2517,24 +2569,30 @@ impl AcpThread {
             return;
         };
 
-        let is_action_choice = matches!(
-            call.status,
-            ToolCallStatus::WaitingForConfirmation {
-                kind: AuthorizationKind::ActionChoice,
-                ..
-            }
-        );
         let new_status =
-            if is_action_choice {
-                ToolCallStatus::InProgress
-            } else {
-                match outcome.option_kind {
+            match &call.status {
+                ToolCallStatus::WaitingForConfirmation {
+                    kind: AuthorizationKind::ActionChoice,
+                    ..
+                } => ToolCallStatus::InProgress,
+                ToolCallStatus::WaitingForConfirmation { current_status, .. } => {
+                    match outcome.option_kind {
+                        acp::PermissionOptionKind::RejectOnce
+                        | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                        acp::PermissionOptionKind::AllowOnce
+                        | acp::PermissionOptionKind::AllowAlways => {
+                            ToolCallStatus::status_after_permission_grant(*current_status)
+                        }
+                        _ => ToolCallStatus::status_after_permission_grant(*current_status),
+                    }
+                }
+                _ => match outcome.option_kind {
                     acp::PermissionOptionKind::RejectOnce
                     | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
                     acp::PermissionOptionKind::AllowOnce
                     | acp::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
                     _ => ToolCallStatus::InProgress,
-                }
+                },
             };
 
         let curr_status = mem::replace(&mut call.status, new_status);
@@ -2608,6 +2666,27 @@ impl AcpThread {
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        self.send_inner(message, true, cx)
+    }
+
+    /// Sends a prompt without displaying a user-message bubble for it.
+    /// This is used for native slash commands (e.g. `/compact`) that run a turn
+    /// which produces its own thread entry (like the compaction summary). The
+    /// typed command isn't sent to the model as an ordinary user turn.
+    pub fn send_command(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        self.send_inner(message, false, cx)
+    }
+
+    fn send_inner(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        push_user_message: bool,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
@@ -2620,32 +2699,38 @@ impl AcpThread {
         let message_id = UserMessageId::new();
 
         self.run_turn(cx, async move |this, cx| {
-            this.update(cx, |this, cx| {
-                this.push_entry(
-                    AgentThreadEntry::UserMessage(UserMessage {
-                        id: Some(message_id.clone()),
-                        content: block,
-                        chunks: message,
-                        checkpoint: None,
-                        indented: false,
-                    }),
-                    cx,
-                );
-            })
-            .ok();
+            if push_user_message {
+                this.update(cx, |this, cx| {
+                    this.push_entry(
+                        AgentThreadEntry::UserMessage(UserMessage {
+                            id: Some(message_id.clone()),
+                            content: block,
+                            chunks: message,
+                            checkpoint: None,
+                            indented: false,
+                        }),
+                        cx,
+                    );
+                })
+                .ok();
 
-            let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))
-                .await
-                .context("failed to get old checkpoint")
-                .log_err();
+                let old_checkpoint = git_store
+                    .update(cx, |git, cx| git.checkpoint(cx))
+                    .await
+                    .context("failed to get old checkpoint")
+                    .log_err();
+                this.update(cx, |this, _cx| {
+                    if let Some((_ix, message)) = this.last_user_message() {
+                        message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
+                            git_checkpoint,
+                            show: false,
+                        });
+                    }
+                })
+                .ok();
+            }
+
             this.update(cx, |this, cx| {
-                if let Some((_ix, message)) = this.last_user_message() {
-                    message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
-                        git_checkpoint,
-                        show: false,
-                    });
-                }
                 this.connection.prompt(message_id, request, cx)
             })?
             .await
@@ -2750,7 +2835,7 @@ impl AcpThread {
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
-                        if canceled {
+                        if canceled && is_same_turn {
                             this.mark_pending_entries_as_canceled(cx);
                         }
 
@@ -4033,6 +4118,80 @@ mod tests {
         );
     }
 
+    /// `send_command` runs the turn (the connection receives the typed command)
+    /// but never echoes a user-message bubble, so commands like `/compact` don't
+    /// show a fake user message implying the text was sent to the model.
+    #[gpui::test]
+    async fn test_send_command_does_not_echo_user_message(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let received_prompt: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let received_prompt = received_prompt.clone();
+            move |request, thread, mut cx| {
+                let received_prompt = received_prompt.clone();
+                async move {
+                    if let Some(acp::ContentBlock::Text(text)) = request.prompt.first() {
+                        *received_prompt.borrow_mut() = Some(text.text.clone());
+                    }
+                    // Simulate a native command producing its own thread entry
+                    // (here a compaction) rather than echoing a user message.
+                    thread.update(&mut cx, |thread, cx| {
+                        thread.push_context_compaction(
+                            ContextCompaction {
+                                id: ContextCompactionId("c1".into()),
+                                status: ContextCompactionStatus::Completed,
+                                summary: None,
+                            },
+                            cx,
+                        );
+                    })?;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.send_command(vec!["/compact".into()], cx)
+            })
+        })
+        .await
+        .unwrap();
+
+        // The command turn ran: the connection received the typed command.
+        assert_eq!(received_prompt.borrow().as_deref(), Some("/compact"));
+
+        thread.update(cx, |thread, _cx| {
+            assert!(
+                !thread
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, AgentThreadEntry::UserMessage(_))),
+                "send_command must not echo a user message"
+            );
+            // The command's own entry (here a compaction) is still shown.
+            assert!(
+                thread
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, AgentThreadEntry::ContextCompaction(_))),
+                "the command's own thread entry should still be present"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_ignore_echoed_user_message_chunks_during_active_turn(
         cx: &mut gpui::TestAppContext,
@@ -4486,6 +4645,382 @@ mod tests {
                 .expect("resolved location should keep an open buffer");
             assert_eq!(buffer.read(cx).text(), "skill body");
         });
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_tool_call_update_preserves_open_permission_request_until_authorized(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01duplicate");
+        let allow_option_id = acp::PermissionOptionId::new("allow");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .content(vec!["original content".into()])
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        allow_option_id.clone(),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "Updated title")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::Pending)
+                            .content(vec!["updated content".into()]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Updated title");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "updated content");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::InProgress)
+                            .title("Updated again")
+                            .content(vec!["updated again".into()]),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Updated again");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "updated again");
+        });
+
+        let selected_outcome = SelectedPermissionOutcome::new(
+            allow_option_id.clone(),
+            acp::PermissionOptionKind::AllowOnce,
+        );
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(tool_call_id.clone(), selected_outcome, cx);
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, allow_option_id);
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("permission request should remain open after duplicate tool call update")
+            }
+        }
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Completed)
+                            .title("Completed")
+                            .content(vec!["done".into()]),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Completed");
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "done");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_request_tracks_agent_status_until_resolved(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01auto_resolve");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation {
+                    current_status: acp::ToolCallStatus::InProgress,
+                    ..
+                }
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id.clone(),
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("resolved permission request should select an outcome")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_request_sets_waiting_status_on_existing_tool_call(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01existing_permission");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "Running title")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Needs permission");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation {
+                    current_status: acp::ToolCallStatus::InProgress,
+                    ..
+                }
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id.clone(),
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("permission request should resolve after authorization")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_terminal_tool_call_update_closes_open_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01completed_while_waiting");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("terminal tool call update should close pending permission request")
+            }
+        }
     }
 
     #[gpui::test]
@@ -5788,6 +6323,102 @@ mod tests {
             !running_turn_after_second,
             "second turn completing should clear running_turn"
         );
+    }
+
+    #[gpui::test]
+    async fn test_stale_cancelled_response_does_not_cancel_current_compaction(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let first_complete_rx = RefCell::new(Some(first_complete_rx));
+        let compaction_id = ContextCompactionId("test-compaction".into());
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let compaction_id = compaction_id.clone();
+            move |params, thread, mut cx| {
+                let first_complete_rx = first_complete_rx.borrow_mut().take();
+                let is_first = params.prompt.iter().any(|content| {
+                    matches!(content, acp::ContentBlock::Text(text) if text.text.contains("first"))
+                });
+                let compaction_id = compaction_id.clone();
+
+                async move {
+                    if is_first {
+                        if let Some(rx) = first_complete_rx {
+                            rx.await
+                                .expect("first completion sender should still be alive");
+                        }
+
+                        thread.update(&mut cx, |thread, cx| {
+                            thread.push_context_compaction(
+                                ContextCompaction {
+                                    id: compaction_id,
+                                    status: ContextCompactionStatus::InProgress,
+                                    summary: None,
+                                },
+                                cx,
+                            );
+                        })?;
+
+                        Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    } else {
+                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    }
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 1);
+
+        let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 2);
+
+        first_complete_tx
+            .send(())
+            .expect("first completion receiver should still be alive");
+
+        let response = first_request
+            .await
+            .expect("first request should complete")
+            .expect("first request should have response");
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+
+        thread.read_with(cx, |thread, _| {
+            let compaction = thread
+                .entries
+                .iter()
+                .find_map(|entry| {
+                    let AgentThreadEntry::ContextCompaction(compaction) = entry else {
+                        return None;
+                    };
+                    (compaction.id == compaction_id).then_some(compaction)
+                })
+                .expect("compaction entry should exist");
+
+            assert_eq!(
+                compaction.status,
+                ContextCompactionStatus::InProgress,
+                "a stale cancelled response from an older turn should not cancel current compaction"
+            );
+        });
+
+        second_request
+            .await
+            .expect("second request should complete");
     }
 
     #[gpui::test]

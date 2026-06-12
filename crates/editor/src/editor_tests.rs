@@ -21267,6 +21267,88 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_inside_enclosing_bracket(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    #[track_caller]
+    fn assert_after_runs(before: &str, after: &str, runs: usize, cx: &mut EditorLspTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        for _ in 0..runs {
+            cx.update_editor(|editor, window, cx| {
+                editor.select_inside_enclosing_bracket(&SelectInsideEnclosingBracket, window, cx)
+            });
+        }
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
+        assert_after_runs(before, after, 1, cx);
+    }
+
+    assert("console.log(ˇvar);", "console.log(«varˇ»);", &mut cx);
+    assert("console.logˇ(var);", "console.log(«varˇ»);", &mut cx);
+    assert("console.log(var)ˇ;", "console.log(«varˇ»);", &mut cx);
+    assert(
+        "let numbers = [1, ˇ2, 3];",
+        "let numbers = [«1, 2, 3ˇ»];",
+        &mut cx,
+    );
+    assert(
+        "const object = { foo: ˇbar };",
+        "const object = {« foo: bar ˇ»};",
+        &mut cx,
+    );
+    assert(
+        r#"const doubleQuoted = "foo ˇbar";"#,
+        r#"const doubleQuoted = "«foo barˇ»";"#,
+        &mut cx,
+    );
+    assert(
+        "const singleQuoted = 'foo ˇbar';",
+        "const singleQuoted = '«foo barˇ»';",
+        &mut cx,
+    );
+    assert(
+        "const template = `foo ˇbar`;",
+        "const template = `«foo barˇ»`;",
+        &mut cx,
+    );
+    assert(
+        "let result = foo(bar(ˇbaz));",
+        "let result = foo(bar(«bazˇ»));",
+        &mut cx,
+    );
+    assert(
+        "let result = foo(«barˇ»(baz));",
+        "let result = foo(«bar(baz)ˇ»);",
+        &mut cx,
+    );
+    assert_after_runs(
+        "let result = foo(bar(ˇbaz));",
+        "let result = foo(«bar(baz)ˇ»);",
+        2,
+        &mut cx,
+    );
+    assert_after_runs(
+        r#"let result = (xx[xxx{xxˇx}] xx"xxx"xx);"#,
+        r#"let result = («xx[xxx{xxx}] xx"xxx"xxˇ»);"#,
+        3,
+        &mut cx,
+    );
+    assert("let plain = ˇvalue;", "let plain = ˇvalue;", &mut cx);
+    assert(
+        "foo(ˇone); bar(ˇtwo);",
+        "foo(«oneˇ»); bar(«twoˇ»);",
+        &mut cx,
+    );
+}
+
+#[gpui::test]
 async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
@@ -33266,6 +33348,36 @@ async fn test_paste_plain_text_from_other_app_replaces_selection_without_creatin
     });
 
     cx.assert_editor_state(&format!("Hello, {text}ˇ.\nZed is {text}ˇ"));
+}
+
+#[gpui::test]
+async fn test_paste_text_with_scheme_like_prefix_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    // `url::Url::parse` accepts this as a URL with the scheme `editor`, but it
+    // should not be treated as one when pasting.
+    let text = "editor: Fix double-click bracket selection for large spans";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("«(feat on git-ui-add-info-exclude-to-context-menus) Fmtˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("{text}ˇ"));
 }
 
 #[gpui::test]

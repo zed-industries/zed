@@ -1,5 +1,4 @@
 mod api_key;
-mod model;
 mod registry;
 mod request;
 
@@ -17,7 +16,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
-pub use crate::model::*;
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
@@ -86,6 +84,13 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports thinking.
     fn supports_thinking(&self) -> bool {
         false
+    }
+
+    /// Whether thinking can be turned off entirely for this model. Some
+    /// models (e.g. Claude Fable 5) always think and cannot honor an "off"
+    /// request. Only meaningful when `supports_thinking` returns `true`.
+    fn supports_disabling_thinking(&self) -> bool {
+        true
     }
 
     fn supports_fast_mode(&self) -> bool {

@@ -7,6 +7,7 @@ use smol::Unblock;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::process::ExitStatusExt;
@@ -427,9 +428,23 @@ fn spawn_posix_spawn(
         cvt_nz(libc::posix_spawnattr_init(&mut attr))?;
         cvt_nz(libc::posix_spawn_file_actions_init(&mut file_actions))?;
 
+        // The Rust runtime sets SIGPIPE to SIG_IGN before `main`, and ignored
+        // dispositions survive exec, so without this children would never die
+        // from writing to a closed pipe. Reset it to SIG_DFL, like std does
+        // (rust-lang/rust#101077). Like std, we don't touch the signal mask,
+        // so deliberately blocked signals (e.g. via `nohup`) stay blocked.
+        let mut default_set: libc::sigset_t = std::mem::zeroed();
+        if libc::sigemptyset(&mut default_set) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::sigaddset(&mut default_set, libc::SIGPIPE) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        cvt_nz(libc::posix_spawnattr_setsigdefault(&mut attr, &default_set))?;
+
         cvt_nz(libc::posix_spawnattr_setflags(
             &mut attr,
-            libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short,
+            (libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF) as libc::c_short,
         ))?;
 
         cvt_nz(posix_spawnattr_setexceptionports_np(
@@ -445,36 +460,46 @@ fn spawn_posix_spawn(
             current_dir_cstr.as_ptr(),
         ))?;
 
-        if let Some(fd) = stdin_read {
+        // With POSIX_SPAWN_CLOEXEC_DEFAULT, any fd without a file action is
+        // closed in the child, so inheriting a stdio fd requires an explicit
+        // addinherit_np action; without one the child's fd 0/1/2 would start
+        // out closed and could be silently reused by its first open().
+        if let Some(fd) = &stdin_read {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDIN_FILENO,
             ))?;
+        }
+        if stdin_read.is_some() || stdin_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDIN_FILENO,
             ))?;
         }
 
-        if let Some(fd) = stdout_write {
+        if let Some(fd) = &stdout_write {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDOUT_FILENO,
             ))?;
+        }
+        if stdout_write.is_some() || stdout_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDOUT_FILENO,
             ))?;
         }
 
-        if let Some(fd) = stderr_write {
+        if let Some(fd) = &stderr_write {
             cvt_nz(libc::posix_spawn_file_actions_adddup2(
                 &mut file_actions,
-                fd,
+                fd.as_raw_fd(),
                 libc::STDERR_FILENO,
             ))?;
+        }
+        if stderr_write.is_some() || stderr_cfg == Stdio::Inherit {
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDERR_FILENO,
@@ -499,30 +524,20 @@ fn spawn_posix_spawn(
         libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut file_actions);
 
-        if let Some(fd) = stdin_read {
-            libc::close(fd);
-        }
-        if let Some(fd) = stdout_write {
-            libc::close(fd);
-        }
-        if let Some(fd) = stderr_write {
-            libc::close(fd);
-        }
-
         cvt_nz(spawn_result)?;
 
         Ok(Child {
             pid,
-            stdin: stdin_write.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            stdout: stdout_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
-            stderr: stderr_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
+            stdin: stdin_write.map(|fd| Unblock::new(fd)),
+            stdout: stdout_read.map(|fd| Unblock::new(fd)),
+            stderr: stderr_read.map(|fd| Unblock::new(fd)),
             kill_on_drop,
             status: None,
         })
     }
 }
 
-fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
+fn create_pipe() -> io::Result<(std::fs::File, std::fs::File)> {
     let mut fds: [libc::c_int; 2] = [0; 2];
     unsafe {
         let result = libc::pipe(fds.as_mut_ptr());
@@ -548,11 +563,14 @@ fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
             }
         }
 
-        Ok((fds[0], fds[1]))
+        Ok((
+            std::fs::File::from_raw_fd(fds[0]),
+            std::fs::File::from_raw_fd(fds[1]),
+        ))
     }
 }
 
-fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
+fn open_dev_null(flags: libc::c_int) -> io::Result<std::fs::File> {
     // Set close-on-exec for this pipe, for the same reason as in `create_pipe`.
     let fd = unsafe {
         libc::open(
@@ -563,7 +581,7 @@ fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
     if fd == -1 {
         return Err(io::Error::last_os_error());
     }
-    Ok(fd)
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 /// Zero means `Ok()`, all other values are treated as raw OS errors. Does not look at `errno`.
@@ -597,7 +615,9 @@ mod tests {
     // git's stdin write end open and deadlock the git child on `read()`.
     #[test]
     fn test_create_pipe_not_inherited_by_unrelated_spawn() {
-        let (read_fd, write_fd) = create_pipe().expect("create_pipe failed");
+        let (read_file, write_file) = create_pipe().expect("create_pipe failed");
+        let read_fd = read_file.as_raw_fd();
+        let write_fd = write_file.as_raw_fd();
 
         // Probe with the exact fds returned by `create_pipe` (no dup), since
         // duping with `F_DUPFD` would lose CLOEXEC and `F_DUPFD_CLOEXEC` would
@@ -619,11 +639,6 @@ mod tests {
             .expect("failed to spawn sh");
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
 
         assert_eq!(
             stdout,
@@ -899,5 +914,87 @@ mod tests {
             assert!(output.status.success());
             assert_eq!(output.stdout, b"piped input");
         });
+    }
+
+    #[test]
+    fn test_stdio_inherit_keeps_stdio_open() {
+        smol::block_on(async {
+            let status = Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "[ -e /dev/fd/0 ] && [ -e /dev/fd/1 ] && [ -e /dev/fd/2 ]",
+                ])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .await
+                .expect("failed to run command");
+
+            assert!(
+                status.success(),
+                "stdio fds should be open in the child when using Stdio::inherit()"
+            );
+        });
+    }
+
+    #[test]
+    fn test_child_sigpipe_disposition_matches_std() {
+        const SCRIPT: &str = "kill -s PIPE $$; echo survived";
+
+        #[allow(clippy::disallowed_methods)]
+        let std_output = std::process::Command::new("/bin/sh")
+            .args(["-c", SCRIPT])
+            .output()
+            .expect("failed to run std command");
+
+        let our_output = smol::block_on(async {
+            Command::new("/bin/sh")
+                .args(["-c", SCRIPT])
+                .output()
+                .await
+                .expect("failed to run command")
+        });
+
+        assert_eq!(
+            std_output.status.signal(),
+            Some(libc::SIGPIPE),
+            "expected std to reset SIGPIPE to SIG_DFL in children; did its default change?"
+        );
+        assert_eq!(
+            our_output.status.signal(),
+            std_output.status.signal(),
+            "child SIGPIPE disposition diverges from std::process::Command"
+        );
+        assert_eq!(our_output.stdout, std_output.stdout);
+    }
+
+    #[test]
+    fn test_stdio_fds_closed_on_error() {
+        fn count_open_fds() -> usize {
+            let limit = unsafe { libc::getdtablesize() };
+            (0..limit)
+                .filter(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } != -1)
+                .count()
+        }
+
+        const ATTEMPTS: usize = 100;
+        const SLACK: usize = 32;
+
+        let before = count_open_fds();
+        for _ in 0..ATTEMPTS {
+            Command::new("/bin/binarythatdoesnotexist")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect_err("spawn should fail for a nonexistent binary");
+        }
+        let after = count_open_fds();
+
+        assert!(
+            after <= before + SLACK,
+            "fd leak detected: {before} open fds before, {after} after {ATTEMPTS} failed spawns"
+        );
     }
 }

@@ -971,7 +971,7 @@ impl Client {
             Ok(valid) => Ok(valid),
             Err(err) => {
                 self.set_status(Status::AuthenticationError, cx);
-                Err(anyhow!("failed to validate credentials: {}", err))
+                Err(err.context("failed to validate credentials"))
             }
         }
     }
@@ -2240,6 +2240,45 @@ mod tests {
         let credentials = client.sign_in(false, &cx.to_async()).await.unwrap();
         assert_eq!(*auth_count.lock(), 2);
         assert_eq!(credentials.access_token, "2");
+    }
+
+    #[gpui::test]
+    async fn test_sign_in_reports_connection_failure(cx: &mut TestAppContext) {
+        init_test(cx);
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body("".into())
+                .unwrap())
+        });
+        let client =
+            cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client.clone(), cx));
+        client.override_authenticate(move |cx| {
+            cx.background_spawn(async move {
+                Ok(Credentials {
+                    user_id: 1,
+                    access_token: "token".into(),
+                })
+            })
+        });
+
+        // Sign in once so that the credentials are cached on the client.
+        client.sign_in(false, &cx.to_async()).await.unwrap();
+
+        // Simulate a transport-level failure (DNS/TCP/TLS/timeout) where the
+        // request never receives a response while validating cached credentials.
+        http_client
+            .as_fake()
+            .replace_handler(|_, _request| async move {
+                Err(anyhow!("connection reset by peer").context("boom"))
+            });
+
+        let error = client.sign_in(false, &cx.to_async()).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "failed to validate credentials: boom: connection reset by peer"
+        );
     }
 
     #[gpui::test(iterations = 10)]
