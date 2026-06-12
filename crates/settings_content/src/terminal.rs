@@ -183,6 +183,45 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: "system"
     pub bell: Option<TerminalBell>,
+    /// Automatically switch each terminal's theme based on its activity: one
+    /// theme while a command is running, another while idle at the shell
+    /// prompt. Both theme names are required when this is set.
+    ///
+    /// Activity is detected heuristically (Zed does not parse OSC 133 prompt
+    /// markers), so shell builtins and very short commands may not register.
+    /// A theme chosen manually with the `theme: terminal` action takes
+    /// precedence over activity switching for that terminal.
+    ///
+    /// Use the `terminal: toggle activity theme` action to turn switching on
+    /// and off without losing the configured theme names.
+    ///
+    /// Example: `{ "busy": "Ayu Dark", "idle": "Ayu Light" }`
+    ///
+    /// Default: null
+    pub activity_theme: Option<ActivityThemeContent>,
+}
+
+/// A pair of theme names selected by terminal activity state.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ActivityThemeContent {
+    /// Theme applied while the terminal is running a command.
+    pub busy: String,
+    /// Theme applied while the terminal is idle at the shell prompt.
+    pub idle: String,
+    /// Whether activity switching is currently on. Lets the
+    /// `terminal: toggle activity theme` action flip the feature without
+    /// discarding the `busy`/`idle` theme names. When omitted, switching is on.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// Extra foreground programs to treat as interactive, in addition to the
+    /// built-in set (editors, pagers, REPLs, `claude`, …). An interactive
+    /// program holds the terminal foreground while waiting for input, so it is
+    /// considered busy only while it is actively producing output and idle once
+    /// that output stops. Matched case-insensitively against the program name.
+    ///
+    /// Default: []
+    pub interactive_programs: Option<Vec<String>>,
 }
 
 /// Shell configuration to open the terminal with.

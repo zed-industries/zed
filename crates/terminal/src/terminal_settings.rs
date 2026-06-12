@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +50,22 @@ pub struct TerminalSettings {
     pub path_hyperlink_timeout_ms: u64,
     pub show_count_badge: bool,
     pub bell: TerminalBell,
+    pub activity_theme: Option<ActivityTheme>,
+}
+
+/// Themes to apply to a terminal depending on whether it is busy or idle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityTheme {
+    pub busy: SharedString,
+    pub idle: SharedString,
+    /// Whether activity switching is currently on. The theme names are kept
+    /// even when this is false so the `terminal: toggle activity theme` action
+    /// can flip the feature without discarding them.
+    pub enabled: bool,
+    /// Foreground programs to treat as interactive in addition to the built-in
+    /// set (editors, pagers, REPLs, `claude`, …). An interactive program is
+    /// busy only while it is producing output and idle once that output stops.
+    pub interactive_programs: Vec<SharedString>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -132,7 +148,29 @@ impl settings::Settings for TerminalSettings {
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
             show_count_badge: user_content.show_count_badge.unwrap(),
             bell: user_content.bell.unwrap(),
+            activity_theme: user_content.activity_theme.map(|activity_theme| ActivityTheme {
+                busy: activity_theme.busy.into(),
+                idle: activity_theme.idle.into(),
+                enabled: activity_theme.enabled.unwrap_or(true),
+                interactive_programs: activity_theme
+                    .interactive_programs
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            }),
         }
+    }
+}
+
+impl TerminalSettings {
+    /// The configured activity theme, but only when activity switching is
+    /// currently enabled. Returns `None` when unconfigured or toggled off, so
+    /// callers can gate the whole feature on a single check.
+    pub fn active_activity_theme(&self) -> Option<&ActivityTheme> {
+        self.activity_theme
+            .as_ref()
+            .filter(|activity_theme| activity_theme.enabled)
     }
 }
 

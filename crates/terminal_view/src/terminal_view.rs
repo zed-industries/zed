@@ -21,6 +21,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
     SeedQuerySetting, Settings, SettingsStore, TerminalBell, TerminalBlink, WorkingDirectory,
+    update_settings_file,
 };
 use std::{
     any::Any,
@@ -32,10 +33,12 @@ use std::{
     time::Duration,
 };
 use task::TaskId;
+use theme::{Theme, ThemeRegistry};
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, Paste, PasteText, Point, Range,
     ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
-    Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalActivity, TerminalBounds,
+    ToggleActivityTheme, ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -49,11 +52,12 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
+    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane, Toast,
     ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
+    notifications::NotificationId,
     register_serializable_item,
     searchable::{
         Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
@@ -76,6 +80,17 @@ fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize>
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+
+// Activity-driven theme switching debounces both edges: a state change is only
+// committed if it still holds after the delay. Busy is held off briefly so
+// sub-second commands never flash; idle settles a bit longer to coalesce
+// back-to-back commands.
+const ACTIVITY_BUSY_DEBOUNCE: Duration = Duration::from_millis(250);
+const ACTIVITY_IDLE_DEBOUNCE: Duration = Duration::from_millis(400);
+// Foreground-process info only refreshes on terminal output, so silent commands
+// (e.g. `sleep`) emit no event. When activity theming is on, poll at this
+// cadence so busy/idle transitions are caught regardless of output.
+const ACTIVITY_POLL_INTERVAL: Duration = Duration::from_millis(300);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -111,8 +126,45 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
+        workspace.register_action(toggle_activity_theme);
     })
     .detach();
+}
+
+/// Flip activity-driven theme switching on or off, persisting the change to the
+/// user settings file. The configured busy/idle theme names are preserved, so
+/// the feature can be turned back on without re-entering them. Does nothing
+/// (beyond a hint) when `terminal.activity_theme` has not been configured.
+fn toggle_activity_theme(
+    workspace: &mut Workspace,
+    _: &ToggleActivityTheme,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(activity_theme) = TerminalSettings::get_global(cx).activity_theme.as_ref() else {
+        struct ActivityThemeUnconfigured;
+        workspace.show_toast(
+            Toast::new(
+                NotificationId::unique::<ActivityThemeUnconfigured>(),
+                "Set \"terminal.activity_theme\" with \"busy\" and \"idle\" themes to use this.",
+            )
+            .autohide(),
+            cx,
+        );
+        return;
+    };
+
+    let now_enabled = !activity_theme.enabled;
+    let fs = workspace.app_state().fs.clone();
+    update_settings_file(fs, cx, move |settings, _| {
+        if let Some(activity_theme) = settings
+            .terminal
+            .as_mut()
+            .and_then(|terminal| terminal.activity_theme.as_mut())
+        {
+            activity_theme.enabled = Some(now_enabled);
+        }
+    });
 }
 
 pub struct BlockProperties {
@@ -141,6 +193,24 @@ pub struct TerminalView {
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
     custom_title: Option<String>,
+    // Per-terminal theme override (name + resolved theme). Resolved once at set
+    // time and re-resolved on settings change so the render path never resolves
+    // by name per frame.
+    theme_override: Option<(SharedString, Arc<Theme>)>,
+    // Who set `theme_override`: an explicit user pick wins over activity-driven
+    // switching until cleared.
+    theme_override_source: Option<ThemeOverrideSource>,
+    // The activity state currently reflected by the theme, so redundant flips
+    // are skipped and the debounce can confirm the state still holds.
+    applied_activity: Option<TerminalActivity>,
+    // The state the in-flight debounce is waiting to apply, so a repeated poll
+    // does not keep resetting the debounce timer before it can elapse.
+    pending_activity: Option<TerminalActivity>,
+    // Pending debounced activity-driven theme switch; dropping it cancels.
+    activity_debounce: Task<()>,
+    // Repeating poll that refreshes foreground-process info while activity
+    // theming is enabled; empty (no-op) task when disabled.
+    activity_poll: Task<()>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
@@ -154,6 +224,14 @@ pub struct TerminalView {
     rename_editor_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
+}
+
+/// Distinguishes a theme the user picked explicitly from one set automatically
+/// by activity state, so the explicit choice is never clobbered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThemeOverrideSource {
+    User,
+    Activity,
 }
 
 #[derive(Default, Clone)]
@@ -274,6 +352,12 @@ impl TerminalView {
             cx.observe_global::<SettingsStore>(Self::settings_changed),
         ];
 
+        let activity_poll = if TerminalSettings::get_global(cx).active_activity_theme().is_some() {
+            Self::spawn_activity_poll(cx)
+        } else {
+            Task::ready(())
+        };
+
         Self {
             terminal,
             workspace: workspace_handle,
@@ -294,6 +378,12 @@ impl TerminalView {
             scroll_handle,
             needs_serialize: false,
             custom_title: None,
+            theme_override: None,
+            theme_override_source: None,
+            applied_activity: None,
+            pending_activity: None,
+            activity_debounce: Task::ready(()),
+            activity_poll,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
             rename_editor: None,
@@ -313,6 +403,170 @@ impl TerminalView {
             max_lines_when_unfocused,
         };
         cx.notify();
+    }
+
+    /// Set or clear this terminal's per-terminal theme override by name, as an
+    /// explicit user choice. An explicit choice suppresses activity-driven
+    /// switching for this terminal until it is cleared. An unresolvable name is
+    /// logged and leaves the terminal on the window theme.
+    pub fn set_theme_override(
+        &mut self,
+        theme_name: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_theme_override(theme_name, ThemeOverrideSource::User, cx);
+    }
+
+    /// Resolves and applies (or clears) the theme override, recording who set
+    /// it. The render path only ever reads the resolved theme, so resolution
+    /// happens here rather than per frame.
+    fn apply_theme_override(
+        &mut self,
+        theme_name: Option<SharedString>,
+        source: ThemeOverrideSource,
+        cx: &mut Context<Self>,
+    ) {
+        self.theme_override = theme_name.and_then(|name| {
+            ThemeRegistry::global(cx)
+                .get(name.as_ref())
+                .log_err()
+                .map(|theme| (name, theme))
+        });
+        self.theme_override_source = self.theme_override.as_ref().map(|_| source);
+        cx.notify();
+    }
+
+    pub fn theme_override_name(&self) -> Option<&SharedString> {
+        self.theme_override.as_ref().map(|(name, _)| name)
+    }
+
+    /// The theme this terminal renders with: its per-terminal override when set,
+    /// otherwise the window/global active theme.
+    pub fn effective_theme(&self, cx: &App) -> Arc<Theme> {
+        self.theme_override
+            .as_ref()
+            .map(|(_, theme)| theme.clone())
+            .unwrap_or_else(|| cx.theme().clone())
+    }
+
+    fn set_terminal_theme(
+        &mut self,
+        _: &zed_actions::theme::Terminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.theme_override_name().cloned();
+        let view = self.self_handle.clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                theme_selector::toggle_theme_selector_for_override(
+                    workspace,
+                    current,
+                    move |theme_name, cx| {
+                        view.update(cx, |view, cx| view.set_theme_override(theme_name, cx))
+                            .log_err();
+                    },
+                    window,
+                    cx,
+                );
+            })
+            .log_err();
+    }
+
+    fn clear_terminal_theme(
+        &mut self,
+        _: &zed_actions::theme::ClearTerminal,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_override(None, cx);
+        // Hand control back to activity-driven switching, if it is configured.
+        self.applied_activity = None;
+        self.pending_activity = None;
+        self.schedule_activity_theme_update(cx);
+    }
+
+    /// Recompute the terminal's activity state and, when `activity_theme` is
+    /// configured and the user has not pinned an explicit theme, debounce-apply
+    /// the busy or idle theme. Both edges are debounced so fast or back-to-back
+    /// commands do not strobe the theme.
+    fn schedule_activity_theme_update(&mut self, cx: &mut Context<Self>) {
+        // An explicit user choice always wins over activity switching.
+        if self.theme_override_source == Some(ThemeOverrideSource::User) {
+            return;
+        }
+
+        let settings = TerminalSettings::get_global(cx);
+        let Some(activity_theme) = settings.active_activity_theme() else {
+            return;
+        };
+        let interactive_programs = activity_theme.interactive_programs.clone();
+
+        let desired = self
+            .terminal
+            .read(cx)
+            .activity_state(&interactive_programs);
+        if self.applied_activity == Some(desired) {
+            // Already showing the right theme; drop any pending opposite flip.
+            // This is the common case on each poll/`Wakeup`, so it stays
+            // allocation-free.
+            self.activity_debounce = Task::ready(());
+            self.pending_activity = None;
+            return;
+        }
+        if self.pending_activity == Some(desired) {
+            // A transition to this state is already being debounced; leave its
+            // timer running rather than restarting it every poll.
+            return;
+        }
+
+        let (delay, theme_name) = match desired {
+            TerminalActivity::Busy => (ACTIVITY_BUSY_DEBOUNCE, activity_theme.busy.clone()),
+            TerminalActivity::Idle => (ACTIVITY_IDLE_DEBOUNCE, activity_theme.idle.clone()),
+        };
+
+        self.pending_activity = Some(desired);
+        self.activity_debounce = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update(cx, |this, cx| {
+                this.pending_activity = None;
+                // The user may have pinned a theme, or the activity state may
+                // have flipped back, while we were waiting out the debounce.
+                if this.theme_override_source == Some(ThemeOverrideSource::User) {
+                    return;
+                }
+                if this.terminal.read(cx).activity_state(&interactive_programs) != desired {
+                    return;
+                }
+                this.applied_activity = Some(desired);
+                this.apply_theme_override(Some(theme_name), ThemeOverrideSource::Activity, cx);
+            })
+            .log_err();
+        });
+    }
+
+    /// A repeating task that refreshes the terminal's foreground-process info
+    /// and re-evaluates activity. Needed because that info is otherwise only
+    /// refreshed on terminal output, so a silent command emits no event.
+    fn spawn_activity_poll(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(ACTIVITY_POLL_INTERVAL)
+                    .await;
+                let alive = this
+                    .update(cx, |this, cx| {
+                        this.terminal.update(cx, |terminal, cx| {
+                            terminal.poll_foreground_process_info(cx);
+                        });
+                        this.schedule_activity_theme_update(cx);
+                    })
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+            }
+        })
     }
 
     const MAX_EMBEDDED_LINES: usize = 1_000;
@@ -566,6 +820,7 @@ impl TerminalView {
             TerminalBlink::On => true,
             TerminalBlink::TerminalControlled => self.blinking_terminal_enabled,
         };
+        let activity_theme_enabled = settings.active_activity_theme().is_some();
         let new_cursor_shape = settings.cursor_shape;
         let old_cursor_shape = self.cursor_shape;
         if old_cursor_shape != new_cursor_shape {
@@ -587,6 +842,31 @@ impl TerminalView {
         if breadcrumb_visibility_changed {
             cx.emit(ItemEvent::UpdateBreadcrumbs);
         }
+
+        if let Some((name, _)) = &self.theme_override {
+            let name = name.clone();
+            if let Some(theme) = ThemeRegistry::global(cx).get(name.as_ref()).log_err() {
+                self.theme_override = Some((name, theme));
+            }
+        }
+
+        if activity_theme_enabled {
+            // Re-evaluate so a renamed busy/idle theme is picked up. Clearing the
+            // applied state forces a re-resolve on the next debounce tick.
+            self.applied_activity = None;
+            self.pending_activity = None;
+            self.activity_poll = Self::spawn_activity_poll(cx);
+            self.schedule_activity_theme_update(cx);
+        } else {
+            self.activity_poll = Task::ready(());
+            if self.theme_override_source == Some(ThemeOverrideSource::Activity) {
+                // The feature was turned off: drop the activity-driven override.
+                self.applied_activity = None;
+                self.pending_activity = None;
+                self.apply_theme_override(None, ThemeOverrideSource::Activity, cx);
+            }
+        }
+
         cx.notify();
     }
 
@@ -1101,6 +1381,7 @@ fn subscribe_for_terminal_events(
                     cx.emit(Event::Wakeup);
                     cx.emit(ItemEvent::UpdateTab);
                     cx.emit(SearchEvent::MatchesInvalidated);
+                    terminal_view.schedule_activity_theme_update(cx);
                 }
 
                 Event::Bell => {
@@ -1132,6 +1413,7 @@ fn subscribe_for_terminal_events(
 
                 Event::TitleChanged => {
                     cx.emit(ItemEvent::UpdateTab);
+                    terminal_view.schedule_activity_theme_update(cx);
                 }
 
                 Event::NewNavigationTarget(maybe_navigation_target) => {
@@ -1332,6 +1614,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
             .on_action(cx.listener(TerminalView::rename_terminal))
+            .on_action(cx.listener(TerminalView::set_terminal_theme))
+            .on_action(cx.listener(TerminalView::clear_terminal_theme))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -2859,6 +3143,363 @@ mod tests {
         terminal_view.update(cx, |view, _cx| {
             assert!(view.custom_title().is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_per_terminal_theme_override(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+
+        // Register two themes that differ only in their terminal background, so
+        // we can prove each terminal resolves its own theme.
+        let (bg_a, bg_b) = cx.update(|cx| {
+            let registry = ThemeRegistry::global(cx);
+            let base = registry.get("One Dark").unwrap();
+
+            let mut theme_a = (*base).clone();
+            theme_a.id = "per-terminal-a".to_string();
+            theme_a.name = "Per Terminal A".into();
+            theme_a.styles.colors.terminal_background = gpui::hsla(0.1, 0.5, 0.5, 1.0);
+
+            let mut theme_b = (*base).clone();
+            theme_b.id = "per-terminal-b".to_string();
+            theme_b.name = "Per Terminal B".into();
+            theme_b.styles.colors.terminal_background = gpui::hsla(0.6, 0.5, 0.5, 1.0);
+
+            let bg_a = theme_a.colors().terminal_background;
+            let bg_b = theme_b.colors().terminal_background;
+
+            registry.register_test_themes([theme::ThemeFamily {
+                id: "per-terminal-family".to_string(),
+                name: "Per Terminal Family".into(),
+                author: "test".into(),
+                themes: vec![theme_a, theme_b],
+                scales: theme::default_color_scales(),
+            }]);
+            (bg_a, bg_b)
+        });
+
+        // Two terminals living in the same window.
+        let (_pane_a, _term_a, view_a) = add_display_only_terminal(&project, window, false, cx);
+        let (_pane_b, _term_b, view_b) = add_display_only_terminal(&project, window, false, cx);
+
+        view_a.update(cx, |view, cx| {
+            view.set_theme_override(Some("Per Terminal A".into()), cx)
+        });
+        view_b.update(cx, |view, cx| {
+            view.set_theme_override(Some("Per Terminal B".into()), cx)
+        });
+
+        // AC-1: each terminal renders with its own theme.
+        cx.update(|cx| {
+            let ta = view_a.read(cx).effective_theme(cx);
+            let tb = view_b.read(cx).effective_theme(cx);
+            assert_eq!(ta.name.as_ref(), "Per Terminal A");
+            assert_eq!(tb.name.as_ref(), "Per Terminal B");
+            assert_eq!(ta.colors().terminal_background, bg_a);
+            assert_eq!(tb.colors().terminal_background, bg_b);
+            assert_ne!(
+                ta.colors().terminal_background,
+                tb.colors().terminal_background
+            );
+        });
+
+        // AC-2: clearing one terminal falls back to the window/global theme and
+        // leaves the other terminal's override intact.
+        view_a.update(cx, |view, cx| view.set_theme_override(None, cx));
+        cx.update(|cx| {
+            let global_name = cx.theme().name.clone();
+            let ta = view_a.read(cx).effective_theme(cx);
+            assert_eq!(ta.name, global_name);
+            assert!(view_a.read(cx).theme_override_name().is_none());
+
+            let tb = view_b.read(cx).effective_theme(cx);
+            assert_eq!(tb.name.as_ref(), "Per Terminal B");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_theme_override_invalid_name_falls_back(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+        let (_pane, _term, view) = add_display_only_terminal(&project, window, false, cx);
+
+        view.update(cx, |view, cx| {
+            view.set_theme_override(Some("No Such Theme 12345".into()), cx);
+            assert!(
+                view.theme_override_name().is_none(),
+                "an unresolvable theme name is not stored as an override"
+            );
+        });
+
+        cx.update(|cx| {
+            let effective = view.read(cx).effective_theme(cx);
+            assert_eq!(
+                effective.name,
+                cx.theme().name,
+                "an unresolved override falls back to the window/global theme"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_activity_theme_switch(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+
+        // Register distinct busy/idle themes so we can prove which one is active.
+        cx.update(|cx| {
+            let registry = ThemeRegistry::global(cx);
+            let base = registry.get("One Dark").unwrap();
+
+            let mut busy = (*base).clone();
+            busy.id = "activity-busy".to_string();
+            busy.name = "Activity Busy".into();
+
+            let mut idle = (*base).clone();
+            idle.id = "activity-idle".to_string();
+            idle.name = "Activity Idle".into();
+
+            registry.register_test_themes([theme::ThemeFamily {
+                id: "activity-family".to_string(),
+                name: "Activity Family".into(),
+                author: "test".into(),
+                themes: vec![busy, idle],
+                scales: theme::default_color_scales(),
+            }]);
+        });
+
+        // Turn on activity-driven theming.
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().activity_theme =
+                    Some(settings::ActivityThemeContent {
+                        busy: "Activity Busy".to_owned(),
+                        idle: "Activity Idle".to_owned(),
+                        enabled: None,
+                        interactive_programs: None,
+                    });
+            });
+        });
+
+        let (_pane, terminal, view) = add_display_only_terminal(&project, window, false, cx);
+
+        let override_name = |view: &Entity<TerminalView>, cx: &mut TestAppContext| {
+            view.read_with(cx, |view, _| {
+                view.theme_override_name().map(|name| name.to_string())
+            })
+        };
+
+        // Busy → after the busy debounce, the terminal adopts the busy theme.
+        terminal.update(cx, |terminal, _| {
+            terminal.set_activity_for_test(Some(TerminalActivity::Busy))
+        });
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx));
+        cx.executor()
+            .advance_clock(ACTIVITY_BUSY_DEBOUNCE + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(
+            override_name(&view, cx),
+            Some("Activity Busy".to_string()),
+            "a running terminal switches to the busy theme after the debounce"
+        );
+
+        // Idle → after the (longer) idle debounce, it reverts to the idle theme.
+        terminal.update(cx, |terminal, _| {
+            terminal.set_activity_for_test(Some(TerminalActivity::Idle))
+        });
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx));
+        cx.executor()
+            .advance_clock(ACTIVITY_IDLE_DEBOUNCE + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(
+            override_name(&view, cx),
+            Some("Activity Idle".to_string()),
+            "an idle terminal reverts to the idle theme after the settle delay"
+        );
+
+        // A theme picked explicitly by the user suppresses activity switching.
+        view.update(cx, |view, cx| {
+            view.set_theme_override(Some("Activity Idle".into()), cx)
+        });
+        terminal.update(cx, |terminal, _| {
+            terminal.set_activity_for_test(Some(TerminalActivity::Busy))
+        });
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx));
+        cx.executor()
+            .advance_clock(ACTIVITY_BUSY_DEBOUNCE + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(
+            override_name(&view, cx),
+            Some("Activity Idle".to_string()),
+            "an explicit user theme is not overridden by activity switching"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_activity_theme_poll_does_not_reset_debounce(cx: &mut TestAppContext) {
+        // Regression: the foreground-info poll re-evaluates activity faster than
+        // the idle debounce, so a naive implementation kept restarting the idle
+        // timer and never reverted. A pending transition must keep its timer.
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+
+        cx.update(|cx| {
+            let registry = ThemeRegistry::global(cx);
+            let base = registry.get("One Dark").unwrap();
+            let mut busy = (*base).clone();
+            busy.id = "poll-busy".to_string();
+            busy.name = "Poll Busy".into();
+            let mut idle = (*base).clone();
+            idle.id = "poll-idle".to_string();
+            idle.name = "Poll Idle".into();
+            registry.register_test_themes([theme::ThemeFamily {
+                id: "poll-family".to_string(),
+                name: "Poll Family".into(),
+                author: "test".into(),
+                themes: vec![busy, idle],
+                scales: theme::default_color_scales(),
+            }]);
+        });
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().activity_theme =
+                    Some(settings::ActivityThemeContent {
+                        busy: "Poll Busy".to_owned(),
+                        idle: "Poll Idle".to_owned(),
+                        enabled: None,
+                        interactive_programs: None,
+                    });
+            });
+        });
+
+        let (_pane, terminal, view) = add_display_only_terminal(&project, window, false, cx);
+        let override_name = |view: &Entity<TerminalView>, cx: &mut TestAppContext| {
+            view.read_with(cx, |view, _| {
+                view.theme_override_name().map(|name| name.to_string())
+            })
+        };
+
+        // Settle into busy.
+        terminal.update(cx, |terminal, _| {
+            terminal.set_activity_for_test(Some(TerminalActivity::Busy))
+        });
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx));
+        cx.executor()
+            .advance_clock(ACTIVITY_BUSY_DEBOUNCE + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(override_name(&view, cx), Some("Poll Busy".to_string()));
+
+        // Now go idle and simulate polls firing inside the idle debounce window.
+        terminal.update(cx, |terminal, _| {
+            terminal.set_activity_for_test(Some(TerminalActivity::Idle))
+        });
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx)); // schedules idle
+        cx.executor().advance_clock(ACTIVITY_POLL_INTERVAL); // a poll tick, < idle debounce
+        cx.run_until_parked();
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx)); // must NOT reset the timer
+        assert_eq!(
+            override_name(&view, cx),
+            Some("Poll Busy".to_string()),
+            "still busy: the idle debounce has not elapsed yet"
+        );
+
+        // Cross the original idle deadline; the un-reset timer fires.
+        cx.executor()
+            .advance_clock(ACTIVITY_IDLE_DEBOUNCE - ACTIVITY_POLL_INTERVAL + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(
+            override_name(&view, cx),
+            Some("Poll Idle".to_string()),
+            "reverts to idle once the (un-reset) debounce elapses"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_activity_theme_toggle_off(cx: &mut TestAppContext) {
+        // Toggling the feature off (via the `enabled` flag) drops the
+        // activity-driven theme without discarding the configured names, and
+        // toggling it back on resumes switching.
+        cx.executor().allow_parking();
+
+        let (project, _workspace, window) = init_test_with_window(cx).await;
+
+        cx.update(|cx| {
+            let registry = ThemeRegistry::global(cx);
+            let base = registry.get("One Dark").unwrap();
+            let mut busy = (*base).clone();
+            busy.id = "toggle-busy".to_string();
+            busy.name = "Toggle Busy".into();
+            let mut idle = (*base).clone();
+            idle.id = "toggle-idle".to_string();
+            idle.name = "Toggle Idle".into();
+            registry.register_test_themes([theme::ThemeFamily {
+                id: "toggle-family".to_string(),
+                name: "Toggle Family".into(),
+                author: "test".into(),
+                themes: vec![busy, idle],
+                scales: theme::default_color_scales(),
+            }]);
+        });
+
+        let set_enabled = |enabled: Option<bool>, cx: &mut TestAppContext| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().activity_theme =
+                        Some(settings::ActivityThemeContent {
+                            busy: "Toggle Busy".to_owned(),
+                            idle: "Toggle Idle".to_owned(),
+                            enabled,
+                            interactive_programs: None,
+                        });
+                });
+            });
+        };
+
+        set_enabled(Some(true), cx);
+
+        let (_pane, terminal, view) = add_display_only_terminal(&project, window, false, cx);
+        let override_name = |view: &Entity<TerminalView>, cx: &mut TestAppContext| {
+            view.read_with(cx, |view, _| {
+                view.theme_override_name().map(|name| name.to_string())
+            })
+        };
+
+        // Busy → busy theme applies while enabled.
+        terminal.update(cx, |terminal, _| {
+            terminal.set_activity_for_test(Some(TerminalActivity::Busy))
+        });
+        view.update(cx, |view, cx| view.schedule_activity_theme_update(cx));
+        cx.executor()
+            .advance_clock(ACTIVITY_BUSY_DEBOUNCE + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(override_name(&view, cx), Some("Toggle Busy".to_string()));
+
+        // Toggle off: the activity-driven override is dropped (back to the
+        // window theme), even though the terminal is still "busy".
+        set_enabled(Some(false), cx);
+        cx.run_until_parked();
+        assert_eq!(
+            override_name(&view, cx),
+            None,
+            "toggling activity theme off clears the activity-driven override"
+        );
+
+        // Toggle back on: switching resumes and re-applies the busy theme.
+        set_enabled(Some(true), cx);
+        cx.executor()
+            .advance_clock(ACTIVITY_BUSY_DEBOUNCE + Duration::from_millis(10));
+        cx.run_until_parked();
+        assert_eq!(
+            override_name(&view, cx),
+            Some("Toggle Busy".to_string()),
+            "toggling activity theme back on resumes switching"
+        );
     }
 
     #[gpui::test]

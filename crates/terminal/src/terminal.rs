@@ -52,7 +52,8 @@ pub use vte::ansi::{Color, NamedColor, Rgb};
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point as GpuiPoint, Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
+    Point as GpuiPoint, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window,
+    actions, black, px,
 };
 
 #[cfg(not(windows))]
@@ -602,6 +603,9 @@ actions!(
         ToggleViMode,
         /// Selects all text in the terminal.
         SelectAll,
+        /// Turns activity-driven terminal theme switching on or off, keeping the
+        /// configured busy/idle theme names.
+        ToggleActivityTheme,
     ]
 );
 
@@ -938,8 +942,11 @@ impl TerminalBuilder {
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
+            last_output_at: None,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            activity_override: None,
         };
 
         TerminalBuilder {
@@ -1161,8 +1168,11 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
+                last_output_at: None,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
+                #[cfg(any(test, feature = "test-support"))]
+                activity_override: None,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -1320,8 +1330,13 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
+    /// When the terminal last received PTY output. Drives the busy/idle state of
+    /// interactive foreground programs (see [`OUTPUT_FLOW_WINDOW`]).
+    last_output_at: Option<Instant>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+    #[cfg(any(test, feature = "test-support"))]
+    activity_override: Option<TerminalActivity>,
 }
 
 struct CopyTemplate {
@@ -1367,6 +1382,105 @@ impl TaskStatus {
         };
     }
 }
+
+/// Whether a terminal is actively running a command (`Busy`) or sitting at the
+/// shell prompt (`Idle`).
+///
+/// This is a heuristic: Zed does not parse OSC 133 shell-integration prompt
+/// markers, so the state is derived from task status and the PTY foreground
+/// process group. Shell builtins and sub-second commands can misread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalActivity {
+    Idle,
+    Busy,
+}
+
+/// How the terminal's foreground program maps onto activity. The foreground
+/// process is the shell at the prompt and the running command otherwise; an
+/// "interactive" program (an editor, pager, REPL, `claude`, …) is special in
+/// that it holds the foreground the whole time it is open, even while waiting
+/// for input, so its presence alone does not mean the terminal is busy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForegroundClass {
+    /// The shell prompt, or no foreground info: idle.
+    Prompt,
+    /// A one-shot command (e.g. `sleep`, `npm`, `cargo`): busy while it runs.
+    Command,
+    /// An interactive program: busy only while it is producing output.
+    Interactive,
+}
+
+fn derive_activity(
+    task_running: bool,
+    foreground: ForegroundClass,
+    output_recent: bool,
+) -> TerminalActivity {
+    if task_running {
+        return TerminalActivity::Busy;
+    }
+    match foreground {
+        ForegroundClass::Prompt => TerminalActivity::Idle,
+        ForegroundClass::Command => TerminalActivity::Busy,
+        // An interactive program (`claude`, an editor, a REPL) sits in the
+        // foreground while waiting for input, so presence alone is not busy:
+        // it is busy only while output is actively flowing and idle once it
+        // stops (e.g. Claude streaming a reply vs. waiting at its prompt).
+        ForegroundClass::Interactive => {
+            if output_recent {
+                TerminalActivity::Busy
+            } else {
+                TerminalActivity::Idle
+            }
+        }
+    }
+}
+
+/// Classify the foreground program name into how it maps onto activity. `extra`
+/// is the user's `interactive_programs` setting, added to the built-in set.
+fn classify_foreground(name: Option<&str>, extra: &[SharedString]) -> ForegroundClass {
+    match name {
+        None => ForegroundClass::Prompt,
+        Some(name) if is_shell_program(name) => ForegroundClass::Prompt,
+        Some(name) if is_interactive_program(name, extra) => ForegroundClass::Interactive,
+        Some(_) => ForegroundClass::Command,
+    }
+}
+
+/// Known interactive shell program names, compared case-insensitively against
+/// the terminal's foreground process to decide whether it is sitting at the
+/// prompt (a shell) or running a command (anything else).
+fn is_shell_program(name: &str) -> bool {
+    const SHELLS: &[&str] = &[
+        "bash", "sh", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "nushell", "pwsh",
+        "powershell", "cmd", "xonsh", "elvish",
+    ];
+    SHELLS.iter().any(|shell| name.eq_ignore_ascii_case(shell))
+}
+
+/// Programs that hold the terminal foreground while waiting for input, so their
+/// busy/idle state is driven by whether they are producing output rather than
+/// by their mere presence. Compared case-insensitively; `extra` extends this
+/// built-in set from the `interactive_programs` setting.
+fn is_interactive_program(name: &str, extra: &[SharedString]) -> bool {
+    const INTERACTIVE: &[&str] = &[
+        // Agentic / conversational CLIs.
+        "claude",
+        // Editors.
+        "vim", "nvim", "vi", "emacs", "nano", "helix", "hx",
+        // Pagers.
+        "less", "more", "man",
+        // REPLs.
+        "python", "python3", "node", "irb", "ipython", "bpython", "ghci", "iex",
+    ];
+    INTERACTIVE.iter().any(|p| name.eq_ignore_ascii_case(p))
+        || extra.iter().any(|p| name.eq_ignore_ascii_case(p))
+}
+
+/// How long after the last byte of PTY output an interactive program is still
+/// considered busy. Comfortably longer than a typical animated-spinner frame
+/// (Claude, progress bars) so a working program reads steadily busy, but short
+/// enough that going quiet flips it to idle within about a second.
+const OUTPUT_FLOW_WINDOW: Duration = Duration::from_millis(1000);
 
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
 
@@ -1429,6 +1543,10 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             TerminalBackendEvent::Wakeup => {
+                // PTY output arrived; remember when, so an interactive foreground
+                // program counts as busy while it streams and idle once it goes
+                // quiet (see `activity_state`).
+                self.last_output_at = Some(Instant::now());
                 cx.emit(Event::Wakeup);
 
                 if let TerminalType::Pty { info, .. } = &self.terminal_type {
@@ -2538,6 +2656,45 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    /// Whether this terminal is busy running a command or idle at the prompt.
+    /// `interactive_programs` is the user's `interactive_programs` setting,
+    /// extending the built-in interactive set. See [`TerminalActivity`] for the
+    /// heuristic's limitations.
+    pub fn activity_state(&self, interactive_programs: &[SharedString]) -> TerminalActivity {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(activity_override) = self.activity_override {
+            return activity_override;
+        }
+
+        let task_running = matches!(
+            self.task().map(|task| task.status),
+            Some(TaskStatus::Running)
+        );
+        let foreground = classify_foreground(
+            self.foreground_process_command_name().as_deref(),
+            interactive_programs,
+        );
+        let output_recent = self
+            .last_output_at
+            .is_some_and(|at| at.elapsed() < OUTPUT_FLOW_WINDOW);
+        derive_activity(task_running, foreground, output_recent)
+    }
+
+    /// Refresh the cached foreground process info from the live PTY foreground
+    /// process group, emitting [`Event::TitleChanged`] if it changed. The info
+    /// is otherwise only refreshed on terminal output, so a silent command
+    /// (e.g. `sleep`) would not register; activity-driven theming polls this.
+    pub fn poll_foreground_process_info(&self, cx: &mut Context<Self>) {
+        if let TerminalType::Pty { info, .. } = &self.terminal_type {
+            info.emit_title_changed_if_changed(cx);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_activity_for_test(&mut self, activity: Option<TerminalActivity>) {
+        self.activity_override = activity;
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
@@ -2898,6 +3055,66 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[test]
+    fn test_derive_activity() {
+        use ForegroundClass::*;
+        use TerminalActivity::*;
+        // A running task marks the terminal busy regardless of the foreground.
+        assert_eq!(derive_activity(true, Prompt, false), Busy);
+        // A one-shot command marks the terminal busy while it runs.
+        assert_eq!(derive_activity(false, Command, false), Busy);
+        // At the prompt (or no foreground info) the terminal is idle.
+        assert_eq!(derive_activity(false, Prompt, false), Idle);
+        // An interactive program is busy only while output is flowing.
+        assert_eq!(derive_activity(false, Interactive, true), Busy);
+        assert_eq!(derive_activity(false, Interactive, false), Idle);
+    }
+
+    #[test]
+    fn test_classify_foreground() {
+        use ForegroundClass::*;
+        let extra = [SharedString::from("lazygit")];
+        // Shells (and missing info) are the prompt.
+        assert_eq!(classify_foreground(Some("zsh"), &extra), Prompt);
+        assert_eq!(classify_foreground(Some("PowerShell"), &extra), Prompt);
+        assert_eq!(classify_foreground(None, &extra), Prompt);
+        // One-shot commands are busy by presence.
+        assert_eq!(classify_foreground(Some("npm"), &extra), Command);
+        assert_eq!(classify_foreground(Some("cargo"), &extra), Command);
+        // Built-in and user-configured interactive programs.
+        assert_eq!(classify_foreground(Some("claude"), &extra), Interactive);
+        assert_eq!(classify_foreground(Some("Vim"), &extra), Interactive);
+        assert_eq!(classify_foreground(Some("python3"), &extra), Interactive);
+        assert_eq!(classify_foreground(Some("lazygit"), &extra), Interactive);
+    }
+
+    #[test]
+    fn test_is_shell_program() {
+        // The foreground being a shell means the terminal is at the prompt.
+        assert!(is_shell_program("zsh"));
+        assert!(is_shell_program("Bash"));
+        assert!(is_shell_program("PowerShell"));
+        // A real command means the terminal is busy.
+        assert!(!is_shell_program("sleep"));
+        assert!(!is_shell_program("npm"));
+        assert!(!is_shell_program("cargo"));
+    }
+
+    #[test]
+    fn test_is_interactive_program() {
+        let extra = [SharedString::from("lazygit")];
+        // Built-in interactive set, matched case-insensitively.
+        assert!(is_interactive_program("claude", &[]));
+        assert!(is_interactive_program("NVIM", &[]));
+        assert!(is_interactive_program("less", &[]));
+        assert!(is_interactive_program("node", &[]));
+        // Extended via settings.
+        assert!(is_interactive_program("lazygit", &extra));
+        // One-shot commands and shells are not interactive.
+        assert!(!is_interactive_program("npm", &extra));
+        assert!(!is_interactive_program("zsh", &extra));
+    }
 
     #[test]
     fn test_normalize_path_command_name() {

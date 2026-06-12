@@ -400,7 +400,16 @@ pub mod feedback {
 pub mod theme {
     use gpui::actions;
 
-    actions!(theme, [ToggleMode]);
+    actions!(
+        theme,
+        [
+            ToggleMode,
+            /// Sets a theme for the focused terminal only, without changing the global theme.
+            Terminal,
+            /// Clears the focused terminal's theme override, returning it to the window/global theme.
+            ClearTerminal
+        ]
+    );
 }
 
 pub mod theme_selector {
