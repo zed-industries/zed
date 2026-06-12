@@ -1231,6 +1231,15 @@
     //
     // Default: true
     "show_merge_conflict_indicator": true,
+    // Maximum size, in bytes, of a single tool result's text content that is
+    // sent inline to the model. When a tool (including MCP/context server
+    // tools) returns more text than this, the full output is written to a
+    // temporary file and the model receives a short notice with the file path
+    // and a preview instead, so a single oversized tool response can't
+    // overflow the model's context window. Set to 0 to disable.
+    //
+    // Default: 65536
+    "tool_output_inline_limit": 65536,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
