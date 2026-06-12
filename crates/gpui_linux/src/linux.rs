@@ -52,6 +52,6 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
         "Headless" => Rc::new(LinuxPlatform {
             inner: HeadlessClient::new(),
         }),
-        _ => unreachable!(),
+        _ => unreachable!("Maybe you forgot to add \"features = [\"x11\", \"wayland\"]\" to gpui_platform?"),
     }
 }
