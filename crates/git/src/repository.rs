@@ -818,6 +818,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
+    fn tracked_paths(&self) -> Task<Result<Vec<RepoPath>>>;
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
@@ -1131,7 +1132,7 @@ impl RealGitRepository {
         let any_git_binary_path = system_git_binary_path
             .clone()
             .or(bundled_git_binary_path)
-            .context("no git binary available")?;
+            .unwrap_or_else(|| PathBuf::from("git"));
         log::info!(
             "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
         );
@@ -1777,6 +1778,27 @@ impl GitRepository for RealGitRepository {
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 anyhow::bail!("git status failed: {stderr}");
+            }
+        })
+    }
+
+    fn tracked_paths(&self) -> Task<Result<Vec<RepoPath>>> {
+        let git = self.git_binary_in_worktree();
+        self.executor.spawn(async move {
+            let git = git?;
+            let output = git.build_command(&["ls-files", "-z"]).output().await?;
+
+            if output.status.success() {
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                stdout
+                    .split('\0')
+                    .filter(|path| !path.is_empty())
+                    .map(|path| RepoPath::new(path))
+                    .collect::<Result<Vec<RepoPath>>>()
+                    .context("loading tracked paths")
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git ls-files failed: {stderr}")
             }
         })
     }

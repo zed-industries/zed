@@ -487,6 +487,18 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn tracked_paths(&self) -> Task<Result<Vec<RepoPath>>> {
+        let result = self.fs.with_git_state(&self.dot_git_path, false, |state| {
+            let mut paths = state.index_contents.keys().cloned().collect::<Vec<_>>();
+            paths.sort();
+            anyhow::Ok(paths)
+        });
+        Task::ready(match result {
+            Ok(result) => result,
+            Err(e) => Err(e),
+        })
+    }
+
     fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
     }

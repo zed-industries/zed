@@ -11901,7 +11901,7 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
-        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, true);
+        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, false);
         assert_entry_git_state(
             tree.read(cx),
             repository.read(cx),
