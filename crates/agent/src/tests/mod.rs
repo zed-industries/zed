@@ -2305,6 +2305,124 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     verify_thread_recovery(&thread, &fake_model, cx).await;
 }
 
+/// The fix for #57230 depends on `Thread::replay` emitting, for tools without
+/// a `replay` impl (like the terminal tool), a `ToolCall` event followed by a
+/// `ToolCallUpdate` carrying the persisted `raw_output` — the update is what
+/// `acp_thread::ToolCall::update_fields` turns back into displayable content.
+/// `test_mcp_tool_result_displayed_when_server_disconnected` covers only the
+/// tool-not-found branch of `replay_tool_call`; this covers the tool-found
+/// branch, running the real `TerminalTool` end to end, and ties the persisted
+/// output to what the UI failure indicator recovers via
+/// `parse_failed_exit_code`.
+#[gpui::test]
+async fn test_terminal_tool_output_replayed_after_restart(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // A terminal whose command exits immediately with a nonzero code.
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(
+            FakeTerminalHandle::new_with_immediate_exit(cx, 128).with_output(
+                acp::TerminalOutputResponse::new("fatal: oops".to_string(), false)
+                    .exit_status(acp::TerminalExitStatus::new().exit_code(128)),
+            ),
+        )
+    }));
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(crate::TerminalTool::new(
+                thread.project().clone(),
+                environment,
+            ));
+            thread.send(UserMessageId::new(), ["run a command"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "terminal_tool_1".into(),
+            name: TerminalTool::NAME.into(),
+            raw_input: r#"{"command": "false", "cd": "."}"#.into(),
+            input: json!({"command": "false", "cd": "."}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Approve the command at the permission prompt. Responding explicitly
+    // (instead of overriding the permission settings) keeps the test
+    // deterministic across scheduler seeds: a settings-global override can
+    // race the async settings load in `setup` and get clobbered.
+    let tool_call_auth = next_tool_call_authorization(&mut events).await;
+    tool_call_auth
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    // After the tool completes, the model continues with a new completion
+    // request that includes the tool result; finish the turn.
+    fake_model.send_last_completion_stream_text_chunk("The command failed.");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+
+    // Replay the thread (this is what happens when loading a saved thread).
+    let mut replay_events = thread.update(cx, |thread, cx| thread.replay(cx));
+
+    let mut saw_tool_call = false;
+    let mut raw_output_update = None;
+    while let Some(event) = replay_events.next().await {
+        match event.unwrap() {
+            ThreadEvent::ToolCall(tool_call) => {
+                assert_eq!(tool_call.tool_call_id.to_string(), "terminal_tool_1");
+                assert_eq!(tool_call.kind, acp::ToolKind::Execute);
+                saw_tool_call = true;
+            }
+            ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                if update.fields.raw_output.is_some() =>
+            {
+                assert_eq!(update.tool_call_id.to_string(), "terminal_tool_1");
+                assert!(
+                    saw_tool_call,
+                    "raw_output update must follow the ToolCall event, or \
+                     `update_fields` has no tool call to repopulate"
+                );
+                raw_output_update = Some(update);
+            }
+            _ => {}
+        }
+    }
+
+    let update = raw_output_update.expect("replay should emit an update carrying raw_output");
+    // A nonzero exit code is not an error result for the terminal tool.
+    assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Completed));
+
+    let saved_output = update
+        .fields
+        .raw_output
+        .as_ref()
+        .and_then(|output| output.as_str())
+        .expect("terminal tool output should be persisted as a string");
+    assert!(
+        saved_output.contains("fatal: oops"),
+        "saved output should contain the terminal output, got: {saved_output}"
+    );
+    assert_eq!(
+        crate::parse_failed_exit_code(saved_output),
+        Some(128),
+        "the UI failure indicator should recover the exit code from the \
+         persisted output, got: {saved_output}"
+    );
+}
+
 #[gpui::test]
 async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppContext) {
     // This test verifies that tools which properly handle cancellation via
