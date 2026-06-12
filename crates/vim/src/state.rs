@@ -79,6 +79,15 @@ impl Mode {
     pub fn is_helix(&self) -> bool {
         matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
+
+    /// `HelixNormal` qualifies because its cursor is itself a one-character selection.
+    pub fn has_selection(&self) -> bool {
+        self.is_visual() || matches!(self, Self::HelixNormal)
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal | Self::HelixNormal)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -172,7 +181,9 @@ pub struct HelixJumpLabel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelixJumpBehaviour {
     Move,
+    MoveToWordStart,
     Extend,
+    ExtendToWordStart,
 }
 
 #[derive(Default, Clone, Debug)]

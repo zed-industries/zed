@@ -1,4 +1,5 @@
 use std::any::TypeId;
+use std::borrow::Cow;
 use std::cmp::min;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -20,17 +21,16 @@ use markdown::{
 };
 use project::Project;
 use project::search::SearchQuery;
-use settings::Settings;
+use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
-use util::normalize_path;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{OpenOptions, OpenVisible, Pane, Workspace};
+use workspace::{Pane, Workspace};
 
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
@@ -223,6 +223,7 @@ impl MarkdownPreviewView {
                         parse_html: true,
                         render_mermaid_diagrams: true,
                         parse_heading_slugs: true,
+                        render_metadata_blocks: true,
                         ..Default::default()
                     },
                     cx,
@@ -623,6 +624,7 @@ impl MarkdownPreviewView {
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             })
             .scroll_handle(self.scroll_handle.clone())
@@ -783,56 +785,22 @@ fn open_preview_url(
 ) {
     let (path_text, _) = split_preview_url(url.as_ref());
 
-    if let Some(path) = resolve_preview_path(path_text, base_directory.as_deref())
-        && let Some(workspace) = workspace.upgrade()
-    {
-        let _ = workspace.update(cx, |workspace, cx| {
-            workspace
-                .open_abs_path(
-                    normalize_path(path.as_path()),
-                    OpenOptions {
-                        visible: Some(OpenVisible::None),
-                        ..Default::default()
-                    },
-                    window,
-                    cx,
-                )
-                .detach();
-        });
-        return;
-    }
+    // URL-decode the path for proper handling of encoded characters
+    let decoded_path = urlencoding::decode(path_text).unwrap_or_else(|_| Cow::Borrowed(path_text));
 
-    cx.open_url(url.as_ref());
+    if let Some(workspace) = workspace.upgrade() {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_url_or_file(&decoded_path, base_directory.as_deref(), window, cx);
+        });
+    } else {
+        cx.open_url(url.as_ref());
+    }
 }
 
 fn split_preview_url(url: &str) -> (&str, Option<&str>) {
     match url.split_once('#') {
         Some((path, fragment)) => (path, Some(fragment)),
         None => (url, None),
-    }
-}
-
-fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<PathBuf> {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        return None;
-    }
-
-    let (path_text, _) = split_preview_url(url);
-    let decoded_url = urlencoding::decode(path_text)
-        .map(|decoded| decoded.into_owned())
-        .unwrap_or_else(|_| path_text.to_string());
-    let candidate = PathBuf::from(&decoded_url);
-
-    if candidate.is_absolute() && candidate.exists() {
-        return Some(candidate);
-    }
-
-    let base_directory = base_directory?;
-    let resolved = base_directory.join(decoded_url);
-    if resolved.exists() {
-        Some(resolved)
-    } else {
-        None
     }
 }
 
@@ -975,6 +943,16 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| Task::ready(Ok(())))
     }
 
+    fn reload(
+        &mut self,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // The preview is not the owner of the source editor's buffer, so force-closing it should not discard editor changes.
+        Task::ready(Ok(()))
+    }
+
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
@@ -1010,7 +988,9 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .bg(bg_color)
             .child(
                 div()
@@ -1098,7 +1078,7 @@ impl SearchableItem for MarkdownPreviewView {
 
     fn query_suggestion(
         &mut self,
-        _ignore_settings: bool,
+        _seed_query_override: Option<SeedQuerySetting>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
@@ -1198,53 +1178,7 @@ mod tests {
     use util::test::TempTree;
     use workspace::{AppState, MultiWorkspace, SaveIntent, Workspace, open_paths};
 
-    use super::{MarkdownPreviewView, resolve_preview_path};
-
-    #[test]
-    fn resolves_relative_preview_path_and_missing_cases() {
-        let tree = markdown_fixture_tree(json!({
-            "notes.md": "# Notes"
-        }));
-        let base_directory = markdown_fixture_directory(&tree);
-        let file = base_directory.join("notes.md");
-
-        assert_eq!(
-            resolve_preview_path("notes.md", Some(base_directory.as_path())),
-            Some(file)
-        );
-        assert_eq!(
-            resolve_preview_path("nonexistent.md", Some(base_directory.as_path())),
-            None
-        );
-        assert_eq!(resolve_preview_path("notes.md", None), None);
-    }
-
-    #[test]
-    fn resolves_urlencoded_preview_path_and_ignores_fragment_component() {
-        let tree = markdown_fixture_tree(json!({
-            "release notes.md": "# Release Notes",
-            "notes.md": "# Notes"
-        }));
-        let base_directory = markdown_fixture_directory(&tree);
-
-        assert_eq!(
-            resolve_preview_path(
-                "release%20notes.md#overview",
-                Some(base_directory.as_path())
-            ),
-            Some(base_directory.join("release notes.md"))
-        );
-        assert_eq!(
-            resolve_preview_path("notes.md#L10", Some(base_directory.as_path())),
-            Some(base_directory.join("notes.md"))
-        );
-    }
-
-    #[test]
-    fn does_not_treat_web_links_as_preview_files() {
-        assert_eq!(resolve_preview_path("https://zed.dev", None), None);
-        assert_eq!(resolve_preview_path("http://example.com", None), None);
-    }
+    use super::MarkdownPreviewView;
 
     #[test]
     fn resolves_workspace_absolute_preview_image_path_and_rejects_missing() {
@@ -1354,6 +1288,92 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn force_closing_preview_preserves_source_editor_changes(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "todo.md": "- [ ] Finish work\n"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir/todo.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let (preview, editor) = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let editor: Entity<Editor> = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .unwrap();
+
+                let preview = workspace.update(cx, |workspace, cx| {
+                    let preview = MarkdownPreviewView::create_markdown_view(
+                        workspace,
+                        editor.clone(),
+                        window,
+                        cx,
+                    );
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                });
+
+                (preview, editor)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let view_handle = preview.downgrade();
+                assert!(preview.read(cx).focus_handle.contains_focused(window, cx));
+                MarkdownPreviewView::apply_checkbox_toggle_to_editor(&editor, 2..5, true, cx);
+                MarkdownPreviewView::refresh_preview(view_handle, window, cx);
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
+            "- [x] Finish work\n"
+        );
+
+        let close_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(preview.entity_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap();
+
+        close_task.await.unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
+            "- [x] Finish work\n"
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
@@ -1361,12 +1381,6 @@ mod tests {
             crate::init(cx);
             state
         })
-    }
-
-    fn markdown_fixture_tree(docs_tree: serde_json::Value) -> TempTree {
-        TempTree::new(json!({
-            "docs": docs_tree
-        }))
     }
 
     fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {

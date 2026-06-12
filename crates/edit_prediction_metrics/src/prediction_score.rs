@@ -5,12 +5,15 @@ use std::path::Path;
 use std::sync::Arc;
 use zeta_prompt::udiff::{apply_diff_to_string, apply_diff_to_string_with_hunk_offset};
 
-use crate::patch_metrics::{
-    ClassificationMetrics, DeltaChrFMetrics, braces_disbalance, count_patch_token_changes,
-    delta_chr_f, delta_chr_f_beta, exact_lines_match, has_isolated_whitespace_changes,
-    is_editable_region_correct,
-};
 use crate::reversal::compute_prediction_reversal_ratio_from_history;
+use crate::{
+    jumps::{EditableContextCoverage, Excerpt, editable_context_coverage},
+    patch_metrics::{
+        ClassificationMetrics, DeltaChrFMetrics, braces_disbalance, count_patch_token_changes,
+        delta_chr_f, delta_chr_f_beta, exact_lines_match, has_isolated_whitespace_changes,
+        is_editable_region_correct,
+    },
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PredictionScore {
@@ -61,6 +64,8 @@ pub struct PredictionScore {
     pub cumulative_logprob: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avg_logprob: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editable_context_coverage: Option<EditableContextCoverage>,
 }
 
 impl PredictionScore {
@@ -91,6 +96,7 @@ impl PredictionScore {
             discarded_chars: None,
             cumulative_logprob: None,
             avg_logprob: None,
+            editable_context_coverage: None,
         }
     }
 
@@ -193,11 +199,26 @@ pub struct PredictionScoringInput<'a> {
     pub reversal_context: Option<PredictionReversalContext<'a>>,
     pub cumulative_logprob: Option<f64>,
     pub avg_logprob: Option<f64>,
+    pub context: Option<&'a [Excerpt]>,
 }
 
 pub fn score_prediction(input: PredictionScoringInput<'_>) -> PredictionScore {
+    let editable_context_coverage = input.context.and_then(|context| {
+        input
+            .expected_patches
+            .iter()
+            .map(|expected| editable_context_coverage(&expected.patch, context))
+            .max_by(|left, right| {
+                left.lines_f1
+                    .total_cmp(&right.lines_f1)
+                    .then_with(|| left.files_f1.total_cmp(&right.files_f1))
+            })
+    });
+
     let Some(actual_patch) = input.actual_patch else {
-        return PredictionScore::zero();
+        let mut score = PredictionScore::zero();
+        score.editable_context_coverage = editable_context_coverage;
+        return score;
     };
 
     let token_changes = count_patch_token_changes(actual_patch);
@@ -208,6 +229,7 @@ pub fn score_prediction(input: PredictionScoringInput<'_>) -> PredictionScore {
             let mut score = PredictionScore::zero();
             score.inserted_tokens = token_changes.inserted_tokens;
             score.deleted_tokens = token_changes.deleted_tokens;
+            score.editable_context_coverage = editable_context_coverage;
             return score;
         }
     };
@@ -218,7 +240,9 @@ pub fn score_prediction(input: PredictionScoringInput<'_>) -> PredictionScore {
 
     for expected in input.expected_patches {
         let delta_chr_f_metrics = delta_chr_f(input.original_text, &expected.text, &actual_text);
-        if delta_chr_f_metrics.score > best_delta_chr_f_metrics.score {
+        if best_expected_text.is_none()
+            || delta_chr_f_metrics.score > best_delta_chr_f_metrics.score
+        {
             best_delta_chr_f_metrics = delta_chr_f_metrics;
             best_expected_cursor = expected.cursor_editable_region_offset;
             best_expected_text = Some(expected.text.as_str());
@@ -300,6 +324,7 @@ pub fn score_prediction(input: PredictionScoringInput<'_>) -> PredictionScore {
         discarded_chars,
         cumulative_logprob: input.cumulative_logprob,
         avg_logprob: input.avg_logprob,
+        editable_context_coverage,
     }
 }
 
@@ -315,5 +340,36 @@ fn compute_cursor_metrics(
         }
         (None, None) => (None, None),
         (Some(_), None) | (None, Some(_)) => (None, Some(false)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kept_rate_is_computed_when_best_delta_chr_f_score_is_zero() {
+        let original_text = "";
+        let actual_patch = "--- a/file.txt\n+++ b/file.txt\n@@ -0,0 +1 @@\n+bbbbbb\n";
+        let expected_patch = "--- a/file.txt\n+++ b/file.txt\n@@ -0,0 +1 @@\n+cccccc\n";
+        let expected_patches = [PreparedExpectedPatch {
+            patch: expected_patch.to_string(),
+            text: "cccccc".to_string(),
+            cursor_editable_region_offset: None,
+        }];
+
+        let score = score_prediction(PredictionScoringInput {
+            original_text,
+            expected_patches: &expected_patches,
+            actual_patch: Some(actual_patch),
+            actual_cursor: None,
+            reversal_context: None,
+            cumulative_logprob: None,
+            avg_logprob: None,
+            context: None,
+        });
+
+        assert_eq!(score.delta_chr_f, 0.0);
+        assert_eq!(score.kept_rate, Some(0.0));
     }
 }

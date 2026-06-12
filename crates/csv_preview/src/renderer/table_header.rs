@@ -3,7 +3,6 @@ use ui::{Tooltip, prelude::*};
 
 use crate::{
     CsvPreviewView,
-    settings::FontType,
     table_data_engine::sorting_by_column::{AppliedSorting, SortDirection},
     types::AnyColumn,
 };
@@ -21,10 +20,7 @@ impl CsvPreviewView {
             .justify_between()
             .items_center()
             .w_full()
-            .map(|div| match self.settings.font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
+            .font_buffer(cx)
             .child(div().child(header_text))
             .child(h_flex().gap_1().child(self.create_sort_button(cx, col_idx)))
             .into_any_element()

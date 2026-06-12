@@ -5,7 +5,8 @@ pub mod responses;
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
-    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
     http::{HeaderMap, HeaderValue},
 };
 pub use language_model_core::ReasoningEffort;
@@ -58,26 +59,14 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo")]
-    ThreePointFiveTurbo,
     #[serde(rename = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-turbo")]
-    FourTurbo,
     #[serde(rename = "gpt-4o-mini")]
     FourOmniMini,
-    #[serde(rename = "gpt-4.1-nano")]
-    FourPointOneNano,
-    #[serde(rename = "o1")]
-    O1,
-    #[serde(rename = "o3-mini")]
-    O3Mini,
     #[serde(rename = "o3")]
     O3,
     #[serde(rename = "gpt-5")]
     Five,
-    #[serde(rename = "gpt-5-codex")]
-    FiveCodex,
     #[serde(rename = "gpt-5-mini")]
     #[default]
     FiveMini,
@@ -87,10 +76,12 @@ pub enum Model {
     FivePointOne,
     #[serde(rename = "gpt-5.2")]
     FivePointTwo,
-    #[serde(rename = "gpt-5.2-codex")]
-    FivePointTwoCodex,
     #[serde(rename = "gpt-5.3-codex")]
     FivePointThreeCodex,
+    #[serde(rename = "gpt-5.4-nano")]
+    FivePointFourNano,
+    #[serde(rename = "gpt-5.4-mini")]
+    FivePointFourMini,
     #[serde(rename = "gpt-5.4")]
     FivePointFour,
     #[serde(rename = "gpt-5.4-pro")]
@@ -130,22 +121,17 @@ impl Model {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
             "gpt-4" => Ok(Self::Four),
-            "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
-            "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
-            "o1" => Ok(Self::O1),
-            "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "gpt-5" => Ok(Self::Five),
-            "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
-            "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
             "gpt-5.3-codex" => Ok(Self::FivePointThreeCodex),
+            "gpt-5.4-nano" => Ok(Self::FivePointFourNano),
+            "gpt-5.4-mini" => Ok(Self::FivePointFourMini),
             "gpt-5.4" => Ok(Self::FivePointFour),
             "gpt-5.4-pro" => Ok(Self::FivePointFourPro),
             "gpt-5.5" => Ok(Self::FivePointFive),
@@ -156,22 +142,17 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOneNano => "gpt-4.1-nano",
-            Self::O1 => "o1",
-            Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::Five => "gpt-5",
-            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
-            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::FivePointThreeCodex => "gpt-5.3-codex",
+            Self::FivePointFourNano => "gpt-5.4-nano",
+            Self::FivePointFourMini => "gpt-5.4-mini",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
             Self::FivePointFive => "gpt-5.5",
@@ -182,22 +163,17 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOneNano => "gpt-4.1-nano",
-            Self::O1 => "o1",
-            Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::Five => "gpt-5",
-            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
-            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::FivePointThreeCodex => "gpt-5.3-codex",
+            Self::FivePointFourNano => "gpt-5.4-nano",
+            Self::FivePointFourMini => "gpt-5.4-mini",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
             Self::FivePointFive => "gpt-5.5",
@@ -208,22 +184,17 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
-            Self::FourTurbo => 128_000,
             Self::FourOmniMini => 128_000,
-            Self::FourPointOneNano => 1_047_576,
-            Self::O1 => 200_000,
-            Self::O3Mini => 200_000,
             Self::O3 => 200_000,
             Self::Five => 272_000,
-            Self::FiveCodex => 272_000,
             Self::FiveMini => 400_000,
             Self::FiveNano => 400_000,
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
-            Self::FivePointTwoCodex => 400_000,
             Self::FivePointThreeCodex => 400_000,
+            Self::FivePointFourNano => 400_000,
+            Self::FivePointFourMini => 400_000,
             Self::FivePointFour => 1_050_000,
             Self::FivePointFourPro => 1_050_000,
             Self::FivePointFive => 1_050_000,
@@ -237,22 +208,17 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
-            Self::ThreePointFiveTurbo => Some(4_096),
             Self::Four => Some(8_192),
-            Self::FourTurbo => Some(4_096),
             Self::FourOmniMini => Some(16_384),
-            Self::FourPointOneNano => Some(32_768),
-            Self::O1 => Some(100_000),
-            Self::O3Mini => Some(100_000),
             Self::O3 => Some(100_000),
             Self::Five => Some(128_000),
-            Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
-            Self::FivePointTwoCodex => Some(128_000),
             Self::FivePointThreeCodex => Some(128_000),
+            Self::FivePointFourNano => Some(128_000),
+            Self::FivePointFourMini => Some(128_000),
             Self::FivePointFour => Some(128_000),
             Self::FivePointFourPro => Some(128_000),
             Self::FivePointFive => Some(128_000),
@@ -265,10 +231,76 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
-            Self::FivePointThreeCodex | Self::FivePointFourPro | Self::FivePointFivePro => {
-                Some(ReasoningEffort::Medium)
-            }
+            Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointFour
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano => Some(ReasoningEffort::None),
+            Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointThreeCodex
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => Some(ReasoningEffort::Medium),
             _ => None,
+        }
+    }
+
+    pub fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+        match self {
+            Self::Custom {
+                reasoning_effort: Some(effort),
+                ..
+            } => match effort {
+                ReasoningEffort::None => &[ReasoningEffort::None],
+                ReasoningEffort::Minimal => &[ReasoningEffort::Minimal],
+                ReasoningEffort::Low => &[ReasoningEffort::Low],
+                ReasoningEffort::Medium => &[ReasoningEffort::Medium],
+                ReasoningEffort::High => &[ReasoningEffort::High],
+                ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
+            },
+            Self::O3 => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::FivePointOne => &[
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::Five | Self::FiveMini | Self::FiveNano => &[
+                ReasoningEffort::Minimal,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::FivePointFourPro | Self::FivePointFivePro => &[
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            Self::FivePointThreeCodex => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            Self::FivePointTwo
+            | Self::FivePointFour
+            | Self::FivePointFive
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano => &[
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            _ => &[],
         }
     }
 
@@ -287,24 +319,21 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::ThreePointFiveTurbo
-            | Self::Four
-            | Self::FourTurbo
+            Self::Four
             | Self::FourOmniMini
-            | Self::FourPointOneNano
             | Self::Five
-            | Self::FiveCodex
             | Self::FiveMini
             | Self::FivePointOne
             | Self::FivePointTwo
-            | Self::FivePointTwoCodex
             | Self::FivePointThreeCodex
             | Self::FivePointFour
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano
             | Self::FivePointFourPro
             | Self::FivePointFive
             | Self::FivePointFivePro
             | Self::FiveNano => true,
-            Self::O1 | Self::O3 | Self::O3Mini | Model::Custom { .. } => false,
+            Self::O3 | Model::Custom { .. } => false,
         }
     }
 
@@ -313,6 +342,105 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+
+    /// Whether OpenAI's Priority processing tier is available for this model.
+    /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
+    /// `*-nano`, and legacy `gpt-4` variants are not eligible.
+    pub fn supports_priority(&self) -> bool {
+        match self {
+            Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointThreeCodex
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFive => true,
+            Self::Four
+            | Self::FiveNano
+            | Self::FivePointFourNano
+            | Self::FivePointFourPro
+            | Self::FivePointFivePro
+            | Self::Custom { .. } => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Model, ReasoningEffort};
+
+    #[test]
+    fn gpt_5_1_uses_none_reasoning_by_default() {
+        let expected_efforts = [
+            ReasoningEffort::None,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+        ];
+
+        assert_eq!(
+            Model::FivePointOne.reasoning_effort(),
+            Some(ReasoningEffort::None)
+        );
+        assert_eq!(
+            Model::FivePointOne.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+    }
+
+    #[test]
+    fn newer_frontier_models_support_none_reasoning() {
+        let expected_efforts = [
+            ReasoningEffort::None,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+        ];
+
+        assert_eq!(
+            Model::FivePointTwo.reasoning_effort(),
+            Some(ReasoningEffort::None)
+        );
+        assert_eq!(
+            Model::FivePointTwo.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+        assert_eq!(
+            Model::FivePointFour.reasoning_effort(),
+            Some(ReasoningEffort::None)
+        );
+        assert_eq!(
+            Model::FivePointFour.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+        assert_eq!(
+            Model::FivePointFive.reasoning_effort(),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            Model::FivePointFive.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+    }
+
+    #[test]
+    fn newer_codex_models_support_low_reasoning_effort() {
+        let expected_efforts = [
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+        ];
+
+        assert_eq!(
+            Model::FivePointThreeCodex.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
     }
 }
 
@@ -353,6 +481,23 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
+/// Service tier for OpenAI requests. Maps to the top-level `service_tier`
+/// field on Responses and Chat Completions. We only ever send `Priority`
+/// today (in response to Fast Mode being enabled); the other variants are
+/// included for symmetry with the API and so deserialization of echoed
+/// values does not fail.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTier {
+    Auto,
+    Default,
+    Flex,
+    Scale,
+    Priority,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -519,9 +664,9 @@ pub struct FunctionChunk {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -614,15 +759,15 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
         ))

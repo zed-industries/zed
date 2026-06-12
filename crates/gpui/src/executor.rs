@@ -6,9 +6,7 @@ use scheduler::Instant;
 use scheduler::Scheduler;
 use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
-pub use scheduler::{
-    FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority, Task,
-};
+pub use scheduler::{FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -22,7 +20,7 @@ pub struct BackgroundExecutor {
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    inner: scheduler::ForegroundExecutor,
+    inner: scheduler::LocalExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
@@ -113,60 +111,6 @@ impl BackgroundExecutor {
         } else {
             self.inner.spawn_with_priority(priority, future)
         }
-    }
-
-    /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
-    ///
-    /// This allows to spawn background work that borrows from its scope. Note that the supplied future will run to
-    /// completion before the current task is resumed, even if the current task is slated for cancellation.
-    pub async fn await_on_background<R>(&self, future: impl Future<Output = R> + Send) -> R
-    where
-        R: Send,
-    {
-        use crate::RunnableMeta;
-        use parking_lot::{Condvar, Mutex};
-
-        struct NotifyOnDrop<'a>(&'a (Condvar, Mutex<bool>));
-
-        impl Drop for NotifyOnDrop<'_> {
-            fn drop(&mut self) {
-                *self.0.1.lock() = true;
-                self.0.0.notify_all();
-            }
-        }
-
-        struct WaitOnDrop<'a>(&'a (Condvar, Mutex<bool>));
-
-        impl Drop for WaitOnDrop<'_> {
-            fn drop(&mut self) {
-                let mut done = self.0.1.lock();
-                if !*done {
-                    self.0.0.wait(&mut done);
-                }
-            }
-        }
-
-        let dispatcher = self.dispatcher.clone();
-        let location = core::panic::Location::caller();
-
-        let pair = &(Condvar::new(), Mutex::new(false));
-        let _wait_guard = WaitOnDrop(pair);
-
-        let (runnable, task) = unsafe {
-            async_task::Builder::new()
-                .metadata(RunnableMeta { location })
-                .spawn_unchecked(
-                    move |_| async {
-                        let _notify_guard = NotifyOnDrop(pair);
-                        future.await
-                    },
-                    move |runnable| {
-                        dispatcher.dispatch(runnable, Priority::default());
-                    },
-                )
-        };
-        runnable.schedule();
-        task.await
     }
 
     /// Scoped lets you start a number of tasks and waits
@@ -334,18 +278,29 @@ impl ForegroundExecutor {
                 )
             } else {
                 let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-                let session_id = platform_scheduler.allocate_session_id();
-                (platform_scheduler, session_id)
+                let inner = platform_scheduler.foreground_executor();
+                return Self {
+                    inner,
+                    dispatcher,
+                    not_send: PhantomData,
+                };
             };
 
         #[cfg(not(any(test, feature = "test-support")))]
-        let (scheduler, session_id): (Arc<dyn Scheduler>, _) = {
+        let inner = {
             let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-            let session_id = platform_scheduler.allocate_session_id();
-            (platform_scheduler, session_id)
+            platform_scheduler.foreground_executor()
         };
 
-        let inner = scheduler::ForegroundExecutor::new(session_id, scheduler);
+        #[cfg(any(test, feature = "test-support"))]
+        let inner = {
+            let scheduler_for_dispatch = Arc::downgrade(&scheduler);
+            scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {
+                if let Some(scheduler) = scheduler_for_dispatch.upgrade() {
+                    scheduler.schedule_local(session_id, runnable);
+                }
+            })
+        };
 
         Self {
             inner,
@@ -420,7 +375,7 @@ impl ForegroundExecutor {
     }
 
     #[doc(hidden)]
-    pub fn scheduler_executor(&self) -> SchedulerForegroundExecutor {
+    pub fn scheduler_executor(&self) -> SchedulerLocalExecutor {
         self.inner.clone()
     }
 }
