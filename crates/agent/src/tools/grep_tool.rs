@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use util::RangeExt;
-use util::markdown::MarkdownInlineCode;
+use util::markdown::{MarkdownCodeBlock, MarkdownInlineCode};
 use util::paths::PathMatcher;
 
 /// Searches the contents of files in the project with a regular expression
@@ -333,10 +333,16 @@ impl AgentTool for GrepTool {
                             acp::ToolCallLocation::new(abs_path).line(Some(range.start.row)),
                         );
                     }
+                    // Use a fence longer than any backtick run in the snippet so
+                    // matches containing code fences don't break the rendering.
                     content.push(acp::ToolCallContent::Content(acp::Content::new(
-                        acp::ContentBlock::Text(acp::TextContent::new(format!(
-                            "```\n{snippet}\n```"
-                        ))),
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            MarkdownCodeBlock {
+                                tag: "",
+                                text: &snippet,
+                            }
+                            .to_string(),
+                        )),
                     )));
 
                     if let Some(ancestor_range) = ancestor_range
