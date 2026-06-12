@@ -5805,6 +5805,7 @@ fn panels_page() -> SettingsPage {
                 title: "Call Hierarchy Panel Button",
                 description: "Show the call hierarchy panel button in the status bar.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("call_hierarchy_panel.button"),
                     pick: |settings_content| {
                         settings_content
@@ -5827,6 +5828,7 @@ fn panels_page() -> SettingsPage {
                 title: "Call Hierarchy Panel Dock",
                 description: "Where to dock the call hierarchy panel.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("call_hierarchy_panel.dock"),
                     pick: |settings_content| {
                         settings_content
@@ -5849,6 +5851,7 @@ fn panels_page() -> SettingsPage {
                 title: "Call Hierarchy Panel Default Width",
                 description: "Default width of the call hierarchy panel in pixels.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("call_hierarchy_panel.default_width"),
                     pick: |settings_content| {
                         settings_content
@@ -5871,6 +5874,7 @@ fn panels_page() -> SettingsPage {
                 title: "Indent Size",
                 description: "Amount of indentation for nested items.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("call_hierarchy_panel.indent_size"),
                     pick: |settings_content| {
                         settings_content
@@ -5893,6 +5897,7 @@ fn panels_page() -> SettingsPage {
                 title: "Show Indent Guides",
                 description: "When to show indent guides in the call hierarchy panel.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("call_hierarchy_panel.indent_guides.show"),
                     pick: |settings_content| {
                         settings_content
