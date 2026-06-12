@@ -1941,6 +1941,7 @@ impl AgentPanel {
             None,
             true,
             true,
+            true,
             source,
             window,
             cx,
@@ -1994,6 +1995,7 @@ impl AgentPanel {
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
+        run_init_command: bool,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2025,6 +2027,17 @@ impl AgentPanel {
                 }
             };
             this.update_in(cx, |this, window, cx| {
+                if run_init_command
+                    && let Some(command) =
+                        AgentSettings::get_global(cx).terminal_init_command.clone()
+                {
+                    let mut input = command.into_bytes();
+                    // CR, not "\r\n": "\r\n" puts PowerShell into continuation
+                    // mode (same convention as the activation-script writes in
+                    // `TerminalBuilder::new`).
+                    input.push(b'\x0d');
+                    terminal.update(cx, |terminal, _| terminal.input(input));
+                }
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 });
@@ -2322,6 +2335,7 @@ impl AgentPanel {
             Some(metadata.created_at),
             true,
             focus,
+            false,
             source,
             window,
             cx,
@@ -5132,6 +5146,7 @@ impl AgentPanel {
             None,
             true,
             false,
+            true,
             source,
             window,
             cx,

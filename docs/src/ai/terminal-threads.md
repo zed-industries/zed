@@ -36,6 +36,22 @@ Open the new-thread menu from the [Agent Panel](./agent-panel.md) using the agen
 
 You can open as many Terminal Threads as you like. Each gets its own entry in the Threads Sidebar.
 
+## Running a Command Automatically {#terminal-thread-init-command}
+
+If you always run the same CLI in Terminal Threads, set the `agent.terminal_init_command` setting to have Zed run a command automatically whenever you open a new Terminal Thread:
+
+```json [settings]
+{
+  "agent": {
+    "terminal_init_command": "claude"
+  }
+}
+```
+
+The command is sent to the shell as if you had typed it, so it is interpreted by your configured shell—including on Windows and in remote or WSL projects—and the terminal remains a regular interactive shell after the command exits. It only runs in newly created Terminal Threads; terminals restored when reopening a project don't re-run it.
+
+You can also configure this from the Settings UI under **AI**, via the "Terminal Thread Init Command" field.
+
 ## Terminal Thread Titles {#terminal-thread-titles}
 
 The terminal title in the toolbar updates automatically to reflect the running shell or process. You can also set a custom name by clicking the title or the pencil icon that appears on hover.
