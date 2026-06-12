@@ -1273,7 +1273,7 @@ pub mod simple_message_notification {
             struct LanguageServerError;
             impl WorkspaceError for LanguageServerError {
                 fn primary_message(&self) -> SharedString {
-                    "Error: Prepare reame via rust-analyzer failed: No references found at position"
+                    "Error: Prepare rename via rust-analyzer failed: No references found at position"
                         .into()
                 }
                 fn secondary_message(&self) -> Option<SharedString> {
