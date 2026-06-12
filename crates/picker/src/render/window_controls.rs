@@ -188,12 +188,12 @@ impl Side for Middle {
                 .left(Self::corner_clearance(window))
                 .right(Self::corner_clearance(window))
                 .h(Self::handle_width(window))
-                .bottom(-Self::handle_offset(window) - shape.preview),
+                .bottom(shape.preview - Self::handle_offset(window)),
             PreviewLayout::Right => div
                 .top_0()
                 .bottom(Self::corner_clearance(window))
                 .w(Self::handle_width(window))
-                .right(-Self::handle_offset(window) - shape.preview),
+                .right(shape.preview - Self::handle_offset(window)),
         }
     }
 
@@ -206,8 +206,8 @@ impl Side for Middle {
             PreviewLayout::Hidden => {
                 unreachable!("This resize handle is not drawn when the preview is hidden")
             }
-            PreviewLayout::Below => shape_before.preview += mouse_movement.y,
-            PreviewLayout::Right => shape_before.preview += mouse_movement.x,
+            PreviewLayout::Below => shape_before.preview -= mouse_movement.y,
+            PreviewLayout::Right => shape_before.preview -= mouse_movement.x,
         }
         shape_before
     }

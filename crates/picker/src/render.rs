@@ -270,7 +270,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
-                // .child(self.render_resize::<Middle>(window, cx))
+                .child(self.render_resize::<Middle>(window, cx))
                 .child(
                     div()
                         .h(self.shape.preview_height(preview, window))
