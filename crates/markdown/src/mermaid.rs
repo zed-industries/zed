@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
-    StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, ImageSource,
+    ParsedSvg, RenderImage, StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -38,12 +38,16 @@ pub(crate) struct MermaidState {
 
 struct CachedMermaidDiagram {
     render_image: Arc<OnceLock<anyhow::Result<Arc<RenderImage>>>>,
+    parsed_svg: Arc<OnceLock<Arc<ParsedSvg>>>,
     fallback_image: Option<Arc<RenderImage>>,
     _task: Task<()>,
 }
 
 impl MermaidState {
-    pub(crate) fn clear(&mut self) {
+    pub(crate) fn clear(&mut self, cx: &mut App) {
+        for cached in self.cache.values() {
+            cached.drop_images(cx);
+        }
         self.cache.clear();
         self.order.clear();
     }
@@ -87,9 +91,42 @@ impl MermaidState {
         }
 
         let new_order_set: std::collections::HashSet<_> = new_order.iter().cloned().collect();
-        self.cache
-            .retain(|content, _| new_order_set.contains(content));
+        self.cache.retain(|content, cached| {
+            let keep = new_order_set.contains(content);
+            if !keep {
+                cached.drop_images(cx);
+            }
+            keep
+        });
         self.order = new_order;
+    }
+
+    /// Re-rasterizes every cached diagram at `zoom` times its base scale,
+    /// reusing the cached parsed SVG so that neither mermaid layout nor SVG
+    /// parsing is re-run. Entries that are still mid-render or failed to
+    /// render are skipped.
+    pub(crate) fn rerasterize(&mut self, zoom: f32, cx: &mut Context<Markdown>) {
+        for (contents, cached) in self.cache.iter_mut() {
+            let Some(parsed_svg) = cached.parsed_svg.get().cloned() else {
+                continue;
+            };
+            // The old render image lives on as the new entry's fallback, so it
+            // must not be dropped here; the old fallback is no longer painted.
+            let new_fallback = cached
+                .render_image
+                .get()
+                .and_then(|result| result.as_ref().ok().cloned());
+            if let Some(old_fallback) = cached.fallback_image.clone() {
+                cx.drop_image(old_fallback, None);
+            }
+            let scale_factor = contents.scale as f32 / 100.0 * zoom;
+            *cached = Arc::new(CachedMermaidDiagram::new_from_parsed(
+                parsed_svg,
+                scale_factor,
+                new_fallback,
+                cx,
+            ));
+        }
     }
 }
 
@@ -100,32 +137,107 @@ impl CachedMermaidDiagram {
         cx: &mut Context<Markdown>,
     ) -> Self {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
-        let render_image_clone = render_image.clone();
+        let parsed_svg = Arc::new(OnceLock::<Arc<ParsedSvg>>::new());
         let svg_renderer = cx.svg_renderer();
         let mermaid_theme = build_mermaid_theme(cx);
 
-        let task = cx.spawn(async move |this, cx| {
-            let value = cx
-                .background_spawn(async move {
-                    let svg_string =
-                        mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
-                    let scale = contents.scale as f32 / 100.0;
-                    svg_renderer
-                        .render_single_frame(svg_string.as_bytes(), scale)
-                        .map_err(|error| anyhow::anyhow!("{error}"))
-                })
-                .await;
-            let _ = render_image_clone.set(value);
-            this.update(cx, |_, cx| {
-                cx.notify();
-            })
-            .ok();
+        let task = cx.spawn({
+            let render_image = render_image.clone();
+            let parsed_svg = parsed_svg.clone();
+            let fallback_image = fallback_image.clone();
+            async move |this, cx| {
+                let value = cx
+                    .background_spawn(async move {
+                        let svg_string =
+                            mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
+                        let tree = svg_renderer
+                            .parse_svg(svg_string.as_bytes())
+                            .map_err(|error| anyhow::anyhow!("{error}"))?;
+                        let tree = Arc::new(tree);
+                        let scale = contents.scale as f32 / 100.0;
+                        let image = svg_renderer
+                            .render_parsed(&tree, scale)
+                            .map_err(|error| anyhow::anyhow!("{error}"))?;
+                        anyhow::Ok((tree, image))
+                    })
+                    .await;
+                let value = match value {
+                    Ok((tree, image)) => {
+                        parsed_svg.set(tree).ok();
+                        Ok(image)
+                    }
+                    Err(error) => Err(error),
+                };
+                render_image.set(value).ok();
+                Self::on_render_complete(this, fallback_image, cx);
+            }
         });
 
         Self {
             render_image,
+            parsed_svg,
             fallback_image,
             _task: task,
+        }
+    }
+
+    fn new_from_parsed(
+        parsed_svg: Arc<ParsedSvg>,
+        scale_factor: f32,
+        fallback_image: Option<Arc<RenderImage>>,
+        cx: &mut Context<Markdown>,
+    ) -> Self {
+        let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
+        let parsed_svg_cell = Arc::new(OnceLock::new());
+        parsed_svg_cell.set(parsed_svg.clone()).ok();
+        let svg_renderer = cx.svg_renderer();
+
+        let task = cx.spawn({
+            let render_image = render_image.clone();
+            let fallback_image = fallback_image.clone();
+            async move |this, cx| {
+                let value = cx
+                    .background_spawn(async move {
+                        svg_renderer
+                            .render_parsed(&parsed_svg, scale_factor)
+                            .map_err(|error| anyhow::anyhow!("{error}"))
+                    })
+                    .await;
+                render_image.set(value).ok();
+                Self::on_render_complete(this, fallback_image, cx);
+            }
+        });
+
+        Self {
+            render_image,
+            parsed_svg: parsed_svg_cell,
+            fallback_image,
+            _task: task,
+        }
+    }
+
+    fn on_render_complete(
+        this: gpui::WeakEntity<Markdown>,
+        fallback_image: Option<Arc<RenderImage>>,
+        cx: &mut gpui::AsyncApp,
+    ) {
+        this.update(cx, |_, cx| {
+            // The fallback will no longer be painted now that the real render
+            // is available, so its GPU texture can be released.
+            if let Some(fallback_image) = fallback_image {
+                cx.drop_image(fallback_image, None);
+            }
+            cx.notify();
+        })
+        .ok();
+    }
+
+    fn drop_images(&self, cx: &mut App) {
+        if let Some(Ok(render_image)) = self.render_image.get() {
+            cx.drop_image(render_image.clone(), None);
+        }
+        if let Some(fallback_image) = self.fallback_image.clone() {
+            cx.drop_image(fallback_image, None);
         }
     }
 
@@ -133,13 +245,19 @@ impl CachedMermaidDiagram {
     fn new_for_test(
         render_image: Option<Arc<RenderImage>>,
         fallback_image: Option<Arc<RenderImage>>,
+        parsed_svg: Option<Arc<ParsedSvg>>,
     ) -> Self {
         let result = Arc::new(OnceLock::new());
         if let Some(render_image) = render_image {
             let _ = result.set(Ok(render_image));
         }
+        let parsed_svg_cell = Arc::new(OnceLock::new());
+        if let Some(parsed_svg) = parsed_svg {
+            let _ = parsed_svg_cell.set(parsed_svg);
+        }
         Self {
             render_image: result,
+            parsed_svg: parsed_svg_cell,
             fallback_image,
             _task: Task::ready(()),
         }
@@ -708,6 +826,7 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
                 None,
+                None,
             )),
         );
         cache.insert(
@@ -715,12 +834,14 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(svg_b.clone()),
                 None,
+                None,
             )),
         );
         cache.insert(
             mermaid_contents("graph C"),
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
+                None,
                 None,
             )),
         );
@@ -742,12 +863,14 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
                 None,
+                None,
             )),
         );
         cache.insert(
             mermaid_contents("graph C"),
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
+                None,
                 None,
             )),
         );
@@ -770,6 +893,7 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
                 None,
+                None,
             )),
         );
         cache.insert(
@@ -777,12 +901,14 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 None,
                 Some(original_svg.clone()),
+                None,
             )),
         );
         cache.insert(
             mermaid_contents("graph C"),
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
+                None,
                 None,
             )),
         );
@@ -813,6 +939,7 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(svg_a.clone()),
                 None,
+                None,
             )),
         );
         cache.insert(
@@ -820,12 +947,71 @@ mod tests {
             Arc::new(CachedMermaidDiagram::new_for_test(
                 Some(mock_render_image(cx)),
                 None,
+                None,
             )),
         );
 
         let fallback = mermaid_fallback("graph A edited", &new_full_order, &old_full_order, &cache);
 
         assert_eq!(fallback.as_ref().map(|image| image.id), Some(svg_a.id));
+    }
+
+    #[gpui::test]
+    fn test_mermaid_rerasterize_reuses_parsed_svg(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+
+        let (parsed_svg, original_image) = markdown.update(cx, |_, cx| {
+            let svg_renderer = cx.svg_renderer();
+            let parsed_svg = Arc::new(
+                svg_renderer
+                    .parse_svg(
+                        br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>"#,
+                    )
+                    .unwrap(),
+            );
+            let original_image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
+            (parsed_svg, original_image)
+        });
+
+        let contents = mermaid_contents("graph A");
+        let mut state = MermaidState::default();
+        state.cache.insert(
+            contents.clone(),
+            Arc::new(CachedMermaidDiagram::new_for_test(
+                Some(original_image.clone()),
+                None,
+                Some(parsed_svg),
+            )),
+        );
+
+        markdown.update(cx, |_, cx| state.rerasterize(2.0, cx));
+
+        let cached = state.cache.get(&contents).unwrap();
+        assert!(
+            cached.render_image.get().is_none(),
+            "the new raster should still be pending"
+        );
+        assert_eq!(
+            cached.fallback_image.as_ref().map(|image| image.id),
+            Some(original_image.id),
+            "the old raster should keep being displayed while the new one is pending"
+        );
+
+        cx.run_until_parked();
+
+        let cached = state.cache.get(&contents).unwrap();
+        let new_image = cached
+            .render_image
+            .get()
+            .expect("render should have completed")
+            .as_ref()
+            .expect("render should have succeeded");
+        let original_size = original_image.size(0);
+        let new_size = new_image.size(0);
+        assert_eq!(new_size.width.0, original_size.width.0 * 2);
+        assert_eq!(new_size.height.0, original_size.height.0 * 2);
     }
 
     #[gpui::test]
@@ -887,7 +1073,11 @@ mod tests {
                 .clone();
             markdown.mermaid_state.cache.insert(
                 contents.clone(),
-                Arc::new(CachedMermaidDiagram::new_for_test(Some(render_image), None)),
+                Arc::new(CachedMermaidDiagram::new_for_test(
+                    Some(render_image),
+                    None,
+                    None,
+                )),
             );
             markdown.mermaid_state.order = vec![contents];
         });

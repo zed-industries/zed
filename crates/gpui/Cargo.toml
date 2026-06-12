@@ -100,6 +100,7 @@ strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.10.1"
 thiserror.workspace = true
+tracing.workspace = true
 gpui_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
@@ -111,6 +112,7 @@ url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
+ztracing.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
@@ -177,10 +179,8 @@ embed-resource = { version = "3.0", optional = true }
 bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
 
-
-
-
-
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
 
 [[example]]
 name = "hello_world"

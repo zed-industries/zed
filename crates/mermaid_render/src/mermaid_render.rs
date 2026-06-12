@@ -175,6 +175,7 @@ pub(crate) fn css_color(color: Hsla) -> String {
 pub use postprocess::util::text_color_for_background;
 
 /// See the [module-level docs][crate] for more info.
+#[ztracing::instrument(skip_all)]
 pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
     let svg = render::render_mermaid(source, theme)?;
     let svg = postprocess::postprocess(&svg, theme)?;

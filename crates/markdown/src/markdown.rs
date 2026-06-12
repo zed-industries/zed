@@ -631,8 +631,23 @@ impl Markdown {
             return;
         }
 
-        self.mermaid_state.clear();
+        self.mermaid_state.clear(cx);
         self.mermaid_state.update(&self.parsed_markdown, cx);
+        cx.notify();
+    }
+
+    /// Re-rasterizes every cached mermaid diagram at `zoom` times its base
+    /// scale, reusing the cached parsed SVG so that neither mermaid layout nor
+    /// SVG parsing is re-run. While the new raster is pending, the previous
+    /// image keeps being displayed. Intended to be called (debounced) when a
+    /// zoom gesture settles.
+    pub fn rerasterize_mermaid_diagrams(&mut self, zoom: f32, cx: &mut Context<Self>) {
+        if !self.options.render_mermaid_diagrams || self.parsed_markdown.mermaid_diagrams.is_empty()
+        {
+            return;
+        }
+
+        self.mermaid_state.rerasterize(zoom, cx);
         cx.notify();
     }
 
@@ -879,7 +894,7 @@ impl Markdown {
             };
             self.active_root_block = None;
             self.images_by_source_offset.clear();
-            self.mermaid_state.clear();
+            self.mermaid_state.clear(cx);
             cx.notify();
             cx.refresh_windows();
             return;
@@ -1027,7 +1042,7 @@ impl Markdown {
                     this.mermaid_showing_code
                         .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
                 } else {
-                    this.mermaid_state.clear();
+                    this.mermaid_state.clear(cx);
                     this.mermaid_showing_code.clear();
                 }
                 this.pending_parse.take();
