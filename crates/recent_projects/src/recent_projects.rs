@@ -3119,7 +3119,7 @@ mod tests {
                     let focus_handle = workspace.focus_handle(cx);
                     RecentProjects::open(
                         workspace,
-                        false,
+                        Some(false),
                         vec![remote_key.clone()],
                         window,
                         focus_handle,
