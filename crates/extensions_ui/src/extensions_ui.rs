@@ -2,10 +2,10 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
+use fs::Fs;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
-use fs::Fs;
 
 use anyhow::Context as _;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
@@ -941,46 +941,25 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        let extension_settings = ExtensionSettings::get_global(cx);
-        let auto_install = extension_settings.should_auto_install(&extension_id);
-        let auto_update = extension_settings.should_auto_update(&extension_id);
+        let this = this.downgrade();
+        ContextMenu::build_persistent(window, cx, move |context_menu, window, cx| {
+            let extension_settings = ExtensionSettings::get_global(cx);
+            let auto_install = extension_settings.should_auto_install(&extension_id);
+            let auto_update = extension_settings.should_auto_update(&extension_id);
 
-        ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
-                .entry(
-                    "Install Another Version...",
-                    None,
-                    window.handler_for(this, {
-                        let extension_id = extension_id.clone();
-                        move |this, window, cx| {
-                            this.show_extension_version_list(extension_id.clone(), window, cx)
-                        }
-                    }),
-                )
-                .toggleable_entry(
-                    "Automatically Install",
-                    auto_install,
-                    IconPosition::Start,
-                    None,
-                    window.handler_for(this, {
-                        let extension_id = extension_id.clone();
-                        move |this, _window, cx| {
-                            this.toggle_auto_install(extension_id.clone(), cx)
-                        }
-                    }),
-                )
-                .toggleable_entry(
-                    "Automatically Update",
-                    auto_update,
-                    IconPosition::Start,
-                    None,
-                    window.handler_for(this, {
-                        let extension_id = extension_id.clone();
-                        move |this, _window, cx| {
-                            this.toggle_auto_update(extension_id.clone(), cx)
-                        }
-                    }),
-                )
+                .when_some(this.upgrade(), |menu, this| {
+                    menu.entry(
+                        "Install Another Version...",
+                        None,
+                        window.handler_for(&this, {
+                            let extension_id = extension_id.clone();
+                            move |this, window, cx| {
+                                this.show_extension_version_list(extension_id.clone(), window, cx)
+                            }
+                        }),
+                    )
+                })
                 .entry("Copy Extension ID", None, {
                     let extension_id = extension_id.clone();
                     move |_, cx| {
@@ -993,6 +972,27 @@ impl ExtensionsPage {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
+                .separator()
+                .toggleable_entry(
+                    "Automatically Install",
+                    auto_install,
+                    IconPosition::Start,
+                    None,
+                    {
+                        let extension_id = extension_id.clone();
+                        move |_window, cx| toggle_auto_install(extension_id.clone(), cx)
+                    },
+                )
+                .toggleable_entry(
+                    "Automatically Update",
+                    auto_update,
+                    IconPosition::Start,
+                    None,
+                    {
+                        let extension_id = extension_id.clone();
+                        move |_window, cx| toggle_auto_update(extension_id.clone(), cx)
+                    },
+                )
         })
     }
 
@@ -1409,54 +1409,6 @@ impl ExtensionsPage {
             .child(Label::new(message))
     }
 
-    fn update_settings(
-        &mut self,
-        selection: &ToggleState,
-
-        cx: &mut Context<Self>,
-        callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
-    ) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            let fs = <dyn Fs>::global(cx);
-            let selection = *selection;
-            settings::update_settings_file(fs, cx, move |settings, _| {
-                let value = match selection {
-                    ToggleState::Unselected => false,
-                    ToggleState::Selected => true,
-                    _ => return,
-                };
-
-                callback(settings, value)
-            });
-        }
-    }
-
-    fn toggle_auto_install(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
-        let extension_settings = ExtensionSettings::get_global(cx);
-        let current_value = extension_settings.should_auto_install(extension_id);
-        let new_value = !current_value;
-
-        if let Some(workspace) = self.workspace.upgrade() {
-            let fs = <dyn Fs>::global(cx);
-            settings::update_settings_file(fs, cx, move |settings, _| {
-                settings.extension.auto_install_extensions.insert(extension_id.clone(), new_value);
-            });
-        }
-    }
-
-    fn toggle_auto_update(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
-        let extension_settings = ExtensionSettings::get_global(cx);
-        let current_value = extension_settings.should_auto_update(extension_id);
-        let new_value = !current_value;
-
-        if let Some(workspace) = self.workspace.upgrade() {
-            let fs = <dyn Fs>::global(cx);
-            settings::update_settings_file(fs, cx, move |settings, _| {
-                settings.extension.auto_update_extensions.insert(extension_id.clone(), new_value);
-            });
-        }
-    }
-
     fn refresh_feature_upsells(&mut self, cx: &mut Context<Self>) {
         let Some(search) = self.search_query(cx) else {
             self.upsells.clear();
@@ -1546,21 +1498,19 @@ impl ExtensionsPage {
                                                         ui::ToggleState::Unselected
                                                     },
                                                 )
-                                                .on_click(cx.listener(
-                                                    move |this, selection, _, cx| {
-                                                        telemetry::event!(
-                                                            "Vim Mode Toggled",
-                                                            source = "Feature Upsell"
-                                                        );
-                                                        this.update_settings(
-                                                            selection,
-                                                            cx,
-                                                            |setting, value| {
-                                                                setting.vim_mode = Some(value)
-                                                            },
-                                                        );
-                                                    },
-                                                )),
+                                                .on_click(move |selection, _, cx| {
+                                                    telemetry::event!(
+                                                        "Vim Mode Toggled",
+                                                        source = "Feature Upsell"
+                                                    );
+                                                    update_setting(
+                                                        selection,
+                                                        cx,
+                                                        |setting, value| {
+                                                            setting.vim_mode = Some(value)
+                                                        },
+                                                    );
+                                                }),
                                             ),
                                     ),
                             )
@@ -1692,6 +1642,52 @@ impl ExtensionsPage {
 
         container
     }
+}
+
+fn update_setting(
+    selection: &ToggleState,
+    cx: &App,
+    callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
+) {
+    let fs = <dyn Fs>::global(cx);
+    let selection = *selection;
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        let value = match selection {
+            ToggleState::Unselected => false,
+            ToggleState::Selected => true,
+            _ => return,
+        };
+
+        callback(settings, value)
+    });
+}
+
+fn toggle_auto_install(extension_id: Arc<str>, cx: &App) {
+    let extension_settings = ExtensionSettings::get_global(cx);
+    let current_value = extension_settings.should_auto_install(&extension_id);
+    let new_value = !current_value;
+
+    let fs = <dyn Fs>::global(cx);
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .extension
+            .auto_install_extensions
+            .insert(extension_id.clone(), new_value);
+    });
+}
+
+fn toggle_auto_update(extension_id: Arc<str>, cx: &App) {
+    let extension_settings = ExtensionSettings::get_global(cx);
+    let current_value = extension_settings.should_auto_update(&extension_id);
+    let new_value = !current_value;
+
+    let fs = <dyn Fs>::global(cx);
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .extension
+            .auto_update_extensions
+            .insert(extension_id.clone(), new_value);
+    });
 }
 
 impl Render for ExtensionsPage {
@@ -1873,8 +1869,8 @@ impl Item for ExtensionsPage {
 
 #[cfg(test)]
 mod tests {
-    use extension_host::ExtensionSettings;
     use collections::HashMap;
+    use extension_host::ExtensionSettings;
     use std::sync::Arc;
 
     #[test]

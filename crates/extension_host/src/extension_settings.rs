@@ -24,7 +24,7 @@ impl ExtensionSettings {
         self.auto_install_extensions
             .get(extension_id)
             .copied()
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     pub fn should_auto_update(&self, extension_id: &str) -> bool {
