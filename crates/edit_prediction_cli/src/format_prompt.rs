@@ -495,22 +495,26 @@ impl TeacherJumpsPrompt {
                 }
             }
 
-            // A replacement that reproduces the start of the span verbatim and
-            // then stops almost always means the model quit writing before
+            // A replacement whose line diff against the original span ends in
+            // a pure deletion usually means the model quit writing before
             // reaching the end marker, not that it intends to delete the
-            // omitted tail. Accepting it would silently drop code, so reject
-            // the whole response. Genuine tail deletions can still be
-            // expressed with an end marker placed beyond the deleted code.
+            // omitted tail. The prompt instructs that genuine tail deletions
+            // be expressed with an end marker placed beyond the deleted code
+            // so output ends with reproduced context, so a compliant
+            // prediction never ends mid-span in a deletion. Accepting one
+            // would silently drop code, so reject the whole response. Unlike
+            // a verbatim-prefix check, this also catches truncation combined
+            // with a real edit earlier in the span. Small trailing deletions
+            // are tolerated because they may be genuine end-of-snippet
+            // deletions with no marker available beyond them; whole-span
+            // deletions (empty replacement) express unambiguous intent and
+            // are always allowed.
             if !new_span.is_empty()
-                && old_span.len() > new_span.len()
-                && old_span.starts_with(&new_span)
-                && !old_span[new_span.len()..].trim().is_empty()
+                && let Some(dropped) = detect_trailing_deletion(old_span, &new_span)
             {
-                let dropped = old_span[new_span.len()..].trim_end();
                 return Err(anyhow!(
                     "edit span `{start_id}`..`{end_id}` looks truncated: the replacement \
-                     matches the start of the original span and then stops before the end \
-                     marker, which would silently delete:\n{dropped}"
+                     stops before the end marker, which would silently delete:\n{dropped}"
                 ));
             }
 
@@ -997,6 +1001,70 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     Some(result)
 }
 
+/// Detects a span replacement that ends in a pure deletion of the span's
+/// tail, the signature of a model that stopped writing before reaching its
+/// end marker.
+///
+/// Returns the deleted tail if the line diff between `old_span` and
+/// `new_span` ends with a deletion-only group that reaches the last line of
+/// `old_span` and drops more than `MAX_TRAILING_DELETED_LINES` non-blank
+/// lines.
+fn detect_trailing_deletion(old_span: &str, new_span: &str) -> Option<String> {
+    const MAX_TRAILING_DELETED_LINES: usize = 3;
+
+    fn flag_if_large(deleted_tail: &str) -> Option<String> {
+        let non_blank_deleted = deleted_tail
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        (non_blank_deleted > MAX_TRAILING_DELETED_LINES)
+            .then(|| deleted_tail.trim_end().to_string())
+    }
+
+    // A verbatim prefix is checked at the byte level so that a replacement
+    // stopping mid-line is caught too; the line diff below would see that as
+    // a trailing replace group rather than a pure deletion.
+    if old_span.starts_with(new_span) {
+        return flag_if_large(&old_span[new_span.len()..]);
+    }
+
+    // With zero context lines, hunks contain only `-` and `+` lines, and
+    // within a hunk deletions precede insertions, so a diff whose final line
+    // is a deletion ends with a deletion-only group.
+    let diff = language::unified_diff_with_context(old_span, new_span, 0, 0, 0);
+    let lines: Vec<&str> = diff.lines().collect();
+    let mut deletion_start = lines.len();
+    while deletion_start > 0 && lines[deletion_start - 1].starts_with('-') {
+        deletion_start -= 1;
+    }
+    let deleted: Vec<&str> = lines[deletion_start..]
+        .iter()
+        .map(|line| line.strip_prefix('-').unwrap_or(line))
+        .collect();
+    if deleted.is_empty() {
+        return None;
+    }
+
+    // The trailing `-` run is preceded by its hunk header exactly when the
+    // hunk is deletion-only (a replacement group would interpose `+` lines).
+    let header = lines.get(deletion_start.checked_sub(1)?)?;
+    let old_range_start: usize = header
+        .strip_prefix("@@ -")?
+        .split(',')
+        .next()?
+        .parse()
+        .ok()?;
+
+    // Only flag deletions that reach the end of the span; a deletion in the
+    // middle is followed by reproduced context, so the model demonstrably
+    // kept writing past it.
+    if old_range_start + deleted.len() - 1 != old_span.lines().count() {
+        return None;
+    }
+
+    flag_if_large(&deleted.join("\n"))
+}
+
 /// Extract all top-level fenced codeblocks from `text`, in order.
 ///
 /// A fence opens with 3+ backticks (optionally followed by an info string)
@@ -1379,6 +1447,85 @@ mod tests {
             error.to_string().contains("looks truncated"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_rejects_tail_deletion_after_head_edit() {
+        let cursor_excerpt = "\
+            fn alpha() {\n    one();\n}\n\nfn beta() {\n    two();\n}\n\n\
+            fn gamma() {\n    three();\n}\n\nfn delta() {\n    four();\n}\n";
+        let example = make_example(cursor_excerpt, 0, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let markers = &marker_table[0].markers;
+        assert!(markers.len() >= 3);
+        let start_tag = hashed_regions::marker_tag(&markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&markers[markers.len() - 1].0);
+
+        // The dropped tail is large enough to trip the trailing-deletion check.
+        let tail = &cursor_excerpt[markers[1].1..];
+        assert!(tail.lines().filter(|line| !line.trim().is_empty()).count() > 3);
+
+        // The model makes a real edit at the head of the span, reproduces
+        // some context, and then stops before the end marker. The replacement
+        // is not a verbatim prefix of the span, but the tail is still
+        // silently deleted.
+        let head = &cursor_excerpt[markers[0].1..markers[1].1];
+        assert!(head.contains("fn alpha()"));
+        let edited_head = head.replacen("fn alpha()", "fn alpha_renamed()", 1);
+        let response =
+            format!("Renaming alpha.\n\n`````\n{start_tag}\n{edited_head}{end_tag}\n`````\n");
+        let error = TeacherJumpsPrompt::parse(&example, &response).unwrap_err();
+        assert!(
+            error.to_string().contains("looks truncated"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_allows_mid_span_deletion() {
+        let cursor_excerpt = "\
+            fn alpha() {\n    one();\n}\n\nfn beta() {\n    two();\n}\n\n\
+            fn gamma() {\n    three();\n}\n\nfn delta() {\n    four();\n}\n";
+        let example = make_example(cursor_excerpt, 0, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let markers = &marker_table[0].markers;
+        assert!(markers.len() >= 3);
+        let start_tag = hashed_regions::marker_tag(&markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&markers[markers.len() - 1].0);
+
+        // Deleting code in the middle while reproducing the span's tail shows
+        // the model kept writing to the end marker, so it must be accepted.
+        let head = &cursor_excerpt[markers[0].1..markers[1].1];
+        let reproduced_tail = &cursor_excerpt[markers[markers.len() - 2].1..];
+        assert!(!reproduced_tail.trim().is_empty());
+        let response = format!(
+            "Removing the middle.\n\n`````\n{start_tag}\n{head}{reproduced_tail}{end_tag}\n`````\n"
+        );
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+        assert!(patch.contains("-fn beta() {"), "patch: {patch}");
+    }
+
+    #[test]
+    fn test_teacher_jumps_parse_allows_small_tail_deletion() {
+        let cursor_excerpt = "\
+            fn alpha() {\n    one();\n}\n\nfn beta() {\n    two();\n}\n\n\
+            fn gamma() {\n    three();\n}\n\nfn delta() {\n    four();\n}\n";
+        let example = make_example(cursor_excerpt, 0, &[]);
+        let marker_table =
+            hashed_regions::build_marker_table(example.prompt_inputs.as_ref().unwrap());
+        let markers = &marker_table[0].markers;
+        let start_tag = hashed_regions::marker_tag(&markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&markers[markers.len() - 1].0);
+
+        // Dropping only the last line of the span may be a genuine
+        // end-of-snippet deletion, so it stays below the threshold.
+        let new_span = cursor_excerpt.strip_suffix("}\n").unwrap();
+        let response =
+            format!("Dropping the brace.\n\n`````\n{start_tag}\n{new_span}{end_tag}\n`````\n");
+        let (patch, _) = TeacherJumpsPrompt::parse(&example, &response).unwrap();
+        assert!(patch.contains("-}"), "patch: {patch}");
     }
 
     #[test]
