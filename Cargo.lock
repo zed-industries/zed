@@ -7359,7 +7359,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
- "linkify",
  "log",
  "markdown",
  "menu",
