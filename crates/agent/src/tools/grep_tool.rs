@@ -178,6 +178,8 @@ impl AgentTool for GrepTool {
             futures::pin_mut!(rx);
 
             let mut output = String::new();
+            let mut content = Vec::new();
+            let mut locations = Vec::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
@@ -209,18 +211,28 @@ impl AgentTool for GrepTool {
                     continue;
                 };
 
+                let project_path = project
+                    .read_with(cx, |project, cx| project.find_project_path(&path, cx))
+                    .ok()
+                    .flatten();
+
                 // Check if this file should be excluded based on its worktree settings
-                if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
-                    project.find_project_path(&path, cx)
-                }) {
+                if let Some(project_path) = &project_path {
                     if cx.update(|cx| {
-                        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                        let worktree_settings = WorktreeSettings::get(Some(project_path.into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
                     }) {
                         continue;
                     }
                 }
+
+                let abs_path = project_path.and_then(|project_path| {
+                    project
+                        .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
+                        .ok()
+                        .flatten()
+                });
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await.map_err(|e| e.to_string())?;
@@ -298,17 +310,34 @@ impl AgentTool for GrepTool {
                             .ok();
                     }
 
-                    if range.start.row == end_row {
-                        writeln!(output, "L{}", range.start.row + 1)
-                            .ok();
+                    let line_label = if range.start.row == end_row {
+                        format!("L{}", range.start.row + 1)
                     } else {
-                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)
-                            .ok();
-                    }
+                        format!("L{}-{}", range.start.row + 1, end_row + 1)
+                    };
+                    writeln!(output, "{line_label}").ok();
 
+                    let snippet: String = snapshot.text_for_range(range.clone()).collect();
                     output.push_str("```\n");
-                    output.extend(snapshot.text_for_range(range));
+                    output.push_str(&snippet);
                     output.push_str("\n```\n");
+
+                    if let Some(abs_path) = &abs_path {
+                        content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                format!("{}#{}", path.display(), line_label),
+                                format!("file://{}#{}", abs_path.display(), line_label),
+                            )),
+                        )));
+                        locations.push(
+                            acp::ToolCallLocation::new(abs_path).line(Some(range.start.row)),
+                        );
+                    }
+                    content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        acp::ContentBlock::Text(acp::TextContent::new(format!(
+                            "```\n{snippet}\n```"
+                        ))),
+                    )));
 
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
@@ -319,6 +348,14 @@ impl AgentTool for GrepTool {
 
                     matches_found += 1;
                 }
+            }
+
+            if !content.is_empty() {
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new()
+                        .content(content)
+                        .locations(locations),
+                );
             }
 
             if matches_found == 0 {
