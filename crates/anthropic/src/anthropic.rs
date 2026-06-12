@@ -883,6 +883,8 @@ pub struct MessageDelta {
 pub struct StopDetails {
     #[serde(default)]
     pub fallback_credit_token: Option<String>,
+    #[serde(default)]
+    pub fallback_has_prefill_claim: Option<bool>,
 }
 
 #[derive(Debug)]

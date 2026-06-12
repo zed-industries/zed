@@ -42,7 +42,7 @@ pub enum LanguageModelCompletionEvent {
     },
     /// A credit carried by a refusal that can be redeemed by retrying the
     /// refused request on a fallback model with `fallback_credit_token` set.
-    FallbackCreditToken(String),
+    FallbackCredit(FallbackCredit),
     Text(String),
     Thinking {
         text: String,
@@ -63,6 +63,15 @@ pub enum LanguageModelCompletionEvent {
     },
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct FallbackCredit {
+    pub token: String,
+    /// Whether the retry may append an assistant message echoing the refused
+    /// response's content so the fallback model continues the partial output.
+    /// Absent means the continuation shape should still be preferred.
+    pub has_prefill_claim: Option<bool>,
 }
 
 impl LanguageModelCompletionEvent {

@@ -2,9 +2,9 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    FallbackCredit, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -333,7 +333,7 @@ pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
-    fallback_credit_token: Option<String>,
+    fallback_credit: Option<FallbackCredit>,
 }
 
 impl AnthropicEventMapper {
@@ -342,7 +342,7 @@ impl AnthropicEventMapper {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
-            fallback_credit_token: None,
+            fallback_credit: None,
         }
     }
 
@@ -495,7 +495,13 @@ impl AnthropicEventMapper {
                     };
                 }
                 if let Some(stop_details) = delta.stop_details {
-                    self.fallback_credit_token = stop_details.fallback_credit_token;
+                    self.fallback_credit =
+                        stop_details
+                            .fallback_credit_token
+                            .map(|token| FallbackCredit {
+                                token,
+                                has_prefill_claim: stop_details.fallback_has_prefill_claim,
+                            });
                 }
                 vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
                     convert_usage(&self.usage),
@@ -503,8 +509,8 @@ impl AnthropicEventMapper {
             }
             Event::MessageStop => {
                 let mut events = Vec::new();
-                if let Some(token) = self.fallback_credit_token.take() {
-                    events.push(Ok(LanguageModelCompletionEvent::FallbackCreditToken(token)));
+                if let Some(credit) = self.fallback_credit.take() {
+                    events.push(Ok(LanguageModelCompletionEvent::FallbackCredit(credit)));
                 }
                 events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
                 events
@@ -627,6 +633,7 @@ mod tests {
                 stop_sequence: None,
                 stop_details: Some(StopDetails {
                     fallback_credit_token: Some("credit-token".to_string()),
+                    fallback_has_prefill_claim: Some(true),
                 }),
             },
             usage: Usage::default(),
@@ -639,13 +646,14 @@ mod tests {
 
         let events = mapper.map_event(Event::MessageStop);
         let [
-            Ok(LanguageModelCompletionEvent::FallbackCreditToken(token)),
+            Ok(LanguageModelCompletionEvent::FallbackCredit(credit)),
             Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)),
         ] = events.as_slice()
         else {
-            panic!("expected a credit token event followed by a refusal stop, got {events:?}");
+            panic!("expected a fallback credit event followed by a refusal stop, got {events:?}");
         };
-        assert_eq!(token, "credit-token");
+        assert_eq!(credit.token, "credit-token");
+        assert_eq!(credit.has_prefill_claim, Some(true));
     }
 
     #[test]

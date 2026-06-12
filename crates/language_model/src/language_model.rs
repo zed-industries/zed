@@ -199,7 +199,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::Fallback { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::FallbackCreditToken(_)) => None,
+                                Ok(LanguageModelCompletionEvent::FallbackCredit(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..
