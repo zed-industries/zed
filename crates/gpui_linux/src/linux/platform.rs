@@ -26,8 +26,9 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams,
+    PlatformWindow, Result, RunnableVariant, SystemNotification, SystemNotificationId,
+    SystemNotificationPermission, Task, ThermalState, WindowAppearance, WindowButtonLayout,
+    WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -622,6 +623,56 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+
+    fn system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        {
+            super::notifications::system_notification_permission(self.background_executor())
+        }
+
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        {
+            Task::ready(Ok(SystemNotificationPermission::Unsupported))
+        }
+    }
+
+    fn request_system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        {
+            super::notifications::request_system_notification_permission(self.background_executor())
+        }
+
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        {
+            Task::ready(Ok(SystemNotificationPermission::Unsupported))
+        }
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) -> Task<Result<()>> {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        {
+            super::notifications::show_system_notification(self.background_executor(), notification)
+        }
+
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        {
+            let _ = notification;
+            Task::ready(Err(anyhow!("system notifications are not supported")))
+        }
+    }
+
+    fn remove_system_notification(&self, id: SystemNotificationId) -> Task<Result<()>> {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        {
+            super::notifications::remove_system_notification(self.background_executor(), id)
+        }
+
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        {
+            let _ = id;
+            Task::ready(Ok(()))
+        }
     }
 
     fn write_to_primary(&self, item: ClipboardItem) {

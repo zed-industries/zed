@@ -3,8 +3,8 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
     PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams,
-    size,
+    SourceMetadata, SystemNotification, SystemNotificationId, SystemNotificationPermission, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -33,6 +33,9 @@ pub(crate) struct TestPlatform {
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
+    pub(crate) system_notification_permission: RefCell<SystemNotificationPermission>,
+    pub(crate) shown_system_notifications: RefCell<Vec<SystemNotification>>,
+    pub(crate) removed_system_notifications: RefCell<Vec<SystemNotificationId>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
@@ -132,6 +135,9 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             #[cfg(target_os = "macos")]
             current_find_pasteboard_item: Mutex::new(None),
+            system_notification_permission: RefCell::new(SystemNotificationPermission::Granted),
+            shown_system_notifications: Default::default(),
+            removed_system_notifications: Default::default(),
             weak: weak.clone(),
             opened_url: Default::default(),
             text_system,
@@ -211,6 +217,21 @@ impl TestPlatform {
 
     pub(crate) fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
         *self.screen_capture_sources.borrow_mut() = sources;
+    }
+
+    pub(crate) fn set_system_notification_permission(
+        &self,
+        permission: SystemNotificationPermission,
+    ) {
+        *self.system_notification_permission.borrow_mut() = permission;
+    }
+
+    pub(crate) fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.shown_system_notifications.borrow().clone()
+    }
+
+    pub(crate) fn removed_system_notifications(&self) -> Vec<SystemNotificationId> {
+        self.removed_system_notifications.borrow().clone()
     }
 
     pub(crate) fn prompt(
@@ -489,6 +510,26 @@ impl Platform for TestPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         unimplemented!()
+    }
+
+    fn system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        Task::ready(Ok(*self.system_notification_permission.borrow()))
+    }
+
+    fn request_system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        Task::ready(Ok(*self.system_notification_permission.borrow()))
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) -> Task<Result<()>> {
+        self.shown_system_notifications
+            .borrow_mut()
+            .push(notification);
+        Task::ready(Ok(()))
+    }
+
+    fn remove_system_notification(&self, id: SystemNotificationId) -> Task<Result<()>> {
+        self.removed_system_notifications.borrow_mut().push(id);
+        Task::ready(Ok(()))
     }
 
     fn open_with_system(&self, _path: &Path) {

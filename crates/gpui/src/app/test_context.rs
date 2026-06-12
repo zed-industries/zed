@@ -3,9 +3,10 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
+    Pixels, Platform, Point, Render, Result, Size, SystemNotification, SystemNotificationId,
+    SystemNotificationPermission, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
+    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -369,6 +370,22 @@ impl TestAppContext {
     /// All the urls that have been opened with cx.open_url() during this test.
     pub fn opened_url(&self) -> Option<String> {
         self.test_platform.opened_url.borrow().clone()
+    }
+
+    /// Sets the notification permission state reported by the test platform.
+    pub fn set_system_notification_permission(&self, permission: SystemNotificationPermission) {
+        self.test_platform
+            .set_system_notification_permission(permission);
+    }
+
+    /// Returns the notifications shown through the test platform.
+    pub fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.test_platform.shown_system_notifications()
+    }
+
+    /// Returns the notification IDs removed through the test platform.
+    pub fn removed_system_notifications(&self) -> Vec<SystemNotificationId> {
+        self.test_platform.removed_system_notifications()
     }
 
     /// Simulates the user resizing the window to the new size.
@@ -1115,7 +1132,10 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::{PathPromptOptions, TestAppContext};
+    use crate::{
+        PathPromptOptions, SystemNotification, SystemNotificationId, SystemNotificationPermission,
+        SystemNotificationPriority, TestAppContext,
+    };
     use std::path::PathBuf;
 
     #[gpui::test]
@@ -1161,5 +1181,42 @@ mod tests {
 
         let response = receiver.await.unwrap().unwrap();
         assert_eq!(response, None);
+    }
+
+    #[gpui::test]
+    async fn test_system_notification_permission(cx: &mut TestAppContext) {
+        cx.set_system_notification_permission(SystemNotificationPermission::Denied);
+
+        let permission = cx
+            .update(|cx| cx.system_notification_permission())
+            .await
+            .unwrap();
+        assert_eq!(permission, SystemNotificationPermission::Denied);
+
+        let permission = cx
+            .update(|cx| cx.request_system_notification_permission())
+            .await
+            .unwrap();
+        assert_eq!(permission, SystemNotificationPermission::Denied);
+    }
+
+    #[gpui::test]
+    async fn test_system_notification_recording(cx: &mut TestAppContext) {
+        let notification = SystemNotification {
+            id: SystemNotificationId("test-notification".into()),
+            title: "Test notification".into(),
+            body: Some("Notification body".into()),
+            priority: SystemNotificationPriority::High,
+        };
+
+        cx.update(|cx| cx.show_system_notification(notification.clone()))
+            .await
+            .unwrap();
+        cx.update(|cx| cx.remove_system_notification(notification.id.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(cx.shown_system_notifications(), vec![notification.clone()]);
+        assert_eq!(cx.removed_system_notifications(), vec![notification.id]);
     }
 }

@@ -817,6 +817,36 @@ impl Platform for WindowsPlatform {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
 
+    fn system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        crate::notifications::system_notification_permission(
+            self.background_executor(),
+            self.headless,
+        )
+    }
+
+    fn request_system_notification_permission(&self) -> Task<Result<SystemNotificationPermission>> {
+        crate::notifications::request_system_notification_permission(
+            self.background_executor(),
+            self.headless,
+        )
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) -> Task<Result<()>> {
+        crate::notifications::show_system_notification(
+            self.background_executor(),
+            self.headless,
+            notification,
+        )
+    }
+
+    fn remove_system_notification(&self, id: SystemNotificationId) -> Task<Result<()>> {
+        crate::notifications::remove_system_notification(
+            self.background_executor(),
+            self.headless,
+            id,
+        )
+    }
+
     fn perform_dock_menu_action(&self, action: usize) {
         unsafe {
             PostMessageW(
