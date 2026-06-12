@@ -23,6 +23,8 @@ use crate::provider::api_compatible::{
 pub use settings::AnthropicCompatibleAvailableModel as AvailableModel;
 pub use settings::AnthropicCompatibleModelCapabilities as ModelCapabilities;
 
+const API_KEY_PLACEHOLDER: &str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicCompatibleSettings {
     pub api_url: String,
@@ -188,7 +190,7 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
             ApiCompatibleProviderConfigurationView::new(
                 self.state.clone(),
                 "Anthropic",
-                "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                API_KEY_PLACEHOLDER,
                 window,
                 cx,
             )

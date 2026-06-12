@@ -205,19 +205,6 @@ impl ModelInput {
         Ok(name)
     }
 
-    fn parse_u64_field(
-        &self,
-        field: &Entity<InputField>,
-        field_name: &str,
-        cx: &App,
-    ) -> Result<u64, SharedString> {
-        field
-            .read(cx)
-            .text(cx)
-            .parse::<u64>()
-            .map_err(|_| SharedString::from(format!("{field_name} must be a number")))
-    }
-
     fn parse_open_ai_compatible(
         &self,
         cx: &App,
@@ -225,17 +212,17 @@ impl ModelInput {
         Ok(OpenAiCompatibleAvailableModel {
             name: self.parse_name(cx)?,
             display_name: None,
-            max_completion_tokens: Some(self.parse_u64_field(
+            max_completion_tokens: Some(parse_u64_field(
                 &self.max_completion_tokens,
                 "Max Completion Tokens",
                 cx,
             )?),
-            max_output_tokens: Some(self.parse_u64_field(
+            max_output_tokens: Some(parse_u64_field(
                 &self.max_output_tokens,
                 "Max Output Tokens",
                 cx,
             )?),
-            max_tokens: self.parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
+            max_tokens: parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
             reasoning_effort: None,
             capabilities: OpenAiCompatibleModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
@@ -255,9 +242,9 @@ impl ModelInput {
         Ok(AnthropicCompatibleAvailableModel {
             name: self.parse_name(cx)?,
             display_name: None,
-            max_tokens: self.parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
+            max_tokens: parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
             tool_override: None,
-            max_output_tokens: Some(self.parse_u64_field(
+            max_output_tokens: Some(parse_u64_field(
                 &self.max_output_tokens,
                 "Max Output Tokens",
                 cx,
@@ -272,6 +259,18 @@ impl ModelInput {
             },
         })
     }
+}
+
+fn parse_u64_field(
+    field: &Entity<InputField>,
+    field_name: &str,
+    cx: &App,
+) -> Result<u64, SharedString> {
+    field
+        .read(cx)
+        .text(cx)
+        .parse::<u64>()
+        .map_err(|_| SharedString::from(format!("{field_name} must be a number")))
 }
 
 enum ParsedModels {

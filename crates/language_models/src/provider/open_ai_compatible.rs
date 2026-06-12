@@ -28,6 +28,8 @@ use crate::provider::open_ai::{
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
+const API_KEY_PLACEHOLDER: &str = "000000000000000000000000000000000000000000000000000";
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
@@ -151,7 +153,7 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
             ApiCompatibleProviderConfigurationView::new(
                 self.state.clone(),
                 "OpenAI",
-                "000000000000000000000000000000000000000000000000000",
+                API_KEY_PLACEHOLDER,
                 window,
                 cx,
             )
