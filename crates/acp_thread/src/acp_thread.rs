@@ -3380,12 +3380,15 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
+        // The network proxy binds a loopback port on this host, so it can only
+        // confine commands for local projects.
+        let is_local = project.read(cx).is_local();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let env = env.await;
+                let mut env = env.await;
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3397,8 +3400,17 @@ impl AcpThread {
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                // Spawn the network proxy (if the wrap requests network) before
+                // generating the sandbox policy, since the policy must pin the
+                // child to the proxy's loopback port. This also injects the
+                // child's proxy env vars.
+                let (proxy_handle, proxy_port) =
+                    setup_network_proxy(sandbox_wrap.as_ref(), is_local, &mut env, cx)?;
+                let (task_command, task_args, config_handle) =
+                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, proxy_port)?;
+                // One RAII handle keeps both the Seatbelt config and the proxy
+                // alive for exactly the command's lifetime.
+                let sandbox_config = combine_sandbox_resources(config_handle, proxy_handle);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
