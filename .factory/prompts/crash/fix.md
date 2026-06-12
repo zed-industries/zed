@@ -39,6 +39,7 @@ Apply the minimal change needed to resolve the root cause. Guidelines:
 - **Don't add unnecessary changes.** No drive-by improvements, keep the diff focused.
 - **Add a comment only if the fix is non-obvious.** If a reader might wonder "why is this check here?", a brief comment explaining the crash scenario is appropriate.
 - **Consider long term maintainability** Please make a targeted fix while being sure to consider the long term maintainability and reliability of the codebase
+- **Write readable conditionals.** When checking the same property across multiple objects, extract a helper closure to make intent explicit. Prefer positive logic (`is_none_or`, `all()`) over verbose chains of negated conditions.
 
 ### Step 4: Verify the Fix
 
