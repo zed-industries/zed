@@ -3610,7 +3610,7 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
     ) -> Vec<(
-        BufferSnapshot,
+        &BufferSnapshot,
         Range<BufferOffset>,
         ExcerptRange<text::Anchor>,
     )> {
@@ -3621,7 +3621,7 @@ impl MultiBufferSnapshot {
         cursor.seek(&start);
 
         let mut result: Vec<(
-            BufferSnapshot,
+            &BufferSnapshot,
             Range<BufferOffset>,
             ExcerptRange<text::Anchor>,
         )> = Vec::new();
@@ -3653,7 +3653,7 @@ impl MultiBufferSnapshot {
                 {
                     prev.1.end = end;
                 } else {
-                    result.push((region.buffer.clone(), start..end, excerpt_range));
+                    result.push((region.buffer, start..end, excerpt_range));
                 }
             }
             cursor.next();
@@ -3676,11 +3676,7 @@ impl MultiBufferSnapshot {
                         || prev_excerpt.context.start != excerpt_range.context.start
                 })
             {
-                result.push((
-                    buffer_snapshot.clone(),
-                    buffer_offset..buffer_offset,
-                    excerpt_range,
-                ));
+                result.push((buffer_snapshot, buffer_offset..buffer_offset, excerpt_range));
             }
         }
 
