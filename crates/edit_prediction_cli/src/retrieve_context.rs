@@ -1,5 +1,6 @@
 use crate::{
     example::Example,
+    format_prompt::line_start_offset,
     headless::EpAppState,
     load_project::run_load_project,
     progress::{ExampleProgress, InfoStyle, Step, StepProgress},
@@ -211,15 +212,71 @@ fn merge_context_files(
         {
             existing_file.max_row = existing_file.max_row.max(new_file.max_row);
             existing_file.excerpts.append(&mut new_file.excerpts);
-            existing_file
-                .excerpts
-                .sort_by_key(|excerpt| (excerpt.order, excerpt.row_range.start));
             existing_file.in_open_source_repo =
                 existing_file.in_open_source_repo && new_file.in_open_source_repo;
         } else {
             context_files.push(new_file);
         }
     }
+    for file in context_files.iter_mut() {
+        coalesce_touching_excerpts(&mut file.excerpts);
+    }
+}
+
+/// Sort a file's excerpts by position and merge those whose row ranges touch
+/// or overlap. Touching excerpts render seamlessly in prompts (no `...`
+/// separator), so keeping them separate splits edit addressing across a
+/// boundary the model can't see and wastes adjacent marker tags (see
+/// `TeacherJumpsPrompt::parse`).
+///
+/// A merged excerpt keeps the minimum `order` (and that excerpt's context
+/// source), so the highest-priority content still survives budget-based
+/// selection downstream; the tradeoff is that lower-priority touching
+/// content is now selected together with it.
+fn coalesce_touching_excerpts(excerpts: &mut Vec<zeta_prompt::RelatedExcerpt>) {
+    excerpts.sort_by_key(|excerpt| (excerpt.row_range.start, excerpt.row_range.end));
+    let mut coalesced: Vec<zeta_prompt::RelatedExcerpt> = Vec::with_capacity(excerpts.len());
+    for excerpt in excerpts.drain(..) {
+        let Some(last) = coalesced.last_mut() else {
+            coalesced.push(excerpt);
+            continue;
+        };
+        if excerpt.row_range.start > last.row_range.end {
+            coalesced.push(excerpt);
+            continue;
+        }
+        if excerpt.row_range.end > last.row_range.end {
+            // Touching or overlapping. Shared rows come from the same buffer
+            // snapshot, so drop the duplicated prefix of the new excerpt and
+            // append the rest.
+            let mut overlap_rows = (last.row_range.end - excerpt.row_range.start) as usize;
+            if !last.text.ends_with('\n') && !last.text.is_empty() {
+                // An unterminated final line means `last` includes the
+                // content of its `row_range.end` row itself.
+                overlap_rows += 1;
+            }
+            let Some(tail_start) = line_start_offset(&excerpt.text, overlap_rows) else {
+                // The excerpt has fewer lines than its row range claims;
+                // leave it unmerged rather than corrupt the text.
+                coalesced.push(excerpt);
+                continue;
+            };
+            let mut text =
+                String::with_capacity(last.text.len() + excerpt.text.len() - tail_start + 1);
+            text.push_str(&last.text);
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(&excerpt.text[tail_start..]);
+            last.text = text.into();
+            last.row_range.end = excerpt.row_range.end;
+        }
+        if excerpt.order < last.order {
+            last.order = excerpt.order;
+            last.context_source = excerpt.context_source;
+        }
+    }
+    *excerpts = coalesced;
 }
 
 fn oracle_targets_from_expected_patches(example: &Example) -> Vec<OracleTarget> {
@@ -402,4 +459,133 @@ async fn wait_for_language_servers_to_start(
     drop(subscriptions);
     step_progress.clear_substatus();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
+
+    fn excerpt(
+        row_range: std::ops::Range<u32>,
+        text: &str,
+        order: usize,
+        context_source: ContextSource,
+    ) -> RelatedExcerpt {
+        RelatedExcerpt {
+            row_range,
+            text: Arc::from(text),
+            order,
+            context_source,
+        }
+    }
+
+    #[test]
+    fn test_coalesce_touching_excerpts() {
+        let mut excerpts = vec![
+            excerpt(2..4, "line2\nline3\n", 1, ContextSource::EditHistory),
+            excerpt(0..2, "line0\nline1\n", 3, ContextSource::Bm25),
+            excerpt(4..6, "line4\nline5\n", 2, ContextSource::OracleSnippet),
+            excerpt(10..12, "line10\nline11\n", 0, ContextSource::Bm25),
+        ];
+        coalesce_touching_excerpts(&mut excerpts);
+
+        assert_eq!(excerpts.len(), 2);
+        assert_eq!(excerpts[0].row_range, 0..6);
+        assert_eq!(
+            excerpts[0].text.as_ref(),
+            "line0\nline1\nline2\nline3\nline4\nline5\n"
+        );
+        // The merged excerpt keeps the highest priority (minimum order) and
+        // its context source.
+        assert_eq!(excerpts[0].order, 1);
+        assert_eq!(excerpts[0].context_source, ContextSource::EditHistory);
+        // The gapped excerpt stays separate.
+        assert_eq!(excerpts[1].row_range, 10..12);
+    }
+
+    #[test]
+    fn test_coalesce_overlapping_excerpts_drops_duplicated_rows() {
+        let mut excerpts = vec![
+            excerpt(0..3, "line0\nline1\nline2\n", 0, ContextSource::Bm25),
+            excerpt(
+                2..5,
+                "line2\nline3\nline4\n",
+                1,
+                ContextSource::OracleSnippet,
+            ),
+        ];
+        coalesce_touching_excerpts(&mut excerpts);
+
+        assert_eq!(excerpts.len(), 1);
+        assert_eq!(excerpts[0].row_range, 0..5);
+        assert_eq!(
+            excerpts[0].text.as_ref(),
+            "line0\nline1\nline2\nline3\nline4\n"
+        );
+        assert_eq!(excerpts[0].order, 0);
+        assert_eq!(excerpts[0].context_source, ContextSource::Bm25);
+    }
+
+    #[test]
+    fn test_coalesce_contained_excerpt_upgrades_order() {
+        let mut excerpts = vec![
+            excerpt(0..4, "line0\nline1\nline2\nline3\n", 5, ContextSource::Bm25),
+            excerpt(1..3, "line1\nline2\n", 2, ContextSource::OracleSnippet),
+        ];
+        coalesce_touching_excerpts(&mut excerpts);
+
+        assert_eq!(excerpts.len(), 1);
+        assert_eq!(excerpts[0].row_range, 0..4);
+        assert_eq!(excerpts[0].text.as_ref(), "line0\nline1\nline2\nline3\n");
+        assert_eq!(excerpts[0].order, 2);
+        assert_eq!(excerpts[0].context_source, ContextSource::OracleSnippet);
+    }
+
+    #[test]
+    fn test_coalesce_handles_unterminated_final_line() {
+        // An excerpt ending without a newline includes the content of its
+        // `row_range.end` row (e.g. git-log excerpts ending at EOF), so a
+        // touching excerpt's first row duplicates it.
+        let mut excerpts = vec![
+            excerpt(0..2, "line0\nline1\nline2", 0, ContextSource::GitLog),
+            excerpt(2..4, "line2\nline3\n", 1, ContextSource::Bm25),
+        ];
+        coalesce_touching_excerpts(&mut excerpts);
+
+        assert_eq!(excerpts.len(), 1);
+        assert_eq!(excerpts[0].row_range, 0..4);
+        assert_eq!(excerpts[0].text.as_ref(), "line0\nline1\nline2\nline3\n");
+    }
+
+    #[test]
+    fn test_merge_context_files_coalesces_across_sources() {
+        let path: Arc<Path> = Path::new("root/src/lib.rs").into();
+        let mut context_files = vec![RelatedFile {
+            path: path.clone(),
+            max_row: 100,
+            excerpts: vec![excerpt(
+                0..2,
+                "line0\nline1\n",
+                0,
+                ContextSource::CurrentFile,
+            )],
+            in_open_source_repo: false,
+        }];
+        let new_files = vec![RelatedFile {
+            path,
+            max_row: 100,
+            excerpts: vec![excerpt(2..4, "line2\nline3\n", 1, ContextSource::Bm25)],
+            in_open_source_repo: false,
+        }];
+        merge_context_files(&mut context_files, new_files);
+
+        assert_eq!(context_files.len(), 1);
+        assert_eq!(context_files[0].excerpts.len(), 1);
+        assert_eq!(context_files[0].excerpts[0].row_range, 0..4);
+        assert_eq!(
+            context_files[0].excerpts[0].text.as_ref(),
+            "line0\nline1\nline2\nline3\n"
+        );
+    }
 }

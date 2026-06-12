@@ -943,7 +943,7 @@ impl TeacherJumpsPrompt {
     }
 }
 
-fn line_start_offset(text: &str, row: usize) -> Option<usize> {
+pub(crate) fn line_start_offset(text: &str, row: usize) -> Option<usize> {
     let mut offset = 0;
     for _ in 0..row {
         offset += text[offset..].find('\n')? + 1;
