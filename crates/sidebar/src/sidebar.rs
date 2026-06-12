@@ -107,7 +107,7 @@ const MAX_WIDTH: Pixels = px(800.0);
 
 /// In the workspace grouping mode, each project group shows at most this many
 /// rows before a "See more" row is shown to reveal the rest.
-const GROUP_THREAD_LIMIT: usize = 5;
+const GROUP_THREAD_LIMIT: usize = 2;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
@@ -129,6 +129,50 @@ enum ThreadListDisplayField {
     Timestamp,
     Branch,
     DiffStats,
+}
+
+/// A status category the thread list can be filtered to (see the "Filter by"
+/// menu). Multiple may be active at once.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ThreadStatusFilter {
+    Running,
+    NeedsAttention,
+    Completed,
+    Error,
+}
+
+/// A thread source the thread list can be filtered to (see the "Filter by"
+/// menu). Multiple may be active at once.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ThreadSourceFilter {
+    Zed,
+    External,
+}
+
+const ALL_STATUS_FILTERS: &[ThreadStatusFilter] = &[
+    ThreadStatusFilter::Running,
+    ThreadStatusFilter::NeedsAttention,
+    ThreadStatusFilter::Completed,
+    ThreadStatusFilter::Error,
+];
+
+const ALL_SOURCE_FILTERS: &[ThreadSourceFilter] =
+    &[ThreadSourceFilter::Zed, ThreadSourceFilter::External];
+
+fn thread_status_filter_label(filter: ThreadStatusFilter) -> &'static str {
+    match filter {
+        ThreadStatusFilter::Running => "Running",
+        ThreadStatusFilter::NeedsAttention => "Needs Attention",
+        ThreadStatusFilter::Completed => "Completed",
+        ThreadStatusFilter::Error => "Error",
+    }
+}
+
+fn thread_source_filter_label(filter: ThreadSourceFilter) -> &'static str {
+    match filter {
+        ThreadSourceFilter::Zed => "Zed Agent",
+        ThreadSourceFilter::External => "External Agents",
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -544,7 +588,14 @@ impl From<TerminalEntry> for ListEntry {
 
 #[derive(Default)]
 struct SidebarContents {
+    /// The rendered entries: workspace groups truncated to
+    /// [`GROUP_THREAD_LIMIT`] with "See more" rows. Used for rendering,
+    /// selection, and keyboard navigation.
     entries: Vec<ListEntry>,
+    /// Every entry, untruncated. Used by consumers that must see all threads
+    /// regardless of "See more" truncation (the thread switcher and thread
+    /// cycling).
+    all_entries: Vec<ListEntry>,
     notified_threads: HashSet<agent_ui::ThreadId>,
     notified_terminals: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
@@ -827,6 +878,11 @@ pub struct Sidebar {
     /// Workspace groups the user has expanded past [`GROUP_THREAD_LIMIT`] via
     /// the "See more" row. Groups not in this set are truncated.
     groups_showing_all: HashSet<ProjectGroupKey>,
+    /// Active status filters (see the "Filter by" menu). Empty means no status
+    /// filtering. Ephemeral (not persisted across restarts).
+    status_filter: HashSet<ThreadStatusFilter>,
+    /// Active source filters. Empty means no source filtering. Ephemeral.
+    source_filter: HashSet<ThreadSourceFilter>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -975,6 +1031,8 @@ impl Sidebar {
             draft_kinds: HashMap::new(),
             collapsed_sections: HashSet::new(),
             groups_showing_all: HashSet::new(),
+            status_filter: HashSet::new(),
+            source_filter: HashSet::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -2006,6 +2064,14 @@ impl Sidebar {
                 }
             }
 
+            // Apply the active status/source filters (no-op when none are set).
+            // Filtered-out rows are simply hidden from the list.
+            if self.has_active_filter() {
+                threads.retain(|thread| self.thread_matches_filter(thread));
+                let terminal_matches = self.terminal_matches_filter();
+                terminals.retain(|_| terminal_matches);
+            }
+
             // Pull pinned threads out of this group (outside of search) so they
             // surface in the top "Pinned" section instead of being truncated,
             // bucketed into a section, or hidden by collapse.
@@ -2187,26 +2253,16 @@ impl Sidebar {
                     continue;
                 }
 
-                if mode_uses_sections(group_by) {
-                    // Section modes regroup every thread below, so emit them
-                    // all here without truncation.
-                    Self::push_entries_by_display_time(
-                        &mut entries,
-                        terminals,
-                        threads,
-                        &mut current_session_ids,
-                        &mut current_thread_ids,
-                    );
-                } else {
-                    self.push_group_entries_truncated(
-                        group_key,
-                        &mut entries,
-                        terminals,
-                        threads,
-                        &mut current_session_ids,
-                        &mut current_thread_ids,
-                    );
-                }
+                // Emit every row here; workspace-group truncation ("See more")
+                // is applied as a post-pass so the untruncated list remains
+                // available for the thread switcher and cycling.
+                Self::push_entries_by_display_time(
+                    &mut entries,
+                    terminals,
+                    threads,
+                    &mut current_session_ids,
+                    &mut current_thread_ids,
+                );
             }
         }
 
@@ -2230,12 +2286,18 @@ impl Sidebar {
         // Prepend the collected pinned threads as a "Pinned" section at the
         // very top. A no-op when nothing is pinned, so the default layout (and
         // existing tests) are unaffected.
-        let (entries, project_header_indices) = self.prepend_pinned_section(
+        let (all_entries, _) = self.prepend_pinned_section(
             pinned_entries,
             entries,
             project_header_indices,
             &notified_threads,
         );
+
+        // The full (untruncated) list feeds the thread switcher and cycling;
+        // the rendered list truncates each workspace group to
+        // `GROUP_THREAD_LIMIT` with a "See more" row.
+        let (entries, project_header_indices) =
+            self.truncate_workspace_groups(&all_entries, group_by);
 
         notified_threads.retain(|id| current_thread_ids.contains(id));
 
@@ -2248,6 +2310,7 @@ impl Sidebar {
 
         self.contents = SidebarContents {
             entries,
+            all_entries,
             notified_threads,
             notified_terminals,
             project_header_indices,
@@ -3543,6 +3606,65 @@ impl Sidebar {
     /// truncation).
     fn show_all_in_group(&mut self, key: &ProjectGroupKey, cx: &mut Context<Self>) {
         if self.groups_showing_all.insert(key.clone()) {
+            self.update_entries(cx);
+        }
+    }
+
+    /// Whether any status or source filter is active.
+    fn has_active_filter(&self) -> bool {
+        !self.status_filter.is_empty() || !self.source_filter.is_empty()
+    }
+
+    /// Whether a thread passes the active status/source filters.
+    fn thread_matches_filter(&self, thread: &ThreadEntry) -> bool {
+        if !self.status_filter.is_empty() {
+            let category = match thread.status {
+                AgentThreadStatus::Running => ThreadStatusFilter::Running,
+                AgentThreadStatus::WaitingForConfirmation => ThreadStatusFilter::NeedsAttention,
+                AgentThreadStatus::Error => ThreadStatusFilter::Error,
+                AgentThreadStatus::Completed => ThreadStatusFilter::Completed,
+            };
+            if !self.status_filter.contains(&category) {
+                return false;
+            }
+        }
+        if !self.source_filter.is_empty() {
+            let source = if thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+                ThreadSourceFilter::Zed
+            } else {
+                ThreadSourceFilter::External
+            };
+            if !self.source_filter.contains(&source) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether a terminal passes the active filters. Terminals are treated as
+    /// running processes for the status filter and are not source-filtered.
+    fn terminal_matches_filter(&self) -> bool {
+        self.status_filter.is_empty() || self.status_filter.contains(&ThreadStatusFilter::Running)
+    }
+
+    fn toggle_status_filter(&mut self, filter: ThreadStatusFilter, cx: &mut Context<Self>) {
+        if !self.status_filter.remove(&filter) {
+            self.status_filter.insert(filter);
+        }
+        self.update_entries(cx);
+    }
+
+    fn toggle_source_filter(&mut self, filter: ThreadSourceFilter, cx: &mut Context<Self>) {
+        if !self.source_filter.remove(&filter) {
+            self.source_filter.insert(filter);
+        }
+        self.update_entries(cx);
+    }
+
+    fn clear_filters(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_filter() {
+            self.status_filter.clear();
+            self.source_filter.clear();
             self.update_entries(cx);
         }
     }
@@ -6247,61 +6369,78 @@ impl Sidebar {
         }
     }
 
-    /// Pushes a workspace group's rows, truncating to [`GROUP_THREAD_LIMIT`]
-    /// with a trailing "See more" row unless the group has been expanded by the
-    /// user. Every row (visible or hidden) is still registered in the current
-    /// id sets so notification state is preserved.
-    fn push_group_entries_truncated(
+    /// Produces the rendered entry list by truncating each workspace project
+    /// group to [`GROUP_THREAD_LIMIT`] rows, appending a "See more" row for the
+    /// remainder. Groups the user has expanded (and the group containing the
+    /// active thread) are shown in full. Section-grouping modes and the Pinned
+    /// section are never truncated.
+    ///
+    /// Returns the truncated entries and their header indices (for sticky
+    /// headers).
+    fn truncate_workspace_groups(
         &self,
-        group_key: &ProjectGroupKey,
-        entries: &mut Vec<ListEntry>,
-        terminals: Vec<TerminalEntry>,
-        threads: Vec<Arc<ThreadEntry>>,
-        current_session_ids: &mut HashSet<acp::SessionId>,
-        current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
-    ) {
-        let mut rows: Vec<ListEntry> = terminals
-            .into_iter()
-            .map(ListEntry::Terminal)
-            .chain(threads.into_iter().map(ListEntry::Thread))
-            .collect();
-        rows.sort_by_key(|entry| std::cmp::Reverse(list_entry_display_time(entry)));
+        entries: &[ListEntry],
+        group_by: ThreadGroupBy,
+    ) -> (Vec<ListEntry>, Vec<usize>) {
+        if mode_uses_sections(group_by) {
+            let out = entries.to_vec();
+            let indices = list_entry_header_indices(&out);
+            return (out, indices);
+        }
 
-        for entry in &rows {
-            if let ListEntry::Thread(thread) = entry {
-                if let Some(session_id) = &thread.metadata.session_id {
-                    current_session_ids.insert(session_id.clone());
+        let mut out: Vec<ListEntry> = Vec::with_capacity(entries.len());
+        let mut ix = 0;
+        while ix < entries.len() {
+            match &entries[ix] {
+                ListEntry::ProjectHeader { key, .. } => {
+                    let key = key.clone();
+                    out.push(entries[ix].clone());
+                    ix += 1;
+
+                    let start = ix;
+                    while ix < entries.len()
+                        && matches!(
+                            entries[ix],
+                            ListEntry::Thread(_) | ListEntry::Terminal(_)
+                        )
+                    {
+                        ix += 1;
+                    }
+                    let rows = &entries[start..ix];
+
+                    // Keep the active thread visible by not truncating the
+                    // group that contains it past the limit.
+                    let active_beyond_limit = rows
+                        .iter()
+                        .position(|entry| {
+                            self.active_entry
+                                .as_ref()
+                                .is_some_and(|active| active.matches_entry(entry))
+                        })
+                        .is_some_and(|index| index >= GROUP_THREAD_LIMIT);
+
+                    if self.groups_showing_all.contains(&key)
+                        || rows.len() <= GROUP_THREAD_LIMIT
+                        || active_beyond_limit
+                    {
+                        out.extend_from_slice(rows);
+                    } else {
+                        out.extend(rows[..GROUP_THREAD_LIMIT].iter().cloned());
+                        out.push(ListEntry::SeeMore {
+                            key,
+                            hidden_count: rows.len() - GROUP_THREAD_LIMIT,
+                        });
+                    }
                 }
-                current_thread_ids.insert(thread.metadata.thread_id);
+                other => {
+                    out.push(other.clone());
+                    ix += 1;
+                }
             }
         }
 
-        // Keep the active thread visible even if it falls past the limit by
-        // not truncating the group that contains it.
-        let active_beyond_limit = rows
-            .iter()
-            .position(|entry| {
-                self.active_entry
-                    .as_ref()
-                    .is_some_and(|active| active.matches_entry(entry))
-            })
-            .is_some_and(|index| index >= GROUP_THREAD_LIMIT);
-
-        let show_all = self.groups_showing_all.contains(group_key)
-            || rows.len() <= GROUP_THREAD_LIMIT
-            || active_beyond_limit;
-
-        if show_all {
-            entries.extend(rows);
-            return;
-        }
-
-        let hidden_count = rows.len() - GROUP_THREAD_LIMIT;
-        entries.extend(rows.into_iter().take(GROUP_THREAD_LIMIT));
-        entries.push(ListEntry::SeeMore {
-            key: group_key.clone(),
-            hidden_count,
-        });
+        let indices = list_entry_header_indices(&out);
+        (out, indices)
     }
 
     /// The sort order used by the ctrl-tab switcher
@@ -6333,7 +6472,7 @@ impl Sidebar {
         let mut current_header_key: Option<ProjectGroupKey> = None;
         let mut entries: Vec<ThreadSwitcherEntry> = self
             .contents
-            .entries
+            .all_entries
             .iter()
             .filter_map(|entry| match entry {
                 ListEntry::ProjectHeader { label, key, .. } => {
@@ -7788,7 +7927,7 @@ impl Sidebar {
     fn cycle_thread_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let thread_indices: Vec<usize> = self
             .contents
-            .entries
+            .all_entries
             .iter()
             .enumerate()
             .filter_map(|(ix, entry)| match entry {
@@ -7804,7 +7943,7 @@ impl Sidebar {
         let current_thread_pos = self.active_entry.as_ref().and_then(|active| {
             thread_indices
                 .iter()
-                .position(|&ix| active.matches_entry(&self.contents.entries[ix]))
+                .position(|&ix| active.matches_entry(&self.contents.all_entries[ix]))
         });
 
         let next_pos = match current_thread_pos {
@@ -7820,7 +7959,7 @@ impl Sidebar {
         };
 
         let entry_ix = thread_indices[next_pos];
-        match &self.contents.entries[entry_ix] {
+        match &self.contents.all_entries[entry_ix] {
             ListEntry::Thread(thread) => {
                 let metadata = thread.metadata.clone();
                 match &thread.workspace {
@@ -8203,6 +8342,84 @@ impl Sidebar {
                             );
                         }
 
+                        // "Filter by" section: narrow the list to threads
+                        // matching the selected status and/or source.
+                        menu = menu.separator().header("Filter by");
+                        {
+                            let this = this.clone();
+                            menu = menu.submenu_with_icon(
+                                "Status",
+                                IconName::Circle,
+                                move |mut submenu, _window, submenu_cx| {
+                                    let active = this
+                                        .read_with(submenu_cx, |sidebar, _| {
+                                            sidebar.status_filter.clone()
+                                        })
+                                        .unwrap_or_default();
+                                    for &filter in ALL_STATUS_FILTERS {
+                                        let this = this.clone();
+                                        let enabled = active.contains(&filter);
+                                        submenu = submenu.toggleable_entry(
+                                            thread_status_filter_label(filter),
+                                            enabled,
+                                            IconPosition::End,
+                                            None,
+                                            move |_window, cx| {
+                                                this.update(cx, |sidebar, cx| {
+                                                    sidebar.toggle_status_filter(filter, cx);
+                                                })
+                                                .ok();
+                                            },
+                                        );
+                                    }
+                                    submenu
+                                },
+                            );
+                        }
+                        {
+                            let this = this.clone();
+                            menu = menu.submenu_with_icon(
+                                "Source",
+                                IconName::Sparkle,
+                                move |mut submenu, _window, submenu_cx| {
+                                    let active = this
+                                        .read_with(submenu_cx, |sidebar, _| {
+                                            sidebar.source_filter.clone()
+                                        })
+                                        .unwrap_or_default();
+                                    for &filter in ALL_SOURCE_FILTERS {
+                                        let this = this.clone();
+                                        let enabled = active.contains(&filter);
+                                        submenu = submenu.toggleable_entry(
+                                            thread_source_filter_label(filter),
+                                            enabled,
+                                            IconPosition::End,
+                                            None,
+                                            move |_window, cx| {
+                                                this.update(cx, |sidebar, cx| {
+                                                    sidebar.toggle_source_filter(filter, cx);
+                                                })
+                                                .ok();
+                                            },
+                                        );
+                                    }
+                                    submenu
+                                },
+                            );
+                        }
+                        if this
+                            .read_with(_cx, |sidebar, _| sidebar.has_active_filter())
+                            .unwrap_or(false)
+                        {
+                            let this = this.clone();
+                            menu = menu.entry("Clear Filters", None, move |_window, cx| {
+                                this.update(cx, |sidebar, cx| {
+                                    sidebar.clear_filters(cx);
+                                })
+                                .ok();
+                            });
+                        }
+
                         // Collapse/expand only affect the workspace-grouped list.
                         if !is_archive {
                             menu = menu.separator();
@@ -8231,6 +8448,7 @@ impl Sidebar {
             .trigger_with_tooltip(
                 IconButton::new("group-by", IconName::ListFilter)
                     .icon_size(IconSize::Small)
+                    .toggle_state(self.has_active_filter())
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 Tooltip::text("Group & Filter Threads"),
             )

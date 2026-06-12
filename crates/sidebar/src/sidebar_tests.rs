@@ -981,6 +981,71 @@ async fn test_collapse_and_expand_all_in_section_mode(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_status_filter_narrows_thread_list(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.update(|_window, cx| {
+        AgentRegistryStore::init_test_global(cx, vec![]);
+    });
+
+    // Historical threads default to the `Completed` status.
+    for (id, title) in [("t-1", "Alpha"), ("t-2", "Beta")] {
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from(id)),
+            Some(title.into()),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            None,
+            None,
+            &project,
+            cx,
+        );
+    }
+    cx.run_until_parked();
+
+    let thread_count = |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| {
+        sidebar.read_with(cx, |sidebar, _| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .filter(|entry| matches!(entry, ListEntry::Thread(_)))
+                .count()
+        })
+    };
+
+    assert_eq!(thread_count(&sidebar, cx), 2, "both threads visible initially");
+
+    // Filtering to `Running` hides the completed threads.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.toggle_status_filter(super::ThreadStatusFilter::Running, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        thread_count(&sidebar, cx),
+        0,
+        "completed threads are hidden when filtering to Running"
+    );
+    assert!(sidebar.read_with(cx, |sidebar, _| sidebar.has_active_filter()));
+
+    // Also allowing `Completed` brings them back.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.toggle_status_filter(super::ThreadStatusFilter::Completed, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(thread_count(&sidebar, cx), 2);
+
+    // Clearing all filters restores the unfiltered list.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.clear_filters(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(thread_count(&sidebar, cx), 2);
+    assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.has_active_filter()));
+}
+
+#[gpui::test]
 async fn test_workspace_group_truncates_with_see_more(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -4432,6 +4497,8 @@ async fn test_search_narrows_visible_threads_to_matches(cx: &mut TestAppContext)
     }
     cx.run_until_parked();
 
+    // The group has more threads than the per-group limit, so it's truncated
+    // to the first two with a "See more" row.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec![
@@ -4439,7 +4506,7 @@ async fn test_search_narrows_visible_threads_to_matches(cx: &mut TestAppContext)
             "v [my-project]",
             "  Fix crash in project panel",
             "  Add inline diff view",
-            "  Refactor settings module",
+            "  see 1 more",
         ]
     );
 
@@ -13137,7 +13204,7 @@ mod property_test {
         let mut seen: HashSet<acp::SessionId> = HashSet::default();
         let mut duplicates: Vec<(acp::SessionId, String)> = Vec::new();
 
-        for entry in &sidebar.contents.entries {
+        for entry in &sidebar.contents.all_entries {
             if let Some(session_id) = entry.session_id() {
                 if !seen.insert(session_id.clone()) {
                     let title = match entry {
@@ -13214,7 +13281,7 @@ mod property_test {
 
         let sidebar_thread_ids: HashSet<acp::SessionId> = sidebar
             .contents
-            .entries
+            .all_entries
             .iter()
             .filter_map(|entry| entry.session_id().cloned())
             .collect();
