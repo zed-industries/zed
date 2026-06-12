@@ -2853,13 +2853,10 @@ impl ThreadView {
                     .border_color(cx.theme().colors().border)
                     .rounded_t_md()
                     .when(opaque_window, |this| {
-                        this.shadow(vec![gpui::BoxShadow {
-                            color: gpui::black().opacity(0.12),
-                            offset: point(px(1.), px(-1.)),
-                            blur_radius: px(2.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        }])
+                        this.shadow(vec![
+                            gpui::BoxShadow::new(px(1.), px(-1.), gpui::black().opacity(0.12))
+                                .blur_radius(px(2.)),
+                        ])
                     })
                     .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
