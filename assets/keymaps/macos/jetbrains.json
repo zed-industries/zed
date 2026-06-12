@@ -120,7 +120,7 @@
       "cmd-shift-n": "file_finder::Toggle",
       "cmd-n": "project_symbols::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
-      "shift shift": "command_palette::Toggle",
+      "shift shift": "search_everywhere::Toggle",
       "cmd-alt-o": "project_symbols::Toggle", // JetBrains: Go to Symbol
       "cmd-o": "project_symbols::Toggle", // JetBrains: Go to Class
       "cmd-1": "project_panel::ToggleFocus",
@@ -196,6 +196,10 @@
     },
   },
   {
+    "context": "SearchEverywhere",
+    "bindings": {
+      "tab": "search_everywhere::NextTab",
+      "shift-tab": "search_everywhere::PreviousTab",
     "context": "Editor && mode == auto_height",
     "bindings": {
       "escape": "editor::Cancel",
