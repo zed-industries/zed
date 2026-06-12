@@ -1624,6 +1624,7 @@ impl Default for WindowOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
+                managed_by_app: Default::default(),
             }),
             focus: true,
             show: true,
@@ -1654,6 +1655,9 @@ pub struct TitlebarOptions {
 
     /// The position of the macOS traffic light buttons
     pub traffic_light_position: Option<Point<Pixels>>,
+
+    /// Whether the window titlebar events are managed by app or the host system? (specific to macOS only)
+    pub managed_by_app: bool,
 }
 
 /// The kind of window to create

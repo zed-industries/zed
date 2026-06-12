@@ -159,6 +159,7 @@ fn open_performance_profiler(
                     title: Some("Profiler Window".into()),
                     appears_transparent: false,
                     traffic_light_position: None,
+                    managed_by_app: false,
                 }),
                 focus: true,
                 show: true,

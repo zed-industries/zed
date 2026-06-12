@@ -286,6 +286,7 @@ pub fn open_audio_test_window(_window: &mut Window, cx: &mut App) {
                 title: Some("Audio Test".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(gpui::point(px(12.0), px(12.0))),
+                managed_by_app: false,
             }),
             focus: true,
             show: true,

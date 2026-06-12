@@ -493,6 +493,7 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
+    managed_by_app: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -824,6 +825,9 @@ impl MacWindow {
                 transparent_titlebar: titlebar
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
+                managed_by_app: titlebar
+                    .as_ref()
+                    .is_some_and(|titlebar| titlebar.managed_by_app),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -2769,8 +2773,13 @@ extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel
             return NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
         }
 
+        let window_state = get_window_state(this);
+        let titlebar_managed_by_app = window_state.lock().managed_by_app;
+
         let style_mask: NSWindowStyleMask = msg_send![window, styleMask];
-        if style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+        if titlebar_managed_by_app
+            && style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask)
+        {
             // Declare the entire view as opaque content for window move purposes
             // when using a custom titlebar, so AppKit doesn't wait for double click
             // disambiguation before delivering clicks to titlebar controls.

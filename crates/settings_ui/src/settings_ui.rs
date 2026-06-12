@@ -800,6 +800,7 @@ fn open_settings_editor_with(
                     title: Some("Zed — Settings".into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
+                    managed_by_app: false,
                 }),
                 focus: true,
                 show: true,
