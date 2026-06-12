@@ -184,6 +184,9 @@ impl Editor {
             .range_to_buffer_ranges(visible_range)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer_snapshot, buffer_offset_range, excerpt_range)| {
+                (buffer_snapshot.clone(), buffer_offset_range, excerpt_range)
+            })
             .collect()
     }
 
