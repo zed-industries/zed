@@ -13,7 +13,7 @@ use editor::{
 use gpui::actions;
 use gpui::{App, Context, Font, FontId, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
 use text::{Bias, LineEnding, SelectionGoal};
@@ -1081,9 +1081,7 @@ impl Vim {
         cx: &App,
     ) -> Range<Point> {
         let visible_range = editor.multi_buffer_visible_range(display_snapshot, cx);
-        let mut range = if editor.visible_line_count().is_some()
-            || visible_range.start != visible_range.end
-        {
+        if editor.visible_line_count().is_some() || visible_range.start != visible_range.end {
             visible_range
         } else {
             let scroll_position = snapshot.scroll_position();
@@ -1100,26 +1098,7 @@ impl Vim {
 
             display_snapshot.display_point_to_point(start_display_point, Bias::Left)
                 ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
-        };
-
-        // In vim normal mode a range end at the end of a line has been
-        // clipped to before the line's last character; recover it so that
-        // fully visible character isn't excluded from jump target collection.
-        // Ends further from the end of their line (e.g. a soft-wrap boundary
-        // at the viewport bottom partway through a long line) are left alone:
-        // snapping those to the line end would pull off-screen text in.
-        let buffer_snapshot = display_snapshot.buffer_snapshot();
-        let line_len = buffer_snapshot.line_len(MultiBufferRow(range.end.row));
-        if range.end.column > 0
-            && range.end.column < line_len
-            && let Some(last_char) = buffer_snapshot
-                .chars_at(buffer_snapshot.point_to_offset(range.end))
-                .next()
-            && range.end.column + last_char.len_utf8() as u32 == line_len
-        {
-            range.end.column = line_len;
         }
-        range
     }
 
     pub(crate) fn jump_ui_context(
@@ -1432,8 +1411,7 @@ impl Vim {
         font_id: FontId,
         font_size: Pixels,
     ) -> bool {
-        let width_of_char =
-            |ch| Self::jump_font_char_width(text_system, font_id, font_size, ch);
+        let width_of_char = |ch| Self::jump_font_char_width(text_system, font_id, font_size, ch);
 
         let a = width_of_char('i');
         let b = width_of_char('w');

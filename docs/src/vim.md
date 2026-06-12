@@ -551,7 +551,7 @@ The Helix-style jump-to-word action shows jump labels at visible word starts. It
 }
 ```
 
-The [flash.nvim](https://github.com/folke/flash.nvim)-style jump lets you navigate by typing a search pattern: matches in the visible area are highlighted and tagged with single-character labels, and pressing a label jumps to that match. While flash is active you can keep typing to narrow the matches, press `enter` to jump to the nearest match, `backspace` to edit the pattern, or `escape` to cancel. It also works as a target for operators: for example `d s {pattern} {label}` deletes from the cursor through the start of the chosen match (inclusive).
+The [flash.nvim](https://github.com/folke/flash.nvim)-style jump lets you navigate by typing a search pattern: matches in the visible area are highlighted and tagged with single-character labels, and pressing a label jumps to that match. While flash is active you can keep typing to narrow the matches, press `enter` to jump to the next match after the cursor (wrapping to the first visible match), `backspace` to edit the pattern, or `escape` to cancel. It also works as a target for operators: for example `d s {pattern} {label}` deletes from the cursor through the start of the chosen match (inclusive).
 
 There is no default binding; you can enable it by adding a keybinding to your keymap. This example uses `s` to match flash.nvim's default, which overrides Vim mode's `s` (`vim::Substitute`) binding:
 
