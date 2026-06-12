@@ -550,21 +550,19 @@ impl NotebookEditor {
                 if cell.has_outputs() {
                     cell.clear_outputs();
                 }
-                match &send_result {
-                    Ok(()) => cell.start_execution(),
-                    Err(error) => cell.show_kernel_error(error, window, cx),
+                if let Err(error) = &send_result {
+                    cell.show_kernel_error(error, window, cx);
+                } else {
+                    cell.start_execution();
                 }
                 cx.notify();
             });
         }
 
-        match send_result {
-            Ok(()) => {
-                self.execution_requests.insert(msg_id, cell_id.clone());
-            }
-            Err(error) => {
-                log::error!("notebook: cannot execute cell: {error}");
-            }
+        if let Err(error) = send_result {
+            log::error!("notebook: cannot execute cell: {error}");
+        } else {
+            self.execution_requests.insert(msg_id, cell_id.clone());
         }
     }
 
