@@ -479,6 +479,7 @@ impl BufferDiffSnapshot {
         }
         let range_end = original_snapshot.anchor_before(range_end);
 
+        // FIXME: All of these `to_point` calls are quite expensive, given these are all ordered we should be able to do a summaries_with_payload call
         let hunk_iter = std::iter::from_fn(move || {
             if let Some(edit) = prefix_edit.take() {
                 return Some(edit);
