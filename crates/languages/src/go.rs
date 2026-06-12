@@ -727,7 +727,19 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(
+        &self,
+        buffer: Option<Entity<Buffer>>,
+        cx: &App,
+    ) -> Task<Option<TaskTemplates>> {
+        let is_test_file = buffer
+            .as_ref()
+            .and_then(|buffer| {
+                let buffer = buffer.read(cx);
+                Some(buffer.file()?.file_name(cx).ends_with("_test.go"))
+            })
+            .unwrap_or(false);
+
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {
@@ -735,181 +747,190 @@ impl ContextProvider for GoContextProvider {
         };
         let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
-        Task::ready(Some(TaskTemplates(vec![
-            TaskTemplate {
-                label: format!(
-                    "go test {} -v -run Test{}/{}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    GO_SUITE_NAME_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-v".into(),
-                    "-run".into(),
-                    format!(
-                        "\\^Test{}\\$/\\^{}\\$",
+        let package_test_template = is_test_file.then(|| TaskTemplate {
+            label: format!("go test -v {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+            command: "go".into(),
+            args: vec!["test".into(), "-v".into(), ".".into()],
+            cwd: package_cwd.clone(),
+            tags: vec!["go-package-test".to_owned()],
+            ..TaskTemplate::default()
+        });
+
+        Task::ready(Some(TaskTemplates(
+            vec![
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -v -run Test{}/{}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
                         GO_SUITE_NAME_TASK_VARIABLE.template_value(),
                         VariableName::Symbol.template_value(),
                     ),
-                ],
-                cwd: package_cwd.clone(),
-                tags: vec!["go-testify-suite".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "go test {} -v -run {}/{}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
-                    GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-v".into(),
-                    "-run".into(),
-                    format!(
-                        "\\^{}\\$/\\^{}\\$",
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-v".into(),
+                        "-run".into(),
+                        format!(
+                            "\\^Test{}\\$/\\^{}\\$",
+                            GO_SUITE_NAME_TASK_VARIABLE.template_value(),
+                            VariableName::Symbol.template_value(),
+                        ),
+                    ],
+                    cwd: package_cwd.clone(),
+                    tags: vec!["go-testify-suite".to_owned()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -v -run {}/{}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
                         VariableName::Symbol.template_value(),
                         GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.template_value(),
                     ),
-                ],
-                cwd: package_cwd.clone(),
-                tags: vec![
-                    "go-table-test-case".to_owned(),
-                    "go-table-test-case-without-explicit-variable".to_owned(),
-                ],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "go test {} -run {}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-run".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
-                ],
-                tags: vec!["go-test".to_owned()],
-                cwd: package_cwd.clone(),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "go test {} -run {}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-run".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
-                ],
-                tags: vec!["go-example".to_owned()],
-                cwd: package_cwd.clone(),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
-                command: "go".into(),
-                args: vec!["test".into()],
-                cwd: package_cwd.clone(),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: "go test ./...".into(),
-                command: "go".into(),
-                args: vec!["test".into(), "./...".into()],
-                cwd: module_cwd.clone(),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "go test {} -v -run {}/{}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
-                    GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-v".into(),
-                    "-run".into(),
-                    format!(
-                        "'^{}$/^{}$'",
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-v".into(),
+                        "-run".into(),
+                        format!(
+                            "\\^{}\\$/\\^{}\\$",
+                            VariableName::Symbol.template_value(),
+                            GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.template_value(),
+                        ),
+                    ],
+                    cwd: package_cwd.clone(),
+                    tags: vec![
+                        "go-table-test-case".to_owned(),
+                        "go-table-test-case-without-explicit-variable".to_owned(),
+                    ],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -v -run {}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
+                        VariableName::Symbol.template_value(),
+                    ),
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-v".into(),
+                        "-run".into(),
+                        format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                    ],
+                    tags: vec!["go-test".to_owned()],
+                    cwd: package_cwd.clone(),
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -v -run {}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
+                        VariableName::Symbol.template_value(),
+                    ),
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-v".into(),
+                        "-run".into(),
+                        format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                    ],
+                    tags: vec!["go-example".to_owned()],
+                    cwd: package_cwd.clone(),
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: "go test -v ./...".into(),
+                    command: "go".into(),
+                    args: vec!["test".into(), "-v".into(), "./...".into()],
+                    cwd: module_cwd.clone(),
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -v -run {}/{}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
-                ],
-                cwd: package_cwd.clone(),
-                tags: vec!["go-subtest".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "go test {} -bench {}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value()
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-benchmem".into(),
-                    "-run='^$'".into(),
-                    "-bench".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value()),
-                ],
-                cwd: package_cwd.clone(),
-                tags: vec!["go-benchmark".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "go test {} -fuzz=Fuzz -run {}",
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
-                ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    "-fuzz=Fuzz".into(),
-                    "-run".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
-                ],
-                tags: vec!["go-fuzz".to_owned()],
-                cwd: package_cwd.clone(),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!("go run {}", GO_PACKAGE_TASK_VARIABLE.template_value(),),
-                command: "go".into(),
-                args: vec!["run".into(), ".".into()],
-                cwd: package_cwd.clone(),
-                tags: vec!["go-main".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!("go generate {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
-                command: "go".into(),
-                args: vec!["generate".into()],
-                cwd: package_cwd,
-                tags: vec!["go-generate".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: "go generate ./...".into(),
-                command: "go".into(),
-                args: vec!["generate".into(), "./...".into()],
-                cwd: module_cwd,
-                ..TaskTemplate::default()
-            },
-        ])))
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-v".into(),
+                        "-run".into(),
+                        format!(
+                            "'^{}$/^{}$'",
+                            VariableName::Symbol.template_value(),
+                            GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
+                        ),
+                    ],
+                    cwd: package_cwd.clone(),
+                    tags: vec!["go-subtest".to_owned()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -bench {}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
+                        VariableName::Symbol.template_value()
+                    ),
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-benchmem".into(),
+                        "-run='^$'".into(),
+                        "-bench".into(),
+                        format!("\\^{}\\$", VariableName::Symbol.template_value()),
+                    ],
+                    cwd: package_cwd.clone(),
+                    tags: vec!["go-benchmark".to_owned()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!(
+                        "go test {} -fuzz=Fuzz -run {}",
+                        GO_PACKAGE_TASK_VARIABLE.template_value(),
+                        VariableName::Symbol.template_value(),
+                    ),
+                    command: "go".into(),
+                    args: vec![
+                        "test".into(),
+                        "-fuzz=Fuzz".into(),
+                        "-run".into(),
+                        format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                    ],
+                    tags: vec!["go-fuzz".to_owned()],
+                    cwd: package_cwd.clone(),
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!("go run {}", GO_PACKAGE_TASK_VARIABLE.template_value(),),
+                    command: "go".into(),
+                    args: vec!["run".into(), ".".into()],
+                    cwd: package_cwd.clone(),
+                    tags: vec!["go-main".to_owned()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: format!("go generate {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                    command: "go".into(),
+                    args: vec!["generate".into()],
+                    cwd: package_cwd,
+                    tags: vec!["go-generate".to_owned()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: "go generate ./...".into(),
+                    command: "go".into(),
+                    args: vec!["generate".into(), "./...".into()],
+                    cwd: module_cwd,
+                    ..TaskTemplate::default()
+                },
+            ]
+            .into_iter()
+            .chain(package_test_template)
+            .collect(),
+        )))
     }
 
     fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
@@ -1041,6 +1062,74 @@ mod tests {
                 vec![(4..9, highlight_field), (12..15, highlight_type)],
             ))
         );
+    }
+
+    #[gpui::test]
+    fn test_go_package_test_runnable(cx: &mut TestAppContext) {
+        let language = go_language();
+
+        let source = r#"
+        package middlewares
+
+        import "testing"
+
+        func TestSomething(t *testing.T) {}
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..source.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-package-test".to_string()),
+            "Should find go-package-test tag, found: {:?}",
+            tag_strings
+        );
+        assert_eq!(
+            tag_strings
+                .iter()
+                .filter(|&t| t == "go-package-test")
+                .count(),
+            1,
+            "Should find exactly one go-package-test runnable per file"
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_package_test_template_only_for_test_files(cx: &mut TestAppContext) {
+        use futures::FutureExt as _;
+
+        let provider = GoContextProvider;
+
+        let has_package_test_template = |tasks: TaskTemplates| {
+            tasks
+                .0
+                .iter()
+                .any(|t| t.tags.contains(&"go-package-test".to_owned()))
+        };
+
+        cx.update(|cx| {
+            let tasks = provider
+                .associated_tasks(None, cx)
+                .now_or_never()
+                .flatten()
+                .unwrap();
+            assert!(
+                !has_package_test_template(tasks),
+                "go-package-test template should not appear when there is no buffer"
+            );
+        });
     }
 
     #[gpui::test]
