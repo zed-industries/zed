@@ -204,7 +204,8 @@ fn path_match_helper<'a>(
         let filename_bonus = get_filename_match_bonus(&candidate_buf, &query.pattern, matcher);
         let tail_proximity_bonus =
             get_tail_proximity_bonus(&matched_chars, candidate_buf.len() as u32);
-        let positive = (score as f64 + filename_bonus + tail_proximity_bonus) * case_penalty(case_mismatches);
+        let positive =
+            (score as f64 + filename_bonus + tail_proximity_bonus) * case_penalty(case_mismatches);
         let adjusted_score = positive - length_penalty;
         let positions = positions_from_sorted(&candidate_buf, &matched_chars);
 
