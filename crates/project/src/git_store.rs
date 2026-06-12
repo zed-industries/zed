@@ -78,7 +78,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -702,6 +702,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_create_worktree);
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
+        client.add_entity_request_handler(Self::handle_worktree_created_at);
         client.add_entity_request_handler(Self::handle_get_head_sha);
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
@@ -2851,6 +2852,26 @@ impl GitStore {
             .await??;
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_worktree_created_at(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitWorktreeCreatedAt>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitWorktreeCreatedAtResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let worktree_path = PathBuf::from(envelope.payload.worktree_path);
+
+        let created_at = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.worktree_created_at(worktree_path)
+            })
+            .await??;
+
+        Ok(proto::GitWorktreeCreatedAtResponse {
+            created_at: created_at.map(Into::into),
+        })
     }
 
     async fn handle_get_head_sha(
@@ -7495,6 +7516,34 @@ impl Repository {
                 }
             },
         )
+    }
+
+    /// Returns the creation time of a linked worktree's git metadata
+    /// directory. See [`GitRepository::worktree_created_at`]. For remote
+    /// projects the stat runs on the remote host, where the worktree's
+    /// filesystem lives.
+    pub fn worktree_created_at(
+        &mut self,
+        worktree_path: PathBuf,
+    ) -> oneshot::Receiver<Result<Option<SystemTime>>> {
+        let id = self.id;
+        self.send_job("worktree_created_at", None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.worktree_created_at(worktree_path).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitWorktreeCreatedAt {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            worktree_path: worktree_path.to_string_lossy().to_string(),
+                        })
+                        .await?;
+                    Ok(response.created_at.map(SystemTime::from))
+                }
+            }
+        })
     }
 
     pub fn create_worktree_detached(
