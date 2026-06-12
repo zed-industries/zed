@@ -1141,6 +1141,68 @@ async fn test_workspace_group_truncates_with_see_more(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_expand_all_reveals_see_more_truncation(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.update(|_window, cx| {
+        AgentRegistryStore::init_test_global(cx, vec![]);
+    });
+
+    // More historical threads than the per-group limit so the group is
+    // truncated with a "See more" row.
+    let total = GROUP_THREAD_LIMIT + 3;
+    for i in 0..total {
+        let session_id = acp::SessionId::new(Arc::from(format!("thread-{i}")));
+        let timestamp =
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i as u32).unwrap();
+        save_thread_metadata(
+            session_id,
+            Some(format!("Thread {i}").into()),
+            timestamp,
+            Some(timestamp),
+            None,
+            &project,
+            cx,
+        );
+    }
+    cx.run_until_parked();
+
+    // Sanity check: the group starts truncated.
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    let thread_lines = lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("Thread "))
+        .count();
+    assert_eq!(
+        thread_lines, GROUP_THREAD_LIMIT,
+        "expected the group to start truncated, got {lines:?}"
+    );
+
+    // "Expand All" should reveal every thread and remove the "See more" row,
+    // not just un-collapse the group header.
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_all_groups_expanded(true, cx);
+    });
+    cx.run_until_parked();
+
+    let lines = visible_entries_as_strings(&sidebar, cx);
+    let thread_lines = lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("Thread "))
+        .count();
+    assert_eq!(
+        thread_lines, total,
+        "expected `Expand All` to reveal every thread, got {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.contains("see ")),
+        "expected `Expand All` to remove the `See more` row, got {lines:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_pinned_threads_surface_in_pinned_section(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =

@@ -4847,7 +4847,20 @@ impl Sidebar {
                 self.collapsed_sections.extend(section_ids);
             }
         } else if let Some(mw) = self.multi_workspace.upgrade() {
-            if !expanded {
+            if expanded {
+                // Expanding all groups should also reveal every "See more"
+                // truncation, not just un-collapse the headers.
+                let group_keys: Vec<ProjectGroupKey> = self
+                    .contents
+                    .all_entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                self.groups_showing_all.extend(group_keys);
+            } else {
                 // Collapsing all groups resets every "See more" expansion.
                 self.groups_showing_all.clear();
             }
