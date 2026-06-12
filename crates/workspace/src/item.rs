@@ -72,6 +72,7 @@ pub struct PreviewTabsSettings {
     pub enable_preview_multibuffer_from_code_navigation: bool,
     pub enable_preview_file_from_code_navigation: bool,
     pub enable_keep_preview_on_code_navigation: bool,
+    pub enable_preview_from_git: bool,
 }
 
 impl Settings for ItemSettings {
@@ -114,6 +115,7 @@ impl Settings for PreviewTabsSettings {
             enable_keep_preview_on_code_navigation: preview_tabs
                 .enable_keep_preview_on_code_navigation
                 .unwrap(),
+            enable_preview_from_git: preview_tabs.enable_preview_from_git.unwrap(),
         }
     }
 }
