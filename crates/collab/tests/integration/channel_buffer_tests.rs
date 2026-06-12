@@ -863,6 +863,374 @@ async fn test_channel_buffer_operations_lost_on_reconnect(
     });
 }
 
+// Reproduces a crash observed in production: a client that kept its channel
+// buffer alive across a server-side epoch snapshot ends up holding
+// insertions that no longer exist anywhere else, and its selection
+// broadcasts crash every other client rendering the channel notes with
+// "invalid anchor" in `BufferSnapshot::offset_for_anchor`.
+//
+// The honest sequence, all through real client/server code:
+//
+// 1. Client B opens the channel notes (epoch 0, replica 8) and inserts text.
+// 2. B loses its connection. After RECONNECT_TIMEOUT the server removes B's
+//    collaborator row; B was the last collaborator, so the server snapshots
+//    the buffer: the text is baked into `base_text`, the operations are
+//    discarded, and the epoch advances to 1. B's insertion now exists only
+//    in B's in-memory buffer.
+// 3. B reconnects. `RejoinChannelBuffers` refuses B's buffer ("epoch has
+//    changed"), so B's `ChannelBuffer` disconnects but stays alive: B is now
+//    a zombie whose notes view still shows the old buffer.
+// 4. Client C joins the notes in epoch 1 and is assigned replica 8 -- B's
+//    old replica id, recycled. C's edits advance every other client's
+//    version watermark for replica 8 past the lamport timestamp of B's
+//    snapshotted insertion.
+// 5. B parks its cursor inside its old insertion. Its selection broadcast
+//    carries an anchor for insertion (8, small_lamport). On client A,
+//    `Buffer::can_apply_op` gates `UpdateSelections` on
+//    `version.observed(anchor.timestamp())`, and `clock::Global::observed`
+//    is a per-replica high-watermark, so C's recycled-replica edits make the
+//    check pass even though the insertion doesn't exist on A. The selection
+//    is stored in `remote_selections` and crashes A's editor during
+//    `layout_selections`.
+#[gpui::test]
+async fn test_channel_notes_selection_from_zombie_pre_epoch_buffer(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    // Epoch 0: client B is the only collaborator in the channel notes, and
+    // inserts some text. B is the first joiner, so it gets replica 8
+    // (FIRST_COLLAB_ID).
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+    let buffer_b = channel_buffer_b.read_with(cx_b, |channel_buffer, _| channel_buffer.buffer());
+    buffer_b.update(cx_b, |buffer, cx| {
+        buffer.edit([(0..0, "zombie epoch text")], None, cx)
+    });
+    executor.run_until_parked();
+
+    let replica_id_b = channel_buffer_b.read_with(cx_b, |channel_buffer, cx| {
+        assert!(channel_buffer.is_connected());
+        channel_buffer.replica_id(cx)
+    });
+
+    // B parks a cursor inside its insertion and records the anchors. They
+    // reference the insertion B just made: (replica 8, some small lamport).
+    let (zombie_selections, zombie_anchor_timestamp) = buffer_b.read_with(cx_b, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        let cursor = snapshot.anchor_after(3);
+        assert_eq!(cursor.timestamp().replica_id, replica_id_b);
+        (
+            Arc::from([text::Selection {
+                id: 1,
+                start: cursor,
+                end: cursor,
+                reversed: false,
+                goal: text::SelectionGoal::None,
+            }]),
+            cursor.timestamp(),
+        )
+    });
+
+    // B loses its connection long enough for the server to remove its
+    // collaborator row. B was the last collaborator, so the server
+    // snapshots the buffer: epoch 0 -> 1, operations discarded.
+    server.forbid_connections();
+    server.disconnect_client(client_b.peer_id().unwrap());
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    let db_channel_id = collab::db::ChannelId::from_proto(channel_id.0);
+    assert!(
+        server
+            .app_state
+            .db
+            .get_channel_buffer_collaborators(db_channel_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "server should have dropped b and snapshotted the buffer"
+    );
+
+    // B reconnects. The rejoin fails because the epoch changed, so B's
+    // channel buffer disconnects but stays alive with its pre-snapshot
+    // contents: B is now a zombie replica.
+    server.allow_connections();
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    executor.run_until_parked();
+    channel_buffer_b.read_with(cx_b, |channel_buffer, _| {
+        assert!(
+            !channel_buffer.is_connected(),
+            "b's buffer should have failed to rejoin across the epoch change"
+        );
+    });
+
+    // Epoch 1: client C joins the notes first and gets B's recycled replica
+    // id. C edits enough to push its lamport clock past the timestamp of B's
+    // snapshotted insertion.
+    let channel_buffer_c = client_c
+        .channel_store()
+        .update(cx_c, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+    channel_buffer_c.read_with(cx_c, |channel_buffer, cx| {
+        assert_eq!(
+            channel_buffer.replica_id(cx),
+            replica_id_b,
+            "c should be assigned b's recycled replica id"
+        );
+        assert_eq!(
+            channel_buffer.buffer().read(cx).text(),
+            "zombie epoch text",
+            "the snapshot should have baked b's text into the new epoch's base text"
+        );
+    });
+    let buffer_c = channel_buffer_c.read_with(cx_c, |channel_buffer, _| channel_buffer.buffer());
+    for _ in 0..zombie_anchor_timestamp.value {
+        buffer_c.update(cx_c, |buffer, cx| buffer.edit([(0..0, "c")], None, cx));
+    }
+    executor.run_until_parked();
+
+    // Client A opens the channel notes in a real window.
+    let (_workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+    let channel_view_a = open_channel_notes(channel_id, cx_a).await.unwrap();
+    cx_a.run_until_parked();
+
+    // A's watermark for the recycled replica now covers the zombie anchor's
+    // timestamp, but the insertion itself was discarded by the snapshot.
+    channel_view_a.update_in(cx_a, |notes, _, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            assert!(
+                buffer.version().observed(zombie_anchor_timestamp),
+                "a's version watermark should cover the zombie anchor's timestamp"
+            );
+        });
+    });
+
+    // The zombie parks its cursor inside its old insertion, exactly as the
+    // editor does on every cursor move in B's stale notes view, and the
+    // buffer emits the broadcast operation. We capture it from the buffer's
+    // own event and deliver it over B's connection.
+    //
+    // We deliver the captured op explicitly rather than relying on
+    // `on_buffer_update` to send it, because the deterministic test harness
+    // lands the zombie in the muted variant: B's client-side
+    // buffer-disconnect timer (RECONNECT_TIMEOUT after B noticed the drop)
+    // and the server's snapshot timer (RECONNECT_TIMEOUT after the server
+    // noticed) are both armed at the same tick, so the buffer is
+    // disconnected before `handle_connect`'s failed rejoin runs, leaving
+    // `rejoining` stuck true and muting `on_buffer_update`. In production
+    // these two clocks are skewed by asymmetric detection and human
+    // reconnect timing, so a zombie also reaches the unmuted variant and
+    // sends these exact bytes itself; any client that merely *applied* the
+    // poisoned set likewise rebroadcasts it via `serialize_ops` on its next
+    // rejoin. The wire message, and the crash it causes, are identical
+    // regardless of which path emits it.
+    let captured_selection_op = Rc::new(RefCell::new(None));
+    let _subscription = cx_b.update(|cx| {
+        cx.subscribe(&buffer_b, {
+            let captured_selection_op = captured_selection_op.clone();
+            move |_, event, _| {
+                if let language::BufferEvent::Operation {
+                    operation,
+                    is_local: true,
+                } = event
+                    && matches!(operation, language::Operation::UpdateSelections { .. })
+                {
+                    *captured_selection_op.borrow_mut() =
+                        Some(language::proto::serialize_operation(operation));
+                }
+            }
+        })
+    });
+    buffer_b.update(cx_b, |buffer, cx| {
+        buffer.set_active_selections(
+            zombie_selections,
+            false,
+            language::CursorShape::default(),
+            cx,
+        );
+    });
+    let zombie_selection_op = captured_selection_op.borrow_mut().take().unwrap();
+    client_b
+        .client()
+        .send(rpc::proto::UpdateChannelBuffer {
+            channel_id: channel_id.0,
+            operations: vec![zombie_selection_op],
+        })
+        .unwrap();
+
+    // Client A receives the selection. It passes `can_resolve` thanks to the
+    // recycled replica's watermark, and rendering the channel notes panics
+    // in `offset_for_anchor` via `layout_selections`.
+    cx_a.run_until_parked();
+
+    channel_view_a.update_in(cx_a, |notes, window, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            // Resolve remote selections the same way `layout_selections`
+            // does during rendering. With the bug present, this panics with
+            // "invalid anchor".
+            let snapshot = editor.snapshot(window, cx);
+            let hub = editor.collaboration_hub().unwrap();
+            let range = Anchor::Min..Anchor::Max;
+            for remote_selection in snapshot.remote_selections_in_range(&range, hub, cx) {
+                let start = remote_selection
+                    .selection
+                    .start
+                    .to_offset(snapshot.buffer_snapshot());
+                let end = remote_selection
+                    .selection
+                    .end
+                    .to_offset(snapshot.buffer_snapshot());
+                assert!(start <= end);
+            }
+        });
+    });
+}
+
+// Reproduces the same crash as the test above, but distilled to the wire
+// level: the poisoned `UpdateSelections` is crafted directly, standing in
+// for any diverged replica (the zombie above, or a victim of a historical
+// op-loss bug) whose buffer contains an insertion nobody else has.
+//
+// The receiving side admits the poisoned selection because
+// `Buffer::can_apply_op` gates `UpdateSelections` on
+// `version.observed(anchor.timestamp())`, and `clock::Global::observed` is a
+// per-replica high-watermark: once a *later* op from the same replica is
+// applied, the watermark also covers the missing insertion's timestamp, so
+// the gap is undetectable. The selection is then stored in
+// `remote_selections` and crashes the editor during `layout_selections`.
+#[gpui::test]
+async fn test_channel_notes_selection_anchored_in_unseen_insertion(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let (_server, client_a, client_b, channel_id) = TestServer::start2(cx_a, cx_b).await;
+    let (_workspace_a, cx_a) = client_a.build_test_workspace(cx_a).await;
+
+    // Client A opens the channel notes in a real window, and writes some text.
+    let channel_view_a = open_channel_notes(channel_id, cx_a).await.unwrap();
+    channel_view_a.update_in(cx_a, |notes, window, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            editor.insert("hello from a", window, cx);
+        });
+    });
+    cx_a.run_until_parked();
+
+    // Client B joins the channel buffer as a collaborator.
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+    cx_b.run_until_parked();
+
+    let (buffer_id, replica_id_b, version_b) =
+        channel_buffer_b.read_with(cx_b, |channel_buffer, cx| {
+            let buffer = channel_buffer.buffer().read(cx);
+            assert_eq!(buffer.text(), "hello from a");
+            (buffer.remote_id(), buffer.replica_id(), buffer.version())
+        });
+
+    // Simulate client B being a diverged replica, exactly as observed on the
+    // wire in the production crash:
+    // - B has an insertion at (replica_b, 100) that was never delivered to
+    //   anyone else (we never deliver it here).
+    // - B's later edit at (replica_b, 200) *is* delivered, advancing every
+    //   other replica's watermark for replica_b past 100.
+    // - B then broadcasts selections anchored inside the missing insertion.
+    let phantom_insertion = clock::Lamport {
+        replica_id: replica_id_b,
+        value: 100,
+    };
+    let delivered_edit = clock::Lamport {
+        replica_id: replica_id_b,
+        value: 200,
+    };
+    let selection_timestamp = clock::Lamport {
+        replica_id: replica_id_b,
+        value: 201,
+    };
+
+    let edit_op = language::Operation::Buffer(text::Operation::Edit(text::EditOperation {
+        timestamp: delivered_edit,
+        version: version_b,
+        ranges: vec![text::FullOffset(0)..text::FullOffset(0)],
+        new_text: vec!["B: ".into()],
+    }));
+    let selection_op = language::Operation::UpdateSelections {
+        selections: Arc::from([text::Selection {
+            id: 1,
+            start: text::Anchor::new(phantom_insertion, 1, text::Bias::Left, buffer_id),
+            end: text::Anchor::new(phantom_insertion, 2, text::Bias::Left, buffer_id),
+            reversed: false,
+            goal: text::SelectionGoal::None,
+        }]),
+        lamport_timestamp: selection_timestamp,
+        line_mode: false,
+        cursor_shape: language::CursorShape::default(),
+    };
+
+    client_b
+        .client()
+        .send(rpc::proto::UpdateChannelBuffer {
+            channel_id: channel_id.0,
+            operations: vec![
+                language::proto::serialize_operation(&edit_op),
+                language::proto::serialize_operation(&selection_op),
+            ],
+        })
+        .unwrap();
+
+    // Client A receives both operations. The edit applies cleanly and
+    // advances A's watermark for B's replica to 200, so the selection op
+    // passes `can_resolve` and is stored even though the insertion at
+    // (replica_b, 100) doesn't exist on A. Rendering the channel notes then
+    // panics in `offset_for_anchor` via `layout_selections`.
+    cx_a.run_until_parked();
+
+    channel_view_a.update_in(cx_a, |notes, window, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "B: hello from a");
+
+            // Resolve remote selections the same way `layout_selections`
+            // does during rendering. With the bug present, this panics with
+            // "invalid anchor".
+            let snapshot = editor.snapshot(window, cx);
+            let hub = editor.collaboration_hub().unwrap();
+            let range = Anchor::Min..Anchor::Max;
+            for remote_selection in snapshot.remote_selections_in_range(&range, hub, cx) {
+                let start = remote_selection
+                    .selection
+                    .start
+                    .to_offset(snapshot.buffer_snapshot());
+                let end = remote_selection
+                    .selection
+                    .end
+                    .to_offset(snapshot.buffer_snapshot());
+                assert!(start <= end);
+            }
+        });
+    });
+}
+
 #[track_caller]
 fn assert_collaborators(
     collaborators: &HashMap<PeerId, Collaborator>,
