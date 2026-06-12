@@ -36,6 +36,12 @@ impl RelPath {
         Self::new_unchecked("")
     }
 
+    /// Creates an empty [`RelPath`].
+    pub fn empty_arc() -> Arc<Self> {
+        static EMPTY: std::sync::OnceLock<Arc<RelPath>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(|| Arc::from(Self::empty())).clone()
+    }
+
     /// Converts a path with a given style into a [`RelPath`].
     ///
     /// Returns an error if the path is absolute, or is not valid unicode.

@@ -100,7 +100,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -321,9 +321,9 @@ jobs:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
       continue-on-error: true
-    - name: '@actions/upload-artifact compliance-report-${{ github.ref_name }}.md'
+    - name: run_bundling::upload_artifact
       if: always()
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: compliance-report-${{ github.ref_name }}.md
         path: compliance-report-${{ github.ref_name }}.md
@@ -367,6 +367,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -377,14 +382,14 @@ jobs:
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-    - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-linux-aarch64.tar.gz
         path: target/release/zed-linux-aarch64.tar.gz
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-linux-aarch64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-linux-aarch64.gz
         path: target/zed-remote-server-linux-aarch64.gz
@@ -407,6 +412,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -417,14 +427,14 @@ jobs:
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-    - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-linux-x86_64.tar.gz
         path: target/release/zed-linux-x86_64.tar.gz
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-linux-x86_64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-linux-x86_64.gz
         path: target/zed-remote-server-linux-x86_64.gz
@@ -450,6 +460,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -462,14 +477,14 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
-    - name: '@actions/upload-artifact Zed-aarch64.dmg'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-aarch64.dmg
         path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-macos-aarch64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
@@ -495,6 +510,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -507,14 +527,14 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
-    - name: '@actions/upload-artifact Zed-x86_64.dmg'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-macos-x86_64.gz'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
@@ -548,18 +568,21 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed-aarch64.exe'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-aarch64.exe
         path: target/Zed-aarch64.exe
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-windows-aarch64.zip'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-windows-aarch64.zip
         path: target/zed-remote-server-windows-aarch64.zip
@@ -593,18 +616,21 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
       working-directory: ${{ env.ZED_WORKSPACE }}
-    - name: '@actions/upload-artifact Zed-x86_64.exe'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: Zed-x86_64.exe
         path: target/Zed-x86_64.exe
         if-no-files-found: error
-    - name: '@actions/upload-artifact zed-remote-server-windows-x86_64.zip'
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: zed-remote-server-windows-x86_64.zip
         path: target/zed-remote-server-windows-x86_64.zip
@@ -622,7 +648,7 @@ jobs:
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: release::download_workflow_artifacts
-      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         path: ./artifacts/
     - name: ls -lR ./artifacts
@@ -694,9 +720,9 @@ jobs:
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: '@actions/upload-artifact compliance-report-${{ github.ref_name }}.md'
+    - name: run_bundling::upload_artifact
       if: always()
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: compliance-report-${{ github.ref_name }}.md
         path: compliance-report-${{ github.ref_name }}.md

@@ -69,6 +69,68 @@ impl Rgba {
             }
         }
     }
+
+    /// Returns a new RGBA color with the same red, green and blue channels, but
+    /// with a new alpha value.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0xFF0000FF);
+    /// let faded = color.alpha(0.25);
+    /// assert_eq!(faded.a, 0.25);
+    /// ```
+    ///
+    /// This will return a red color with 25% opacity.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0x3399FFCC);
+    /// let transparent = color.alpha(0.0);
+    /// assert_eq!(transparent.a, 0.0);
+    /// ```
+    ///
+    /// This will return the same blue color, fully transparent.
+    pub fn alpha(&self, a: f32) -> Self {
+        Rgba {
+            r: self.r,
+            g: self.g,
+            b: self.b,
+            a: a.clamp(0., 1.),
+        }
+    }
+
+    /// Returns a new RGBA color with the same red, green, and blue channels,
+    /// but with the alpha channel multiplied by the given factor.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0xFF0000FF); // Fully opaque red
+    /// let faded = color.opacity(0.5);
+    /// assert_eq!(faded.a, 0.5);
+    /// ```
+    ///
+    /// This will return a red color with 50% opacity.
+    ///
+    /// Example:
+    /// ```
+    /// use gpui::rgba;
+    /// let color = rgba(0x3399FFCC); // A light blue with 80% opacity
+    /// let faded = color.opacity(0.5);
+    /// assert!((faded.a - 0.4).abs() < 1e-6);
+    /// ```
+    ///
+    /// This will return the same blue color scaled down to 40% opacity.
+    pub fn opacity(&self, factor: f32) -> Self {
+        Rgba {
+            r: self.r,
+            g: self.g,
+            b: self.b,
+            a: self.a * factor.clamp(0., 1.),
+        }
+    }
 }
 
 impl From<Rgba> for u32 {
@@ -591,7 +653,7 @@ impl Hsla {
     /// assert_eq!(red_color.a, 0.25);
     /// ```
     ///
-    /// This will return a red color with half the opacity.
+    /// This will return a red color with 25% opacity.
     ///
     /// Example:
     /// ```
@@ -978,5 +1040,30 @@ mod tests {
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
+    }
+
+    #[test]
+    fn test_rgba_alpha() {
+        let color = Rgba {
+            r: 0.2,
+            g: 0.6,
+            b: 1.0,
+            a: 0.8,
+        };
+
+        assert_eq!(color.alpha(0.25).a, 0.25);
+        assert_eq!(color.alpha(1.5).a, 1.0);
+    }
+
+    #[test]
+    fn test_rgba_opacity() {
+        let color = Rgba {
+            r: 0.2,
+            g: 0.6,
+            b: 1.0,
+            a: 0.8,
+        };
+        assert!((color.opacity(0.5).a - 0.4).abs() < 1e-6);
+        assert_eq!(color.opacity(2.0).a, 0.8);
     }
 }
