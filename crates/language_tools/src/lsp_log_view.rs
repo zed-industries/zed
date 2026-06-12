@@ -17,6 +17,7 @@ use project::{
     search::SearchQuery,
 };
 use proto::toggle_lsp_logs::LogType;
+use settings::SeedQuerySetting;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
@@ -28,7 +29,7 @@ use workspace::{
 
 use crate::get_or_create_tool;
 
-pub fn open_server_trace(
+pub fn open(
     log_store: &Entity<LogStore>,
     workspace: WeakEntity<Workspace>,
     server: LanguageServerSelector,
@@ -67,7 +68,7 @@ pub fn open_server_trace(
                             }
                         };
                         if let Some(server_id) = server_id {
-                            log_view.show_rpc_trace_for_server(server_id, window, cx);
+                            log_view.show_logs_for_server(server_id, window, cx);
                         }
                     });
                 })
@@ -824,12 +825,13 @@ impl SearchableItem for LspLogView {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
-        self.editor
-            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.query_suggestion(seed_query_override, window, cx)
+        })
     }
 
     fn activate_match(
@@ -1361,6 +1363,7 @@ impl ServerInfo {
             capabilities: server.capabilities(),
             status: LanguageServerStatus {
                 name: server.name(),
+                language_name: None,
                 server_version: server.version(),
                 server_readable_version: server.readable_version(),
                 pending_work: Default::default(),

@@ -174,6 +174,12 @@ On Linux:
 ls ~/.local/share/zed/extensions/installed
 ```
 
+On Windows:
+
+```pwsh
+Get-ChildItem "$env:LOCALAPPDATA\Zed\extensions\installed" -Name
+```
+
 Define extensions which should be installed (`true`) or never installed (`false`).
 
 ```json [settings]
@@ -185,6 +191,28 @@ Define extensions which should be installed (`true`) or never installed (`false`
   }
 }
 ```
+
+## Auto Update extensions
+
+- Description: Disable auto-updates for specific extensions.
+- Setting: `auto_update_extensions`
+- Default: `{}`
+
+**Options**
+
+By default, every installed extension is auto-updated when Zed starts.
+Add an extension here with `false` to pin it to its currently installed version.
+
+```json [settings]
+{
+  "auto_update_extensions": {
+    "html": false
+  }
+}
+```
+
+Selecting **Install Another Version…** from an extension's `⋯` menu on the Extensions
+page ({#action zed::Extensions}) does this automatically.
 
 ## Autosave
 
@@ -552,7 +580,7 @@ See [Git documentation](../git.md#diff-view-styles) for more details.
 ## Direnv Integration
 
 - Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
-  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+  `direnv` integration makes it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
   It also allows for those environment variables to be used in tasks.
 - Setting: `load_direnv`
 - Default: `"direct"`
@@ -765,7 +793,7 @@ List of `string` values
 }
 ```
 
-4. An box drawn around the following character:
+4. A box drawn around the following character:
 
 ```json [settings]
 {
@@ -801,9 +829,8 @@ List of `string` values
 
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+- Description: Determines when the mouse cursor should be hidden in response to keyboard input.
+- Default: `on_typing_and_action`
 
 **Options**
 
@@ -823,11 +850,11 @@ List of `string` values
 }
 ```
 
-3. Hide on both typing and cursor movement:
+3. Hide on typing and on key bindings that resolve to an action:
 
 ```json [settings]
 {
-  "hide_mouse": "on_typing_and_movement"
+  "hide_mouse": "on_typing_and_action"
 }
 ```
 
@@ -1931,7 +1958,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 
 WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
 
@@ -2050,6 +2077,32 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 }
 ```
 
+## Scan Symbolic Links
+
+- Description: When to scan content of linked directories.
+- Setting: `scan_symlinks`
+- Default: `expanded`
+
+**Options**
+
+1. Only scan symlinked directories when they've been expanded in the workspace (default):
+
+```json [settings]
+{
+  "scan_symlinks": "expanded"
+}
+```
+
+2. Always scan symlinked directories:
+
+```json [settings]
+{
+  "scan_symlinks": "always"
+}
+```
+
+When set to `expanded`, symbolic links are only scanned after you explicitly expand them in the project panel. When set to `always`, Zed follows all symbolic links and scans their contents when indexing the project, unless they match gitignore rules. The `always` option may have performance implications for projects with many or deeply nested symlinks.
+
 ## File Types
 
 - Setting: `file_types`
@@ -2093,6 +2146,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 ```json [settings]
 {
   "diagnostics": {
+    "button": true,
     "include_warnings": true,
     "inline": {
       "enabled": false
@@ -2100,6 +2154,11 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   }
 }
 ```
+
+**Options**
+
+- `button`: Whether to show the project diagnostics button in the status bar
+- `include_warnings`: Whether to show warnings or not by default
 
 ### Inline Diagnostics
 
@@ -2748,7 +2807,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 **Options**
 
 Inlay hints querying consists of two parts: editor (client) and LSP server.
-With the inlay settings above are changed to enable the hints, editor will start to query certain types of hints and react on LSP hint refresh request from the server.
+When the inlay settings above are changed to enable the hints, the editor will start to query certain types of hints and react on LSP hint refresh request from the server.
 At this point, the server may or may not return hints depending on its implementation, further configuration might be needed, refer to the corresponding LSP server documentation.
 
 The following languages have inlay hints preconfigured by Zed:
@@ -2860,7 +2919,7 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 **Options**
 
-To override settings for a language, add an entry for that languages name to the `languages` value. Example:
+To override settings for a language, add an entry for that language's name to the `languages` value. Example:
 
 ```json [settings]
 {
@@ -2999,6 +3058,16 @@ Configuration for various AI model providers including API URLs and authenticati
 3. `border`: Draw a border around the color text.
 4. `none`: Do not query and render document colors.
 
+## LSP Document Links
+
+- Description: Whether to query and display LSP `textDocument/documentLink` links in the editor
+- Setting: `lsp_document_links`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Max Tabs
 
 - Description: Maximum number of tabs to show in the tab bar
@@ -3021,7 +3090,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 ## Multi Cursor Modifier
 
-- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it does not conflict with the multicursor modifier.
 - Setting: `multi_cursor_modifier`
 - Default: `alt`
 
@@ -3035,7 +3104,7 @@ Positive `integer` values or `null` for unlimited tabs
 }
 ```
 
-2. Maps `Control` on Linux and Windows and to `Command` on macOS:
+2. Maps to `Control` on Linux and Windows and to `Command` on macOS:
 
 ```json [settings]
 {
@@ -3148,7 +3217,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 ### Performance Profiler
 
-- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the `zed: open performance profiler` action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the {#action zed::OpenPerformanceProfiler} action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
 - Setting: `instrumentation.performance_profiler.enabled`
 - Default: `false`
 
@@ -3651,7 +3720,7 @@ Non-negative `integer` values
 
 ## Search Wrap
 
-- Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
+- Description: If `search_wrap` is disabled, search results do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
 
@@ -4055,7 +4124,7 @@ List of `integer` column numbers
 
 ### Metrics
 
-- Description: Setting for sending anonymized usage data, such what languages you're using Zed with.
+- Description: Setting for sending anonymized usage data, such as what languages you're using Zed with.
 - Setting: `metrics`
 - Default: `true`
 
@@ -4476,7 +4545,7 @@ See Buffer Font Features
 
 ## Terminal: Detect Virtual Environments {#terminal-detect_venv}
 
-- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environment.
+- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the `working_directory` setting), automatically activating the virtual environment.
 - Setting: `detect_venv`
 - Default:
 
@@ -5260,7 +5329,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
 
 ## Collaboration Panel
 
@@ -5560,7 +5629,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from {#action settings_profile_selector::Toggle}.
 - Setting: `profiles`
 - Default: `{}`
 
@@ -5602,7 +5671,7 @@ Example:
 }
 ```
 
-To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for {#action settings_profile_selector::Toggle}.
 
 ## An example configuration:
 

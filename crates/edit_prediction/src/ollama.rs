@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, SharedString,
+    App, SharedString, TaskExt,
     http_client::{self, HttpClient},
 };
 use language::language_settings::OpenAiCompatibleEditPredictionSettings;

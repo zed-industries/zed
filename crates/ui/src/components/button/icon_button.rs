@@ -2,7 +2,8 @@ use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
 use crate::{
-    ElevationIndex, Icon, IconWithIndicator, Indicator, SelectableButton, TintColor, prelude::*,
+    ElevationIndex, Icon, IconWithIndicator, Indicator, SelectableButton, TintColor, Tooltip,
+    prelude::*,
 };
 use crate::{IconName, IconSize};
 
@@ -240,160 +241,171 @@ impl Component for IconButton {
         "ButtonB"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Icon Button Styles",
-                        vec![
-                            single_example(
-                                "Default",
-                                IconButton::new("default", IconName::Check)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Filled",
-                                IconButton::new("filled", IconName::Check)
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Filled)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Subtle",
-                                IconButton::new("subtle", IconName::Check)
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Subtle)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Tinted",
-                                IconButton::new("tinted", IconName::Check)
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Transparent",
-                                IconButton::new("transparent", IconName::Check)
-                                    .layer(ElevationIndex::Background)
-                                    .style(ButtonStyle::Transparent)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Icon Button Shapes",
-                        vec![
-                            single_example(
-                                "Square",
-                                IconButton::new("square", IconName::Check)
-                                    .shape(IconButtonShape::Square)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Wide",
-                                IconButton::new("wide", IconName::Check)
-                                    .shape(IconButtonShape::Wide)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Icon Button Sizes",
-                        vec![
-                            single_example(
-                                "XSmall",
-                                IconButton::new("xsmall", IconName::Check)
-                                    .icon_size(IconSize::XSmall)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Small",
-                                IconButton::new("small", IconName::Check)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Medium",
-                                IconButton::new("medium", IconName::Check)
-                                    .icon_size(IconSize::Medium)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "XLarge",
-                                IconButton::new("xlarge", IconName::Check)
-                                    .icon_size(IconSize::XLarge)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Special States",
-                        vec![
-                            single_example(
-                                "Disabled",
-                                IconButton::new("disabled", IconName::Check)
-                                    .disabled(true)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                IconButton::new("selected", IconName::Check)
-                                    .toggle_state(true)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "With Indicator",
-                                IconButton::new("indicator", IconName::Check)
-                                    .indicator(Indicator::dot().color(Color::Success))
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Custom Colors",
-                        vec![
-                            single_example(
-                                "Custom Icon Color",
-                                IconButton::new("custom_color", IconName::Check)
-                                    .icon_color(Color::Accent)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "With Alpha",
-                                IconButton::new("alpha", IconName::Check)
-                                    .alpha(0.5)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::Background)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn description() -> &'static str {
+        "A compact button that displays a single icon with an optional tooltip.\
+        The most frequently used button in the Zed codebase."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Icon Button Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            IconButton::new("default", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            IconButton::new("filled", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Filled)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Subtle",
+                            IconButton::new("subtle", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Subtle)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Tinted",
+                            IconButton::new("tinted", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Transparent",
+                            IconButton::new("transparent", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Transparent)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Icon Button Shapes",
+                    vec![
+                        single_example(
+                            "Square",
+                            IconButton::new("square", IconName::Check)
+                                .shape(IconButtonShape::Square)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Wide",
+                            IconButton::new("wide", IconName::Check)
+                                .shape(IconButtonShape::Wide)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Icon Button Sizes",
+                    vec![
+                        single_example(
+                            "XSmall",
+                            IconButton::new("xsmall", IconName::Check)
+                                .icon_size(IconSize::XSmall)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Small",
+                            IconButton::new("small", IconName::Check)
+                                .icon_size(IconSize::Small)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Medium",
+                            IconButton::new("medium", IconName::Check)
+                                .icon_size(IconSize::Medium)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "XLarge",
+                            IconButton::new("xlarge", IconName::Check)
+                                .icon_size(IconSize::XLarge)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Special States",
+                    vec![
+                        single_example(
+                            "Disabled",
+                            IconButton::new("disabled", IconName::Check)
+                                .disabled(true)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            IconButton::new("selected", IconName::Check)
+                                .toggle_state(true)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Indicator",
+                            IconButton::new("indicator", IconName::Check)
+                                .indicator(Indicator::dot().color(Color::Success))
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Tooltip",
+                            IconButton::new("tooltip", IconName::Check)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .tooltip(Tooltip::text("As mentioned - with a tooltip"))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Custom Colors",
+                    vec![
+                        single_example(
+                            "Custom Icon Color",
+                            IconButton::new("custom_color", IconName::Check)
+                                .icon_color(Color::Accent)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Alpha",
+                            IconButton::new("alpha", IconName::Check)
+                                .alpha(0.5)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

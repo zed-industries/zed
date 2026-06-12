@@ -22,7 +22,8 @@ use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
     Action, AnyElement, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
-    SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
+    SharedString, Styled, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, Window, actions,
+    div,
 };
 use itertools::Itertools;
 use language::{Buffer, Language};
@@ -678,6 +679,10 @@ impl Item for ProjectSearchView {
         self.results_editor.for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.results_editor.read(cx).active_project_path(cx)
+    }
+
     fn can_save(&self, _: &App) -> bool {
         true
     }
@@ -1221,7 +1226,7 @@ impl ProjectSearchView {
             }
 
             let editor = item.act_as::<Editor>(cx)?;
-            let query = editor.query_suggestion(false, window, cx);
+            let query = editor.query_suggestion(None, window, cx);
             if query.is_empty() { None } else { Some(query) }
         });
 
@@ -2194,7 +2199,7 @@ impl Render for ProjectSearchBar {
         let input_base_styles = |panel: InputPanel| {
             input_base_styles(search.border_color_for(panel, cx), |div| match panel {
                 InputPanel::Query | InputPanel::Replacement => div.w(input_width),
-                InputPanel::Include | InputPanel::Exclude => div.flex_grow(),
+                InputPanel::Include | InputPanel::Exclude => div.flex_grow_1(),
             })
         };
         let theme_colors = cx.theme().colors();
