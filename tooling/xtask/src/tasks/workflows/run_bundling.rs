@@ -74,6 +74,7 @@ pub(crate) fn bundle_mac(
             .runs_on(runners::MAC_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -117,6 +118,7 @@ pub(crate) fn bundle_linux(
             .add_env(Env::new("CC", "clang-18"))
             .add_env(Env::new("CXX", "clang++-18"))
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -161,6 +163,7 @@ pub(crate) fn bundle_windows(
                 job.add_step(set_release_channel(platform, release_channel))
             })
             .add_step(steps::setup_sentry())
+            .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(bundle_windows(arch))
             .add_step(upload_artifact(&format!("target/{artifact_name}")))
             .add_step(upload_artifact(&format!(

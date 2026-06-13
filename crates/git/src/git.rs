@@ -107,6 +107,8 @@ actions!(
         ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Adds a file to the repository's .git/info/exclude.
+        AddToGitInfoExclude,
         /// Copies the current branch name to the clipboard.
         CopyBranchName,
     ]
