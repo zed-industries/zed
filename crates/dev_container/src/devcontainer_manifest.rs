@@ -600,7 +600,12 @@ impl DevContainerManifest {
                     DevContainerError::ResourceFetchFailed
                 })?;
 
-            let feature_manifest = FeatureManifest::new(consecutive_id, feature_ref.to_string(), feature_dir, feature_json);
+            let feature_manifest = FeatureManifest::new(
+                consecutive_id,
+                feature_ref.to_string(),
+                feature_dir,
+                feature_json,
+            );
 
             log::debug!("Prepared feature content for '{}'", feature_ref);
 
@@ -791,52 +796,69 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
             ConfigStatus::VariableParsed(dev_container) => dev_container,
         };
-        let mut mounts = dev_container.mounts.clone().unwrap_or(Vec::new());
-
-        let mut feature_mounts = self.features.iter().flat_map(|f| f.mounts()).collect();
-
-        mounts.append(&mut feature_mounts);
-
-        let privileged = dev_container.privileged.unwrap_or(false)
-            || self.features.iter().any(|f| f.privileged());
-
-        let mut cap_add: Vec<String> = dev_container.cap_add.clone().unwrap_or_default();
-        let mut security_opt: Vec<String> = dev_container.security_opt.clone().unwrap_or_default();
+        let mut mounts = Vec::new();
+        let mut cap_add = Vec::new();
+        let mut security_opt = Vec::new();
+        let mut privileged = false;
+        let mut init = false;
 
         if let Some(metadata_entries) = &base_image.config.labels.metadata {
             for entry in metadata_entries {
-                if let Some(serde_json_lenient::Value::Array(caps)) = entry.get("capAdd") {
-                    for cap in caps {
-                        if let Some(s) = cap.as_str() {
-                            if !cap_add.contains(&s.to_string()) {
-                                cap_add.push(s.to_string());
-                            }
+                if let Some(serde_json_lenient::Value::Array(metadata_mounts)) = entry.get("mounts")
+                {
+                    for mount in metadata_mounts {
+                        if let Some(mount) = mount_definition_from_metadata(mount) {
+                            append_mount_with_target_override(&mut mounts, mount);
                         }
                     }
                 }
+                if entry.get("privileged").and_then(|value| value.as_bool()) == Some(true) {
+                    privileged = true;
+                }
+                if entry.get("init").and_then(|value| value.as_bool()) == Some(true) {
+                    init = true;
+                }
+                if let Some(serde_json_lenient::Value::Array(caps)) = entry.get("capAdd") {
+                    for cap in caps.iter().filter_map(|cap| cap.as_str()) {
+                        push_unique_string(&mut cap_add, cap);
+                    }
+                }
                 if let Some(serde_json_lenient::Value::Array(opts)) = entry.get("securityOpt") {
-                    for opt in opts {
-                        if let Some(s) = opt.as_str() {
-                            if !security_opt.contains(&s.to_string()) {
-                                security_opt.push(s.to_string());
-                            }
-                        }
+                    for opt in opts.iter().filter_map(|opt| opt.as_str()) {
+                        push_unique_string(&mut security_opt, opt);
                     }
                 }
             }
         }
 
         for feature in &self.features {
+            for mount in feature.mounts() {
+                append_mount_with_target_override(&mut mounts, mount);
+            }
+            if feature.privileged() {
+                privileged = true;
+            }
+            if feature.init() {
+                init = true;
+            }
             for cap in feature.cap_add() {
-                if !cap_add.contains(&cap) {
-                    cap_add.push(cap);
-                }
+                push_unique_string(&mut cap_add, &cap);
             }
             for opt in feature.security_opt() {
-                if !security_opt.contains(&opt) {
-                    security_opt.push(opt);
-                }
+                push_unique_string(&mut security_opt, &opt);
             }
+        }
+
+        for mount in dev_container.mounts.clone().unwrap_or_default() {
+            append_mount_with_target_override(&mut mounts, mount);
+        }
+        privileged |= dev_container.privileged.unwrap_or(false);
+        init |= dev_container.init.unwrap_or(false);
+        for cap in dev_container.cap_add.clone().unwrap_or_default() {
+            push_unique_string(&mut cap_add, &cap);
+        }
+        for opt in dev_container.security_opt.clone().unwrap_or_default() {
+            push_unique_string(&mut security_opt, &opt);
         }
 
         let entrypoint_script = if dev_container.override_command == Some(false) {
@@ -871,11 +893,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 }
             }
         }
-        for feature in &self.features {
-            for (k, v) in feature.container_env() {
-                container_env.insert(k, v);
-            }
-        }
         if let Some(config_env) = &dev_container.container_env {
             for (k, v) in config_env {
                 container_env.insert(k.clone(), v.clone());
@@ -888,6 +905,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             additional_mounts: mounts,
             container_env,
             privileged,
+            init,
             cap_add,
             security_opt,
             entrypoint_script,
@@ -905,17 +923,31 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         match dev_container.build_type() {
             DevContainerBuildType::Image(base_image) => {
                 let built_docker_image = self.build_docker_image().await?;
-
-                let image_tag = self
+                let has_features = dev_container
+                    .features
+                    .as_ref()
+                    .is_some_and(|features| !features.is_empty());
+                let features_image_tag = self
                     .features_build_info
                     .as_ref()
-                    .map(|info| info.image_tag.as_str())
-                    .unwrap_or(&base_image);
+                    .map(|info| info.image_tag.as_str());
+                let uid_base_image = if has_features {
+                    features_image_tag.unwrap_or(&base_image)
+                } else {
+                    &base_image
+                };
+                let will_update_remote_user_uid =
+                    self.should_update_remote_user_uid(&built_docker_image)?;
 
                 let built_docker_image = self
-                    .update_remote_user_uid(built_docker_image, image_tag)
+                    .update_remote_user_uid(built_docker_image, uid_base_image)
                     .await?;
 
+                let image_tag = if has_features || will_update_remote_user_uid {
+                    features_image_tag.unwrap_or(&base_image)
+                } else {
+                    &base_image
+                };
                 let resources = self.build_merged_resources(built_docker_image, image_tag)?;
                 Ok(DevContainerBuildResources::Docker(resources))
             }
@@ -931,8 +963,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     .update_remote_user_uid(built_docker_image, &features_build_info.image_tag)
                     .await?;
 
-                let resources =
-                    self.build_merged_resources(built_docker_image, &features_build_info.image_tag)?;
+                let resources = self
+                    .build_merged_resources(built_docker_image, &features_build_info.image_tag)?;
                 Ok(DevContainerBuildResources::Docker(resources))
             }
             DevContainerBuildType::DockerCompose => {
@@ -974,6 +1006,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let remote_env = self.runtime_remote_env(&running_container.config.env_as_map()?)?;
 
         Ok(DevContainerUp {
+            started_at: running_container
+                .state
+                .as_ref()
+                .and_then(|state| state.started_at.clone()),
             container_id: running_container.id,
             remote_user,
             remote_workspace_folder: remote_workspace_folder.display().to_string(),
@@ -1258,7 +1294,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .update_remote_user_uid(built_service_image, built_service_image_tag)
             .await?;
 
-        let resources = self.build_merged_resources(built_service_image, built_service_image_tag)?;
+        let resources =
+            self.build_merged_resources(built_service_image, built_service_image_tag)?;
 
         let network_mode = main_service.network_mode.as_ref();
         let network_mode_service = network_mode.and_then(|mode| mode.strip_prefix("service:"));
@@ -1324,8 +1361,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 }
             }
 
-            if let Ok(substituted_json) = self.parse_nonremote_vars_for_content(&self.raw_config)
-            {
+            if let Ok(substituted_json) = self.parse_nonremote_vars_for_content(&self.raw_config) {
                 let config_entry = build_devcontainer_metadata_entry(&substituted_json);
                 if !config_entry.is_empty() {
                     metadata_entries.push(serde_json_lenient::Value::Object(config_entry));
@@ -1333,17 +1369,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             }
 
             if !metadata_entries.is_empty() {
-                let serialized =
-                    serde_json_lenient::to_string(&metadata_entries).map_err(|e| {
-                        log::error!("Error serializing docker image metadata: {e}");
-                        DevContainerError::ContainerNotValid(resources.image.id.clone())
-                    })?;
-                runtime_labels.insert("devcontainer.metadata".to_string(), serialized);
+                let serialized = serde_json_lenient::to_string(&metadata_entries).map_err(|e| {
+                    log::error!("Error serializing docker image metadata: {e}");
+                    DevContainerError::ContainerNotValid(resources.image.id.clone())
+                })?;
+                runtime_labels.insert(
+                    "devcontainer.metadata".to_string(),
+                    escape_compose_interpolation(&serialized),
+                );
             }
         }
 
         for (k, v) in self.identifying_labels() {
-            runtime_labels.insert(k.to_string(), v.to_string());
+            runtime_labels.insert(k.to_string(), escape_compose_interpolation(&v));
         }
 
         let config_volumes: HashMap<String, DockerComposeVolume> = resources
@@ -1399,8 +1437,16 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let environment = if resources.container_env.is_empty() {
             None
         } else {
-            Some(resources.container_env)
+            Some(
+                resources
+                    .container_env
+                    .into_iter()
+                    .map(|(key, value)| (key, escape_compose_interpolation(&value)))
+                    .collect(),
+            )
         };
+        let privileged = resources.privileged.then_some(true);
+        let init = resources.init.then_some(true);
 
         let mut main_service = DockerComposeService {
             entrypoint,
@@ -1408,7 +1454,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             security_opt,
             labels: Some(runtime_labels),
             volumes,
-            privileged: Some(resources.privileged),
+            privileged,
+            init,
             environment,
             ..Default::default()
         };
@@ -1578,6 +1625,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     }
 
     #[cfg(target_os = "windows")]
+    fn should_update_remote_user_uid(
+        &self,
+        _image: &DockerInspect,
+    ) -> Result<bool, DevContainerError> {
+        Ok(false)
+    }
+
+    #[cfg(target_os = "windows")]
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
@@ -1585,27 +1640,37 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     ) -> Result<DockerInspect, DevContainerError> {
         Ok(image)
     }
+
+    #[cfg(not(target_os = "windows"))]
+    fn should_update_remote_user_uid(
+        &self,
+        image: &DockerInspect,
+    ) -> Result<bool, DevContainerError> {
+        if self.features_build_info.is_none() {
+            return Ok(false);
+        }
+        if self.dev_container().update_remote_user_uid == Some(false) {
+            return Ok(false);
+        }
+        let remote_user = get_remote_user_from_config(image, self)?;
+        Ok(remote_user != "root" && !remote_user.chars().all(|c| c.is_ascii_digit()))
+    }
+
     #[cfg(not(target_os = "windows"))]
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
         base_image: &str,
     ) -> Result<DockerInspect, DevContainerError> {
-        let dev_container = self.dev_container();
-
         let Some(features_build_info) = &self.features_build_info else {
             return Ok(image);
         };
 
-        // updateRemoteUserUID defaults to true per the devcontainers spec
-        if dev_container.update_remote_user_uid == Some(false) {
+        if !self.should_update_remote_user_uid(&image)? {
             return Ok(image);
         }
 
         let remote_user = get_remote_user_from_config(&image, self)?;
-        if remote_user == "root" || remote_user.chars().all(|c| c.is_ascii_digit()) {
-            return Ok(image);
-        }
 
         let image_user = image
             .config
@@ -2081,6 +2146,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if build_resources.privileged {
             command.arg("--privileged");
         }
+        if build_resources.init {
+            command.arg("--init");
+        }
 
         let run_args = match &self.dev_container().run_args {
             Some(run_args) => run_args,
@@ -2144,8 +2212,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 }
             }
 
-            if let Ok(substituted_json) = self.parse_nonremote_vars_for_content(&self.raw_config)
-            {
+            if let Ok(substituted_json) = self.parse_nonremote_vars_for_content(&self.raw_config) {
                 let config_entry = build_devcontainer_metadata_entry(&substituted_json);
                 if !config_entry.is_empty() {
                     metadata_entries.push(serde_json_lenient::Value::Object(config_entry));
@@ -2153,11 +2220,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
 
             if !metadata_entries.is_empty() {
-                let serialized =
-                    serde_json_lenient::to_string(&metadata_entries).map_err(|e| {
-                        log::error!("Problem serializing metadata: {e}");
-                        DevContainerError::ContainerNotValid(build_resources.image.id.clone())
-                    })?;
+                let serialized = serde_json_lenient::to_string(&metadata_entries).map_err(|e| {
+                    log::error!("Problem serializing metadata: {e}");
+                    DevContainerError::ContainerNotValid(build_resources.image.id.clone())
+                })?;
                 command.arg("-l");
                 command.arg(format!("devcontainer.metadata={serialized}"));
             }
@@ -2223,7 +2289,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         let devcontainer_up = self.run_dev_container(build_resources).await?;
 
-        self.run_remote_scripts(&devcontainer_up, true, true).await?;
+        self.run_remote_scripts(&devcontainer_up, true, true)
+            .await?;
 
         Ok(devcontainer_up)
     }
@@ -2285,9 +2352,26 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 }
             }
         }
-        if container_started {
-            if let Some(post_start_command) = &config.post_start_command {
-                for (command_name, command) in post_start_command.script_commands() {
+        if let Some(post_start_command) = &config.post_start_command {
+            let script_commands = post_start_command.script_commands();
+            if let Some(started_at) = &devcontainer_up.started_at {
+                if !script_commands.is_empty() {
+                    for command_name in script_commands.keys() {
+                        log::debug!("Running post start command {command_name}");
+                    }
+                    let script = post_start_marker_script(started_at, script_commands);
+                    self.docker_client
+                        .run_docker_exec(
+                            &devcontainer_up.container_id,
+                            &remote_folder,
+                            &devcontainer_up.remote_user,
+                            &devcontainer_up.remote_env,
+                            Command::new(script),
+                        )
+                        .await?;
+                }
+            } else if container_started {
+                for (command_name, command) in script_commands {
                     log::debug!("Running post start command {command_name}");
                     self.docker_client
                         .run_docker_exec(
@@ -2342,12 +2426,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(docker_ps) = self.check_for_existing_container().await? {
             log::debug!("Dev container already found. Proceeding with it");
 
-            let docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
+            let mut docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
 
             let container_started = !docker_inspect.is_running();
             if container_started {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
-
                 match self.dev_container().build_type() {
                     DevContainerBuildType::DockerCompose => {
                         let resources = self.docker_compose_manifest().await?;
@@ -2356,6 +2439,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                     }
                     _ => self.docker_client.start_container(&docker_ps.id).await?,
                 }
+                docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
             }
 
             let remote_user = get_remote_user_from_config(&docker_inspect, self)?;
@@ -2365,6 +2449,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let remote_env = self.runtime_remote_env(&docker_inspect.config.env_as_map()?)?;
 
             let dev_container_up = DevContainerUp {
+                started_at: docker_inspect
+                    .state
+                    .as_ref()
+                    .and_then(|state| state.started_at.clone()),
                 container_id: docker_ps.id,
                 remote_user: remote_user,
                 remote_workspace_folder: remote_folder.display().to_string(),
@@ -2372,7 +2460,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 remote_env,
             };
 
-            self.run_remote_scripts(&dev_container_up, false, container_started).await?;
+            self.run_remote_scripts(&dev_container_up, false, container_started)
+                .await?;
 
             Ok(Some(dev_container_up))
         } else {
@@ -2639,6 +2728,7 @@ struct DockerBuildResources {
     additional_mounts: Vec<MountDefinition>,
     container_env: HashMap<String, String>,
     privileged: bool,
+    init: bool,
     cap_add: Vec<String>,
     security_opt: Vec<String>,
     entrypoint_script: Option<String>,
@@ -3155,6 +3245,120 @@ fn get_container_user_from_config(
     Ok("root".to_string())
 }
 
+fn push_unique_string(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
+    }
+}
+
+fn append_mount_with_target_override(mounts: &mut Vec<MountDefinition>, mount: MountDefinition) {
+    mounts.retain(|existing| existing.target != mount.target);
+    mounts.push(mount);
+}
+
+fn mount_definition_from_metadata(value: &serde_json_lenient::Value) -> Option<MountDefinition> {
+    match value {
+        serde_json_lenient::Value::String(value) => parse_mount_definition_string(value),
+        serde_json_lenient::Value::Object(object) => {
+            let source = object
+                .get("source")
+                .or_else(|| object.get("src"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            let target = object
+                .get("target")
+                .or_else(|| object.get("dst"))
+                .or_else(|| object.get("destination"))
+                .and_then(|value| value.as_str())?
+                .to_string();
+            let mount_type = object
+                .get("type")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            Some(MountDefinition {
+                source,
+                target,
+                mount_type,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn parse_mount_definition_string(value: &str) -> Option<MountDefinition> {
+    let mut source = None;
+    let mut target = None;
+    let mut mount_type = None;
+
+    for part in value.split(',') {
+        let Some((key, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "source" | "src" => source = Some(value.trim().to_string()),
+            "target" | "dst" | "destination" => target = Some(value.trim().to_string()),
+            "type" => mount_type = Some(value.trim().to_string()),
+            _ => {}
+        }
+    }
+
+    target.map(|target| MountDefinition {
+        source,
+        target,
+        mount_type,
+    })
+}
+
+fn escape_compose_interpolation(value: &str) -> String {
+    value.replace('$', "$$")
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn command_to_shell_string(command: &Command) -> String {
+    let mut command_parts = vec![command.get_program().display().to_string()];
+    command_parts.extend(command.get_args().map(|arg| arg.display().to_string()));
+    command_parts.join(" ")
+}
+
+fn post_start_marker_script(started_at: &str, script_commands: HashMap<String, Command>) -> String {
+    let started_at = shell_single_quote(started_at);
+    let mut script = format!(
+        r#"user_id="$(id -u)"
+home_directory="${{HOME:-}}"
+if [ -z "$home_directory" ]; then
+  home_directory="$( (command -v getent >/dev/null 2>&1 && getent passwd "$user_id" || grep -E "^[^:]*:[^:]*:${{user_id}}:" /etc/passwd || true) | head -n 1 | cut -d: -f6)"
+fi
+if [ -z "$home_directory" ]; then
+  home_directory=/root
+fi
+marker_directory="$home_directory/.devcontainer"
+marker="$marker_directory/.postStartCommandMarker"
+started_at={started_at}
+marker_available=false
+if mkdir -p "$marker_directory"; then
+  previous_started_at="$(cat "$marker" 2>/dev/null || true)"
+  if [ "$previous_started_at" = "$started_at" ]; then
+    exit 0
+  fi
+  marker_available=true
+fi
+"#,
+    );
+    for command in script_commands.into_values() {
+        script.push_str(&command_to_shell_string(&command));
+        script.push_str(" || exit $?\n");
+    }
+    script.push_str(
+        r#"if [ "$marker_available" = "true" ]; then
+  printf '%s' "$started_at" > "$marker" || exit $?
+fi"#,
+    );
+    script
+}
+
 fn build_devcontainer_metadata_entry(
     raw_json: &serde_json_lenient::Value,
 ) -> serde_json_lenient::Map<String, serde_json_lenient::Value> {
@@ -3224,6 +3428,13 @@ mod test {
         sync::{Arc, Mutex},
     };
 
+    #[cfg(not(target_os = "windows"))]
+    use std::{
+        fs as std_fs,
+        process::Command as StdCommand,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use async_trait::async_trait;
     use fs::{FakeFs, Fs};
     use gpui::{AppContext, TestAppContext};
@@ -3239,13 +3450,13 @@ mod test {
     use crate::{
         DevContainerConfig, DevContainerContext,
         command_json::CommandRunner,
-        devcontainer_api::DevContainerError,
+        devcontainer_api::{DevContainerError, DevContainerUp},
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, dockerfile_inject_alias, extract_feature_id, find_primary_service,
-            get_remote_user_from_config, image_from_dockerfile, is_local_feature_ref,
-            resolve_compose_dockerfile,
+            DockerInspect, dockerfile_inject_alias, escape_compose_interpolation,
+            extract_feature_id, find_primary_service, get_remote_user_from_config,
+            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3514,6 +3725,7 @@ mod test {
             additional_mounts: vec![],
             container_env: HashMap::new(),
             privileged: false,
+            init: false,
             cap_add: vec!["SYS_PTRACE".to_string()],
             security_opt: vec!["seccomp=unconfined".to_string()],
             entrypoint_script: Some("echo Container started\n    trap \"exit 0\" 15\n    exec \"$@\"\n    while sleep 1 & wait $!; do :; done".to_string()),
@@ -3614,6 +3826,206 @@ mod test {
             args.contains(&OsStr::new("mcr.microsoft.com/devcontainers/base:ubuntu")),
             "image id must still be present in docker run command"
         );
+    }
+
+    #[gpui::test]
+    async fn should_use_devcontainer_cli_post_start_marker_for_started_container(
+        cx: &mut TestAppContext,
+    ) {
+        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "image": "test_image:latest",
+                "postStartCommand": "echo post-start",
+                "postAttachCommand": "echo post-attach"
+            }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let devcontainer_up = DevContainerUp {
+            started_at: Some("2026-06-23T10:00:00Z".to_string()),
+            container_id: "container".to_string(),
+            remote_user: "root".to_string(),
+            remote_workspace_folder: "/workspaces/project".to_string(),
+            extension_ids: Vec::new(),
+            remote_env: HashMap::new(),
+        };
+
+        devcontainer_manifest
+            .run_remote_scripts(&devcontainer_up, false, false)
+            .await
+            .unwrap();
+
+        let docker_exec_commands = test_dependencies
+            .docker
+            .exec_commands_recorded
+            .lock()
+            .unwrap();
+        assert_eq!(docker_exec_commands.len(), 2);
+        let post_start_script = docker_exec_commands[0]
+            ._inner_command
+            .get_program()
+            .to_string_lossy();
+        assert!(post_start_script.contains("marker_directory=\"$home_directory/.devcontainer\""));
+        assert!(post_start_script.contains("marker=\"$marker_directory/.postStartCommandMarker\""));
+        assert!(!post_start_script.contains("/tmp/zed-devcontainer"));
+        assert!(post_start_script.contains("echo post-start || exit $?"));
+        assert!(
+            post_start_script.find("echo post-start").unwrap()
+                < post_start_script.find("printf '%s'").unwrap(),
+            "postStartCommand marker must be written only after the command succeeds"
+        );
+        assert_eq!(docker_exec_commands[1]._inner_command.get_program(), "echo");
+        assert_eq!(
+            docker_exec_commands[1]
+                ._inner_command
+                .get_args()
+                .collect::<Vec<_>>(),
+            vec![OsStr::new("post-attach")]
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn post_start_marker_script_runs_command_when_marker_directory_cannot_be_created() {
+        let mut command = Command::new("echo");
+        command.arg("post-start");
+        let script = super::post_start_marker_script(
+            "2026-06-23T10:00:00Z",
+            HashMap::from([("default".to_string(), command)]),
+        );
+
+        let output = StdCommand::new("sh")
+            .arg("-c")
+            .arg(script)
+            .env("HOME", "/dev/null")
+            .output()
+            .expect("shell should run postStartCommand marker script");
+
+        assert!(
+            output.status.success(),
+            "script should not fail when marker directory cannot be created: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "post-start\n");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn post_start_marker_script_marks_only_after_success() {
+        let home_directory = temporary_home_directory("post-start-success");
+        let started_at = "2026-06-23T10:00:00Z";
+        let marker = home_directory
+            .join(".devcontainer")
+            .join(".postStartCommandMarker");
+        let mut command = Command::new("echo");
+        command.arg("post-start");
+        let script = super::post_start_marker_script(
+            started_at,
+            HashMap::from([("default".to_string(), command)]),
+        );
+
+        let output = StdCommand::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home_directory)
+            .output()
+            .expect("shell should run postStartCommand marker script");
+        assert!(
+            output.status.success(),
+            "script should run successfully: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "post-start\n");
+        assert_eq!(
+            std_fs::read_to_string(&marker).expect("marker should be written"),
+            started_at
+        );
+
+        let output = StdCommand::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .env("HOME", &home_directory)
+            .output()
+            .expect("shell should run postStartCommand marker script");
+        assert!(
+            output.status.success(),
+            "script should skip successfully: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+
+        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn post_start_marker_script_surfaces_marker_write_failure() {
+        let home_directory = temporary_home_directory("post-start-marker-write-failure");
+        let marker = home_directory
+            .join(".devcontainer")
+            .join(".postStartCommandMarker");
+        std_fs::create_dir_all(&marker).expect("marker path should be a directory");
+        let mut command = Command::new("echo");
+        command.arg("post-start");
+        let script = super::post_start_marker_script(
+            "2026-06-23T10:00:00Z",
+            HashMap::from([("default".to_string(), command)]),
+        );
+
+        let output = StdCommand::new("sh")
+            .arg("-c")
+            .arg(script)
+            .env("HOME", &home_directory)
+            .output()
+            .expect("shell should run postStartCommand marker script");
+
+        assert!(!output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "post-start\n");
+        assert!(marker.is_dir());
+
+        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn post_start_marker_script_does_not_mark_after_failure() {
+        let home_directory = temporary_home_directory("post-start-failure");
+        let marker = home_directory
+            .join(".devcontainer")
+            .join(".postStartCommandMarker");
+        let script = super::post_start_marker_script(
+            "2026-06-23T10:00:00Z",
+            HashMap::from([("default".to_string(), Command::new("false"))]),
+        );
+
+        let output = StdCommand::new("sh")
+            .arg("-c")
+            .arg(script)
+            .env("HOME", &home_directory)
+            .output()
+            .expect("shell should run postStartCommand marker script");
+
+        assert!(!output.status.success());
+        assert!(!marker.exists());
+
+        std_fs::remove_dir_all(home_directory).expect("temporary home should be removed");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn temporary_home_directory(prefix: &str) -> PathBuf {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "zed-devcontainer-{prefix}-{}-{now}",
+            std::process::id()
+        ));
+        std_fs::create_dir_all(&path).expect("temporary home should be created");
+        path
     }
 
     #[gpui::test]
@@ -3803,6 +4215,15 @@ mod test {
                 .as_ref()
                 .and_then(|env| env.get("LOCAL_ENV_VAR_4")),
             Some(&"default".to_string())
+        );
+    }
+
+    #[test]
+    fn escape_compose_interpolation_uses_compose_dollar_escape() {
+        assert_eq!(escape_compose_interpolation("pa$word"), "pa$$word");
+        assert_eq!(
+            escape_compose_interpolation("${containerEnv:PATH}"),
+            "$${containerEnv:PATH}"
         );
     }
 
@@ -4243,27 +4664,40 @@ chmod +x ./install.sh
         assert!(args.contains(&"--security-opt".to_string()));
         assert!(args.contains(&"seccomp=unconfined".to_string()));
 
-        let metadata_arg = args.iter().find(|a| a.starts_with("devcontainer.metadata=")).unwrap();
+        let metadata_arg = args
+            .iter()
+            .find(|a| a.starts_with("devcontainer.metadata="))
+            .unwrap();
         let metadata_json = &metadata_arg["devcontainer.metadata=".len()..];
-        let metadata: Vec<serde_json_lenient::Value> = serde_json_lenient::from_str(metadata_json).unwrap();
+        let metadata: Vec<serde_json_lenient::Value> =
+            serde_json_lenient::from_str(metadata_json).unwrap();
         assert_eq!(metadata.len(), 4);
         assert_eq!(metadata[0]["remoteUser"], "node");
-        assert_eq!(metadata[1]["id"], "ghcr.io/devcontainers/features/docker-in-docker:2");
+        assert_eq!(
+            metadata[1]["id"],
+            "ghcr.io/devcontainers/features/docker-in-docker:2"
+        );
         assert_eq!(metadata[1]["privileged"], true);
         assert_eq!(metadata[2]["id"], "ghcr.io/devcontainers/features/go:1");
-        assert!(metadata[2]["capAdd"].as_array().unwrap().contains(&serde_json_lenient::Value::String("SYS_PTRACE".to_string())));
+        assert!(
+            metadata[2]["capAdd"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json_lenient::Value::String("SYS_PTRACE".to_string()))
+        );
         assert_eq!(metadata[3]["remoteUser"], "node");
         assert!(metadata[3].get("onCreateCommand").is_some());
 
-        let env_args: Vec<&String> = args.iter()
+        let env_args: Vec<&String> = args
+            .iter()
             .enumerate()
             .filter(|(_, a)| *a == "-e")
             .filter_map(|(i, _)| args.get(i + 1))
             .collect();
         assert!(env_args.contains(&&"VARIABLE_VALUE=value".to_string()));
-        assert!(env_args.contains(&&"DOCKER_BUILDKIT=1".to_string()));
-        assert!(env_args.contains(&&"GOPATH=/go".to_string()));
-        assert!(env_args.contains(&&"GOROOT=/usr/local/go".to_string()));
+        assert!(!env_args.contains(&&"DOCKER_BUILDKIT=1".to_string()));
+        assert!(!env_args.contains(&&"GOPATH=/go".to_string()));
+        assert!(!env_args.contains(&&"GOROOT=/usr/local/go".to_string()));
 
         let image_arg = args.iter().find(|a| a.contains("-features")).unwrap();
         assert!(image_arg.ends_with("-features"));
@@ -4566,22 +5000,41 @@ ENV DOCKER_BUILDKIT=1
 
         let app_service = runtime_config.services.get("app").expect("app service");
         assert_eq!(app_service.cap_add, Some(vec!["SYS_PTRACE".to_string()]));
-        assert_eq!(app_service.security_opt, Some(vec!["seccomp=unconfined".to_string()]));
+        assert_eq!(
+            app_service.security_opt,
+            Some(vec!["seccomp=unconfined".to_string()])
+        );
         assert_eq!(app_service.privileged, Some(true));
         assert!(app_service.entrypoint.is_some());
 
         let labels = app_service.labels.as_ref().unwrap();
-        assert_eq!(labels.get("devcontainer.local_folder").unwrap(), "/path/to/local/project");
-        assert_eq!(labels.get("devcontainer.config_file").unwrap(), "/path/to/local/project/.devcontainer/devcontainer.json");
+        assert_eq!(
+            labels.get("devcontainer.local_folder").unwrap(),
+            "/path/to/local/project"
+        );
+        assert_eq!(
+            labels.get("devcontainer.config_file").unwrap(),
+            "/path/to/local/project/.devcontainer/devcontainer.json"
+        );
 
         let metadata_json = labels.get("devcontainer.metadata").unwrap();
-        let metadata: Vec<serde_json_lenient::Value> = serde_json_lenient::from_str(metadata_json).unwrap();
+        let metadata: Vec<serde_json_lenient::Value> =
+            serde_json_lenient::from_str(metadata_json).unwrap();
         assert!(metadata.len() >= 2);
         assert_eq!(metadata[0]["remoteUser"], "vscode");
-        let has_dind_feature = metadata.iter().any(|e| e.get("id").and_then(|v| v.as_str()) == Some("ghcr.io/devcontainers/features/docker-in-docker:2"));
-        assert!(has_dind_feature, "metadata should include docker-in-docker feature entry");
+        let has_dind_feature = metadata.iter().any(|e| {
+            e.get("id").and_then(|v| v.as_str())
+                == Some("ghcr.io/devcontainers/features/docker-in-docker:2")
+        });
+        assert!(
+            has_dind_feature,
+            "metadata should include docker-in-docker feature entry"
+        );
         let has_forward_ports = metadata.iter().any(|e| e.get("forwardPorts").is_some());
-        assert!(has_forward_ports, "metadata should include devcontainer.json config entry with forwardPorts");
+        assert!(
+            has_forward_ports,
+            "metadata should include devcontainer.json config entry with forwardPorts"
+        );
 
         assert_eq!(app_service.volumes.len(), 1);
         assert_eq!(app_service.volumes[0].target, "/var/lib/docker");
@@ -4589,7 +5042,11 @@ ENV DOCKER_BUILDKIT=1
         let db_service = runtime_config.services.get("db").expect("db service");
         assert_eq!(db_service.ports.len(), 3);
 
-        assert!(runtime_config.volumes.contains_key("dind-var-lib-docker-42dad4b4ca7b8ced"))
+        assert!(
+            runtime_config
+                .volumes
+                .contains_key("dind-var-lib-docker-42dad4b4ca7b8ced")
+        )
     }
 
     #[test]
@@ -6627,9 +7084,7 @@ RUN echo $RUBY_VERSION2
                                 HashMap::from([
                                     (
                                         "capAdd".to_string(),
-                                        Value::Array(vec![Value::String(
-                                            "SYS_PTRACE".to_string(),
-                                        )]),
+                                        Value::Array(vec![Value::String("SYS_PTRACE".to_string())]),
                                     ),
                                     (
                                         "securityOpt".to_string(),
@@ -6700,9 +7155,7 @@ RUN echo $RUBY_VERSION2
                                 HashMap::from([
                                     (
                                         "capAdd".to_string(),
-                                        Value::Array(vec![Value::String(
-                                            "SYS_PTRACE".to_string(),
-                                        )]),
+                                        Value::Array(vec![Value::String("SYS_PTRACE".to_string())]),
                                     ),
                                     (
                                         "securityOpt".to_string(),
