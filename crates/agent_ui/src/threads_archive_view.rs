@@ -300,16 +300,27 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(
-                    &query,
-                    session
-                        .title
-                        .as_ref()
-                        .map(|t| t.as_ref())
-                        .unwrap_or(DEFAULT_THREAD_TITLE),
-                ) {
-                    Some(positions) => positions,
-                    None => continue,
+                let title = session
+                    .title
+                    .as_ref()
+                    .map(|t| t.as_ref())
+                    .unwrap_or(DEFAULT_THREAD_TITLE);
+                if let Some(positions) = fuzzy_match_positions(&query, title) {
+                    positions
+                } else {
+                    // If title didn't match, also try matching the project name
+                    // (the basename of any of the thread's worktree paths), so
+                    // typing a project name surfaces its threads here too.
+                    let worktree_matched = session.folder_paths().paths().iter().any(|p| {
+                        p.as_path()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| fuzzy_match_positions(&query, name).is_some())
+                    });
+                    if !worktree_matched {
+                        continue;
+                    }
+                    Vec::new()
                 }
             } else {
                 Vec::new()
