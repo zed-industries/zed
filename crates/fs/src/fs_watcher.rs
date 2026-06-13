@@ -107,7 +107,7 @@ impl Watcher for FsWatcher {
         };
         let id = self
             .global
-            .register(path.clone(), mode, self.make_callback(&path));
+            .add(path.clone(), mode, self.make_callback(&path));
         paths.insert(path, FsWatcherRegistration::Registered { id, mode });
         Ok(())
     }
@@ -116,7 +116,7 @@ impl Watcher for FsWatcher {
         log::trace!("remove watched path: {path:?}");
         let entry = self.registrations.lock().remove(path);
         if let Some(FsWatcherRegistration::Registered { id, .. }) = entry {
-            self.global.unregister(id);
+            self.global.remove(id);
         }
         Ok(())
     }
@@ -127,7 +127,7 @@ impl Drop for FsWatcher {
         let entries = std::mem::take(&mut *self.registrations.lock());
         for (_, entry) in entries {
             if let FsWatcherRegistration::Registered { id, .. } = entry {
-                self.global.unregister(id);
+                self.global.remove(id);
             }
         }
     }
@@ -304,7 +304,7 @@ async fn poll_path_until_created(
             } else {
                 WatcherMode::Native
             };
-            let id = global.register(path.clone(), mode, callback.clone());
+            let id = global.add(path.clone(), mode, callback.clone());
             *entry = FsWatcherRegistration::Registered { id, mode };
         }
 
@@ -550,47 +550,7 @@ pub(crate) struct GlobalWatcher {
 }
 
 impl GlobalWatcher {
-    pub(crate) fn new(executor: &BackgroundExecutor) -> Self {
-        Self::with_backends(executor, None, None)
-    }
-
-    fn with_backends(
-        executor: &BackgroundExecutor,
-        native_backend: Option<Box<dyn WatchBackend>>,
-        poll_backend: Option<Box<dyn WatchBackend>>,
-    ) -> Self {
-        let state = Arc::new(Mutex::new(WatcherState {
-            watchers: HashMap::new(),
-            native_path_registrations: BTreeMap::new(),
-            poll_path_registrations: BTreeMap::new(),
-            dirty_paths: Vec::new(),
-            pending_flushes: Vec::new(),
-            pending_health_checks: Vec::new(),
-        }));
-        let (wake_tx, wake_rx) = async_channel::bounded(1);
-        executor
-            .spawn(
-                Reconciler {
-                    watcher_state: state.clone(),
-                    executor: executor.clone(),
-                    native: BackendState::new(
-                        WatcherMode::Native,
-                        executor.clone(),
-                        native_backend,
-                    ),
-                    poll: BackendState::new(WatcherMode::Poll, executor.clone(), poll_backend),
-                }
-                .run(wake_rx),
-            )
-            .detach();
-        Self {
-            state,
-            wake_tx,
-            next_registration_id: Arc::new(AtomicU32::new(0)),
-        }
-    }
-
-    pub(crate) fn register(
+    pub(crate) fn add(
         &self,
         path: Arc<Path>,
         mode: WatcherMode,
@@ -618,7 +578,7 @@ impl GlobalWatcher {
         id
     }
 
-    pub(crate) fn unregister(&self, id: WatcherRegistrationId) {
+    pub(crate) fn remove(&self, id: WatcherRegistrationId) {
         {
             let mut state = self.state.lock();
             let Some(registration) = state.watchers.remove(&id) else {
@@ -663,6 +623,46 @@ impl GlobalWatcher {
             Err(async_channel::TrySendError::Closed(())) => {
                 log::warn!("file watcher reconciler is gone; dropping sync request");
             }
+        }
+    }
+
+    pub(crate) fn new(executor: &BackgroundExecutor) -> Self {
+        Self::with_backends(executor, None, None)
+    }
+
+    fn with_backends(
+        executor: &BackgroundExecutor,
+        native_backend: Option<Box<dyn WatchBackend>>,
+        poll_backend: Option<Box<dyn WatchBackend>>,
+    ) -> Self {
+        let state = Arc::new(Mutex::new(WatcherState {
+            watchers: HashMap::new(),
+            native_path_registrations: BTreeMap::new(),
+            poll_path_registrations: BTreeMap::new(),
+            dirty_paths: Vec::new(),
+            pending_flushes: Vec::new(),
+            pending_health_checks: Vec::new(),
+        }));
+        let (wake_tx, wake_rx) = async_channel::bounded(1);
+        executor
+            .spawn(
+                Reconciler {
+                    watcher_state: state.clone(),
+                    executor: executor.clone(),
+                    native: BackendState::new(
+                        WatcherMode::Native,
+                        executor.clone(),
+                        native_backend,
+                    ),
+                    poll: BackendState::new(WatcherMode::Poll, executor.clone(), poll_backend),
+                }
+                .run(wake_rx),
+            )
+            .detach();
+        Self {
+            state,
+            wake_tx,
+            next_registration_id: Arc::new(AtomicU32::new(0)),
         }
     }
 }
@@ -1410,16 +1410,16 @@ mod tests {
         let global = test_global(&executor, Some(backend.clone()), None);
         let path = Arc::<Path>::from(Path::new("/repo"));
 
-        let first = global.register(path.clone(), WatcherMode::Native, noop_callback());
-        let second = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        let first = global.add(path.clone(), WatcherMode::Native, noop_callback());
+        let second = global.add(path.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls, &[PathBuf::from("/repo")]);
 
-        global.unregister(first);
+        global.remove(first);
         executor.run_until_parked();
         assert_eq!(backend.lock().unwatch_calls, Vec::<PathBuf>::new());
 
-        global.unregister(second);
+        global.remove(second);
         executor.run_until_parked();
         assert_eq!(backend.lock().unwatch_calls, &[PathBuf::from("/repo")]);
         assert!(backend.lock().watched_paths.is_empty());
@@ -1432,12 +1432,12 @@ mod tests {
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
-        let parent_id = global.register(parent.clone(), WatcherMode::Poll, noop_callback());
-        let child_id = global.register(child.clone(), WatcherMode::Poll, noop_callback());
+        let parent_id = global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        let child_id = global.add(child.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls, &[parent.to_path_buf()]);
 
-        global.unregister(parent_id);
+        global.remove(parent_id);
         executor.run_until_parked();
         assert_eq!(backend.lock().unwatch_calls, &[parent.to_path_buf()]);
         assert_eq!(
@@ -1447,7 +1447,7 @@ mod tests {
         );
         assert!(backend.lock().watched_paths.contains(child.as_ref()));
 
-        global.unregister(child_id);
+        global.remove(child_id);
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.is_empty());
     }
@@ -1459,11 +1459,11 @@ mod tests {
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/sub"));
 
-        global.register(child.clone(), WatcherMode::Poll, noop_callback());
+        global.add(child.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls, &[child.to_path_buf()]);
 
-        global.register(parent.clone(), WatcherMode::Poll, noop_callback());
+        global.add(parent.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
 
         let backend = backend.lock();
@@ -1487,8 +1487,8 @@ mod tests {
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
-        let parent_id = global.register(parent.clone(), WatcherMode::Poll, noop_callback());
-        let child_id = global.register(child.clone(), WatcherMode::Poll, noop_callback());
+        let parent_id = global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        let child_id = global.add(child.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert_eq!(
             backend.lock().watch_calls,
@@ -1496,7 +1496,7 @@ mod tests {
             "the covered child never gets its own OS watch"
         );
 
-        global.unregister(child_id);
+        global.remove(child_id);
         executor.run_until_parked();
         assert_eq!(
             backend.lock().unwatch_calls,
@@ -1505,7 +1505,7 @@ mod tests {
         );
         assert!(backend.lock().watched_paths.contains(parent.as_ref()));
 
-        global.unregister(parent_id);
+        global.remove(parent_id);
         executor.run_until_parked();
         assert_eq!(backend.lock().unwatch_calls, &[parent.to_path_buf()]);
         assert!(backend.lock().watched_paths.is_empty());
@@ -1517,12 +1517,12 @@ mod tests {
         let global = test_global(&executor, Some(backend.clone()), None);
         let path = Arc::<Path>::from(Path::new("/repo"));
 
-        let first = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        let first = global.add(path.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls, &[path.to_path_buf()]);
 
-        global.unregister(first);
-        let second = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        global.remove(first);
+        let second = global.add(path.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
 
         {
@@ -1536,7 +1536,7 @@ mod tests {
             assert_eq!(backend.unwatch_calls, Vec::<PathBuf>::new());
         }
 
-        global.unregister(second);
+        global.remove(second);
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.is_empty());
     }
@@ -1551,11 +1551,11 @@ mod tests {
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
-        let first = global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        let first = global.add(path_a.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls, &[path_a.to_path_buf()]);
 
-        global.register(path_b.clone(), WatcherMode::Native, noop_callback());
+        global.add(path_b.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert_eq!(
             backend.lock().watch_calls,
@@ -1564,10 +1564,10 @@ mod tests {
         );
 
         backend.lock().watch_error = None;
-        global.unregister(first);
+        global.remove(first);
         executor.run_until_parked();
 
-        global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        global.add(path_a.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert!(
             backend.lock().watched_paths.contains(path_a.as_ref()),
@@ -1584,12 +1584,12 @@ mod tests {
         let (native_events, native_callback) = collecting_callback();
         let (poll_events, poll_callback) = collecting_callback();
 
-        let native_id = global.register(
+        let native_id = global.add(
             Arc::<Path>::from(Path::new("/native")),
             WatcherMode::Native,
             native_callback,
         );
-        global.register(
+        global.add(
             Arc::<Path>::from(Path::new("/poll")),
             WatcherMode::Poll,
             poll_callback,
@@ -1609,7 +1609,7 @@ mod tests {
 
         assert_eq!(native_events.lock().len(), 1);
 
-        global.unregister(native_id);
+        global.remove(native_id);
         let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
             .add_path(PathBuf::from("/native/file.txt"));
         handle_event(WatcherMode::Native, &global.state, Ok(event));
@@ -1626,8 +1626,8 @@ mod tests {
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
-        global.register(path_a.clone(), WatcherMode::Native, noop_callback());
-        global.register(path_b.clone(), WatcherMode::Native, noop_callback());
+        global.add(path_a.clone(), WatcherMode::Native, noop_callback());
+        global.add(path_b.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
 
         assert_eq!(
@@ -1649,8 +1649,8 @@ mod tests {
 
         let (events_a, callback_a) = collecting_callback();
         let (events_b, callback_b) = collecting_callback();
-        global.register(path_a.clone(), WatcherMode::Native, callback_a);
-        global.register(path_b.clone(), WatcherMode::Native, callback_b);
+        global.add(path_a.clone(), WatcherMode::Native, callback_a);
+        global.add(path_b.clone(), WatcherMode::Native, callback_b);
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls.len(), 1);
 
@@ -1679,17 +1679,17 @@ mod tests {
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
-        let first = global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        let first = global.add(path_a.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.contains(path_a.as_ref()));
 
         backend.lock().watch_error = Some(watch_limit_error);
-        global.register(path_b.clone(), WatcherMode::Native, noop_callback());
+        global.add(path_b.clone(), WatcherMode::Native, noop_callback());
         executor.run_until_parked();
         assert!(!backend.lock().watched_paths.contains(path_b.as_ref()));
 
         backend.lock().watch_error = None;
-        global.unregister(first);
+        global.remove(first);
         executor.run_until_parked();
 
         let backend = backend.lock();
@@ -1708,13 +1708,13 @@ mod tests {
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
         let (events_a, callback_a) = collecting_callback();
-        global.register(path_a.clone(), WatcherMode::Native, callback_a);
+        global.add(path_a.clone(), WatcherMode::Native, callback_a);
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.contains(path_a.as_ref()));
 
         backend.lock().stream_restart_error = Some(stream_restart_error);
         let (events_b, callback_b) = collecting_callback();
-        global.register(path_b.clone(), WatcherMode::Native, callback_b);
+        global.add(path_b.clone(), WatcherMode::Native, callback_b);
         executor.run_until_parked();
 
         backend.lock().stream_restart_error = None;
@@ -1744,7 +1744,7 @@ mod tests {
         let global = test_global(&executor, Some(backend.clone()), None);
         let path = Arc::<Path>::from(Path::new("/repo"));
 
-        global.register(path.clone(), WatcherMode::Native, noop_callback());
+        global.add(path.clone(), WatcherMode::Native, noop_callback());
         let mut flushed = global.flush();
         executor.run_until_parked();
 
