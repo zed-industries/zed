@@ -1732,7 +1732,7 @@ mod tests {
     use std::{cmp::Ordering, env, io::Read};
     use util::RandomCharIter;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
