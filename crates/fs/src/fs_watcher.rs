@@ -76,7 +76,7 @@ impl Watcher for FsWatcher {
             paths.get(ancestor).is_some_and(|entry| match entry {
                 FsWatcherRegistration::Pending { .. } => false,
                 FsWatcherRegistration::Registered { mode, .. } => {
-                    recursive_mode(*mode) == notify::RecursiveMode::Recursive
+                    platform_recursive_mode(*mode) == notify::RecursiveMode::Recursive
                 }
             })
         });
@@ -551,7 +551,7 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     }
 }
 
-/// `GlobalWatcher` is the low-level manager of filesystem watching. There is one per `RealFs`.
+/// `GlobalWatcher` is the low-level platform-agnostic manager of filesystem watching. There is one per `RealFs`.
 ///
 /// `GlobalWatcher` talks to a `WatchBackend`, which handles the OS-specific details of filesystem watching.
 /// In production, we use the `notify` crate for this. The job of `GlobalWatcher` is to convey watch and unwatch
@@ -648,13 +648,17 @@ impl GlobalWatcher {
     }
 
     pub(crate) fn new(executor: &BackgroundExecutor) -> Self {
-        Self::with_backends(executor, None, None)
+        Self::with_backends(
+            executor,
+            (None, platform_recursive_mode(WatcherMode::Native)),
+            (None, platform_recursive_mode(WatcherMode::Poll)),
+        )
     }
 
     fn with_backends(
         executor: &BackgroundExecutor,
-        native_backend: Option<Box<dyn WatchBackend>>,
-        poll_backend: Option<Box<dyn WatchBackend>>,
+        native: (Option<Box<dyn WatchBackend>>, notify::RecursiveMode),
+        poll: (Option<Box<dyn WatchBackend>>, notify::RecursiveMode),
     ) -> Self {
         let state = Arc::new(Mutex::new(WatcherState {
             watchers: HashMap::new(),
@@ -672,10 +676,11 @@ impl GlobalWatcher {
                     executor: executor.clone(),
                     native: BackendState::new(
                         WatcherMode::Native,
+                        native.1,
                         executor.clone(),
-                        native_backend,
+                        native.0,
                     ),
-                    poll: BackendState::new(WatcherMode::Poll, executor.clone(), poll_backend),
+                    poll: BackendState::new(WatcherMode::Poll, poll.1, executor.clone(), poll.0),
                 }
                 .run(wake_rx),
             )
@@ -690,6 +695,10 @@ impl GlobalWatcher {
 
 struct BackendState {
     mode: WatcherMode,
+    // Whether this backend watches recursively. Determined once at construction
+    // (from the platform for the real backend, or chosen explicitly in tests) so
+    // that coverage reasoning works even before the backend has been created.
+    recursive_mode: notify::RecursiveMode,
     executor: BackgroundExecutor,
     backend: Option<Box<dyn WatchBackend>>,
     /// Paths that we have successfully asked the backend to watch.
@@ -753,11 +762,11 @@ impl Reconciler {
             health_checks = std::mem::take(&mut state.pending_health_checks);
             let dirty = std::mem::take(&mut state.dirty_paths);
             for (mode, path) in dirty {
-                let affected_paths = match mode {
-                    WatcherMode::Native => &mut native_affected_paths,
-                    WatcherMode::Poll => &mut poll_affected_paths,
+                let (affected_paths, is_recursive) = match mode {
+                    WatcherMode::Native => (&mut native_affected_paths, self.native.is_recursive()),
+                    WatcherMode::Poll => (&mut poll_affected_paths, self.poll.is_recursive()),
                 };
-                if recursive_mode(mode) == notify::RecursiveMode::Recursive {
+                if is_recursive {
                     for (descendant, _) in state.path_registrations(mode).range::<Path, _>((
                         std::ops::Bound::Excluded(path.as_ref()),
                         std::ops::Bound::Unbounded,
@@ -797,11 +806,13 @@ impl Reconciler {
 impl BackendState {
     fn new(
         mode: WatcherMode,
+        recursive_mode: notify::RecursiveMode,
         executor: BackgroundExecutor,
         backend: Option<Box<dyn WatchBackend>>,
     ) -> Self {
         Self {
             mode,
+            recursive_mode,
             executor,
             backend,
             applied_paths: HashSet::new(),
@@ -809,6 +820,10 @@ impl BackendState {
             deferred_paths: HashSet::new(),
             cooldown_until: None,
         }
+    }
+
+    fn is_recursive(&self) -> bool {
+        self.recursive_mode == notify::RecursiveMode::Recursive
     }
 
     fn reconcile(
@@ -829,7 +844,7 @@ impl BackendState {
             let registrations = watcher_state.path_registrations(self.mode);
             for path in affected_paths {
                 let is_desired = registrations.contains_key(&path);
-                let is_covered = recursive_mode(self.mode) == notify::RecursiveMode::Recursive
+                let is_covered = self.is_recursive()
                     && path
                         .ancestors()
                         .skip(1)
@@ -938,7 +953,7 @@ impl BackendState {
 
         // Check that no path in the applied set is a strict child of another,
         // if the backend is recursive, since this would be redundant.
-        if recursive_mode(self.mode) == notify::RecursiveMode::Recursive {
+        if self.is_recursive() {
             let mut applied_paths = self
                 .applied_paths
                 .iter()
@@ -1017,7 +1032,7 @@ impl BackendState {
         paths: Vec<Arc<Path>>,
         watcher_state: &Arc<Mutex<WatcherState>>,
     ) -> Option<Instant> {
-        let recursive_mode = recursive_mode(self.mode);
+        let recursive_mode = self.recursive_mode;
         let mut queue = paths;
         let mut wake_at = None;
         while !queue.is_empty() {
@@ -1195,7 +1210,7 @@ fn create_backend(
     }
 }
 
-fn recursive_mode(mode: WatcherMode) -> notify::RecursiveMode {
+fn platform_recursive_mode(mode: WatcherMode) -> notify::RecursiveMode {
     match mode {
         WatcherMode::Native => {
             if cfg!(any(target_os = "windows", target_os = "macos")) {
@@ -1274,6 +1289,7 @@ fn handle_event(mode: WatcherMode, state: &Mutex<WatcherState>, event: notify::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify::RecursiveMode;
     use std::{collections::HashSet, path::PathBuf};
 
     fn rescan(path: &str) -> PathEvent {
@@ -1461,17 +1477,30 @@ mod tests {
         }
     }
 
+    type FakeBackend = Option<(Arc<Mutex<FakeWatchBackend>>, notify::RecursiveMode)>;
+
+    fn fake_backend(
+        backend: FakeBackend,
+        mode: WatcherMode,
+    ) -> (Option<Box<dyn WatchBackend>>, notify::RecursiveMode) {
+        match backend {
+            Some((backend, recursive_mode)) => (
+                Some(Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+                recursive_mode,
+            ),
+            None => (None, platform_recursive_mode(mode)),
+        }
+    }
+
     fn test_global(
         executor: &BackgroundExecutor,
-        native_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
-        poll_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+        native_backend: FakeBackend,
+        poll_backend: FakeBackend,
     ) -> GlobalWatcher {
         GlobalWatcher::with_backends(
             executor,
-            native_backend
-                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
-            poll_backend
-                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+            fake_backend(native_backend, WatcherMode::Native),
+            fake_backend(poll_backend, WatcherMode::Poll),
         )
     }
 
@@ -1495,7 +1524,14 @@ mod tests {
     #[gpui::test]
     async fn watch_and_unwatch_call_the_backend_once_per_path(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path = Arc::<Path>::from(Path::new("/repo"));
 
         let first = global.add(path.clone(), WatcherMode::Native, noop_callback());
@@ -1516,7 +1552,11 @@ mod tests {
     #[gpui::test]
     async fn covered_child_is_promoted_when_parent_is_unregistered(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, None, Some(backend.clone()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
@@ -1543,7 +1583,11 @@ mod tests {
     #[gpui::test]
     async fn child_is_demoted_when_covering_parent_is_registered(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, None, Some(backend.clone()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/sub"));
 
@@ -1569,9 +1613,82 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn non_recursive_backend_does_not_cover_children(executor: BackgroundExecutor) {
+        // A non-recursive backend (e.g. inotify) does not deliver events for a
+        // child via an ancestor's watch, so coverage must not kick in: every
+        // registered path keeps its own watch, nothing is demoted, and removing an
+        // ancestor leaves the descendant's watch untouched. This is the mirror
+        // image of `covered_child_is_promoted_when_parent_is_unregistered`, where
+        // a recursive ancestor covers the child and its removal promotes it. The
+        // polymorphic fake lets us pin this on any host, independent of what
+        // `platform_recursive_mode` would pick.
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            Some((backend.clone(), RecursiveMode::NonRecursive)),
+            None,
+        );
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+
+        let (child_events, child_callback) = collecting_callback();
+        global.add(child.clone(), WatcherMode::Native, child_callback);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[child.to_path_buf()]);
+
+        let parent_id = global.add(parent.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        {
+            let backend = backend.lock();
+            assert_eq!(
+                backend.watch_calls,
+                &[child.to_path_buf(), parent.to_path_buf()],
+                "the parent gets its own watch without covering the child"
+            );
+            assert_eq!(
+                backend.unwatch_calls,
+                Vec::<PathBuf>::new(),
+                "no demotion happens without recursive coverage"
+            );
+            assert!(backend.watched_paths.contains(parent.as_ref()));
+            assert!(
+                backend.watched_paths.contains(child.as_ref()),
+                "the child keeps its own watch under a non-recursive backend"
+            );
+        }
+
+        // Removing the ancestor must not disturb the child: with no coverage there
+        // is nothing to promote, so the child is neither re-watched nor rescanned.
+        global.remove(parent_id);
+        executor.run_until_parked();
+        {
+            let backend = backend.lock();
+            assert_eq!(
+                backend.unwatch_calls,
+                &[parent.to_path_buf()],
+                "only the ancestor is unwatched"
+            );
+            assert_eq!(
+                backend.watch_calls,
+                &[child.to_path_buf(), parent.to_path_buf()],
+                "the child is not re-watched when the ancestor goes away"
+            );
+            assert!(backend.watched_paths.contains(child.as_ref()));
+        }
+        assert!(
+            child_events.lock().is_empty(),
+            "the child gets no rescan since its watch never lapsed"
+        );
+    }
+
+    #[gpui::test]
     async fn removing_a_covered_child_issues_no_unwatch(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, None, Some(backend.clone()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
@@ -1602,7 +1719,11 @@ mod tests {
     #[gpui::test]
     async fn nested_registrations_keep_applied_as_an_antichain(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, None, Some(backend.clone()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/a"));
         let grandchild = Arc::<Path>::from(Path::new("/repo/a/b"));
@@ -1632,7 +1753,11 @@ mod tests {
     #[gpui::test]
     async fn deferred_child_is_not_retained_as_intent_once_covered(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, None, Some(backend.clone()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
         let parent = Arc::<Path>::from(Path::new("/repo"));
         let child = Arc::<Path>::from(Path::new("/repo/sub"));
 
@@ -1673,7 +1798,14 @@ mod tests {
     #[gpui::test]
     async fn unregister_then_register_same_path_coalesces(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path = Arc::<Path>::from(Path::new("/repo"));
 
         let first = global.add(path.clone(), WatcherMode::Native, noop_callback());
@@ -1703,7 +1835,14 @@ mod tests {
     #[gpui::test]
     async fn failed_watch_is_not_retried_until_reregistered(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
         backend
@@ -1742,7 +1881,14 @@ mod tests {
     #[gpui::test]
     async fn batched_watch_skips_only_the_path_with_a_generic_error(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
         let path_c = Arc::<Path>::from(Path::new("/repo/c"));
@@ -1806,7 +1952,14 @@ mod tests {
         executor: BackgroundExecutor,
     ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
         let path_c = Arc::<Path>::from(Path::new("/repo/c"));
@@ -1866,7 +2019,11 @@ mod tests {
     async fn events_are_dispatched_to_matching_mode_only(executor: BackgroundExecutor) {
         let native_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(native_backend), Some(poll_backend));
+        let global = test_global(
+            &executor,
+            Some((native_backend, platform_recursive_mode(WatcherMode::Native))),
+            Some((poll_backend, platform_recursive_mode(WatcherMode::Poll))),
+        );
 
         let (native_events, native_callback) = collecting_callback();
         let (poll_events, poll_callback) = collecting_callback();
@@ -1906,7 +2063,14 @@ mod tests {
     #[gpui::test]
     async fn cooldown_defers_watches_without_further_syscalls(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
         backend
@@ -1928,7 +2092,14 @@ mod tests {
     #[gpui::test]
     async fn deferred_watches_recover_after_cooldown(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
         backend
@@ -1964,7 +2135,14 @@ mod tests {
     #[gpui::test]
     async fn unwatch_clears_the_cooldown(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
@@ -1995,7 +2173,14 @@ mod tests {
     #[gpui::test]
     async fn unregistering_a_deferred_path_clears_it(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path = Arc::<Path>::from(Path::new("/repo/a"));
         backend
             .lock()
@@ -2030,7 +2215,14 @@ mod tests {
     #[gpui::test]
     async fn stream_restart_failure_reestablishes_all_watches(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
@@ -2068,7 +2260,14 @@ mod tests {
     #[gpui::test]
     async fn unwatch_skips_the_failed_path_and_unwatches_the_rest(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
         let path_c = Arc::<Path>::from(Path::new("/repo/c"));
@@ -2111,7 +2310,14 @@ mod tests {
         executor: BackgroundExecutor,
     ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path_a = Arc::<Path>::from(Path::new("/repo/a"));
         let path_b = Arc::<Path>::from(Path::new("/repo/b"));
 
@@ -2147,7 +2353,14 @@ mod tests {
         executor: BackgroundExecutor,
     ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path = Arc::<Path>::from(Path::new("/repo"));
 
         // The initial watch applies in the backend, but the stream fails to
@@ -2175,7 +2388,14 @@ mod tests {
     #[gpui::test]
     async fn flush_resolves_after_reconcile(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend.clone()), None);
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let path = Arc::<Path>::from(Path::new("/repo"));
 
         global.add(path.clone(), WatcherMode::Native, noop_callback());
@@ -2191,7 +2411,11 @@ mod tests {
         executor: BackgroundExecutor,
     ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let global = test_global(&executor, Some(backend), None);
+        let global = test_global(
+            &executor,
+            Some((backend, platform_recursive_mode(WatcherMode::Native))),
+            None,
+        );
 
         let mut health = global.check_health();
         executor.run_until_parked();
@@ -2201,8 +2425,8 @@ mod tests {
 
     fn test_sink(
         executor: &BackgroundExecutor,
-        native_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
-        poll_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+        native_backend: FakeBackend,
+        poll_backend: FakeBackend,
     ) -> (
         FsWatcher,
         async_channel::Receiver<()>,
@@ -2210,10 +2434,8 @@ mod tests {
     ) {
         let global = GlobalWatcher::with_backends(
             executor,
-            native_backend
-                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
-            poll_backend
-                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+            fake_backend(native_backend, WatcherMode::Native),
+            fake_backend(poll_backend, WatcherMode::Poll),
         );
         let (tx, rx) = async_channel::unbounded();
         let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -2224,7 +2446,14 @@ mod tests {
     #[gpui::test]
     async fn sink_establishes_watch_for_existing_path(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let (sink, _rx, _pending) = test_sink(&executor, Some(backend.clone()), None);
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let dir = tempfile::TempDir::new().expect("create temp dir");
 
         sink.add(dir.path()).expect("add succeeds");
@@ -2242,7 +2471,14 @@ mod tests {
     #[gpui::test]
     async fn sink_waits_for_path_creation(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let (sink, rx, pending_path_events) = test_sink(&executor, Some(backend.clone()), None);
+        let (sink, rx, pending_path_events) = test_sink(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let dir = tempfile::TempDir::new().expect("create temp dir");
         let file = dir.path().join("missing.txt");
 
@@ -2271,7 +2507,14 @@ mod tests {
     #[gpui::test]
     async fn sink_remove_cancels_pending_watch(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let (sink, _rx, _pending) = test_sink(&executor, Some(backend.clone()), None);
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let dir = tempfile::TempDir::new().expect("create temp dir");
         let file = dir.path().join("missing.txt");
 
@@ -2291,7 +2534,14 @@ mod tests {
     #[gpui::test]
     async fn sink_recovers_deferred_watch_and_emits_rescan(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let (sink, _rx, pending_path_events) = test_sink(&executor, Some(backend.clone()), None);
+        let (sink, _rx, pending_path_events) = test_sink(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
         let dir = tempfile::TempDir::new().expect("create temp dir");
         backend
             .lock()
