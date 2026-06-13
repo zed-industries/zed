@@ -350,15 +350,15 @@ pub enum FuzzyBoundary {
 }
 
 impl ImmediateBoundary {
-    fn is_inner_start(&self, left: char, right: char, classifier: CharClassifier) -> bool {
+    fn is_inner_start(&self, left: char, right: char, classifier: &CharClassifier) -> bool {
         match self {
             Self::Word { ignore_punctuation } => {
-                let classifier = classifier.ignore_punctuation(*ignore_punctuation);
+                let classifier = classifier.clone().ignore_punctuation(*ignore_punctuation);
                 is_word_start(left, right, &classifier)
                     || (is_buffer_start(left) && classifier.kind(right) != CharKind::Whitespace)
             }
             Self::Subword { ignore_punctuation } => {
-                let classifier = classifier.ignore_punctuation(*ignore_punctuation);
+                let classifier = classifier.clone().ignore_punctuation(*ignore_punctuation);
                 movement::is_subword_start(left, right, &classifier)
                     || (is_buffer_start(left) && classifier.kind(right) != CharKind::Whitespace)
             }
@@ -372,15 +372,15 @@ impl ImmediateBoundary {
             Self::VerticalBars => left == '|',
         }
     }
-    fn is_inner_end(&self, left: char, right: char, classifier: CharClassifier) -> bool {
+    fn is_inner_end(&self, left: char, right: char, classifier: &CharClassifier) -> bool {
         match self {
             Self::Word { ignore_punctuation } => {
-                let classifier = classifier.ignore_punctuation(*ignore_punctuation);
+                let classifier = classifier.clone().ignore_punctuation(*ignore_punctuation);
                 is_word_end(left, right, &classifier)
                     || (is_buffer_end(right) && classifier.kind(left) != CharKind::Whitespace)
             }
             Self::Subword { ignore_punctuation } => {
-                let classifier = classifier.ignore_punctuation(*ignore_punctuation);
+                let classifier = classifier.clone().ignore_punctuation(*ignore_punctuation);
                 movement::is_subword_start(left, right, &classifier)
                     || (is_buffer_end(right) && classifier.kind(left) != CharKind::Whitespace)
             }
@@ -394,7 +394,7 @@ impl ImmediateBoundary {
             Self::VerticalBars => right == '|',
         }
     }
-    fn is_outer_start(&self, left: char, right: char, classifier: CharClassifier) -> bool {
+    fn is_outer_start(&self, left: char, right: char, classifier: &CharClassifier) -> bool {
         match self {
             word @ Self::Word { .. } => word.is_inner_end(left, right, classifier) || left == '\n',
             subword @ Self::Subword { .. } => {
@@ -410,7 +410,7 @@ impl ImmediateBoundary {
             Self::VerticalBars => right == '|',
         }
     }
-    fn is_outer_end(&self, left: char, right: char, classifier: CharClassifier) -> bool {
+    fn is_outer_end(&self, left: char, right: char, classifier: &CharClassifier) -> bool {
         match self {
             word @ Self::Word { .. } => {
                 word.is_inner_start(left, right, classifier) || right == '\n'
@@ -432,42 +432,44 @@ impl ImmediateBoundary {
 
 impl BoundedObject for ImmediateBoundary {
     fn next_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
+        // Resolving the language scope walks the syntax tree, so doing it
+        // per scanned character makes long scans visibly slow.
+        let classifier = map.buffer_snapshot().char_classifier_at(from.0);
         try_find_boundary(map, from, &|left, right| {
-            let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
-                self.is_outer_start(left, right, classifier)
+                self.is_outer_start(left, right, &classifier)
             } else {
-                self.is_inner_start(left, right, classifier)
+                self.is_inner_start(left, right, &classifier)
             }
         })
     }
     fn next_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
+        let classifier = map.buffer_snapshot().char_classifier_at(from.0);
         try_find_boundary(map, from, &|left, right| {
-            let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
-                self.is_outer_end(left, right, classifier)
+                self.is_outer_end(left, right, &classifier)
             } else {
-                self.is_inner_end(left, right, classifier)
+                self.is_inner_end(left, right, &classifier)
             }
         })
     }
     fn previous_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
+        let classifier = map.buffer_snapshot().char_classifier_at(from.0);
         try_find_preceding_boundary(map, from, &|left, right| {
-            let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
-                self.is_outer_start(left, right, classifier)
+                self.is_outer_start(left, right, &classifier)
             } else {
-                self.is_inner_start(left, right, classifier)
+                self.is_inner_start(left, right, &classifier)
             }
         })
     }
     fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
+        let classifier = map.buffer_snapshot().char_classifier_at(from.0);
         try_find_preceding_boundary(map, from, &|left, right| {
-            let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
-                self.is_outer_end(left, right, classifier)
+                self.is_outer_end(left, right, &classifier)
             } else {
-                self.is_inner_end(left, right, classifier)
+                self.is_inner_end(left, right, &classifier)
             }
         })
     }
@@ -616,8 +618,8 @@ impl FuzzyBoundary {
         backward: bool,
         boundary_kind: Boundary,
     ) -> Option<Offset> {
+        let classifier = map.buffer_snapshot().char_classifier_at(from.0);
         let generate_boundary_data = |left, right, point: Offset| {
-            let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             let reach_boundary = if outer && boundary_kind == Boundary::Start {
                 self.is_near_potential_outer_start(left, right, &classifier)
             } else if !outer && boundary_kind == Boundary::Start {
