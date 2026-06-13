@@ -91,10 +91,6 @@ pub enum MenuItem {
         /// The action to perform when this menu item is selected
         action: Box<dyn Action>,
 
-        /// The OS Action that corresponds to this action, if any
-        /// See [`OsAction`] for more information
-        os_action: Option<OsAction>,
-
         /// Whether this action is checked
         checked: bool,
 
@@ -127,22 +123,6 @@ impl MenuItem {
         Self::Action {
             name: name.into(),
             action: Box::new(action),
-            os_action: None,
-            checked: false,
-            disabled: false,
-        }
-    }
-
-    /// Creates a new menu item that invokes an action and has an OS action
-    pub fn os_action(
-        name: impl Into<SharedString>,
-        action: impl Action,
-        os_action: OsAction,
-    ) -> Self {
-        Self::Action {
-            name: name.into(),
-            action: Box::new(action),
-            os_action: Some(os_action),
             checked: false,
             disabled: false,
         }
@@ -156,13 +136,11 @@ impl MenuItem {
             MenuItem::Action {
                 name,
                 action,
-                os_action,
                 checked,
                 disabled,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
-                os_action,
                 checked,
                 disabled,
             },
@@ -265,10 +243,6 @@ pub enum OwnedMenuItem {
         /// The action to perform when this menu item is selected
         action: Box<dyn Action>,
 
-        /// The OS Action that corresponds to this action, if any
-        /// See [`OsAction`] for more information
-        os_action: Option<OsAction>,
-
         /// Whether this action is checked
         checked: bool,
 
@@ -285,13 +259,11 @@ impl Clone for OwnedMenuItem {
             OwnedMenuItem::Action {
                 name,
                 action,
-                os_action,
                 checked,
                 disabled,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
-                os_action: *os_action,
                 checked: *checked,
                 disabled: *disabled,
             },
@@ -300,33 +272,11 @@ impl Clone for OwnedMenuItem {
     }
 }
 
-// TODO: As part of the global selections refactor, these should
-// be moved to GPUI-provided actions that make this association
-// without leaking the platform details to GPUI users
-
-/// OS actions are actions that are recognized by the operating system
-/// This allows the operating system to provide specialized behavior for
-/// these actions
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum OsAction {
-    /// The 'cut' action
-    Cut,
-
-    /// The 'copy' action
-    Copy,
-
-    /// The 'paste' action
-    Paste,
-
-    /// The 'select all' action
-    SelectAll,
-
-    /// The 'undo' action
-    Undo,
-
-    /// The 'redo' action
-    Redo,
-}
+// The OsAction enum and os_selector_for_action function were moved
+// to the action module to hide platform details from GPUI users.
+// Standard actions like `edit::Cut`, `edit::Copy`, `edit::Paste`,
+// `edit::SelectAll`, `undo_redo::Undo`, and `undo_redo::Redo` are now
+// automatically associated with their corresponding OS selectors.
 
 pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
     platform.on_will_open_app_menu(Box::new({

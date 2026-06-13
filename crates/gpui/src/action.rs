@@ -456,3 +456,47 @@ mod no_action {
         action.as_any().is::<Unbind>()
     }
 }
+
+// Standard edit actions that are automatically associated with OS menu selectors.
+actions!(
+    edit,
+    [
+        /// Cuts the current selection to the clipboard.
+        Cut,
+        /// Copies the current selection to the clipboard.
+        Copy,
+        /// Pastes the clipboard contents.
+        Paste,
+        /// Selects all content.
+        SelectAll
+    ]
+);
+
+// Standard undo/redo actions that are automatically associated with OS menu selectors.
+actions!(
+    undo_redo,
+    [
+        /// Undoes the last action.
+        Undo,
+        /// Redoes the last undone action.
+        Redo
+    ]
+);
+
+/// Returns the OS-specific menu selector for a given action, if applicable.
+///
+/// This is used to associate GPUI actions with native menu behavior on platforms
+/// like macOS (e.g., "cut:", "copy:", "paste:").
+#[allow(clippy::self_named_constructors)]
+pub fn os_selector_for_action(action: &dyn Action) -> Option<&'static str> {
+    let name = action.name();
+    match name {
+        n if n.ends_with("::Cut") => Some("cut:"),
+        n if n.ends_with("::Copy") => Some("copy:"),
+        n if n.ends_with("::Paste") => Some("paste:"),
+        n if n.ends_with("::SelectAll") => Some("selectAll:"),
+        n if n.ends_with("::Undo") => Some("undo:"),
+        n if n.ends_with("::Redo") => Some("redo:"),
+        _ => None,
+    }
+}

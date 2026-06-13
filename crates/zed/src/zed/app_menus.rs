@@ -1,5 +1,5 @@
 use collab_ui::collab_panel;
-use gpui::{App, Menu, MenuItem, OsAction};
+use gpui::{App, Menu, MenuItem};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
 use zed_actions::{debug_panel, dev};
@@ -145,13 +145,13 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             name: "Edit".into(),
             disabled: false,
             items: vec![
-                MenuItem::os_action("Undo", editor::actions::Undo, OsAction::Undo),
-                MenuItem::os_action("Redo", editor::actions::Redo, OsAction::Redo),
+                MenuItem::action("Undo", editor::actions::Undo),
+                MenuItem::action("Redo", editor::actions::Redo),
                 MenuItem::separator(),
-                MenuItem::os_action("Cut", editor::actions::Cut, OsAction::Cut),
-                MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
+                MenuItem::action("Cut", editor::actions::Cut),
+                MenuItem::action("Copy", editor::actions::Copy),
                 MenuItem::action("Copy and Trim", editor::actions::CopyAndTrim),
-                MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
+                MenuItem::action("Paste", editor::actions::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
                 MenuItem::action("Find in Project", workspace::DeploySearch::default()),
@@ -166,11 +166,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             name: "Selection".into(),
             disabled: false,
             items: vec![
-                MenuItem::os_action(
-                    "Select All",
-                    editor::actions::SelectAll,
-                    OsAction::SelectAll,
-                ),
+                MenuItem::action("Select All", editor::actions::SelectAll),
                 MenuItem::action("Expand Selection", editor::actions::SelectLargerSyntaxNode),
                 MenuItem::action("Shrink Selection", editor::actions::SelectSmallerSyntaxNode),
                 MenuItem::action("Select Next Sibling", editor::actions::SelectNextSyntaxNode),

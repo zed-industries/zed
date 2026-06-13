@@ -302,7 +302,6 @@ impl MacPlatform {
                 MenuItem::Action {
                     name,
                     action,
-                    os_action,
                     checked,
                     disabled,
                 } => {
@@ -329,17 +328,9 @@ impl MacPlatform {
                         })
                         .map(|binding| binding.keystrokes());
 
-                    let selector = match os_action {
-                        Some(gpui::OsAction::Cut) => selector("cut:"),
-                        Some(gpui::OsAction::Copy) => selector("copy:"),
-                        Some(gpui::OsAction::Paste) => selector("paste:"),
-                        Some(gpui::OsAction::SelectAll) => selector("selectAll:"),
-                        // "undo:" and "redo:" are always disabled in our case, as
-                        // we don't have a NSTextView/NSTextField to enable them on.
-                        Some(gpui::OsAction::Undo) => selector("handleGPUIMenuItem:"),
-                        Some(gpui::OsAction::Redo) => selector("handleGPUIMenuItem:"),
-                        None => selector("handleGPUIMenuItem:"),
-                    };
+                    let selector = gpui::os_selector_for_action(action.as_ref())
+                        .map(selector)
+                        .unwrap_or_else(|| selector("handleGPUIMenuItem:"));
 
                     let item;
                     if let Some(keystrokes) = keystrokes {
