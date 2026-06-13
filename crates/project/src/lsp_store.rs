@@ -287,10 +287,23 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct DynamicTextDocumentRegistration {
+    document_selector: Option<lsp::DocumentSelector>,
+    completion_options: Option<CompletionOptions>,
+}
+
 #[derive(Default, Debug)]
 struct DynamicRegistrations {
     did_change_watched_files: HashSet<String>,
     diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
+    text_documents: HashMap<String, HashMap<String, DynamicTextDocumentRegistration>>,
+}
+
+#[derive(Clone, Debug)]
+struct DocumentSelectorContext {
+    language_id: String,
+    scheme: &'static str,
 }
 
 pub struct LocalLspStore {
@@ -311,6 +324,7 @@ pub struct LocalLspStore {
     language_server_paths_watched_for_rename:
         HashMap<LanguageServerId, RenamePathsWatchedForServer>,
     language_server_dynamic_registrations: HashMap<LanguageServerId, DynamicRegistrations>,
+    initial_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Entity<PrettierStore>,
@@ -2710,35 +2724,33 @@ impl LocalLspStore {
             self.lsp_tree
                 .get(path, language.name(), language.manifest(), &delegate, cx)
         {
-            let server = self
-                .language_servers
-                .get(&server_id)
-                .and_then(|server_state| {
-                    if let LanguageServerState::Running { server, .. } = server_state {
-                        Some(server.clone())
-                    } else {
-                        None
-                    }
-                });
-            let server = match server {
-                Some(server) => server,
+            let server_and_adapter =
+                self.language_servers
+                    .get(&server_id)
+                    .and_then(|server_state| {
+                        if let LanguageServerState::Running {
+                            server, adapter, ..
+                        } = server_state
+                        {
+                            Some((server.clone(), adapter.clone()))
+                        } else {
+                            None
+                        }
+                    });
+            let (server, adapter) = match server_and_adapter {
+                Some(server_and_adapter) => server_and_adapter,
                 None => continue,
             };
 
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
                     server.server_id(),
-                    server
-                        .capabilities()
-                        .completion_provider
-                        .as_ref()
-                        .and_then(|provider| {
-                            provider
-                                .trigger_characters
-                                .as_ref()
-                                .map(|characters| characters.iter().cloned().collect())
-                        })
-                        .unwrap_or_default(),
+                    completion_trigger_characters_for_buffer(
+                        self,
+                        server.server_id(),
+                        &adapter,
+                        buffer,
+                    ),
                     cx,
                 );
             });
@@ -3004,17 +3016,12 @@ impl LocalLspStore {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
                     server.server_id(),
-                    server
-                        .capabilities()
-                        .completion_provider
-                        .as_ref()
-                        .and_then(|provider| {
-                            provider
-                                .trigger_characters
-                                .as_ref()
-                                .map(|characters| characters.iter().cloned().collect())
-                        })
-                        .unwrap_or_default(),
+                    completion_trigger_characters_for_buffer(
+                        self,
+                        server.server_id(),
+                        &adapter,
+                        buffer,
+                    ),
                     cx,
                 );
             });
@@ -4435,6 +4442,7 @@ impl LspStore {
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
                 language_server_dynamic_registrations: Default::default(),
+                initial_server_capabilities: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_to_refresh_hash_set: HashSet::default(),
                 buffers_to_refresh_queue: VecDeque::new(),
@@ -5199,14 +5207,10 @@ impl LspStore {
     where
         R: LspCommand,
     {
-        self.check_if_capable_for_proto_request(
+        self.check_if_any_relevant_text_document_server_matches(
             buffer,
-            |capabilities| {
-                request.check_capabilities(AdapterServerCapabilities {
-                    server_capabilities: capabilities.clone(),
-                    code_action_kinds: None,
-                })
-            },
+            <R::LspRequest as lsp::request::Request>::METHOD,
+            |_, capabilities| request.check_capabilities(capabilities),
             cx,
         )
     }
@@ -5278,6 +5282,75 @@ impl LspStore {
         self.check_if_any_relevant_server_matches(buffer, |_, capabilities| check(capabilities), cx)
     }
 
+    fn check_if_any_relevant_text_document_server_matches<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        method: &str,
+        mut check: F,
+        cx: &App,
+    ) -> bool
+    where
+        F: FnMut(&lsp::LanguageServerName, AdapterServerCapabilities) -> bool,
+    {
+        if let Some(local) = self.as_local() {
+            let buffer = buffer.read(cx);
+            return local
+                .buffers_opened_in_servers
+                .get(&buffer.remote_id())
+                .into_iter()
+                .flatten()
+                .filter_map(|server_id| match local.language_servers.get(server_id)? {
+                    LanguageServerState::Running {
+                        adapter, server, ..
+                    } => Some((adapter, server)),
+                    _ => None,
+                })
+                .any(|(adapter, server)| {
+                    let current_capabilities = server.adapter_server_capabilities();
+                    let code_action_kinds = current_capabilities.code_action_kinds.clone();
+                    if !check(&server.name(), current_capabilities) {
+                        return false;
+                    }
+
+                    text_document_registration_allows_buffer(
+                        local,
+                        server.server_id(),
+                        method,
+                        buffer,
+                        adapter,
+                        || {
+                            local
+                                .initial_server_capabilities
+                                .get(&server.server_id())
+                                .is_some_and(|capabilities| {
+                                    check(
+                                        &server.name(),
+                                        AdapterServerCapabilities {
+                                            server_capabilities: capabilities.clone(),
+                                            code_action_kinds,
+                                        },
+                                    )
+                                })
+                        },
+                    )
+                });
+        }
+
+        self.check_if_any_relevant_server_matches(
+            buffer,
+            |server_status, capabilities| {
+                check(
+                    &server_status.name,
+                    AdapterServerCapabilities {
+                        server_capabilities: capabilities.clone(),
+                        code_action_kinds: None,
+                    },
+                )
+            },
+            cx,
+        )
+    }
+
     pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
         let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
         settings.formatter.as_ref().iter().any(|formatter| {
@@ -5285,28 +5358,41 @@ impl LspStore {
                 Formatter::None => false,
                 Formatter::Auto => {
                     settings.prettier.allowed
-                        || self.check_if_capable_for_proto_request(
+                        || self.check_if_any_relevant_text_document_server_matches(
                             buffer,
-                            server_capabilities_support_range_formatting,
+                            "textDocument/rangeFormatting",
+                            |_, capabilities| {
+                                server_capabilities_support_range_formatting(
+                                    &capabilities.server_capabilities,
+                                )
+                            },
                             cx,
                         )
                 }
                 Formatter::Prettier => true,
                 Formatter::External { .. } => false,
                 Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => {
-                    self.check_if_capable_for_proto_request(
+                    self.check_if_any_relevant_text_document_server_matches(
                         buffer,
-                        server_capabilities_support_range_formatting,
+                        "textDocument/rangeFormatting",
+                        |_, capabilities| {
+                            server_capabilities_support_range_formatting(
+                                &capabilities.server_capabilities,
+                            )
+                        },
                         cx,
                     )
                 }
                 Formatter::LanguageServer(
                     settings::LanguageServerFormatterSpecifier::Specific { name },
-                ) => self.check_if_any_relevant_server_matches(
+                ) => self.check_if_any_relevant_text_document_server_matches(
                     buffer,
-                    |server_status, capabilities| {
-                        server_status.name.0.as_ref() == name
-                            && server_capabilities_support_range_formatting(capabilities)
+                    "textDocument/rangeFormatting",
+                    |server_name, capabilities| {
+                        server_name.0.as_ref() == name
+                            && server_capabilities_support_range_formatting(
+                                &capabilities.server_capabilities,
+                            )
                     },
                     cx,
                 ),
@@ -5367,18 +5453,22 @@ impl LspStore {
             LanguageServerToQuery::FirstCapable => self.as_local().and_then(|local| {
                 local
                     .language_servers_for_buffer(buffer, cx)
-                    .find(|(_, server)| {
-                        request.check_capabilities(server.adapter_server_capabilities())
+                    .find(|(adapter, server)| {
+                        lsp_command_allowed_for_buffer(local, &request, buffer, adapter, server)
                     })
                     .map(|(_, server)| server.clone())
             }),
-            LanguageServerToQuery::Other(id) => self
-                .language_server_for_local_buffer(buffer, id, cx)
-                .and_then(|(_, server)| {
-                    request
-                        .check_capabilities(server.adapter_server_capabilities())
-                        .then(|| Arc::clone(server))
-                }),
+            LanguageServerToQuery::Other(id) => self.as_local().and_then(|local| {
+                local
+                    .language_servers_for_buffer(buffer, cx)
+                    .find(|(adapter, server)| {
+                        server.server_id() == id
+                            && lsp_command_allowed_for_buffer(
+                                local, &request, buffer, adapter, server,
+                            )
+                    })
+                    .map(|(_, server)| Arc::clone(server))
+            }),
         }) else {
             return Task::ready(Ok(Default::default()));
         };
@@ -6744,10 +6834,17 @@ impl LspStore {
                 return Task::ready(Ok(Vec::new()));
             }
 
+            let request = GetCompletions {
+                position,
+                context: context.clone(),
+                server_id: None,
+            };
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
                 local
                     .language_servers_for_buffer(buffer, cx)
-                    .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                    .filter(|(adapter, server)| {
+                        lsp_command_allowed_for_buffer(local, &request, buffer, adapter, server)
+                    })
                     .filter(|(adapter, _)| {
                         scope
                             .as_ref()
@@ -9309,6 +9406,34 @@ impl LspStore {
         })
     }
 
+    fn local_language_server_ids_for_request<R>(
+        &self,
+        buffer: &Entity<Buffer>,
+        request: &R,
+        cx: &mut App,
+    ) -> Option<HashSet<LanguageServerId>>
+    where
+        R: LspCommand,
+    {
+        let local = self.as_local()?;
+        let buffer_id = buffer.read(cx).remote_id();
+        Some(buffer.update(cx, |buffer, cx| {
+            local
+                .language_servers_for_buffer(buffer, cx)
+                .filter(|(adapter, server)| {
+                    lsp_command_allowed_for_buffer(local, request, buffer, adapter, server)
+                })
+                .map(|(_, server)| server.server_id())
+                .filter(|server_id| {
+                    local
+                        .buffers_opened_in_servers
+                        .get(&buffer_id)
+                        .is_some_and(|servers| servers.contains(server_id))
+                })
+                .collect()
+        }))
+    }
+
     fn request_multiple_lsp_locally<P, R>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -9332,6 +9457,9 @@ impl LspStore {
         let server_ids = buffer.update(cx, |buffer, cx| {
             local
                 .language_servers_for_buffer(buffer, cx)
+                .filter(|(adapter, server)| {
+                    lsp_command_allowed_for_buffer(local, &request, buffer, adapter, server)
+                })
                 .filter(|(adapter, _)| {
                     scope
                         .as_ref()
@@ -12020,10 +12148,14 @@ impl LspStore {
         // indicating that the server is up and running and ready
         let workspace_folders = workspace_folders.lock().clone();
         language_server.set_workspace_folders(workspace_folders);
+        let server_capabilities = language_server.capabilities();
+        local
+            .initial_server_capabilities
+            .insert(server_id, server_capabilities.clone());
 
-        let workspace_diagnostics_refresh_tasks = language_server
-            .capabilities()
+        let workspace_diagnostics_refresh_tasks = server_capabilities
             .diagnostic_provider
+            .clone()
             .and_then(|provider| {
                 local
                     .language_server_dynamic_registrations
@@ -12093,7 +12225,6 @@ impl LspStore {
             Some(key.worktree_id),
         ));
 
-        let server_capabilities = language_server.capabilities();
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::StartLanguageServer {
@@ -12736,6 +12867,10 @@ impl LspStore {
             local
                 .workspace_pull_diagnostics_result_ids
                 .remove(&for_server);
+            local
+                .language_server_dynamic_registrations
+                .remove(&for_server);
+            local.initial_server_capabilities.remove(&for_server);
             for buffer_servers in local.buffers_opened_in_servers.values_mut() {
                 buffer_servers.remove(&for_server);
             }
@@ -13083,13 +13218,30 @@ impl LspStore {
                     }
                 }
                 "textDocument/rangeFormatting" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_range_formatting_provider = Some(options);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/onTypeFormatting" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     if let Some(options) = reg
                         .register_options
                         .map(serde_json::from_value)
@@ -13098,38 +13250,103 @@ impl LspStore {
                         server.update_capabilities(|capabilities| {
                             capabilities.document_on_type_formatting_provider = Some(options);
                         });
+                        if let Some(local) = self.as_local_mut() {
+                            register_text_document_dynamic_registration(
+                                local,
+                                server_id,
+                                &method,
+                                registration_id,
+                                registration,
+                            );
+                        }
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/formatting" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_formatting_provider = Some(options);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/rename" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.rename_provider = Some(options);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/inlayHint" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.inlay_hint_provider = Some(options);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentSymbol" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.document_symbol_provider = Some(options);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/codeAction" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::CodeActionProviderCapability::Simple(value),
@@ -13138,24 +13355,66 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.code_action_provider = Some(provider);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/definition" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     server.update_capabilities(|capabilities| {
                         capabilities.definition_provider = Some(options);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/completion" => {
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     if let Some(caps) = reg
                         .register_options
-                        .map(serde_json::from_value::<CompletionOptions>)
+                        .map(serde_json::from_value::<lsp::CompletionRegistrationOptions>)
                         .transpose()?
                     {
+                        let registration = DynamicTextDocumentRegistration {
+                            document_selector: caps
+                                .text_document_registration_options
+                                .document_selector
+                                .clone(),
+                            completion_options: Some(caps.completion_options.clone()),
+                        };
                         server.update_capabilities(|capabilities| {
-                            capabilities.completion_provider = Some(caps.clone());
+                            capabilities.completion_provider =
+                                Some(caps.completion_options.clone());
                         });
+
+                        if let Some(local) = self.as_local_mut() {
+                            register_text_document_dynamic_registration(
+                                local,
+                                server_id,
+                                &method,
+                                registration_id,
+                                registration,
+                            );
+                        }
 
                         if let Some(local) = self.as_local() {
                             let mut buffers_with_language_server = Vec::new();
@@ -13170,13 +13429,18 @@ impl LspStore {
                                     buffers_with_language_server.push(handle);
                                 }
                             }
-                            let triggers = caps
-                                .trigger_characters
-                                .unwrap_or_default()
-                                .into_iter()
-                                .collect::<BTreeSet<_>>();
                             for handle in buffers_with_language_server {
-                                let triggers = triggers.clone();
+                                let triggers = handle.update(cx, |buffer, cx| {
+                                    local
+                                        .language_servers_for_buffer(buffer, cx)
+                                        .find(|(_, server)| server.server_id() == server_id)
+                                        .map(|(adapter, _)| {
+                                            completion_trigger_characters_for_buffer(
+                                                local, server_id, adapter, buffer,
+                                            )
+                                        })
+                                        .unwrap_or_default()
+                                });
                                 let _ = handle.update(cx, move |buffer, cx| {
                                     buffer.set_completion_triggers(server_id, triggers, cx);
                                 });
@@ -13186,6 +13450,10 @@ impl LspStore {
                     }
                 }
                 "textDocument/hover" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::HoverProviderCapability::Simple(value),
@@ -13194,9 +13462,22 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.hover_provider = Some(provider);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/signatureHelp" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
@@ -13205,6 +13486,15 @@ impl LspStore {
                         server.update_capabilities(|capabilities| {
                             capabilities.signature_help_provider = Some(caps);
                         });
+                        if let Some(local) = self.as_local_mut() {
+                            register_text_document_dynamic_registration(
+                                local,
+                                server_id,
+                                &method,
+                                registration_id,
+                                registration,
+                            );
+                        }
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -13255,6 +13545,10 @@ impl LspStore {
                     }
                 }
                 "textDocument/codeLens" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
@@ -13263,11 +13557,22 @@ impl LspStore {
                         server.update_capabilities(|capabilities| {
                             capabilities.code_lens_provider = Some(caps);
                         });
+                        if let Some(local) = self.as_local_mut() {
+                            register_text_document_dynamic_registration(
+                                local,
+                                server_id,
+                                &method,
+                                registration_id,
+                                registration,
+                            );
+                        }
                         notify_server_capabilities_updated(&server, cx);
                         self.refresh_code_lens(cx);
                     }
                 }
                 "textDocument/diagnostic" => {
+                    let text_document_registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
                     if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value::<DiagnosticServerCapabilities>)
@@ -13276,16 +13581,19 @@ impl LspStore {
                         let local = self
                             .as_local_mut()
                             .context("Expected LSP Store to be local")?;
-                        let state = local
-                            .language_servers
-                            .get_mut(&server_id)
-                            .context("Could not obtain Language Servers state")?;
                         local
                             .language_server_dynamic_registrations
                             .entry(server_id)
                             .or_default()
                             .diagnostics
                             .insert(Some(reg.id.clone()), caps.clone());
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &reg.method,
+                            reg.id.clone(),
+                            text_document_registration,
+                        );
 
                         let supports_workspace_diagnostics =
                             |capabilities: &DiagnosticServerCapabilities| match capabilities {
@@ -13302,6 +13610,10 @@ impl LspStore {
                             };
 
                         if supports_workspace_diagnostics(&caps) {
+                            let state = local
+                                .language_servers
+                                .get_mut(&server_id)
+                                .context("Could not obtain Language Servers state")?;
                             if let LanguageServerState::Running {
                                 workspace_diagnostics_refresh_tasks,
                                 ..
@@ -13327,6 +13639,10 @@ impl LspStore {
                     }
                 }
                 "textDocument/documentColor" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::ColorProviderCapability::Simple(value),
@@ -13335,9 +13651,22 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.color_provider = Some(provider);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/foldingRange" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     let options = parse_register_capabilities(reg)?;
                     let provider = match options {
                         OneOf::Left(value) => lsp::FoldingRangeProviderCapability::Simple(value),
@@ -13346,9 +13675,22 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.folding_range_provider = Some(provider);
                     });
+                    if let Some(local) = self.as_local_mut() {
+                        register_text_document_dynamic_registration(
+                            local,
+                            server_id,
+                            &method,
+                            registration_id,
+                            registration,
+                        );
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentLink" => {
+                    let registration =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let registration_id = reg.id.clone();
+                    let method = reg.method.clone();
                     if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
@@ -13357,6 +13699,15 @@ impl LspStore {
                         server.update_capabilities(|capabilities| {
                             capabilities.document_link_provider = Some(caps);
                         });
+                        if let Some(local) = self.as_local_mut() {
+                            register_text_document_dynamic_registration(
+                                local,
+                                server_id,
+                                &method,
+                                registration_id,
+                                registration,
+                            );
+                        }
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -13394,6 +13745,17 @@ impl LspStore {
             .language_server_for_id(server_id)
             .with_context(|| format!("no server {server_id} found"))?;
         for unreg in params.unregisterations.iter() {
+            if unreg.method.starts_with("textDocument/")
+                && let Some(local) = self.as_local_mut()
+            {
+                unregister_text_document_dynamic_registration(
+                    local,
+                    server_id,
+                    &unreg.method,
+                    &unreg.id,
+                );
+            }
+
             match unreg.method.as_str() {
                 "workspace/didChangeWatchedFiles" => {
                     let notify = if let Some(local_lsp_store) = self.as_local_mut() {
@@ -13484,6 +13846,36 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.completion_provider = None;
                     });
+                    if let Some(local) = self.as_local() {
+                        let mut buffers_with_language_server = Vec::new();
+                        for handle in self.buffer_store.read(cx).buffers() {
+                            let buffer_id = handle.read(cx).remote_id();
+                            if local
+                                .buffers_opened_in_servers
+                                .get(&buffer_id)
+                                .filter(|servers| servers.contains(&server_id))
+                                .is_some()
+                            {
+                                buffers_with_language_server.push(handle);
+                            }
+                        }
+                        for handle in buffers_with_language_server {
+                            let triggers = handle.update(cx, |buffer, cx| {
+                                local
+                                    .language_servers_for_buffer(buffer, cx)
+                                    .find(|(_, server)| server.server_id() == server_id)
+                                    .map(|(adapter, _)| {
+                                        completion_trigger_characters_for_buffer(
+                                            local, server_id, adapter, buffer,
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            });
+                            let _ = handle.update(cx, move |buffer, cx| {
+                                buffer.set_completion_triggers(server_id, triggers, cx);
+                            });
+                        }
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/hover" => {
@@ -13974,6 +14366,205 @@ fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
         Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
         None => OneOf::Left(true),
     })
+}
+
+fn register_text_document_dynamic_registration(
+    local: &mut LocalLspStore,
+    server_id: LanguageServerId,
+    method: &str,
+    registration_id: String,
+    registration: DynamicTextDocumentRegistration,
+) {
+    local
+        .language_server_dynamic_registrations
+        .entry(server_id)
+        .or_default()
+        .text_documents
+        .entry(method.to_string())
+        .or_default()
+        .insert(registration_id, registration);
+}
+
+fn unregister_text_document_dynamic_registration(
+    local: &mut LocalLspStore,
+    server_id: LanguageServerId,
+    method: &str,
+    registration_id: &str,
+) {
+    let Some(registrations) = local
+        .language_server_dynamic_registrations
+        .get_mut(&server_id)
+        .and_then(|registrations| registrations.text_documents.get_mut(method))
+    else {
+        return;
+    };
+
+    registrations.remove(registration_id);
+}
+
+fn parse_text_document_registration(
+    register_options: Option<&Value>,
+) -> Result<DynamicTextDocumentRegistration> {
+    let document_selector = register_options
+        .cloned()
+        .map(serde_json::from_value::<lsp::TextDocumentRegistrationOptions>)
+        .transpose()?
+        .and_then(|options| options.document_selector);
+
+    Ok(DynamicTextDocumentRegistration {
+        document_selector,
+        completion_options: None,
+    })
+}
+
+fn document_selector_context_for_buffer(
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+) -> Option<DocumentSelectorContext> {
+    let language = buffer.language()?;
+    Some(DocumentSelectorContext {
+        language_id: adapter.language_id(&language.name()),
+        scheme: "file",
+    })
+}
+
+fn document_selector_matches(
+    document_selector: Option<&lsp::DocumentSelector>,
+    context: &DocumentSelectorContext,
+) -> bool {
+    let Some(document_selector) = document_selector else {
+        return true;
+    };
+
+    document_selector.iter().any(|filter| {
+        if let Some(language) = &filter.language
+            && language != &context.language_id
+        {
+            return false;
+        }
+
+        if let Some(scheme) = &filter.scheme
+            && !scheme.eq_ignore_ascii_case(context.scheme)
+        {
+            return false;
+        }
+
+        true
+    })
+}
+
+fn text_document_registration_allows_buffer(
+    local: &LocalLspStore,
+    server_id: LanguageServerId,
+    method: &str,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    statically_supported: impl FnOnce() -> bool,
+) -> bool {
+    // Check for a dynamic registration before evaluating `statically_supported()`:
+    // it clones the full `ServerCapabilities`, and a method without any dynamic
+    // registration has no selector to honor anyway.
+    let Some(registrations) = local
+        .language_server_dynamic_registrations
+        .get(&server_id)
+        .and_then(|registrations| registrations.text_documents.get(method))
+    else {
+        return true;
+    };
+
+    if statically_supported() {
+        return true;
+    }
+
+    let Some(context) = document_selector_context_for_buffer(buffer, adapter) else {
+        return true;
+    };
+
+    registrations.values().any(|registration| {
+        document_selector_matches(registration.document_selector.as_ref(), &context)
+    })
+}
+
+fn lsp_command_allowed_for_buffer<R>(
+    local: &LocalLspStore,
+    request: &R,
+    buffer: &Buffer,
+    adapter: &CachedLspAdapter,
+    server: &LanguageServer,
+) -> bool
+where
+    R: LspCommand,
+{
+    let current_capabilities = server.adapter_server_capabilities();
+    let code_action_kinds = current_capabilities.code_action_kinds.clone();
+    if !request.check_capabilities(current_capabilities) {
+        return false;
+    }
+
+    let method = <R::LspRequest as lsp::request::Request>::METHOD;
+    text_document_registration_allows_buffer(
+        local,
+        server.server_id(),
+        method,
+        buffer,
+        adapter,
+        || {
+            local
+                .initial_server_capabilities
+                .get(&server.server_id())
+                .is_some_and(|capabilities| {
+                    request.check_capabilities(AdapterServerCapabilities {
+                        server_capabilities: capabilities.clone(),
+                        code_action_kinds,
+                    })
+                })
+        },
+    )
+}
+
+fn completion_trigger_characters_for_buffer(
+    local: &LocalLspStore,
+    server_id: LanguageServerId,
+    adapter: &CachedLspAdapter,
+    buffer: &Buffer,
+) -> BTreeSet<String> {
+    let mut triggers = BTreeSet::new();
+
+    // Static capabilities advertised at initialize-time apply to every buffer
+    // attached to the server.
+    if let Some(provider) = local
+        .initial_server_capabilities
+        .get(&server_id)
+        .and_then(|capabilities| capabilities.completion_provider.as_ref())
+        && let Some(characters) = &provider.trigger_characters
+    {
+        triggers.extend(characters.iter().cloned());
+    }
+
+    // Dynamic completion registrations only contribute their triggers when their
+    // selector matches this buffer.
+    if let Some(context) = document_selector_context_for_buffer(buffer, adapter)
+        && let Some(registrations) = local
+            .language_server_dynamic_registrations
+            .get(&server_id)
+            .and_then(|registrations| registrations.text_documents.get("textDocument/completion"))
+    {
+        for registration in registrations.values() {
+            if !document_selector_matches(registration.document_selector.as_ref(), &context) {
+                continue;
+            }
+
+            if let Some(characters) = registration
+                .completion_options
+                .as_ref()
+                .and_then(|options| options.trigger_characters.as_ref())
+            {
+                triggers.extend(characters.iter().cloned());
+            }
+        }
+    }
+
+    triggers
 }
 
 fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabilities) -> bool {

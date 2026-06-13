@@ -77,22 +77,19 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_language_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_language_servers =
+            self.local_language_server_ids_for_request(buffer, &GetDocumentLinks, cx);
 
         if let Some(lsp_data) = self.current_lsp_data(buffer_id)
             && let Some(cached) = &lsp_data.document_links
             && !version_queried_for.changed_since(&lsp_data.buffer_version)
         {
             let has_different_servers =
-                current_language_servers.is_some_and(|current_language_servers| {
-                    current_language_servers != cached.links.keys().copied().collect()
-                });
+                current_language_servers
+                    .as_ref()
+                    .is_some_and(|current_language_servers| {
+                        current_language_servers != &cached.links.keys().copied().collect()
+                    });
             if !has_different_servers {
                 return Task::ready(Some(cached.links.clone()));
             }
@@ -151,6 +148,12 @@ impl LspStore {
                         let Some(fetched_links) = fetched else {
                             return None;
                         };
+
+                        if let Some(current_language_servers) = &current_language_servers {
+                            links_data.links.retain(|server_id, _| {
+                                current_language_servers.contains(server_id)
+                            });
+                        }
 
                         let mut tagged = BufferDocumentLinks::default();
                         for (server_id, server_links) in fetched_links {

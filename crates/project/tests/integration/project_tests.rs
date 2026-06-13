@@ -5070,6 +5070,151 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_dynamic_completion_registration_honors_document_selector(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let value = foo" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(lsp::TextDocumentSyncKind::FULL),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "untitled-completion".to_string(),
+                    method: "textDocument/completion".to_string(),
+                    register_options: serde_json::to_value(lsp::CompletionRegistrationOptions {
+                        text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                            document_selector: Some(vec![lsp::DocumentFilter {
+                                language: Some("rust".to_string()),
+                                scheme: Some("untitled".to_string()),
+                                pattern: None,
+                            }]),
+                        },
+                        completion_options: lsp::CompletionOptions {
+                            trigger_characters: Some(vec![".".to_string()]),
+                            ..Default::default()
+                        },
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(buffer.read_with(cx, |buffer, _| buffer.completion_triggers().is_empty()));
+
+    let completion_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _completion_requests = fake_server.set_request_handler::<lsp::request::Completion, _, _>({
+        let completion_request_count = completion_request_count.clone();
+        move |_, _| {
+            completion_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "matched".into(),
+                        ..Default::default()
+                    },
+                ])))
+            }
+        }
+    });
+
+    let completions = project
+        .update(cx, |project, cx| {
+            project.completions(&buffer, 15, DEFAULT_COMPLETION_CONTEXT, cx)
+        })
+        .await
+        .unwrap();
+    assert!(completions.is_empty());
+    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 0);
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "file-completion".to_string(),
+                    method: "textDocument/completion".to_string(),
+                    register_options: serde_json::to_value(lsp::CompletionRegistrationOptions {
+                        text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                            document_selector: Some(vec![lsp::DocumentFilter {
+                                language: Some("rust".to_string()),
+                                scheme: Some("file".to_string()),
+                                pattern: None,
+                            }]),
+                        },
+                        completion_options: lsp::CompletionOptions {
+                            trigger_characters: Some(vec![":".to_string()]),
+                            ..Default::default()
+                        },
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+        BTreeSet::from([":".to_string()])
+    );
+
+    let completions = project
+        .update(cx, |project, cx| {
+            project.completions(&buffer, 15, DEFAULT_COMPLETION_CONTEXT, cx)
+        })
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
+
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "matched");
+    assert_eq!(completion_request_count.load(atomic::Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
 async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

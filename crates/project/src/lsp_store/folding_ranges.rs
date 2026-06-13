@@ -46,21 +46,18 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_language_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_language_servers =
+            self.local_language_server_ids_for_request(buffer, &GetFoldingRanges, cx);
 
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached) = &lsp_data.folding_ranges {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
                     let has_different_servers =
-                        current_language_servers.is_some_and(|current_language_servers| {
-                            current_language_servers != cached.ranges.keys().copied().collect()
-                        });
+                        current_language_servers
+                            .as_ref()
+                            .is_some_and(|current_language_servers| {
+                                current_language_servers != &cached.ranges.keys().copied().collect()
+                            });
                     if !has_different_servers {
                         let snapshot = buffer.read(cx).snapshot();
                         return Task::ready(
@@ -127,6 +124,11 @@ impl LspStore {
                         let folding = lsp_data.folding_ranges.get_or_insert_default();
 
                         if let Some(fetched_ranges) = fetched {
+                            if let Some(current_language_servers) = &current_language_servers {
+                                folding.ranges.retain(|server_id, _| {
+                                    current_language_servers.contains(server_id)
+                                });
+                            }
                             if lsp_data.buffer_version == query_version {
                                 folding.ranges.extend(fetched_ranges);
                             } else if !lsp_data.buffer_version.changed_since(&query_version) {

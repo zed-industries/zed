@@ -53,21 +53,19 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_language_servers = self.as_local().map(|local| {
-            local
-                .buffers_opened_in_servers
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        });
+        let current_language_servers =
+            self.local_language_server_ids_for_request(buffer, &GetDocumentSymbols, cx);
 
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached) = &lsp_data.document_symbols {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
                     let has_different_servers =
-                        current_language_servers.is_some_and(|current_language_servers| {
-                            current_language_servers != cached.symbols.keys().copied().collect()
-                        });
+                        current_language_servers
+                            .as_ref()
+                            .is_some_and(|current_language_servers| {
+                                current_language_servers
+                                    != &cached.symbols.keys().copied().collect()
+                            });
                     if !has_different_servers {
                         let snapshot = buffer.read(cx).snapshot();
                         return Task::ready(
@@ -137,6 +135,11 @@ impl LspStore {
                         let doc_symbols = lsp_data.document_symbols.get_or_insert_default();
 
                         if let Some(fetched_symbols) = fetched {
+                            if let Some(current_language_servers) = &current_language_servers {
+                                doc_symbols.symbols.retain(|server_id, _| {
+                                    current_language_servers.contains(server_id)
+                                });
+                            }
                             let converted = fetched_symbols
                                 .iter()
                                 .map(|(&server_id, symbols)| {
