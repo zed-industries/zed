@@ -99,8 +99,9 @@ fn split_keyword_and_value(line: &str) -> Option<(&str, &str)> {
 }
 
 fn is_git_provider_domain(host: &str) -> bool {
-    let host = host.to_ascii_lowercase();
-    FILTERED_GIT_PROVIDER_HOSTNAMES.contains(&host.as_str())
+    FILTERED_GIT_PROVIDER_HOSTNAMES
+        .iter()
+        .any(|h| h.eq_ignore_ascii_case(host))
 }
 
 #[cfg(test)]

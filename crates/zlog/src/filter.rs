@@ -111,15 +111,20 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
 
 fn level_filter_from_str(level_str: &str) -> Option<log::LevelFilter> {
     use log::LevelFilter::*;
-    let level = match level_str.to_ascii_lowercase().as_str() {
-        "" => Trace,
-        "trace" => Trace,
-        "debug" => Debug,
-        "info" => Info,
-        "warn" => Warn,
-        "error" => Error,
-        "off" => Off,
-        "disable" | "no" | "none" | "disabled" => {
+    let level = match level_str {
+        none if none.is_ascii() => Trace,
+        trace if trace.eq_ignore_ascii_case("trace") => Trace,
+        debug if debug.eq_ignore_ascii_case("debug") => Debug,
+        info if info.eq_ignore_ascii_case("info") => Info,
+        warn if warn.eq_ignore_ascii_case("warn") => Warn,
+        error if error.eq_ignore_ascii_case("error") => Error,
+        off if off.eq_ignore_ascii_case("off") => Off,
+        disable
+            if disable.eq_ignore_ascii_case("disable")
+                || disable.eq_ignore_ascii_case("no")
+                || disable.eq_ignore_ascii_case("none")
+                || disable.eq_ignore_ascii_case("disabled") =>
+        {
             crate::warn!(
                 "Invalid log level \"{level_str}\", to disable logging set to \"off\". Defaulting to \"off\"."
             );

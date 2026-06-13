@@ -279,34 +279,36 @@ where
             "p" => {
                 let omit_end = ctx.next_element().map_or(true, |node| {
                     if let NodeData::Element { name, .. } = &node.data {
-                        matches!(
-                            name.local.as_ref().to_ascii_lowercase().as_str(),
-                            "address"
-                                | "article"
-                                | "aside"
-                                | "blockquote"
-                                | "div"
-                                | "dl"
-                                | "fieldset"
-                                | "footer"
-                                | "form"
-                                | "h1"
-                                | "h2"
-                                | "h3"
-                                | "h4"
-                                | "h5"
-                                | "h6"
-                                | "header"
-                                | "hr"
-                                | "menu"
-                                | "nav"
-                                | "ol"
-                                | "p"
-                                | "pre"
-                                | "section"
-                                | "table"
-                                | "ul"
-                        )
+                        const ELEMENTS: &'static [&'static str] = &[
+                            "address",
+                            "article",
+                            "aside",
+                            "blockquote",
+                            "div",
+                            "dl",
+                            "fieldset",
+                            "footer",
+                            "form",
+                            "h1",
+                            "h2",
+                            "h3",
+                            "h4",
+                            "h5",
+                            "h6",
+                            "header",
+                            "hr",
+                            "menu",
+                            "nav",
+                            "ol",
+                            "p",
+                            "pre",
+                            "section",
+                            "table",
+                            "ul",
+                        ];
+                        ELEMENTS
+                            .iter()
+                            .any(|element| element.eq_ignore_ascii_case(name.local.as_ref()))
                     } else {
                         false
                     }

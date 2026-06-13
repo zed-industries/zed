@@ -31,13 +31,15 @@ use crate::provider::open_ai::{
 };
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
-    match effort.trim().to_ascii_lowercase().as_str() {
-        "none" => Some(ReasoningEffort::None),
-        "minimal" => Some(ReasoningEffort::Minimal),
-        "low" => Some(ReasoningEffort::Low),
-        "medium" => Some(ReasoningEffort::Medium),
-        "high" => Some(ReasoningEffort::High),
-        "max" | "xhigh" => Some(ReasoningEffort::XHigh),
+    match effort.trim() {
+        none if none.eq_ignore_ascii_case("none") => Some(ReasoningEffort::None),
+        minalmal if minalmal.eq_ignore_ascii_case("minimal") => Some(ReasoningEffort::Minimal),
+        low if low.eq_ignore_ascii_case("low") => Some(ReasoningEffort::Low),
+        medium if medium.eq_ignore_ascii_case("medium") => Some(ReasoningEffort::Medium),
+        high if high.eq_ignore_ascii_case("high") => Some(ReasoningEffort::High),
+        max if max.eq_ignore_ascii_case("max") || max.eq_ignore_ascii_case("xhigh") => {
+            Some(ReasoningEffort::XHigh)
+        }
         _ => None,
     }
 }

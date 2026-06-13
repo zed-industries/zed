@@ -101,14 +101,19 @@ pub fn request_prediction_with_zeta(
                 .as_ref()
                 .and_then(|settings| match settings.prompt_format {
                     EditPredictionPromptFormat::Zeta(version) => Some(version),
-                    EditPredictionPromptFormat::Infer => {
-                        match settings.model.to_ascii_lowercase().as_str() {
-                            "zeta" | "zeta1" => Some(ZetaVersion::Zeta1),
-                            "zeta2" => Some(ZetaVersion::Zeta2),
-                            "zeta2.1" => Some(ZetaVersion::Zeta2_1),
-                            _ => None,
+                    EditPredictionPromptFormat::Infer => match settings.model.as_str() {
+                        zeta1
+                            if zeta1.eq_ignore_ascii_case("zeta")
+                                || zeta1.eq_ignore_ascii_case("zeta1") =>
+                        {
+                            Some(ZetaVersion::Zeta1)
                         }
-                    }
+                        zeta2 if zeta2.eq_ignore_ascii_case("zeta2") => Some(ZetaVersion::Zeta2),
+                        zeta2_1 if zeta2_1.eq_ignore_ascii_case("zeta2.1") => {
+                            Some(ZetaVersion::Zeta2_1)
+                        }
+                        _ => None,
+                    },
                     _ => None,
                 })
                 .unwrap_or_default();

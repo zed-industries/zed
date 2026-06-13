@@ -603,10 +603,10 @@ fn html_style_from_html_styles(styles: HashMap<String, String>) -> Option<HtmlHi
 }
 
 fn parse_text_align(value: &str) -> Option<TextAlign> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "left" => Some(TextAlign::Left),
-        "center" => Some(TextAlign::Center),
-        "right" => Some(TextAlign::Right),
+    match value.trim() {
+        left if left.eq_ignore_ascii_case("left") => Some(TextAlign::Left),
+        center if center.eq_ignore_ascii_case("center") => Some(TextAlign::Center),
+        right if right.eq_ignore_ascii_case("right") => Some(TextAlign::Right),
         _ => None,
     }
 }
