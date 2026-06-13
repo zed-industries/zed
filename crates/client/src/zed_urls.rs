@@ -69,10 +69,6 @@ pub fn skills_docs(cx: &App) -> String {
     format!("{docs_url}/ai/skills", docs_url = docs_url(cx))
 }
 
-pub fn rules_docs(cx: &App) -> String {
-    format!("{docs_url}/ai/rules", docs_url = docs_url(cx))
-}
-
 /// Returns the URL to Zed's ACP registry blog post.
 pub fn acp_registry_blog(cx: &App) -> String {
     format!(
