@@ -1020,6 +1020,25 @@ impl Element for TerminalElement {
 
                     let mut size = bounds.size;
                     size.width -= gutter;
+                    // For capped embedded terminals, grow the grid one row taller
+                    // than the cap so the trailing blank cursor line the grid keeps
+                    // after each newline sits just below the visible (clipped) box.
+                    // The element bounds stay at the cap height, so painting clips
+                    // that extra row and the box hugs the real output with no
+                    // padding above or below the text. Skipped on the alternate
+                    // screen, where a full-screen TUI owns the whole grid.
+                    if let TerminalMode::Embedded {
+                        max_lines: Some(max_lines),
+                    } = &self.mode
+                        && !self
+                            .terminal
+                            .read(cx)
+                            .last_content()
+                            .mode
+                            .contains(Modes::ALT_SCREEN)
+                    {
+                        size.height = px((*max_lines + 1) as f32 * line_height);
+                    }
                     let available_height = size.height;
 
                     // https://github.com/zed-industries/zed/issues/2750

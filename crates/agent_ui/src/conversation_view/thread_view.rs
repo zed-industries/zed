@@ -31,6 +31,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
 use settings::{update_settings_file, update_settings_file_with_completion};
+use terminal_view::ContentMode;
 use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
     Tab,
@@ -264,6 +265,33 @@ fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
     Some((tag, code))
 }
 
+/// Decides how a tool output / diff content block of `content_lines` lines
+/// should be height-capped, given the `agent.tool_output_max_lines` setting and
+/// whether the user has expanded the block.
+///
+/// Returns `None` when the block should render unconstrained (the cap is
+/// disabled with `0`, or the content already fits within the cap), or
+/// `Some(cap)` with the maximum number of lines to show. Expanding multiplies
+/// the cap by [`OUTPUT_BLOCK_EXPANDED_FACTOR`] so an expanded block is taller
+/// but still bounded rather than rendering the whole buffer.
+fn constrained_block_cap_lines(
+    max_lines: usize,
+    content_lines: usize,
+    is_expanded: bool,
+) -> Option<usize> {
+    if max_lines == 0 || content_lines <= max_lines {
+        return None;
+    }
+    Some(if is_expanded {
+        max_lines.saturating_mul(OUTPUT_BLOCK_EXPANDED_FACTOR)
+    } else {
+        max_lines
+    })
+}
+
+/// Factor by which expanding a constrained output block raises its line cap.
+const OUTPUT_BLOCK_EXPANDED_FACTOR: usize = 2;
+
 /// Walks `code` exactly once: for each line it validates and strips the
 /// `NNN\t` prefix, then pushes the line's content into the accumulating
 /// code buffer (with `\n` between lines, no trailing newline). Verifies that
@@ -463,6 +491,27 @@ mod numbered_code_block_tests {
     use super::*;
 
     #[test]
+    fn constrained_block_cap_lines_disabled_and_fitting_content_is_unconstrained() {
+        // A cap of 0 disables constraining entirely.
+        assert_eq!(constrained_block_cap_lines(0, 10_000, false), None);
+        // Content within the cap renders unconstrained, collapsed or expanded.
+        assert_eq!(constrained_block_cap_lines(24, 24, false), None);
+        assert_eq!(constrained_block_cap_lines(24, 10, true), None);
+    }
+
+    #[test]
+    fn constrained_block_cap_lines_caps_overflowing_content() {
+        // Collapsed: capped at exactly the configured number of lines.
+        assert_eq!(constrained_block_cap_lines(24, 25, false), Some(24));
+        assert_eq!(constrained_block_cap_lines(24, 100_000, false), Some(24));
+        // Expanded: a larger, still-bounded cap (never the whole buffer).
+        assert_eq!(
+            constrained_block_cap_lines(24, 100_000, true),
+            Some(24 * OUTPUT_BLOCK_EXPANDED_FACTOR)
+        );
+    }
+
+    #[test]
     fn parses_cat_numbered_markdown_code_block() {
         let parsed = parse_cat_numbered_markdown_code_block(
             "```rs zed/crates/example.rs\n     2\tfn main() {\n     3\t    println!(\"hi\");\n     4\t}\n```\n",
@@ -580,6 +629,16 @@ pub struct ThreadView {
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
     collapsed_sandbox_network_details: HashSet<acp::ToolCallId>,
+    pub expanded_thinking_blocks: HashSet<(usize, usize)>,
+    /// Tool output / diff content blocks (keyed by `(entry_ix, context_ix)`)
+    /// the user has expanded past the default height cap. Even when expanded,
+    /// the block stays height-capped and scrollable.
+    expanded_output_blocks: HashSet<(usize, usize)>,
+    /// Per-block vertical scroll handles (keyed by `(entry_ix, context_ix)`)
+    /// for constrained output/diff blocks, so each block keeps its own scroll
+    /// position and we can chain scrolling out to the thread at the block's
+    /// top/bottom edges.
+    output_block_scroll_handles: RefCell<HashMap<(usize, usize), ScrollHandle>>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -961,6 +1020,9 @@ impl ThreadView {
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
             collapsed_sandbox_network_details: HashSet::default(),
+            expanded_thinking_blocks: HashSet::default(),
+            expanded_output_blocks: HashSet::default(),
+            output_block_scroll_handles: RefCell::new(HashMap::default()),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -6567,6 +6629,163 @@ impl ThreadView {
         cx.notify();
     }
 
+    fn toggle_output_block_expansion(&mut self, key: (usize, usize), cx: &mut Context<Self>) {
+        if !self.expanded_output_blocks.remove(&key) {
+            self.expanded_output_blocks.insert(key);
+        }
+        cx.notify();
+    }
+
+    /// Bounds the rendered height of a tool output / diff content block so a
+    /// very large buffer never lays out at full height (which can severely
+    /// degrade scrolling/layout performance). When `content_lines` exceeds
+    /// `max_lines`, the block is capped at that many lines with a bottom
+    /// vignette and a centered chevron that expands it to a larger (still
+    /// bounded) height. A `max_lines` of 0, or content within the cap, renders
+    /// the element unchanged.
+    fn render_constrained_output_block(
+        &self,
+        content: AnyElement,
+        key: (usize, usize),
+        content_lines: usize,
+        max_lines: usize,
+        collapsed_top_offset_lines: usize,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let is_expanded = self.expanded_output_blocks.contains(&key);
+        let Some(cap_lines) = constrained_block_cap_lines(max_lines, content_lines, is_expanded)
+        else {
+            return content;
+        };
+        // Reserve a band for the bottom vignette/chevron on *top* of the
+        // visible cap, so the intended `cap_lines` of content stay fully
+        // visible above it. Without this, a small cap (e.g. a short diff) is
+        // almost entirely covered by the fixed-height vignette and the content
+        // is hidden behind the fade/chevron.
+        const VIGNETTE_LINES: f32 = 2.5;
+        let line_height = window.line_height();
+        let vignette_height = line_height * VIGNETTE_LINES;
+        // Nothing is actually hidden if the whole buffer fits within the cap
+        // plus the reserved band, so render it as-is. Keep the chrome when the
+        // user has explicitly expanded it, so they can still collapse.
+        let overflows = content_lines as f32 > cap_lines as f32 + VIGNETTE_LINES;
+        if !overflows && !is_expanded {
+            return content;
+        }
+        let max_height = line_height * (cap_lines as f32 + VIGNETTE_LINES);
+        // When collapsed, anchor the preview to a specific row (diffs use this
+        // to skip leading context so the change is visible) rather than always
+        // starting at row 0. Clamp so we never scroll past the end of the
+        // content into blank space.
+        let visible_lines = cap_lines as f32 + VIGNETTE_LINES;
+        let max_offset_lines = (content_lines as f32 - visible_lines).max(0.);
+        let collapsed_offset =
+            line_height * (collapsed_top_offset_lines as f32).min(max_offset_lines);
+        // Fade toward the editor background (forced fully opaque so the vignette
+        // stays visible even with translucent/transparent themes where the
+        // panel background has alpha).
+        let vignette_bg = cx.theme().colors().editor_background;
+        let content_id = SharedString::from(format!("tool-output-block-{}-{}", key.0, key.1));
+        let toggle_id = SharedString::from(format!("tool-output-toggle-{}-{}", key.0, key.1));
+        let toggle_icon = if is_expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+        let scroll_handle = self
+            .output_block_scroll_handles
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(ScrollHandle::new)
+            .clone();
+
+        div()
+            .relative()
+            .w_full()
+            .child(
+                div()
+                    .id(content_id)
+                    .max_h(max_height)
+                    .overflow_hidden()
+                    // Only the expanded state scrolls. While expanded we drive
+                    // the scroll ourselves and occlude so the thread list
+                    // behind the block doesn't also scroll (its wheel handler
+                    // only checks hit-test membership, not propagation), and at
+                    // the block's top/bottom edges we carry the scroll out to
+                    // the thread. Collapsed blocks aren't scrollable, so the
+                    // wheel just scrolls the thread.
+                    .when(is_expanded, |this| {
+                        this.track_scroll(&scroll_handle)
+                            .occlude()
+                            .on_scroll_wheel(cx.listener({
+                                let scroll_handle = scroll_handle.clone();
+                                move |this, event: &gpui::ScrollWheelEvent, window, cx| {
+                                    let delta = event.delta.pixel_delta(window.line_height()).y;
+                                    if delta == px(0.) {
+                                        return;
+                                    }
+                                    let offset = scroll_handle.offset();
+                                    let max_y = scroll_handle.max_offset().y;
+                                    let new_y = (offset.y + delta).clamp(-max_y, px(0.));
+                                    if new_y != offset.y {
+                                        // The block can still move: scroll it.
+                                        scroll_handle.set_offset(gpui::point(offset.x, new_y));
+                                    } else {
+                                        // At the top/bottom edge: carry the
+                                        // scroll over to the surrounding thread.
+                                        this.list_state.scroll_by(-delta);
+                                    }
+                                    cx.notify();
+                                }
+                            }))
+                    })
+                    .child(
+                        div()
+                            .w_full()
+                            .when(!is_expanded && collapsed_offset > px(0.), |this| {
+                                this.mt(-collapsed_offset)
+                            })
+                            .child(content),
+                    ),
+            )
+            .child(
+                // A vertical vignette across the bottom of the block fades the
+                // buffer out, with a transparent-background chevron centered on
+                // top of it that flips to reflect the collapsed/expanded state.
+                h_flex()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(vignette_height)
+                    .pb_1()
+                    .justify_center()
+                    .items_end()
+                    .when(overflows, |this| {
+                        this.bg(linear_gradient(
+                            180.,
+                            linear_color_stop(vignette_bg.opacity(0.), 0.),
+                            linear_color_stop(vignette_bg.opacity(1.), 1.),
+                        ))
+                    })
+                    .child(
+                        IconButton::new(toggle_id, toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text(if is_expanded {
+                                "Collapse"
+                            } else {
+                                "Expand"
+                            }))
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.toggle_output_block_expansion(key, cx);
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_thinking_block(
         &self,
         entry_ix: usize,
@@ -6946,6 +7165,7 @@ impl ThreadView {
         &self,
         active_session_id: &acp::SessionId,
         entry_ix: usize,
+        context_ix: usize,
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
@@ -7200,14 +7420,77 @@ impl ThreadView {
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
-                            let element = if terminal_view
-                                .read(cx)
-                                .content_mode(window, cx)
-                                .is_scrollable()
-                            {
-                                div().h_72().child(terminal_view).into_any_element()
-                            } else {
-                                terminal_view.into_any_element()
+                            let content_mode = terminal_view.read(cx).content_mode(window, cx);
+                            let block_key = (entry_ix, context_ix);
+                            let element = match content_mode {
+                                ContentMode::Scrollable => {
+                                    div().h_72().child(terminal_view).into_any_element()
+                                }
+                                // The terminal natively renders the most recent
+                                // `displayed_lines` (its embedded cap), which is
+                                // gap-free and accurate even mid-stream. Show a
+                                // chevron below to expand/collapse the cap when
+                                // there's more output than is shown.
+                                ContentMode::Inline {
+                                    displayed_lines,
+                                    total_lines,
+                                } => {
+                                    let output_expanded =
+                                        self.expanded_output_blocks.contains(&block_key);
+                                    let show_toggle =
+                                        total_lines > displayed_lines || output_expanded;
+                                    let toggle = show_toggle.then(|| {
+                                        let terminal_view = terminal_view.clone();
+                                        h_flex().w_full().justify_center().pt_1().child(
+                                            IconButton::new(
+                                                SharedString::from(format!(
+                                                    "terminal-output-toggle-{}-{}",
+                                                    entry_ix, context_ix
+                                                )),
+                                                if output_expanded {
+                                                    IconName::ChevronUp
+                                                } else {
+                                                    IconName::ChevronDown
+                                                },
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .tooltip(Tooltip::text(if output_expanded {
+                                                "Collapse"
+                                            } else {
+                                                "Expand"
+                                            }))
+                                            .on_click(
+                                                cx.listener(move |this, _, _window, cx| {
+                                                    let now_expanded = !this
+                                                        .expanded_output_blocks
+                                                        .contains(&block_key);
+                                                    this.toggle_output_block_expansion(
+                                                        block_key, cx,
+                                                    );
+                                                    let base = AgentSettings::get_global(cx)
+                                                        .tool_output_max_lines;
+                                                    let cap = if now_expanded {
+                                                        base.saturating_mul(2)
+                                                    } else {
+                                                        base
+                                                    };
+                                                    terminal_view.update(cx, |tv, cx| {
+                                                        tv.set_embedded_mode(
+                                                            (cap != 0).then_some(cap),
+                                                            cx,
+                                                        );
+                                                    });
+                                                }),
+                                            ),
+                                        )
+                                    });
+                                    v_flex()
+                                        .w_full()
+                                        .child(terminal_view)
+                                        .children(toggle)
+                                        .into_any_element()
+                                }
                             };
 
                             div()
@@ -7392,18 +7675,24 @@ impl ThreadView {
                     ),
                 )
             } else if has_terminals {
-                this.children(tool_call.terminals().map(|terminal| {
-                    self.render_terminal_tool_call(
-                        active_session_id,
-                        entry_ix,
-                        terminal,
-                        tool_call,
-                        focus_handle,
-                        layout,
-                        window,
-                        cx,
-                    )
-                }))
+                this.children(
+                    tool_call
+                        .terminals()
+                        .enumerate()
+                        .map(|(terminal_ix, terminal)| {
+                            self.render_terminal_tool_call(
+                                active_session_id,
+                                entry_ix,
+                                terminal_ix,
+                                terminal,
+                                tool_call,
+                                focus_handle,
+                                layout,
+                                window,
+                                cx,
+                            )
+                        }),
+                )
             } else {
                 this.child(self.render_tool_call(
                     active_session_id,
@@ -9186,12 +9475,13 @@ impl ThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => {
-                self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
-            }
+            ToolCallContent::Diff(diff) => self.render_diff_editor(
+                entry_ix, context_ix, diff, tool_call, has_failed, window, cx,
+            ),
             ToolCallContent::Terminal(terminal) => self.render_terminal_tool_call(
                 session_id,
                 entry_ix,
+                context_ix,
                 terminal,
                 tool_call,
                 focus_handle,
@@ -9277,9 +9567,11 @@ impl ThreadView {
     fn render_diff_editor(
         &self,
         entry_ix: usize,
+        context_ix: usize,
         diff: &Entity<acp_thread::Diff>,
         tool_call: &ToolCall,
         has_failed: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let tool_progress = matches!(
@@ -9307,7 +9599,49 @@ impl ThreadView {
                     .border_color(self.tool_card_border_color(cx))
             })
             .child(if let Some(editor) = revealed_diff_editor {
-                editor.into_any_element()
+                let content_lines = diff
+                    .read(cx)
+                    .multibuffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .max_row()
+                    .0 as usize
+                    + 1;
+                // Size the diff preview proportionally to its length rather
+                // than with the flat output cap: a few lines of headroom plus a
+                // tenth of the diff, so small diffs show (almost) fully and
+                // large diffs grow slowly. `tool_output_max_lines == 0` still
+                // disables capping entirely.
+                let max_lines = if AgentSettings::get_global(cx).tool_output_max_lines == 0 {
+                    0
+                } else {
+                    3 + content_lines / 10
+                };
+                // Anchor the collapsed preview to the first change so the diff
+                // is actually visible: the multibuffer only contains hunks, but
+                // each one carries leading context (and the diff renders deleted
+                // rows), which with a small cap would otherwise fill the window
+                // with unchanged lines. Everything above the first hunk is plain
+                // context (1:1 display mapping), so its multibuffer row is a good
+                // anchor; keep one line of context above the change.
+                let collapsed_top_offset_lines = diff
+                    .read(cx)
+                    .multibuffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .diff_hunks()
+                    .next()
+                    .map_or(0, |hunk| hunk.row_range.start.0 as usize)
+                    .saturating_sub(1);
+                self.render_constrained_output_block(
+                    editor.into_any_element(),
+                    (entry_ix, context_ix),
+                    content_lines,
+                    max_lines,
+                    collapsed_top_offset_lines,
+                    window,
+                    cx,
+                )
             } else if tool_progress && self.as_native_connection(cx).is_some() {
                 self.render_diff_loading(cx)
             } else {
@@ -9327,6 +9661,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let markdown_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+        let content_lines = markdown.read(cx).source().lines().count();
         let output = self
             .render_numbered_read_file_output(
                 markdown.clone(),
@@ -9340,6 +9675,15 @@ impl ThreadView {
                 self.render_markdown(markdown, markdown_style, cx)
                     .into_any()
             });
+        let output = self.render_constrained_output_block(
+            output,
+            (entry_ix, context_ix),
+            content_lines,
+            AgentSettings::get_global(cx).tool_output_max_lines,
+            0,
+            window,
+            cx,
+        );
 
         v_flex()
             .gap_2()
