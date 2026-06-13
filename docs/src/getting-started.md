@@ -44,7 +44,7 @@ The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If y
 
 ### Panel Layout
 
-Use **Zed > Panel Layout > Agentic** when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Zed > Panel Layout > Classic** to restore the editor-oriented layout.
+Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
 
 ### 3. Configure Your Editor
 

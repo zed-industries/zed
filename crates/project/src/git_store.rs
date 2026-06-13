@@ -745,7 +745,14 @@ impl GitStore {
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
-                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+                // The folder opened in Zed isn't necessarily the repo root; it may be
+                // a subdirectory of it, e.g. opening `~/code/myrepo/backend` when the
+                // repo lives at `~/code/myrepo`. So match any repo whose work directory
+                // contains the folder. Nested repos can produce multiple matches, e.g.
+                // opening `~/code/myrepo/vendor/lib` where `vendor/lib` is a submodule
+                // matches both `myrepo` and the submodule; `max_by_key` then picks the
+                // innermost match (the submodule), which the folder actually belongs to.
+                worktree_abs_path.starts_with(repo_path.as_ref())
             })
             .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
             .map(|repo| repo.read(cx).id)

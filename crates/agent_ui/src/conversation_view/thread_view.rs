@@ -1942,12 +1942,19 @@ impl ThreadView {
             //
             // If editing the prompt that generated the edits, they are auto-rejected
             // through the `rewind` function in the `acp_thread`.
+            //
+            // Subagent edits never show up as diffs in the parent thread's entries (they
+            // are only forwarded to the parent's action log), so treat any earlier
+            // subagent tool call as potentially having edits. Keeping all edits is a
+            // no-op when the subagent didn't make any.
             let has_earlier_edits = thread.read_with(cx, |thread, _| {
-                thread
-                    .entries()
-                    .iter()
-                    .take(entry_ix)
-                    .any(|entry| entry.diffs().next().is_some())
+                thread.entries().iter().take(entry_ix).any(|entry| {
+                    entry.diffs().next().is_some()
+                        || matches!(
+                            entry,
+                            AgentThreadEntry::ToolCall(tool_call) if tool_call.is_subagent()
+                        )
+                })
             });
 
             if has_earlier_edits {
@@ -2155,6 +2162,20 @@ impl ThreadView {
 
         cx.notify();
         true
+    }
+
+    fn handle_message_editor_move_up(
+        &mut self,
+        _: &zed_actions::editor::MoveUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.message_editor.read(cx).is_empty(cx) || self.local_queued_messages.is_empty() {
+            cx.propagate();
+            return;
+        }
+        let last_index = self.local_queued_messages.len() - 1;
+        self.move_queued_message_to_main_editor(last_index, None, None, window, cx);
     }
 
     // editor methods
@@ -2824,6 +2845,10 @@ impl ThreadView {
         let queue_expanded = self.queue_expanded;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        // Drop shadows have no opaque surface to blend into on a transparent
+        // window, so they render as a dark halo; only apply them when opaque.
+        let opaque_window =
+            cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
         h_flex()
             .w_full()
@@ -2841,13 +2866,12 @@ impl ThreadView {
                     .border_b_0()
                     .border_color(cx.theme().colors().border)
                     .rounded_t_md()
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(0.12),
-                        offset: point(px(1.), px(-1.)),
-                        blur_radius: px(2.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .when(opaque_window, |this| {
+                        this.shadow(vec![
+                            gpui::BoxShadow::new(px(1.), px(-1.), gpui::black().opacity(0.12))
+                                .blur_radius(px(2.)),
+                        ])
+                    })
                     .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
                         has_awaiting_permission
@@ -4029,6 +4053,7 @@ impl ThreadView {
             .p_2()
             .bg(editor_bg_color)
             .justify_center()
+            .on_action(cx.listener(Self::handle_message_editor_move_up))
             .map(|this| {
                 if has_messages {
                     this.on_action(cx.listener(Self::expand_message_editor))
@@ -4651,6 +4676,24 @@ impl ThreadView {
             return None;
         }
 
+        // A toggle would be dishonest for models that always think: only
+        // offer the effort selector.
+        if !model.supports_disabling_thinking() {
+            let effort_levels = model.supported_effort_levels();
+            if effort_levels.is_empty() {
+                return None;
+            }
+            return Some(
+                self.render_effort_selector(
+                    effort_levels,
+                    thread.thinking_effort().cloned(),
+                    true,
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+
         let thinking = thread.thinking_enabled();
 
         let (tooltip_label, icon, color) = if thinking {
@@ -4715,6 +4758,7 @@ impl ThreadView {
         let right_btn = self.render_effort_selector(
             model.supported_effort_levels(),
             thread.thinking_effort().cloned(),
+            false,
             cx,
         );
 
@@ -4729,6 +4773,7 @@ impl ThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
+        standalone: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak_self = cx.weak_entity();
@@ -4794,12 +4839,27 @@ impl ThreadView {
             }
         });
 
-        PopoverMenu::new("effort-selector")
-            .trigger_with_tooltip(
-                ButtonLike::new_rounded_right("effort-selector-trigger")
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        let trigger = if standalone {
+            ButtonLike::new("effort-selector-trigger").child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::ThinkingMode)
+                            .size(IconSize::Small)
+                            .color(label_color),
+                    )
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+            )
+        } else {
+            ButtonLike::new_rounded_right("effort-selector-trigger")
+                .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+        };
+
+        PopoverMenu::new("effort-selector")
+            .trigger_with_tooltip(
+                trigger.selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 tooltip,
             )
             .menu(move |window, cx| {
@@ -5446,6 +5506,9 @@ impl ThreadView {
                 let editing = self.editing_message == Some(entry_ix);
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
+                // Drop shadows render as a dark halo on transparent windows.
+                let opaque_window = cx.theme().window_background_appearance()
+                    == gpui::WindowBackgroundAppearance::Opaque;
 
                 let has_checkpoint_button = message
                     .checkpoint
@@ -5504,7 +5567,9 @@ impl ThreadView {
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
                                     .when(is_indented, |this| {
-                                        this.py_2().px_2().shadow_sm()
+                                        this.py_2().px_2().when(opaque_window, |this| {
+                                            this.shadow_sm()
+                                        })
                                     })
                                     .border_color(cx.theme().colors().border)
                                     .map(|this| {
@@ -5520,9 +5585,10 @@ impl ThreadView {
                                         if editing && !editor_focus {
                                             return this.border_dashed()
                                         }
-                                        this.shadow_md().hover(|s| {
-                                            s.border_color(focus_border.opacity(0.8))
-                                        })
+                                        this.when(opaque_window, |this| this.shadow_md())
+                                            .hover(|s| {
+                                                s.border_color(focus_border.opacity(0.8))
+                                            })
                                     })
                                     .text_xs()
                                     .child(editor.clone().into_any_element())
@@ -10532,7 +10598,12 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        let model_allows_disabling = thread
+                            .model()
+                            .is_none_or(|model| model.supports_disabling_thinking());
+                        if model_allows_disabling {
+                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        }
                     });
                 }
             }))

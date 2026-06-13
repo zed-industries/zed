@@ -86,6 +86,13 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether thinking can be turned off entirely for this model. Some
+    /// models (e.g. Claude Fable 5) always think and cannot honor an "off"
+    /// request. Only meaningful when `supports_thinking` returns `true`.
+    fn supports_disabling_thinking(&self) -> bool {
+        true
+    }
+
     fn supports_fast_mode(&self) -> bool {
         false
     }
