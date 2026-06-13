@@ -26,7 +26,7 @@ use std::{
     cell::{Cell, RefCell},
 };
 use std::{ops::Range, sync::Arc, time::Duration};
-use std::{path::PathBuf, rc::Rc};
+
 use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
@@ -807,9 +807,12 @@ pub fn open_markdown_url(
         && uri.scheme() == "file"
         && let Some(workspace) = workspace
     {
+        let Ok(path) = uri.to_file_path() else {
+            return;
+        };
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
-                PathBuf::from(uri.path()),
+                path,
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
