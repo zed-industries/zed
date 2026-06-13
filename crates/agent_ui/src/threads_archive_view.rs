@@ -307,16 +307,14 @@ impl ThreadsArchiveView {
                 if let Some(positions) = fuzzy_match_positions(&query, title) {
                     positions
                 } else {
-                    // Title didn't match — also try matching the project name
+                    // If title didn't match, also try matching the project name
                     // (the basename of any of the thread's worktree paths), so
                     // typing a project name surfaces its threads here too.
                     let worktree_matched = session.folder_paths().paths().iter().any(|p| {
                         p.as_path()
                             .file_name()
                             .and_then(|name| name.to_str())
-                            .is_some_and(|name| {
-                                fuzzy_match_positions(&query, name).is_some()
-                            })
+                            .is_some_and(|name| fuzzy_match_positions(&query, name).is_some())
                     });
                     if !worktree_matched {
                         continue;
