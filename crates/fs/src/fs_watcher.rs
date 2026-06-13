@@ -526,7 +526,11 @@ struct WatcherRegistrationState {
 }
 
 struct PathRegistrationState {
-    count: u32,
+    /// Ids of every `add` call that resolved to this watched path. The OS watch
+    /// is only torn down once the last of these is removed. Indexing dispatch by
+    /// path means an event can be routed to its registrations without scanning
+    /// every registration in the process.
+    registration_ids: Vec<WatcherRegistrationId>,
     has_os_watcher: bool,
 }
 
@@ -560,13 +564,15 @@ impl WatcherState {
     ) -> Option<(Arc<std::path::Path>, WatcherMode)> {
         let registration_state = self.watchers.remove(&id)?;
         let path_registrations = self.path_registrations(registration_state.mode);
-        let count = path_registrations.get_mut(&registration_state.path)?;
-        count.count -= 1;
-        if count.count != 0 {
+        let path_state = path_registrations.get_mut(&registration_state.path)?;
+        path_state
+            .registration_ids
+            .retain(|&existing| existing != id);
+        if !path_state.registration_ids.is_empty() {
             return None;
         }
 
-        let was_actually_watched = count.has_os_watcher;
+        let was_actually_watched = path_state.has_os_watcher;
         path_registrations.remove(&registration_state.path);
 
         was_actually_watched.then_some((registration_state.path, registration_state.mode))
@@ -588,6 +594,10 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     }
 }
 
+/// An event delivered by an OS watcher, tagged with the mode it came from so the
+/// dispatch thread can route it to the right set of registrations.
+type DispatchEvent = (WatcherMode, Result<notify::Event, notify::Error>);
+
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
 
@@ -595,6 +605,13 @@ pub struct GlobalWatcher {
     // two mutexes because calling watcher.add triggers watcher.event, which needs watchers.
     native_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
     poll_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
+
+    // OS watcher callbacks fan an event out to potentially tens of thousands of
+    // registrations. Doing that work on the thread that reads the OS watcher
+    // means the kernel's bounded event queue (e.g. inotify's `max_queued_events`)
+    // can overflow during bursts before we drain it, forcing full rescans. We
+    // instead hand events to a dedicated dispatch thread so reading stays fast.
+    event_tx: async_channel::Sender<DispatchEvent>,
 }
 
 impl GlobalWatcher {
@@ -643,9 +660,9 @@ impl GlobalWatcher {
         state
             .path_registrations(mode)
             .entry(path)
-            .and_modify(|registration| registration.count += 1)
-            .or_insert(PathRegistrationState {
-                count: 1,
+            .and_modify(|registration| registration.registration_ids.push(id))
+            .or_insert_with(|| PathRegistrationState {
+                registration_ids: vec![id],
                 has_os_watcher: !path_already_covered,
             });
 
@@ -786,28 +803,49 @@ pub fn poll_interval() -> Duration {
 static FS_WATCHER_INSTANCE: OnceLock<GlobalWatcher> = OnceLock::new();
 
 fn global_watcher() -> &'static GlobalWatcher {
-    FS_WATCHER_INSTANCE.get_or_init(|| GlobalWatcher {
-        state: Mutex::new(WatcherState {
-            watchers: Default::default(),
-            native_path_registrations: Default::default(),
-            poll_path_registrations: Default::default(),
-            cooldown_until: None,
-            last_registration: Default::default(),
-        }),
-        native_watcher: Mutex::new(None),
-        poll_watcher: Mutex::new(None),
+    FS_WATCHER_INSTANCE.get_or_init(|| {
+        let (event_tx, event_rx) = async_channel::unbounded::<DispatchEvent>();
+        // Drain OS watcher events on a dedicated thread, separate from the threads
+        // that read the OS watchers, so reading (and thus emptying the kernel
+        // queue) is never blocked by the per-event fan-out to registrations. By
+        // the time any event arrives the `OnceLock` is initialized, so the
+        // `global_watcher()` call below resolves without recursing.
+        std::thread::Builder::new()
+            .name("fs-watcher-dispatch".to_owned())
+            .spawn(move || {
+                while let Ok((mode, event)) = event_rx.recv_blocking() {
+                    handle_event(global_watcher(), mode, event);
+                }
+            })
+            .expect("failed to spawn fs watcher dispatch thread");
+        GlobalWatcher {
+            state: Mutex::new(WatcherState {
+                watchers: Default::default(),
+                native_path_registrations: Default::default(),
+                poll_path_registrations: Default::default(),
+                cooldown_until: None,
+                last_registration: Default::default(),
+            }),
+            native_watcher: Mutex::new(None),
+            poll_watcher: Mutex::new(None),
+            event_tx,
+        }
     })
 }
 
 fn handle_native_event(event: Result<notify::Event, notify::Error>) {
-    handle_event(WatcherMode::Native, event);
+    forward_event(WatcherMode::Native, event);
 }
 
 fn handle_poll_event(event: Result<notify::Event, notify::Error>) {
-    handle_event(WatcherMode::Poll, event);
+    forward_event(WatcherMode::Poll, event);
 }
 
-fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
+/// Runs on the OS watcher's reading thread. Drops the high-volume `Access` events
+/// here so they never reach the dispatch thread, then hands everything else off
+/// without blocking on the fan-out. A send only fails once the dispatch thread is
+/// gone during shutdown, where there is nothing left to do.
+fn forward_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
     if matches!(
         event,
         Ok(Event {
@@ -817,35 +855,80 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
     ) {
         return;
     }
+    global_watcher().event_tx.try_send((mode, event)).ok();
+}
+
+fn handle_event(
+    watcher: &GlobalWatcher,
+    mode: WatcherMode,
+    event: Result<notify::Event, notify::Error>,
+) {
+    let event = match event {
+        Ok(event) => event,
+        Err(error) => {
+            log::warn!("watcher error for {mode:?}: {error}");
+            return;
+        }
+    };
 
     log::trace!("global handle event for {mode:?}: {event:?}");
 
     let callbacks = {
-        let state = global_watcher().state.lock();
-        state
-            .watchers
-            .values()
-            .filter(|registration| registration.mode == mode)
-            .map(|registration| registration.callback.clone())
-            .collect::<Vec<_>>()
+        let state = watcher.state.lock();
+        let path_registrations = match mode {
+            WatcherMode::Native => &state.native_path_registrations,
+            WatcherMode::Poll => &state.poll_path_registrations,
+        };
+        if event.need_rescan() {
+            // A rescan event (e.g. an inotify queue overflow) carries no paths and
+            // means we may have missed anything, so every registration of this mode
+            // needs to resync. This broadcast is the one O(registrations) path, and
+            // it only runs when sync was already lost.
+            let callbacks = state
+                .watchers
+                .values()
+                .filter(|registration| registration.mode == mode)
+                .map(|registration| registration.callback.clone())
+                .collect::<Vec<_>>();
+            log::warn!(
+                "filesystem watcher lost sync for {mode:?}; scheduling rescans for {} registrations",
+                callbacks.len()
+            );
+            callbacks
+        } else {
+            matching_registration_ids(path_registrations, &event)
+                .into_iter()
+                .filter_map(|id| state.watchers.get(&id))
+                .map(|registration| registration.callback.clone())
+                .collect::<Vec<_>>()
+        }
     };
 
-    match event {
-        Ok(event) => {
-            if event.need_rescan() {
-                log::warn!(
-                    "filesystem watcher lost sync for {mode:?}; scheduling rescans for {} registrations",
-                    callbacks.len()
-                );
+    for callback in callbacks {
+        callback(&event);
+    }
+}
+
+/// Collects the registrations an event should be delivered to. A registration
+/// watches a single directory, so an event belongs to it when that directory is
+/// the event path or an ancestor of it (the latter covers recursive watchers).
+/// This is equivalent to the previous behavior of calling every registration and
+/// having each one filter by `starts_with`, but without the linear scan.
+fn matching_registration_ids(
+    path_registrations: &HashMap<Arc<std::path::Path>, PathRegistrationState>,
+    event: &notify::Event,
+) -> Vec<WatcherRegistrationId> {
+    let mut ids = Vec::new();
+    for path in &event.paths {
+        for ancestor in path.ancestors() {
+            if let Some(registration) = path_registrations.get(ancestor) {
+                ids.extend_from_slice(&registration.registration_ids);
             }
-            for callback in callbacks {
-                callback(&event);
-            }
-        }
-        Err(error) => {
-            log::warn!("watcher error for {mode:?}: {error}");
         }
     }
+    ids.sort_unstable_by_key(|id| id.0);
+    ids.dedup();
+    ids
 }
 
 #[cfg(test)]
@@ -909,6 +992,9 @@ mod tests {
         native_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
         poll_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
     ) -> GlobalWatcher {
+        // Tests drive `handle_event` directly rather than through the OS watchers,
+        // so the dispatch channel is never sent on; the receiver can drop here.
+        let (event_tx, _) = async_channel::unbounded();
         GlobalWatcher {
             state: Mutex::new(WatcherState {
                 watchers: Default::default(),
@@ -927,6 +1013,7 @@ mod tests {
                     Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
                 }),
             ),
+            event_tx,
         }
     }
 
@@ -985,6 +1072,85 @@ mod tests {
 
         let native_backend = native_backend.lock();
         assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    fn modify_event(path: &str) -> notify::Event {
+        notify::Event {
+            paths: vec![PathBuf::from(path)],
+            ..notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+        }
+    }
+
+    fn recording_watcher() -> (GlobalWatcher, Arc<Mutex<Vec<String>>>) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(backend), None);
+        let fired = Arc::new(Mutex::new(Vec::new()));
+        for dir in ["/repo/a", "/repo/a/nested", "/repo/b"] {
+            let fired = fired.clone();
+            let label = dir.to_owned();
+            watcher
+                .add(
+                    Arc::<Path>::from(Path::new(dir)),
+                    WatcherMode::Native,
+                    move |_| {
+                        fired.lock().push(label.clone());
+                    },
+                )
+                .expect("add watch")
+                .expect("watch registered");
+        }
+        (watcher, fired)
+    }
+
+    #[test]
+    fn event_dispatches_only_to_registrations_covering_its_path() {
+        let (watcher, fired) = recording_watcher();
+
+        handle_event(
+            &watcher,
+            WatcherMode::Native,
+            Ok(modify_event("/repo/a/file.txt")),
+        );
+
+        // Only the directory containing the file resolves; siblings stay untouched.
+        assert_eq!(*fired.lock(), vec!["/repo/a".to_owned()]);
+    }
+
+    #[test]
+    fn event_dispatches_to_every_ancestor_registration() {
+        let (watcher, fired) = recording_watcher();
+
+        handle_event(
+            &watcher,
+            WatcherMode::Native,
+            Ok(modify_event("/repo/a/nested/file.txt")),
+        );
+
+        // Both the immediate directory and the ancestor watching it resync, each
+        // exactly once, matching the previous broadcast-and-filter behavior.
+        let mut got = fired.lock().clone();
+        got.sort();
+        assert_eq!(got, vec!["/repo/a".to_owned(), "/repo/a/nested".to_owned()]);
+    }
+
+    #[test]
+    fn rescan_event_broadcasts_to_all_registrations() {
+        let (watcher, fired) = recording_watcher();
+
+        let rescan = notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        handle_event(&watcher, WatcherMode::Native, Ok(rescan));
+
+        // A pathless rescan can have missed anything, so every registration resyncs.
+        let mut got = fired.lock().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "/repo/a".to_owned(),
+                "/repo/a/nested".to_owned(),
+                "/repo/b".to_owned(),
+            ]
+        );
     }
 
     #[test]
