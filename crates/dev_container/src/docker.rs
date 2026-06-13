@@ -275,12 +275,19 @@ impl Docker {
 #[async_trait]
 impl DockerClient for Docker {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
-        // Try to pull the image, continue on failure; Image may be local only, id a reference to a running container
+        // Always try inspect first — avoid pulling unless necessary.
+        let command = self.create_docker_inspect(id);
+        match evaluate_json_command::<DockerInspect>(command).await {
+            Ok(Some(docker_inspect)) => return Ok(docker_inspect),
+            Ok(None) | Err(_) => {}
+        }
+
+        // Inspect failed — try pulling and retry.
         self.pull_image(id).await.ok();
 
         let command = self.create_docker_inspect(id);
-
-        let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await?
+        let Some(docker_inspect): Option<DockerInspect> =
+            evaluate_json_command(command).await?
         else {
             log::error!("Docker inspect produced no deserializable output");
             return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
