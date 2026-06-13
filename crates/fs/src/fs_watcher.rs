@@ -482,6 +482,9 @@ struct WatcherState {
     ///
     /// The backend may or may not be watching them currently.
     poll_path_registrations: BTreeMap<Arc<Path>, PathRegistrationState>,
+    /// Paths that have been registered or unregistered since the last reconciliation.
+    ///
+    /// We track this as an optimization, so reconciliation doesn't have to scan all the registrations every time.
     dirty_paths: Vec<(WatcherMode, Arc<Path>)>,
     pending_flushes: Vec<oneshot::Sender<()>>,
     pending_health_checks: Vec<oneshot::Sender<anyhow::Result<()>>>,
@@ -548,6 +551,15 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     }
 }
 
+/// `GlobalWatcher` is the low-level manager of filesystem watching. There is one per `RealFs`.
+///
+/// `GlobalWatcher` talks to a `WatchBackend`, which handles the OS-specific details of filesystem watching.
+/// In production, we use the `notify` crate for this. The job of `GlobalWatcher` is to convey watch and unwatch
+/// requests from callers across Zed to the `WatchBackend` To do this, it tracks which paths are currently registered
+/// for watching, and when this set changes, invokes the `Reconciler` to make appropriate calls into the `WatchBackend`.
+///
+/// The split between `GlobalWatcher` and `Reconciler` allows the `Reconciler` to run in the background,
+/// and to make fewer calls into the backend by coalescing changes to the set of watched paths.
 #[derive(Clone)]
 pub(crate) struct GlobalWatcher {
     state: Arc<Mutex<WatcherState>>,
@@ -680,11 +692,11 @@ struct BackendState {
     mode: WatcherMode,
     executor: BackgroundExecutor,
     backend: Option<Box<dyn WatchBackend>>,
-    /// Paths that the backend is currently successfully watching.
+    /// Paths that we have successfully asked the backend to watch.
     applied_paths: HashSet<Arc<Path>>,
-    /// Paths that might still be registered in the backend without being confirmed-applied: those left behind by a failed unwatch (removal may not have taken effect) and those a dead event stream left suspect. Keeps the upper bound `B ⊆ applied ∪ suspect` honest.
+    /// Paths that we asked the backend to watch at some point, that now might or might not be watched because of a backend error.
     suspect_paths: HashSet<Arc<Path>>,
-    /// Paths that we were asked to watch, but that haven't been successfully registered with the backend yet.
+    /// Paths that were registered and that we intend to ask the backend to watch in the future.
     deferred_paths: HashSet<Arc<Path>>,
     cooldown_until: Option<Instant>,
 }
@@ -814,40 +826,30 @@ impl BackendState {
         let mut to_unwatch = Vec::new();
         {
             let watcher_state = watcher_state.lock();
-            let desired = watcher_state.path_registrations(self.mode);
+            let registrations = watcher_state.path_registrations(self.mode);
             for path in affected_paths {
-                let in_desired = desired.contains_key(&path);
-                // `suspect` is deliberately *not* cleared here: it witnesses the
-                // upper bound `B ⊆ applied ∪ suspect`, and a path can stay leaked in
-                // the backend after it leaves desired (e.g. a stream-restart path
-                // unregistered before it recovers). Dropping it while it is still in
-                // `B` would violate the bound, so we keep tracking the leak.
-                let covered = recursive_mode(self.mode) == notify::RecursiveMode::Recursive
+                let is_desired = registrations.contains_key(&path);
+                let is_covered = recursive_mode(self.mode) == notify::RecursiveMode::Recursive
                     && path
                         .ancestors()
                         .skip(1)
-                        .any(|ancestor| desired.contains_key(ancestor));
-                let should_watch = in_desired && !covered;
+                        .any(|ancestor| registrations.contains_key(ancestor));
+                let should_watch = is_desired && !is_covered;
                 if !should_watch {
-                    // `deferred` is pure intent to *directly* watch a path, so a
-                    // path that is no longer eligible for a direct watch (covered
-                    // by an ancestor or unregistered) has no live intent and must
-                    // be dropped — otherwise it lingers and, if later promoted,
-                    // emits a spurious recovery rescan.
                     self.deferred_paths.remove(&path);
                 }
-                // Intent invariant: `deferred` only ever holds paths still eligible
-                // for a direct watch (desired and not covered).
-                debug_assert!(
-                    should_watch || !self.deferred_paths.contains(&path),
-                    "{:?} keeps a covered or unregistered path queued for a watch: {:?}",
-                    self.mode,
-                    path,
-                );
-                let applied = self.applied_paths.contains(&path);
-                if should_watch && !applied {
+                if cfg!(any(test, debug_assertions)) {
+                    assert!(
+                        should_watch || !self.deferred_paths.contains(&path),
+                        "{:?} keeps a covered or unregistered path queued for a watch: {:?}",
+                        self.mode,
+                        path,
+                    )
+                }
+                let is_applied = self.applied_paths.contains(&path);
+                if should_watch && !is_applied {
                     to_watch.push(path);
-                } else if !should_watch && applied {
+                } else if !should_watch && is_applied {
                     to_unwatch.push(path);
                 }
             }
@@ -875,6 +877,10 @@ impl BackendState {
     }
 
     fn verify_backend_watches(&self) {
+        if !cfg!(any(test, debug_assertions)) {
+            return;
+        }
+
         let Some(backend) = self.backend.as_ref() else {
             return;
         };
@@ -893,81 +899,54 @@ impl BackendState {
             .map(|(path, _)| path)
             .collect::<HashSet<PathBuf>>();
 
-        // Hard invariant: every path we believe is established must really be
-        // watched. This is what guarantees we never silently miss events for a
-        // path we think we're watching, and it holds no matter how the backend
-        // behaves on errors, because a path only enters `applied_paths` after the
-        // backend confirmed the watch.
-        let missing = self
+        // Check that the backend is in fact watching the paths we think it is definitely watching.
+        let missing_paths = self
             .applied_paths
             .iter()
             .filter(|path| !backend_paths.contains(path.as_ref()))
             .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            if cfg!(test) {
-                panic!(
-                    "{:?} backend is missing paths we believe are watched: {missing:?}",
-                    self.mode,
-                )
-            } else {
-                log::warn!(
-                    "{:?} backend is missing paths we believe are watched: {missing:?}",
-                    self.mode,
-                );
-            }
-        }
+        assert!(
+            missing_paths.is_empty(),
+            "{:?} backend is missing paths we believe are watched: {missing_paths:?}",
+            self.mode,
+        );
 
-        // Upper bound: every path the backend is watching is one we believe is
-        // established (`applied`) or one whose state is indeterminate (`suspect` —
-        // paths possibly leaked by a failed unwatch, and watches the backend holds
-        // but a dead stream left suspect). A failed *watch* never enters the
-        // backend, so it is not tracked here. `deferred` is deliberately *not*
-        // here: it is pure intent to (re-)establish and says nothing about what the
-        // backend currently holds.
-        let untracked = backend_paths
+        // Check that we haven't left any unexpected watches in the backend.
+        //
+        // We allow that the backend may be watching some paths for which `unwatch` failed,
+        // or as a result of a stream restart error, in addition to the ones we successfully
+        // asked it to watch.
+        let unexpected_paths = backend_paths
             .iter()
             .filter(|path| {
                 !self.applied_paths.contains(path.as_path())
                     && !self.suspect_paths.contains(path.as_path())
             })
             .collect::<Vec<_>>();
-        if !untracked.is_empty() {
-            if cfg!(test) {
-                panic!(
-                    "{:?} backend is watching paths we do not track: {untracked:?}",
-                    self.mode,
-                )
-            } else {
-                log::warn!(
-                    "{:?} backend is watching paths we do not track: {untracked:?}",
-                    self.mode,
-                );
-            }
-        }
+        assert!(
+            unexpected_paths.is_empty(),
+            "{:?} backend is watching paths we do not track: {unexpected_paths:?}",
+            self.mode,
+        );
 
-        // `deferred` is purely intent to (re-)establish; a path we believe is
-        // established should never simultaneously be queued for one.
-        debug_assert!(
+        // Check that no successfully-watched path is also deferred.
+        assert!(
             self.applied_paths.is_disjoint(&self.deferred_paths),
             "a path is both applied and deferred for {:?}",
             self.mode,
         );
 
-        // Coverage invariant (recursive mode only): a recursive watch on an
-        // ancestor already delivers events for its whole subtree, so we never hold
-        // a redundant direct watch on a descendant of another applied path —
-        // `applied_paths` is an antichain under the path-prefix order. This is
-        // asserted on `applied` rather than the backend set because a leaked watch
-        // tracked in `suspect` may legitimately nest under an applied ancestor.
+        // Check that no path in the applied set is a strict child of another,
+        // if the backend is recursive, since this would be redundant.
         if recursive_mode(self.mode) == notify::RecursiveMode::Recursive {
-            let mut applied = self
+            let mut applied_paths = self
                 .applied_paths
                 .iter()
                 .map(|path| path.as_ref())
                 .collect::<Vec<&Path>>();
-            applied.sort();
-            for pair in applied.windows(2) {
-                debug_assert!(
+            applied_paths.sort();
+            for pair in applied_paths.windows(2) {
+                assert!(
                     !pair[1].starts_with(pair[0]),
                     "{:?} backend holds nested applied watches: {:?} covers {:?}",
                     self.mode,
@@ -1004,16 +983,16 @@ impl BackendState {
                     break;
                 }
                 Err(error) => {
-                    let applied_count =
-                        queue.len() - error.remaining.len() - usize::from(error.origin.is_some());
-                    any_succeeded |= applied_count > 0;
-                    if error.origin.is_none() {
+                    let Some(origin) = &error.origin else {
+                        any_succeeded |= queue.len() > error.remaining.len();
                         restart_failure = Some(error.source);
                         break;
-                    }
+                    };
+                    let applied_count = queue.len() - error.remaining.len() - 1;
+                    any_succeeded |= applied_count > 0;
                     log::warn!(
                         "failed to unwatch {:?}: {:#}",
-                        error.origin.as_ref().map(|op| op.as_path()),
+                        origin.as_path(),
                         error.source
                     );
                     if let Some(path) = queue.get(applied_count) {
@@ -1024,10 +1003,9 @@ impl BackendState {
             }
         }
 
-        // A failed unwatch may have left the path watched in the backend. We've
-        // already dropped it from `applied_paths`, so record it as suspect to keep
-        // the upper-bound invariant honest about the possible leak.
+        // A failed unwatch may have left the path watched in the backend, so record its state as indeterminate.
         self.suspect_paths.extend(failed);
+        // If we unwatched at least one path, there might now be room to watch, so clear the cooldown.
         if any_succeeded {
             self.cooldown_until = None;
         }
@@ -1099,9 +1077,6 @@ impl BackendState {
                         self.deferred_paths.insert(failed);
                         wake_at = earliest(wake_at, self.cooldown_until);
                     } else {
-                        // A failed watch never registers in the backend, so there
-                        // is nothing to track: it simply isn't retried until it is
-                        // re-registered (and so re-enters `affected`).
                         log::warn!("failed to watch {failed:?}: {:#}", error.source);
                     }
                     queue = rest;
