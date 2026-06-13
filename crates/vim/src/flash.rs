@@ -9,10 +9,11 @@ use editor::{
 };
 use gpui::{Context, Font, Hsla, KeystrokeEvent, Pixels, Window, WindowTextSystem, actions};
 use multi_buffer::MultiBufferSnapshot;
+use settings::Settings;
 use ui::px;
 
 use crate::{
-    ClearOperators, Vim,
+    ClearOperators, Vim, VimSettings,
     motion::{self, Motion},
     state::{FlashJumpLabel, Operator},
 };
@@ -38,9 +39,9 @@ enum FlashJumpNavigationOverlay {}
 const FLASH_JUMP_OVERLAY_KEY: NavigationOverlayKey =
     NavigationOverlayKey::unique::<FlashJumpNavigationOverlay>();
 
-// flash.nvim's default label alphabet: home row first, never uppercase, so
-// uppercase input is unambiguously a pattern character.
-const FLASH_JUMP_ALPHABET: &[char] = &[
+// flash.nvim's default label alphabet: home row first. Its default
+// `label.uppercase = true` appends uppercase variants after these labels.
+const FLASH_JUMP_LOWERCASE_ALPHABET: &[char] = &[
     'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
     'z', 'x', 'c', 'v', 'b', 'n', 'm',
 ];
@@ -201,13 +202,21 @@ impl Vim {
             return;
         }
 
+        let smartcase = VimSettings::get_global(cx).use_smartcase_find;
         let applied = self.update_editor(cx, |_, editor, cx| {
             let FlashJumpUiData {
                 labels,
                 target,
                 overlays,
                 match_ranges,
-            } = Self::collect_flash_jump_data(editor, &pattern, &previous_labels, true, window, cx);
+            } = Self::collect_flash_jump_data(
+                editor,
+                &pattern,
+                &previous_labels,
+                smartcase,
+                window,
+                cx,
+            );
 
             if match_ranges.is_empty() {
                 // abort_flash_jump tears the UI down.
@@ -514,15 +523,34 @@ impl Vim {
     /// equal to the character right after a match would be ambiguous between
     /// jumping and extending the pattern.
     fn flash_allowed_labels(matches: &[FlashMatch], smartcase: bool) -> Vec<char> {
-        let mut labels = FLASH_JUMP_ALPHABET.to_vec();
+        let mut labels = Self::flash_label_alphabet();
         labels.retain(|label| {
             !matches.iter().any(|flash_match| {
                 flash_match.next_char.is_some_and(|next_char| {
-                    motion::is_character_match(*label, next_char, smartcase)
+                    Self::flash_label_conflicts_with_next_char(*label, next_char, smartcase)
                 })
             })
         });
         labels
+    }
+
+    fn flash_label_alphabet() -> Vec<char> {
+        let mut labels = Vec::with_capacity(FLASH_JUMP_LOWERCASE_ALPHABET.len() * 2);
+        labels.extend_from_slice(FLASH_JUMP_LOWERCASE_ALPHABET);
+        labels.extend(
+            FLASH_JUMP_LOWERCASE_ALPHABET
+                .iter()
+                .map(|label| label.to_ascii_uppercase()),
+        );
+        labels
+    }
+
+    fn flash_label_conflicts_with_next_char(label: char, next_char: char, smartcase: bool) -> bool {
+        if smartcase {
+            label.eq_ignore_ascii_case(&next_char)
+        } else {
+            label == next_char
+        }
     }
 
     /// Assigns labels to matches by distance from the cursor, returning
@@ -607,9 +635,11 @@ mod test {
     use editor::{HighlightKey, MultiBufferOffset, ToOffset};
     use gpui::KeyBinding;
     use language::Point;
+    use settings::SettingsStore;
 
     use super::{
-        FLASH_JUMP_MAX_MATCHES, FLASH_JUMP_MAX_SEARCH_BYTES, FLASH_JUMP_OVERLAY_KEY, PushFlash,
+        FLASH_JUMP_LOWERCASE_ALPHABET, FLASH_JUMP_MAX_MATCHES, FLASH_JUMP_MAX_SEARCH_BYTES,
+        FLASH_JUMP_OVERLAY_KEY, PushFlash,
     };
     use crate::{
         Exchange, Vim, VimAddon,
@@ -831,6 +861,27 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_flash_jump_uses_uppercase_labels(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+
+        let match_count = FLASH_JUMP_LOWERCASE_ALPHABET.len() + 1;
+        let text = (0..match_count).map(|_| "x").collect::<Vec<_>>().join(" ");
+        cx.set_state(&format!("ˇ{text}"), Mode::Normal);
+
+        cx.simulate_keystrokes("s x");
+
+        let uppercase_offset = FLASH_JUMP_LOWERCASE_ALPHABET.len() * "x ".len();
+        assert_eq!(flash_label_at(&mut cx, uppercase_offset), "A");
+        cx.simulate_keystrokes("shift-a");
+
+        let mut expected = text;
+        expected.insert_str(uppercase_offset, "ˇ");
+        cx.assert_state(&expected, Mode::Normal);
+        assert_flash_cleared(&mut cx);
+    }
+
+    #[gpui::test]
     async fn test_flash_jump_binding_key_can_be_label(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         bind_flash_globally(&mut cx);
@@ -859,8 +910,26 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_flash_jump_default_case_sensitive(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+        cx.set_state("ˇkey Key", Mode::Normal);
+
+        cx.simulate_keystrokes("s k e");
+        let labels = active_flash_labels(&mut cx);
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].2, 0);
+        cx.simulate_keystrokes("escape");
+    }
+
+    #[gpui::test]
     async fn test_flash_jump_smartcase(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_smartcase_find = Some(true);
+            });
+        });
         bind_flash(&mut cx);
         cx.set_state("ˇkey Key", Mode::Normal);
 
@@ -874,6 +943,35 @@ mod test {
         let labels = active_flash_labels(&mut cx);
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].2, 4);
+        cx.simulate_keystrokes("escape");
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_smartcase_skips_conflicting_label_case_variants(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_smartcase_find = Some(true);
+            });
+        });
+        bind_flash(&mut cx);
+
+        let match_count = FLASH_JUMP_LOWERCASE_ALPHABET.len();
+        let text = (0..match_count).map(|_| "fa").collect::<Vec<_>>().join(" ");
+        cx.set_state(&format!("ˇ{text}"), Mode::Normal);
+
+        cx.simulate_keystrokes("s f");
+
+        let labels = active_flash_labels(&mut cx);
+        assert_eq!(labels.len(), match_count);
+        assert!(
+            labels
+                .iter()
+                .all(|(label, _, _)| !label.eq_ignore_ascii_case(&'a')),
+            "expected labels that could continue the pattern to be skipped: {labels:?}"
+        );
         cx.simulate_keystrokes("escape");
     }
 
