@@ -723,7 +723,13 @@ impl MessageEditor {
             .detach();
     }
 
-    #[cfg(test)]
+    /// The inner `Editor` that backs this message editor. Exposed so the
+    /// thread-search bar can paint `BufferSearchHighlights` background
+    /// highlights on past user messages — the markdown source that the bar
+    /// otherwise reads for highlights is detached from the editor that
+    /// actually renders the message, so highlights set on the markdown are
+    /// invisible. Reach in only for highlight-related calls; do not mutate
+    /// the editor's content through this handle.
     pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }

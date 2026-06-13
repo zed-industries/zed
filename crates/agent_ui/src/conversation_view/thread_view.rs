@@ -630,6 +630,12 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
+    /// In-thread search bar. `None` until the user first opens it with
+    /// `agent::ToggleSearch`; after that it's kept around (focus toggles
+    /// visibility-by-focus) so query state persists across hides.
+    pub(crate) thread_search_bar: Option<Entity<super::thread_search_bar::ThreadSearchBar>>,
+    /// When true, the search bar is shown above the entries.
+    pub(crate) thread_search_visible: bool,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -1003,6 +1009,8 @@ impl ThreadView {
             generating_indicator_in_list: false,
             skill_loading_issues: Vec::new(),
             dismissed_skill_loading_issues: HashSet::default(),
+            thread_search_bar: None,
+            thread_search_visible: false,
         };
 
         this.sync_generating_indicator(cx);
@@ -6293,6 +6301,89 @@ impl ThreadView {
         }
     }
 
+    /// Toggle the in-thread search bar. Lazily creates it on first use so
+    /// threads that never get searched don't pay the editor + subscription
+    /// cost.
+    pub(crate) fn toggle_search(
+        &mut self,
+        _: &crate::ToggleSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use super::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent};
+        if self.thread_search_bar.is_none() {
+            let thread = self.thread.clone();
+            let view = cx.entity().downgrade();
+            let on_activate =
+                std::sync::Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
+                    // Defer the ThreadView update: this callback fires synchronously
+                    // from `ThreadSearchBar::activate_match`, which is itself called
+                    // from inside a `bar.update(...)` initiated by a `ThreadView`
+                    // action handler (e.g. the forwarded `SelectNextThreadMatch`).
+                    // Calling `view.update(cx, ...)` synchronously would re-enter
+                    // `ThreadView`'s update and panic with "cannot update X while
+                    // it is already being updated". `cx.defer` schedules the work
+                    // after the current call stack unwinds.
+                    let view = view.clone();
+                    cx.defer(move |cx| {
+                        // Ignore the result: this only fails if the `ThreadView`
+                        // was dropped, in which case there's nothing to scroll.
+                        view.update(cx, |this, cx| {
+                            this.list_state.scroll_to(gpui::ListOffset {
+                                item_ix: entry_ix,
+                                offset_in_item: gpui::px(0.),
+                            });
+                            cx.notify();
+                        })
+                        .ok();
+                    });
+                });
+            let bar = cx.new(|cx| {
+                ThreadSearchBar::new(
+                    thread,
+                    self.entry_view_state.clone(),
+                    on_activate,
+                    window,
+                    cx,
+                )
+            });
+            let dismiss_sub = cx.subscribe_in(&bar, window, |this, _bar, event, window, cx| {
+                if matches!(event, ThreadSearchBarEvent::Dismissed) {
+                    this.thread_search_visible = false;
+                    this.message_editor.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                }
+            });
+            self._subscriptions.push(dismiss_sub);
+            self.thread_search_bar = Some(bar);
+        }
+
+        // Smart toggle: pressing Cmd/Ctrl+F when the bar is hidden opens
+        // and focuses it; when it's already open but focus is elsewhere
+        // (e.g. the message editor), re-focus the bar instead of closing
+        // it; only close when the bar is open *and* already focused. The
+        // explicit dismiss path is Esc / the close button.
+        let bar_focused = self
+            .thread_search_bar
+            .as_ref()
+            .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
+
+        if self.thread_search_visible && bar_focused {
+            if let Some(bar) = &self.thread_search_bar {
+                bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+            }
+            self.thread_search_visible = false;
+            self.message_editor.focus_handle(cx).focus(window, cx);
+            cx.notify();
+        } else {
+            self.thread_search_visible = true;
+            if let Some(bar) = self.thread_search_bar.clone() {
+                bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
+            }
+            cx.notify();
+        }
+    }
+
     pub fn open_thread_as_markdown(
         &self,
         workspace: Entity<Workspace>,
@@ -10553,14 +10644,130 @@ impl Render for ThreadView {
                 }
             });
 
+        // Build the key context dynamically so `AcpThreadSearchBar` is in
+        // the dispatch chain whenever the bar is visible — not only when
+        // focus is in the bar's query editor. Without this, Esc / Cmd+F /
+        // etc. typed from the message editor would fall through to ancestor
+        // handlers (cancel generation, dismiss the workspace's
+        // `BufferSearchBar`). This mirrors `BufferSearchBar`'s
+        // `contribute_context` pattern, which is only available to
+        // toolbar items.
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("AcpThread");
+        if self.thread_search_visible {
+            key_context.add("AcpThreadSearchBar");
+        }
+
         v_flex()
-            .key_context("AcpThread")
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.parent_session_id.is_none() {
                     this.cancel_generation(cx);
                 }
             }))
+            // Forward search-bar actions from this outer element so they
+            // fire even when focus is in the message editor. The bar itself
+            // also registers these handlers, so both paths reach the same
+            // code regardless of where focus is.
+            .on_action(cx.listener(
+                |this, _: &super::thread_search_bar::DismissThreadSearch, window, cx| {
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+                    }
+                    this.thread_search_visible = false;
+                    this.message_editor.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                },
+            ))
+            // Catch Esc that the `Editor::cancel` handler propagated up
+            // (when there's nothing to cancel inside the editor itself). The
+            // keymap binds `escape` to `editor::Cancel` at the `Editor` level,
+            // which shadows the `AcpThreadSearchBar` context's `escape ->
+            // agent::DismissThreadSearch` binding because `Editor` is deeper
+            // in the focus chain. Without this handler the propagated Cancel
+            // walks all the way up to the workspace, where `BufferSearchBar`
+            // has registered a global handler that dismisses the active pane's
+            // search bar instead of ours — user-visible as "Esc in the agent
+            // thread search bar dismisses an unrelated editor's search bar".
+            // Mirrors what `BufferSearchBar::register` does for its own pane.
+            .on_action(
+                cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+                    }
+                    this.thread_search_visible = false;
+                    this.message_editor.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                }),
+            )
+            .on_action(cx.listener(
+                |this, action: &super::thread_search_bar::SelectNextThreadMatch, window, cx| {
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.select_next_match(action, window, cx));
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &super::thread_search_bar::SelectPreviousThreadMatch, window, cx| {
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.select_prev_match(action, window, cx));
+                    }
+                },
+            ))
+            // Forward the `search::` actions too so Alt+C / Alt+W / Alt+X (and
+            // Ctrl+F to refocus the bar) fire when the bar is visible but focus
+            // is in the message editor. Without these, the keymap resolves the
+            // binding (because `AcpThreadSearchBar` is contributed here) but the
+            // dispatched action finds no handler on the bubble path.
+            .on_action(
+                cx.listener(|this, action: &search::ToggleCaseSensitive, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.toggle_case_sensitive(action, window, cx));
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &search::ToggleWholeWord, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.toggle_whole_word(action, window, cx));
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &search::ToggleRegex, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.toggle_regex(action, window, cx));
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, action: &search::FocusSearch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.focus_search(action, window, cx));
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
                 if let Some(parent_session_id) = this.thread.read(cx).parent_session_id().cloned() {
                     this.server_view
@@ -10589,6 +10796,7 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::scroll_output_to_bottom))
             .on_action(cx.listener(Self::scroll_output_to_previous_message))
             .on_action(cx.listener(Self::scroll_output_to_next_message))
+            .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
                 this.toggle_fast_mode(window, cx);
             }))
@@ -10758,6 +10966,12 @@ impl Render for ThreadView {
             }))
             .size_full()
             .children(self.render_subagent_titlebar(cx))
+            .when_some(
+                self.thread_search_visible
+                    .then(|| self.thread_search_bar.clone())
+                    .flatten(),
+                |this, bar| this.child(bar),
+            )
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))
