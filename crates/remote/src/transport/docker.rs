@@ -126,17 +126,16 @@ impl DockerExecConnection {
     /// BASH_ENV or .bashrc) does not corrupt the result.
     async fn run_docker_exec_delimited(&self, script: &str) -> Result<String> {
         const MARKER: &str = "=====ZED_DELIM_7f3a9c=====";
-        let wrapped = format!(
-            "printf '{MARKER}'; {script}; __exit=$?; printf '{MARKER}'; exit $__exit"
-        );
+        let wrapped =
+            format!("printf '{MARKER}'; {script}; __exit=$?; printf '{MARKER}'; exit $__exit");
         let output = self
             .run_docker_exec("sh", None, &Default::default(), &["-c", &wrapped])
             .await?;
-        let start = output
+        let start = output.find(MARKER).map(|i| i + MARKER.len()).unwrap_or(0);
+        let end = output[start..]
             .find(MARKER)
-            .map(|i| i + MARKER.len())
-            .unwrap_or(0);
-        let end = output[start..].find(MARKER).map(|i| start + i).unwrap_or(output.len());
+            .map(|i| start + i)
+            .unwrap_or(output.len());
         Ok(output[start..end].to_string())
     }
 
