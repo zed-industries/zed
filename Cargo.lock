@@ -10628,6 +10628,8 @@ dependencies = [
  "sum_tree",
  "theme",
  "theme_settings",
+ "tree-sitter-css",
+ "tree-sitter-html",
  "ui",
  "util",
 ]

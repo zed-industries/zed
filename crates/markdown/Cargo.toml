@@ -49,4 +49,6 @@ language = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+tree-sitter-css.workspace = true
+tree-sitter-html.workspace = true
 util = { workspace = true, features = ["test-support"] }

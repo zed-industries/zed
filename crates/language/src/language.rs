@@ -1055,6 +1055,45 @@ impl Language {
         result
     }
 
+    pub fn highlight_text_with_injections(
+        self: &Arc<Self>,
+        text: &Rope,
+        range: Range<usize>,
+        language_registry: Option<&Arc<LanguageRegistry>>,
+    ) -> Vec<(Range<usize>, HighlightId)> {
+        if language_registry.is_none()
+            || self
+                .grammar
+                .as_ref()
+                .is_none_or(|grammar| grammar.injection_config.is_none())
+        {
+            return self.highlight_text(text, range);
+        }
+
+        let snapshot = BufferSnapshot::for_highlighting(
+            text.clone(),
+            self.clone(),
+            language_registry.cloned(),
+        );
+        let mut result = Vec::new();
+        let mut offset = 0;
+        for chunk in snapshot.chunks(
+            range,
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: false,
+            },
+        ) {
+            let end_offset = offset + chunk.text.len();
+            if let Some(highlight_id) = chunk.syntax_highlight_id {
+                result.push((offset..end_offset, highlight_id));
+            }
+            offset = end_offset;
+        }
+
+        result
+    }
+
     pub fn path_suffixes(&self) -> &[String] {
         &self.config.matcher.path_suffixes
     }
