@@ -418,6 +418,9 @@ TBD: Centered layout related settings
     // Whether to show a background for inlay hints (theme `hint.background`)
     "show_background": false, //
 
+    // Maximum characters to display for an inlay hint (0 to disable truncation)
+    "max_length": 45,
+
     // Time to wait after editing before requesting hints (0 to disable debounce)
     "edit_debounce_ms": 700,
     // Time to wait after scrolling before requesting hints (0 to disable debounce)

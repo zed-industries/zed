@@ -1878,6 +1878,7 @@ mod tests {
                 show_parameter_hints: Some(true),
                 show_other_hints: Some(true),
                 show_background: Some(false),
+                max_length: None,
                 toggle_on_modifiers_press: None,
             })
         });

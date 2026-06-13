@@ -9155,7 +9155,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn inlay_hints_section() -> [SettingsPageItem; 10] {
+    fn inlay_hints_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Inlay Hints"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -9281,6 +9281,25 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.inlay_hints.get_or_insert_default().show_background = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Max Length",
+                description: "Maximum number of characters to display for an inlay hint. Set to 0 to disable truncation.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).inlay_hints.max_length"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.inlay_hints.as_ref()?.max_length.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.inlay_hints.get_or_insert_default().max_length = value;
                         })
                     },
                 }),
