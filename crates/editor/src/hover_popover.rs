@@ -25,7 +25,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
 };
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
 
 use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
@@ -2708,5 +2708,35 @@ mod tests {
                 "No hover info task should be scheduled when hover is disabled"
             );
         });
+    }
+
+    #[test]
+    fn test_file_url_to_path_conversion_on_windows() {
+        // Verify that `Url::to_file_path()` correctly handles Windows paths.
+        // This is the same conversion used in `open_markdown_url`.
+        // On Windows, `uri.path()` returns `/D:/path/to/file.rs` (with leading slash),
+        // which `PathBuf::from()` cannot resolve correctly.
+        // `uri.to_file_path()` properly strips the leading slash.
+
+        // Windows-style file URL
+        let url = Url::parse("file:///D:/path/to/file.rs").unwrap();
+        let path = url.to_file_path().unwrap();
+
+        // Verify the path is correct on the current platform
+        if cfg!(windows) {
+            assert_eq!(path, std::path::PathBuf::from("D:\\path\\to\\file.rs"));
+        } else {
+            // On Unix, the URL path is used as-is
+            assert_eq!(path, std::path::PathBuf::from("/D:/path/to/file.rs"));
+        }
+
+        // Verify that `uri.path()` alone gives the wrong result on Windows
+        if cfg!(windows) {
+            let raw_path = url.path();
+            assert!(
+                raw_path.starts_with("/D:"),
+                "On Windows, uri.path() should start with /D: to match the bug pattern"
+            );
+        }
     }
 }
