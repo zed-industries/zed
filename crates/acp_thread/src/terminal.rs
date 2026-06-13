@@ -2,6 +2,7 @@ use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
+use http_proxy::Allowlist;
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
@@ -25,9 +26,9 @@ use util::get_default_system_shell_preferring_bash;
 /// *intent* with plain data here rather than constructing platform-specific
 /// types directly.
 ///
-/// All-zero defaults are the fully-sandboxed run. Setting `allow_network` /
-/// `allow_fs_write` requests a relaxation; the caller is responsible for
-/// having obtained user approval before reaching this point.
+/// Default is the fully-sandboxed run (no network, project-only writes).
+/// Setting `network` / `allow_fs_write` requests a relaxation; the caller is
+/// responsible for having obtained user approval before reaching this point.
 #[derive(Clone, Debug, Default)]
 pub struct SandboxWrap {
     /// Directory subtrees the sandbox should allow writes to. Pass the
@@ -41,8 +42,10 @@ pub struct SandboxWrap {
     /// model-requested paths that passed a user-approval prompt. They are
     /// merged with `writable_paths` when generating the sandbox policy.
     pub extra_write_paths: Vec<PathBuf>,
-    /// Allow outbound network access for this command.
-    pub allow_network: bool,
+    /// Outbound network the command may reach, as a hostname allowlist. An
+    /// empty allowlist (the default) means no network. A non-empty allowlist
+    /// (or [`Allowlist::any`]) relaxes the sandbox's network policy.
+    pub network: Allowlist,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
 }
@@ -81,10 +84,10 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
-        let network = if sandbox_wrap.allow_network {
-            NetworkAccess::All
-        } else {
+        let network = if sandbox_wrap.network.is_deny_all() {
             NetworkAccess::None
+        } else {
+            NetworkAccess::All
         };
         let permissions = sandbox::macos_seatbelt::SandboxPermissions {
             network,
