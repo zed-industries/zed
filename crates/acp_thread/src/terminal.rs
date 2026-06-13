@@ -73,14 +73,21 @@ pub(crate) fn apply_sandbox_wrap(
 
     #[cfg(target_os = "macos")]
     {
+        use sandbox::macos_seatbelt::NetworkAccess;
+
         let writable: Vec<&std::path::Path> = sandbox_wrap
             .writable_paths
             .iter()
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
+        let network = if sandbox_wrap.allow_network {
+            NetworkAccess::All
+        } else {
+            NetworkAccess::None
+        };
         let permissions = sandbox::macos_seatbelt::SandboxPermissions {
-            allow_network: sandbox_wrap.allow_network,
+            network,
             allow_fs_write: sandbox_wrap.allow_fs_write,
         };
         let (new_program, new_args, config_file) =
