@@ -1022,6 +1022,11 @@ pub struct WrapPointCursor<'transforms> {
 }
 
 impl WrapPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: TabPoint) -> WrapPoint {
         let cursor = &mut self.cursor;
