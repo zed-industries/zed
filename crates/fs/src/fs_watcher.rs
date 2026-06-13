@@ -22,6 +22,117 @@ pub enum WatcherMode {
     Poll,
 }
 
+pub(crate) struct FsWatcher {
+    global: GlobalWatcher,
+    executor: BackgroundExecutor,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    paths: Arc<Mutex<BTreeMap<Arc<Path>, PathState>>>,
+}
+
+enum PathState {
+    Pending {
+        _task: Task<()>,
+    },
+    Registered {
+        id: WatcherRegistrationId,
+        mode: WatcherMode,
+    },
+}
+
+impl FsWatcher {
+    pub(crate) fn new(
+        global: GlobalWatcher,
+        executor: BackgroundExecutor,
+        tx: async_channel::Sender<()>,
+        pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    ) -> Self {
+        Self {
+            global,
+            executor,
+            tx,
+            pending_path_events,
+            paths: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    fn make_callback(&self, path: &Arc<Path>) -> Arc<dyn Fn(&notify::Event) + Send + Sync> {
+        let tx = self.tx.clone();
+        let pending_path_events = self.pending_path_events.clone();
+        let root_path = SanitizedPath::new_arc(path.as_ref());
+        let path = path.clone();
+        Arc::new(move |event| {
+            push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event)
+        })
+    }
+}
+
+impl Watcher for FsWatcher {
+    fn add(&self, path: &Path) -> anyhow::Result<()> {
+        log::trace!("watcher add: {path:?}");
+        let mut paths = self.paths.lock();
+
+        let path_is_covered = path.ancestors().skip(1).any(|ancestor| {
+            paths.get(ancestor).is_some_and(|entry| match entry {
+                PathState::Pending { .. } => false,
+                PathState::Registered { mode, .. } => {
+                    recursive_mode(*mode) == notify::RecursiveMode::Recursive
+                }
+            })
+        });
+        if path_is_covered || paths.contains_key(path) {
+            log::trace!("path to watch is covered or already requested: {path:?}");
+            return Ok(());
+        }
+
+        let path: Arc<Path> = path.into();
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            let task = self.executor.spawn(poll_path_until_created(
+                self.global.clone(),
+                self.executor.clone(),
+                path.clone(),
+                self.make_callback(&path),
+                Arc::downgrade(&self.paths),
+                self.tx.clone(),
+                self.pending_path_events.clone(),
+            ));
+            paths.insert(path, PathState::Pending { _task: task });
+            return Ok(());
+        }
+
+        let mode = if requires_poll_watcher(&path) {
+            WatcherMode::Poll
+        } else {
+            WatcherMode::Native
+        };
+        let id = self
+            .global
+            .register(path.clone(), mode, self.make_callback(&path));
+        paths.insert(path, PathState::Registered { id, mode });
+        Ok(())
+    }
+
+    fn remove(&self, path: &Path) -> anyhow::Result<()> {
+        log::trace!("remove watched path: {path:?}");
+        let entry = self.paths.lock().remove(path);
+        if let Some(PathState::Registered { id, .. }) = entry {
+            self.global.unregister(id);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for FsWatcher {
+    fn drop(&mut self) {
+        let entries = std::mem::take(&mut *self.paths.lock());
+        for (_, entry) in entries {
+            if let PathState::Registered { id, .. } = entry {
+                self.global.unregister(id);
+            }
+        }
+    }
+}
+
 /// Detect whether a path requires polling instead of native file watching.
 ///
 /// Returns `true` for filesystem types where inotify/FSEvents/ReadDirectoryChanges
@@ -159,6 +270,60 @@ fn is_wsl_drvfs_path(path: &Path) -> bool {
     let after_mnt = &path[5..];
     after_mnt.starts_with(|c: char| c.is_ascii_alphabetic())
         && (after_mnt.len() == 1 || after_mnt.as_bytes()[1] == b'/')
+}
+
+async fn poll_path_until_created(
+    global: GlobalWatcher,
+    executor: BackgroundExecutor,
+    path: Arc<Path>,
+    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
+    entries: std::sync::Weak<Mutex<BTreeMap<Arc<Path>, PathState>>>,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+) {
+    loop {
+        executor.timer(poll_interval()).await;
+
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            continue;
+        }
+
+        let Some(entries) = entries.upgrade() else {
+            return;
+        };
+        {
+            let mut entries = entries.lock();
+            let Some(entry) = entries.get_mut(path.as_ref()) else {
+                return;
+            };
+            if !matches!(entry, PathState::Pending { .. }) {
+                return;
+            }
+            let mode = if requires_poll_watcher(&path) {
+                WatcherMode::Poll
+            } else {
+                WatcherMode::Native
+            };
+            let id = global.register(path.clone(), mode, callback.clone());
+            *entry = PathState::Registered { id, mode };
+        }
+
+        enqueue_path_events(
+            &tx,
+            &pending_path_events,
+            vec![
+                PathEvent {
+                    path: path.to_path_buf(),
+                    kind: Some(PathEventKind::Created),
+                },
+                PathEvent {
+                    path: path.to_path_buf(),
+                    kind: Some(PathEventKind::Rescan),
+                },
+            ],
+        );
+        return;
+    }
 }
 
 fn enqueue_path_events(
@@ -302,6 +467,31 @@ struct WatcherRegistrationState {
     mode: WatcherMode,
 }
 
+struct WatcherState {
+    registrations: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
+    native_desired_paths: BTreeMap<Arc<Path>, u32>,
+    poll_desired_paths: BTreeMap<Arc<Path>, u32>,
+    dirty_paths: Vec<(WatcherMode, Arc<Path>)>,
+    pending_flushes: Vec<oneshot::Sender<()>>,
+    pending_health_checks: Vec<oneshot::Sender<anyhow::Result<()>>>,
+}
+
+impl WatcherState {
+    fn desired_paths_mut(&mut self, mode: WatcherMode) -> &mut BTreeMap<Arc<Path>, u32> {
+        match mode {
+            WatcherMode::Native => &mut self.native_desired_paths,
+            WatcherMode::Poll => &mut self.poll_desired_paths,
+        }
+    }
+
+    fn desired_paths(&self, mode: WatcherMode) -> &BTreeMap<Arc<Path>, u32> {
+        match mode {
+            WatcherMode::Native => &self.native_desired_paths,
+            WatcherMode::Poll => &self.poll_desired_paths,
+        }
+    }
+}
+
 trait WatchBackend: Send {
     fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()>;
     fn unwatch(&mut self, path: &Path) -> notify::Result<()>;
@@ -342,28 +532,6 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
     fn update_paths(&mut self, ops: Vec<notify::PathOp>) -> Result<(), notify::UpdatePathsError> {
         notify::Watcher::update_paths(self, ops)
     }
-}
-
-static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
-    let poll_ms: u64 = std::env::var("ZED_FILE_WATCHER_POLL_MS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(2000)
-        .clamp(500, 30000);
-    Duration::from_millis(poll_ms)
-});
-
-static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
-    let cooldown_seconds: u64 = std::env::var("ZED_NATIVE_WATCH_LIMIT_COOLDOWN_SECONDS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(5)
-        .clamp(0, 300);
-    Duration::from_secs(cooldown_seconds)
-});
-
-pub fn poll_interval() -> Duration {
-    *POLL_INTERVAL
 }
 
 #[derive(Clone)]
@@ -490,31 +658,6 @@ impl GlobalWatcher {
     }
 }
 
-struct WatcherState {
-    registrations: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
-    native_desired_paths: BTreeMap<Arc<Path>, u32>,
-    poll_desired_paths: BTreeMap<Arc<Path>, u32>,
-    dirty_paths: Vec<(WatcherMode, Arc<Path>)>,
-    pending_flushes: Vec<oneshot::Sender<()>>,
-    pending_health_checks: Vec<oneshot::Sender<anyhow::Result<()>>>,
-}
-
-impl WatcherState {
-    fn desired_paths_mut(&mut self, mode: WatcherMode) -> &mut BTreeMap<Arc<Path>, u32> {
-        match mode {
-            WatcherMode::Native => &mut self.native_desired_paths,
-            WatcherMode::Poll => &mut self.poll_desired_paths,
-        }
-    }
-
-    fn desired_paths(&self, mode: WatcherMode) -> &BTreeMap<Arc<Path>, u32> {
-        match mode {
-            WatcherMode::Native => &self.native_desired_paths,
-            WatcherMode::Poll => &self.poll_desired_paths,
-        }
-    }
-}
-
 struct BackendState {
     mode: WatcherMode,
     executor: BackgroundExecutor,
@@ -577,7 +720,7 @@ impl Reconciler {
             health_checks = std::mem::take(&mut state.pending_health_checks);
             let dirty = std::mem::take(&mut state.dirty_paths);
             for (mode, path) in dirty {
-                let examine = match mode {
+                let affected_paths = match mode {
                     WatcherMode::Native => &mut native_affected_paths,
                     WatcherMode::Poll => &mut poll_affected_paths,
                 };
@@ -589,10 +732,10 @@ impl Reconciler {
                         if !descendant.starts_with(&path) {
                             break;
                         }
-                        examine.insert(descendant.clone());
+                        affected_paths.insert(descendant.clone());
                     }
                 }
-                examine.insert(path);
+                affected_paths.insert(path);
             }
         }
         native_affected_paths.extend(self.native.deferred_paths.iter().cloned());
@@ -968,6 +1111,41 @@ fn create_backend(
     }
 }
 
+fn recursive_mode(mode: WatcherMode) -> notify::RecursiveMode {
+    match mode {
+        WatcherMode::Native => {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
+                notify::RecursiveMode::Recursive
+            } else {
+                notify::RecursiveMode::NonRecursive
+            }
+        }
+        WatcherMode::Poll => notify::RecursiveMode::Recursive,
+    }
+}
+
+static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
+    let poll_ms: u64 = std::env::var("ZED_FILE_WATCHER_POLL_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2000)
+        .clamp(500, 30000);
+    Duration::from_millis(poll_ms)
+});
+
+static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
+    let cooldown_seconds: u64 = std::env::var("ZED_NATIVE_WATCH_LIMIT_COOLDOWN_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(5)
+        .clamp(0, 300);
+    Duration::from_secs(cooldown_seconds)
+});
+
+pub fn poll_interval() -> Duration {
+    *POLL_INTERVAL
+}
+
 fn handle_event(mode: WatcherMode, shared: &Mutex<WatcherState>, event: notify::Result<Event>) {
     if matches!(
         event,
@@ -1006,184 +1184,6 @@ fn handle_event(mode: WatcherMode, shared: &Mutex<WatcherState>, event: notify::
         Err(error) => {
             log::warn!("watcher error for {mode:?}: {error}");
         }
-    }
-}
-
-fn recursive_mode(mode: WatcherMode) -> notify::RecursiveMode {
-    match mode {
-        WatcherMode::Native => {
-            if cfg!(any(target_os = "windows", target_os = "macos")) {
-                notify::RecursiveMode::Recursive
-            } else {
-                notify::RecursiveMode::NonRecursive
-            }
-        }
-        WatcherMode::Poll => notify::RecursiveMode::Recursive,
-    }
-}
-
-pub(crate) struct FsWatcher {
-    global: GlobalWatcher,
-    executor: BackgroundExecutor,
-    tx: async_channel::Sender<()>,
-    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    paths: Arc<Mutex<BTreeMap<Arc<Path>, PathState>>>,
-}
-
-enum PathState {
-    Pending {
-        _task: Task<()>,
-    },
-    Registered {
-        id: WatcherRegistrationId,
-        mode: WatcherMode,
-    },
-}
-
-impl FsWatcher {
-    pub(crate) fn new(
-        global: GlobalWatcher,
-        executor: BackgroundExecutor,
-        tx: async_channel::Sender<()>,
-        pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    ) -> Self {
-        Self {
-            global,
-            executor,
-            tx,
-            pending_path_events,
-            paths: Arc::new(Mutex::new(BTreeMap::new())),
-        }
-    }
-
-    fn make_callback(&self, path: &Arc<Path>) -> Arc<dyn Fn(&notify::Event) + Send + Sync> {
-        let tx = self.tx.clone();
-        let pending_path_events = self.pending_path_events.clone();
-        let root_path = SanitizedPath::new_arc(path.as_ref());
-        let path = path.clone();
-        Arc::new(move |event| {
-            push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event)
-        })
-    }
-}
-
-impl Watcher for FsWatcher {
-    fn add(&self, path: &Path) -> anyhow::Result<()> {
-        log::trace!("watcher add: {path:?}");
-        let mut paths = self.paths.lock();
-
-        let path_is_covered = path.ancestors().skip(1).any(|ancestor| {
-            paths.get(ancestor).is_some_and(|entry| match entry {
-                PathState::Pending { .. } => false,
-                PathState::Registered { mode, .. } => {
-                    recursive_mode(*mode) == notify::RecursiveMode::Recursive
-                }
-            })
-        });
-        if path_is_covered || paths.contains_key(path) {
-            log::trace!("path to watch is covered or already requested: {path:?}");
-            return Ok(());
-        }
-
-        let path: Arc<Path> = path.into();
-        if std::fs::symlink_metadata(path.as_ref()).is_err() {
-            let task = self.executor.spawn(watch_path_when_created(
-                self.global.clone(),
-                self.executor.clone(),
-                path.clone(),
-                self.make_callback(&path),
-                Arc::downgrade(&self.paths),
-                self.tx.clone(),
-                self.pending_path_events.clone(),
-            ));
-            paths.insert(path, PathState::Pending { _task: task });
-            return Ok(());
-        }
-
-        let mode = if requires_poll_watcher(&path) {
-            WatcherMode::Poll
-        } else {
-            WatcherMode::Native
-        };
-        let id = self
-            .global
-            .register(path.clone(), mode, self.make_callback(&path));
-        paths.insert(path, PathState::Registered { id, mode });
-        Ok(())
-    }
-
-    fn remove(&self, path: &Path) -> anyhow::Result<()> {
-        log::trace!("remove watched path: {path:?}");
-        let entry = self.paths.lock().remove(path);
-        if let Some(PathState::Registered { id, .. }) = entry {
-            self.global.unregister(id);
-        }
-        Ok(())
-    }
-}
-
-impl Drop for FsWatcher {
-    fn drop(&mut self) {
-        let entries = std::mem::take(&mut *self.paths.lock());
-        for (_, entry) in entries {
-            if let PathState::Registered { id, .. } = entry {
-                self.global.unregister(id);
-            }
-        }
-    }
-}
-
-async fn watch_path_when_created(
-    global: GlobalWatcher,
-    executor: BackgroundExecutor,
-    path: Arc<Path>,
-    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
-    entries: std::sync::Weak<Mutex<BTreeMap<Arc<Path>, PathState>>>,
-    tx: async_channel::Sender<()>,
-    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-) {
-    loop {
-        executor.timer(poll_interval()).await;
-
-        if std::fs::symlink_metadata(path.as_ref()).is_err() {
-            continue;
-        }
-
-        let Some(entries) = entries.upgrade() else {
-            return;
-        };
-        {
-            let mut entries = entries.lock();
-            let Some(entry) = entries.get_mut(path.as_ref()) else {
-                return;
-            };
-            if !matches!(entry, PathState::Pending { .. }) {
-                return;
-            }
-            let mode = if requires_poll_watcher(&path) {
-                WatcherMode::Poll
-            } else {
-                WatcherMode::Native
-            };
-            let id = global.register(path.clone(), mode, callback.clone());
-            *entry = PathState::Registered { id, mode };
-        }
-
-        enqueue_path_events(
-            &tx,
-            &pending_path_events,
-            vec![
-                PathEvent {
-                    path: path.to_path_buf(),
-                    kind: Some(PathEventKind::Created),
-                },
-                PathEvent {
-                    path: path.to_path_buf(),
-                    kind: Some(PathEventKind::Rescan),
-                },
-            ],
-        );
-        return;
     }
 }
 
@@ -1417,9 +1417,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn covered_child_is_promoted_when_parent_is_unregistered(
-        executor: BackgroundExecutor,
-    ) {
+    async fn covered_child_is_promoted_when_parent_is_unregistered(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let global = test_global(&executor, None, Some(backend.clone()));
         let parent = Arc::<Path>::from(Path::new("/repo"));
