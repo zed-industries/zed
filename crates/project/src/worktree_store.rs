@@ -433,7 +433,7 @@ impl WorktreeStore {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty().into())) })
+            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty_arc())) })
         }
     }
 

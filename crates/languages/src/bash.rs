@@ -76,7 +76,7 @@ impl LspInstaller for BashLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &gpui::AsyncApp,
     ) -> Option<lsp::LanguageServerBinary> {
@@ -130,7 +130,7 @@ impl LspInstaller for BashLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut gpui::AsyncApp,
     ) -> Result<Self::BinaryVersion> {
