@@ -22785,14 +22785,7 @@ async fn test_lsp_completion_filter_uses_text_edit_range(cx: &mut TestAppContext
     });
 
     let counter = Arc::new(AtomicUsize::new(0));
-    handle_completion_request(
-        "foo <b|>",
-        vec!["bar"],
-        false,
-        counter.clone(),
-        &mut cx,
-    )
-    .await;
+    handle_completion_request("foo <b|>", vec!["bar"], false, counter.clone(), &mut cx).await;
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
 
