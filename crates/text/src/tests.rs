@@ -48,6 +48,72 @@ fn test_point_for_row_and_column_from_external_source() {
     assert_eq!(snapshot.point_from_external_input(1, 3), Point::new(1, 3));
 }
 
+#[test]
+fn test_history_serialization() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc\n");
+    buffer.set_group_interval(Duration::ZERO);
+    buffer.edit([(4..4, "def\n")]);
+    buffer.edit([(8..8, "ghi\n")]);
+    assert_eq!(buffer.text(), "abc\ndef\nghi\n");
+
+    let bytes = buffer.serialize_history().unwrap();
+    let mut restored =
+        Buffer::deserialize_history(&bytes, ReplicaId::LOCAL, BufferId::new(1).unwrap()).unwrap();
+    assert_eq!(restored.text(), "abc\ndef\nghi\n");
+    assert_eq!(restored.lamport_clock, buffer.lamport_clock);
+    assert_eq!(restored.version(), buffer.version());
+
+    restored.undo();
+    assert_eq!(restored.text(), "abc\ndef\n");
+    restored.undo();
+    assert_eq!(restored.text(), "abc\n");
+    restored.redo();
+    assert_eq!(restored.text(), "abc\ndef\n");
+    restored.redo();
+    assert_eq!(restored.text(), "abc\ndef\nghi\n");
+
+    // Test with remote operations
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc\n");
+    let mut remote_buffer = Buffer::new(ReplicaId::new(1), BufferId::new(1).unwrap(), "abc\n");
+
+    buffer.set_group_interval(Duration::ZERO);
+    remote_buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(4..4, "local\n")]);
+    let local_op = buffer.history.operations.values().last().unwrap().clone();
+
+    remote_buffer.edit([(4..4, "remote\n")]);
+    let remote_op = remote_buffer
+        .history
+        .operations
+        .values()
+        .last()
+        .unwrap()
+        .clone();
+
+    buffer.apply_ops(vec![remote_op]);
+    remote_buffer.apply_ops(vec![local_op]);
+
+    assert_eq!(buffer.text(), remote_buffer.text());
+    let shared_text = buffer.text();
+
+    let bytes = buffer.serialize_history().unwrap();
+    let mut restored =
+        Buffer::deserialize_history(&bytes, ReplicaId::LOCAL, BufferId::new(1).unwrap()).unwrap();
+    assert_eq!(restored.text(), shared_text);
+    assert_eq!(restored.lamport_clock, buffer.lamport_clock);
+    assert_eq!(restored.version(), buffer.version());
+
+    // Undo local edit
+    restored.undo();
+    // Since it's a CRDT, undoing the local edit should work even if there are remote edits
+    // that were applied later (in terms of causality or Lamport time).
+    // The exact text depends on how CRDT handles it, but it should match the original buffer
+    // if we undo the same edit.
+    buffer.undo();
+    assert_eq!(restored.text(), buffer.text());
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_edits(mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
