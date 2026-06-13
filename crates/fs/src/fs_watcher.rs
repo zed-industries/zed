@@ -1188,6 +1188,11 @@ fn create_backend(
 ) -> anyhow::Result<Box<dyn WatchBackend>> {
     match mode {
         WatcherMode::Native => {
+            // CORE excludes Access events, which Zed discards anyway. Without this,
+            // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every
+            // file read in a watched directory would queue events, increasing the
+            // risk of queue overflows (and thus full rescans) under read-heavy
+            // workloads like grep or language server indexing.
             let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
             let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
                 move |event: notify::Result<Event>| {
