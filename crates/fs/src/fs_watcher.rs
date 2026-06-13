@@ -817,16 +817,33 @@ impl BackendState {
             let desired = watcher_state.path_registrations(self.mode);
             for path in affected_paths {
                 let in_desired = desired.contains_key(&path);
-                if !in_desired {
-                    self.suspect_paths.remove(&path);
-                    self.deferred_paths.remove(&path);
-                }
+                // `suspect` is deliberately *not* cleared here: it witnesses the
+                // upper bound `B ⊆ applied ∪ suspect`, and a path can stay leaked in
+                // the backend after it leaves desired (e.g. a stream-restart path
+                // unregistered before it recovers). Dropping it while it is still in
+                // `B` would violate the bound, so we keep tracking the leak.
                 let covered = recursive_mode(self.mode) == notify::RecursiveMode::Recursive
                     && path
                         .ancestors()
                         .skip(1)
                         .any(|ancestor| desired.contains_key(ancestor));
                 let should_watch = in_desired && !covered;
+                if !should_watch {
+                    // `deferred` is pure intent to *directly* watch a path, so a
+                    // path that is no longer eligible for a direct watch (covered
+                    // by an ancestor or unregistered) has no live intent and must
+                    // be dropped — otherwise it lingers and, if later promoted,
+                    // emits a spurious recovery rescan.
+                    self.deferred_paths.remove(&path);
+                }
+                // Intent invariant: `deferred` only ever holds paths still eligible
+                // for a direct watch (desired and not covered).
+                debug_assert!(
+                    should_watch || !self.deferred_paths.contains(&path),
+                    "{:?} keeps a covered or unregistered path queued for a watch: {:?}",
+                    self.mode,
+                    path,
+                );
                 let applied = self.applied_paths.contains(&path);
                 if should_watch && !applied {
                     to_watch.push(path);
@@ -935,6 +952,30 @@ impl BackendState {
             "a path is both applied and deferred for {:?}",
             self.mode,
         );
+
+        // Coverage invariant (recursive mode only): a recursive watch on an
+        // ancestor already delivers events for its whole subtree, so we never hold
+        // a redundant direct watch on a descendant of another applied path —
+        // `applied_paths` is an antichain under the path-prefix order. This is
+        // asserted on `applied` rather than the backend set because a leaked watch
+        // tracked in `suspect` may legitimately nest under an applied ancestor.
+        if recursive_mode(self.mode) == notify::RecursiveMode::Recursive {
+            let mut applied = self
+                .applied_paths
+                .iter()
+                .map(|path| path.as_ref())
+                .collect::<Vec<&Path>>();
+            applied.sort();
+            for pair in applied.windows(2) {
+                debug_assert!(
+                    !pair[1].starts_with(pair[0]),
+                    "{:?} backend holds nested applied watches: {:?} covers {:?}",
+                    self.mode,
+                    pair[0],
+                    pair[1],
+                );
+            }
+        }
     }
 
     fn apply_unwatches(&mut self, paths: Vec<Arc<Path>>) -> Option<Instant> {
@@ -1584,6 +1625,77 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn nested_registrations_keep_applied_as_an_antichain(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(&executor, None, Some(backend.clone()));
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/a"));
+        let grandchild = Arc::<Path>::from(Path::new("/repo/a/b"));
+
+        // Register from the leaf up: each newly covering ancestor must demote the
+        // descendants it now covers, so `applied` never holds nested watches (the
+        // antichain invariant checked in `verify_backend_watches`).
+        global.add(grandchild.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(grandchild.as_ref()));
+
+        global.add(child.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(child.as_ref()));
+        assert!(!backend.lock().watched_paths.contains(grandchild.as_ref()));
+
+        global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watched_paths.iter().cloned().collect::<Vec<_>>(),
+            vec![parent.to_path_buf()],
+            "only the top of the nested registration tree keeps a direct watch"
+        );
+    }
+
+    #[gpui::test]
+    async fn deferred_child_is_not_retained_as_intent_once_covered(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(&executor, None, Some(backend.clone()));
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+
+        // The child's initial watch applies, but the stream fails to restart, so
+        // the child is deferred (its events aren't being delivered) behind a
+        // cooldown rather than established.
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        let (child_events, child_callback) = collecting_callback();
+        global.add(child.clone(), WatcherMode::Poll, child_callback);
+        executor.run_until_parked();
+
+        // A recursive parent is registered while the child is still deferred. The
+        // child is now covered by the parent, so it has no live intent to be
+        // watched directly and must be dropped from `deferred` (it is not desired
+        // *and uncovered* anymore).
+        backend.lock().stream_restart_error = None;
+        let parent_id = global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+
+        // Let the cooldown expire so the parent watch is established; the parent's
+        // recovery rescan already covers the child's subtree.
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(parent.as_ref()));
+
+        // Removing the parent promotes the child to its own watch. Because the
+        // child became covered (not because its own watch finally succeeded), it
+        // must not emit a spurious rescan here.
+        global.remove(parent_id);
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(child.as_ref()));
+        assert!(
+            child_events.lock().is_empty(),
+            "a child that was only ever covered (never recovered) emits no rescan when promoted"
+        );
+    }
+
+    #[gpui::test]
     async fn unregister_then_register_same_path_coalesces(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let global = test_global(&executor, Some(backend.clone()), None);
@@ -2053,6 +2165,36 @@ mod tests {
             "the surviving watch is re-established with a rescan after the stream restart failure"
         );
         assert!(events_b[0].need_rescan());
+    }
+
+    #[gpui::test]
+    async fn unregistering_a_suspect_path_during_cooldown_keeps_the_upper_bound_honest(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(&executor, Some(backend.clone()), None);
+        let path = Arc::<Path>::from(Path::new("/repo"));
+
+        // The initial watch applies in the backend, but the stream fails to
+        // restart, so the path is left suspect (still watched in the backend) and
+        // deferred behind a cooldown.
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        let registration = global.add(path.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(path.as_ref()));
+
+        // Unregistering the path before the cooldown lets it recover must not drop
+        // it from the suspect set while it is still leaked in the backend: doing so
+        // would leave a path in `B` that is in neither `applied` nor `suspect`,
+        // violating the hard upper bound `B ⊆ applied ∪ suspect`. We accept the
+        // leak and keep tracking it.
+        backend.lock().stream_restart_error = None;
+        global.remove(registration);
+        executor.run_until_parked();
+        assert!(
+            backend.lock().watched_paths.contains(path.as_ref()),
+            "the leaked watch is still tracked as suspect, keeping the upper bound honest"
+        );
     }
 
     #[gpui::test]
