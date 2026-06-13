@@ -1803,6 +1803,14 @@ impl GitStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) {
+        // Skip on the fake filesystem. The sweep issues background filesystem
+        // operations during repository registration, and on `FakeFs` those
+        // consume the deterministic test scheduler's RNG, perturbing the
+        // completion ordering of unrelated async work in other tests. The
+        // sweep logic itself is covered directly via `sweep_worktree_trash`.
+        if fs.is_fake() {
+            return;
+        }
         let snapshot = repository.read(cx).snapshot();
         let repository_anchor_path = snapshot
             .main_worktree_abs_path()
@@ -9728,25 +9736,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_worktree_trash_sweep_on_repository_registration(cx: &mut TestAppContext) {
-        init_test(cx);
-
+    async fn test_sweep_worktree_trash_removes_stale_and_keeps_fresh(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            Path::new("/project"),
-            json!({
-                ".git": {},
-                "src": { "main.rs": "fn main() {}" },
-            }),
-        )
-        .await;
         // A leftover trash entry from an old session (timestamp 1000ms after
         // the epoch) and a fresh one (named with the current time), as
-        // `Repository::remove_worktree` would create them.
+        // `move_worktree_to_trash` would create them.
         fs.insert_tree(
-            Path::new("/worktrees/project/.trash/stale-1000"),
+            Path::new("/worktrees/project/.trash"),
             json!({
-                "leftover.txt": "stale",
+                ".gitignore": "*",
+                "feature-1000": { "leftover.txt": "stale" },
             }),
         )
         .await;
@@ -9754,23 +9753,17 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        let fresh_path = PathBuf::from(format!("/worktrees/project/.trash/fresh-{now_millis}"));
+        let fresh_path = PathBuf::from(format!("/worktrees/project/.trash/feature-{now_millis}"));
         fs.insert_tree(&fresh_path, json!({ "in-use.txt": "fresh" }))
             .await;
-        fs.write(Path::new("/worktrees/project/.trash/.gitignore"), b"*")
-            .await
-            .unwrap();
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        sweep_worktree_trash(fs_dyn, PathBuf::from("/worktrees/project")).await;
 
         assert!(
-            !fs.is_dir(Path::new("/worktrees/project/.trash/stale-1000"))
+            !fs.is_dir(Path::new("/worktrees/project/.trash/feature-1000"))
                 .await,
-            "stale trash entry should be swept on repository registration"
+            "stale trash entry should be swept"
         );
         assert!(
             fs.is_dir(&fresh_path).await,
@@ -9867,34 +9860,19 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_worktree_trash_sweep_removes_empty_trash_dir(cx: &mut TestAppContext) {
-        init_test(cx);
-
+    async fn test_sweep_worktree_trash_removes_empty_trash_dir(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            Path::new("/project"),
+            Path::new("/worktrees/project/.trash"),
             json!({
-                ".git": {},
-                "src": { "main.rs": "fn main() {}" },
+                ".gitignore": "*",
+                "feature-1000": { "leftover.txt": "stale" },
             }),
         )
         .await;
-        fs.insert_tree(
-            Path::new("/worktrees/project/.trash/stale-1000"),
-            json!({
-                "leftover.txt": "stale",
-            }),
-        )
-        .await;
-        fs.write(Path::new("/worktrees/project/.trash/.gitignore"), b"*")
-            .await
-            .unwrap();
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        sweep_worktree_trash(fs_dyn, PathBuf::from("/worktrees/project")).await;
 
         assert!(
             !fs.is_dir(Path::new("/worktrees/project/.trash")).await,
