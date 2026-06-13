@@ -1675,19 +1675,11 @@ impl DisplaySnapshot {
         inlay_snapshot
             .buffer_offset_to_inlay_ranges(range)
             .map(|inlay_range| {
-                let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
-                    let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
-                    let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
-                    let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
-                    let block_point = self.block_snapshot.to_block_point(wrap_point);
-                    DisplayPoint(block_point)
-                };
-
-                let start = inlay_point_to_display_point(
+                let start = self.inlay_point_to_display_point(
                     inlay_snapshot.to_point(inlay_range.start),
                     Bias::Left,
                 );
-                let end = inlay_point_to_display_point(
+                let end = self.inlay_point_to_display_point(
                     inlay_snapshot.to_point(inlay_range.end),
                     Bias::Left,
                 );
@@ -1709,6 +1701,26 @@ impl DisplaySnapshot {
     pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
         self.inlay_snapshot()
             .to_inlay_offset(anchor.to_offset(self.buffer_snapshot()))
+    }
+
+    pub fn inlay_point_to_display_point(
+        &self,
+        inlay_point: InlayPoint,
+        bias: Bias,
+    ) -> DisplayPoint {
+        let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
+        let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
+    }
+
+    pub fn inlay_offset_to_display_point(
+        &self,
+        inlay_offset: InlayOffset,
+        bias: Bias,
+    ) -> DisplayPoint {
+        self.inlay_point_to_display_point(self.inlay_snapshot().to_point(inlay_offset), bias)
     }
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
