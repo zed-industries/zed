@@ -24,6 +24,7 @@ askpass.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 collections.workspace = true
+encoding_rs.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

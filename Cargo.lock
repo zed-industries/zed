@@ -14941,6 +14941,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "collections",
+ "encoding_rs",
  "fs",
  "futures 0.3.32",
  "gpui",
