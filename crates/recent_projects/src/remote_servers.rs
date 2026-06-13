@@ -1624,6 +1624,7 @@ impl RemoteServerProjects {
                                         .on_click(cx.listener({
                                             let connection = connection.clone();
                                             move |this, _, window, cx| {
+                                                cx.emit(DismissEvent);
                                                 this.create_remote_project(
                                                     index,
                                                     connection.clone().into(),
