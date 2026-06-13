@@ -1,8 +1,9 @@
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
+use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
-use http_proxy::Allowlist;
+use http_proxy::{Allowlist, ProxyConfig, ProxyEvent, ProxyHandle, UpstreamProxy};
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
@@ -44,10 +45,20 @@ pub struct SandboxWrap {
     pub extra_write_paths: Vec<PathBuf>,
     /// Outbound network the command may reach, as a hostname allowlist. An
     /// empty allowlist (the default) means no network. A non-empty allowlist
-    /// (or [`Allowlist::any`]) relaxes the sandbox's network policy.
+    /// (or [`Allowlist::any`]) causes an in-process HTTP/HTTPS proxy to be
+    /// spawned that enforces the policy, with the sandbox confined to its
+    /// loopback port.
     pub network: Allowlist,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
+}
+
+impl SandboxWrap {
+    /// Whether this wrap requests any outbound network access, and therefore
+    /// needs the in-process proxy to be spawned.
+    fn wants_network(&self) -> bool {
+        !self.network.is_deny_all()
+    }
 }
 
 /// Opaque RAII handle the sandbox implementation hands back to keep its
@@ -62,6 +73,12 @@ pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 /// duration of the spawned command — dropping it deletes any on-disk
 /// config the launcher reads at startup.
 ///
+/// `proxy_port`, when set, is the loopback port of the in-process network
+/// proxy spawned for this command (see [`setup_network_proxy`]); the sandbox
+/// is narrowed to permit outbound TCP only to that port. When network was
+/// requested but no proxy is running (e.g. a non-local project), egress falls
+/// back to unrestricted.
+///
 /// On non-macOS hosts this is a no-op: the inputs pass through unchanged
 /// and the returned handle is `None`. (We don't yet have a sandbox
 /// integration for other platforms.)
@@ -69,6 +86,7 @@ pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
     sandbox_wrap: Option<SandboxWrap>,
+    proxy_port: Option<u16>,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let Some(sandbox_wrap) = sandbox_wrap else {
         return Ok((program, args, None));
@@ -84,10 +102,17 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
-        let network = if sandbox_wrap.network.is_deny_all() {
-            NetworkAccess::None
-        } else {
+        let network = if let Some(port) = proxy_port {
+            NetworkAccess::LocalhostPort(port)
+        } else if sandbox_wrap.wants_network() {
+            // Network was requested but we couldn't stand up the enforcing
+            // proxy (e.g. a non-local project). Don't silently deny — fall
+            // back to unrestricted egress. The agent layer widens such
+            // requests to "arbitrary network access" before prompting (see
+            // `run_terminal_tool`), so the user approved exactly this.
             NetworkAccess::All
+        } else {
+            NetworkAccess::None
         };
         let permissions = sandbox::macos_seatbelt::SandboxPermissions {
             network,
@@ -105,8 +130,149 @@ pub(crate) fn apply_sandbox_wrap(
     {
         // No sandbox integration available; ignore the wrap request and
         // let the command run with the agent's ambient permissions.
-        let _ = sandbox_wrap;
+        let _ = (sandbox_wrap, proxy_port);
         Ok((program, args, None))
+    }
+}
+
+/// Bundles the per-command sandbox RAII resources so a single
+/// [`SandboxConfigHandle`] keeps both the Seatbelt config file and the network
+/// proxy alive for exactly the command's lifetime. Dropping it deletes the
+/// config file and shuts the proxy listener down.
+struct SandboxResources {
+    _config: Option<SandboxConfigHandle>,
+    _proxy: Option<ProxyHandle>,
+}
+
+/// Combine an optional Seatbelt config handle and an optional proxy handle into
+/// a single RAII handle, or `None` if neither is present.
+pub(crate) fn combine_sandbox_resources(
+    config: Option<SandboxConfigHandle>,
+    proxy: Option<ProxyHandle>,
+) -> Option<SandboxConfigHandle> {
+    if config.is_none() && proxy.is_none() {
+        return None;
+    }
+    Some(Box::new(SandboxResources {
+        _config: config,
+        _proxy: proxy,
+    }) as SandboxConfigHandle)
+}
+
+/// Spawn the in-process network proxy for a sandboxed command, if one is
+/// needed, and wire the child's environment to route through it.
+///
+/// Returns the proxy handle (which must outlive the command) and its loopback
+/// port. Returns `(None, None)` when no proxy is needed: no sandbox wrap, no
+/// network requested, a non-local project (the loopback proxy can't serve a
+/// remote terminal), or a non-macOS host (no sandbox to confine the child).
+pub(crate) fn setup_network_proxy(
+    sandbox_wrap: Option<&SandboxWrap>,
+    is_local: bool,
+    env: &mut HashMap<String, String>,
+    cx: &mut AsyncApp,
+) -> Result<(Option<ProxyHandle>, Option<u16>)> {
+    let Some(sandbox_wrap) = sandbox_wrap else {
+        return Ok((None, None));
+    };
+    // The proxy only buys us anything when a Seatbelt sandbox confines the
+    // child to its loopback port, and only works for local projects.
+    if !cfg!(target_os = "macos") || !is_local || !sandbox_wrap.wants_network() {
+        return Ok((None, None));
+    }
+
+    // Chain through the user's real upstream proxy if their environment names
+    // one. A malformed value shouldn't break the terminal, so log and skip.
+    let upstream = match UpstreamProxy::from_env() {
+        Ok(upstream) => upstream,
+        Err(error) => {
+            log::warn!("[sandbox/network] ignoring upstream proxy env: {error:#}");
+            None
+        }
+    };
+
+    let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
+    let handle = ProxyHandle::spawn(ProxyConfig {
+        allowlist: sandbox_wrap.network.clone(),
+        upstream,
+        events: events_tx,
+    })?;
+    let port = handle.port();
+
+    apply_proxy_env(env, port);
+    spawn_proxy_event_logger(events_rx, cx);
+
+    Ok((Some(handle), Some(port)))
+}
+
+/// Point the child's proxy env vars at the in-process proxy and strip any
+/// inherited `NO_PROXY`.
+///
+/// Both upper- and lower-case forms are set because some clients (notably
+/// curl on macOS) only honor the lowercase variant. `NO_PROXY` is blanked
+/// out so all egress goes through our proxy unconditionally: an inherited
+/// `NO_PROXY` matching an allowlisted host would make the client attempt a
+/// direct connection, which the Seatbelt rule blocks — surfacing as a
+/// confusing "connection refused" instead of a clean policy decision.
+fn apply_proxy_env(env: &mut HashMap<String, String>, port: u16) {
+    let url = format!("http://127.0.0.1:{port}");
+    for key in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        env.insert(key.to_string(), url.clone());
+    }
+    for key in ["NO_PROXY", "no_proxy"] {
+        env.insert(key.to_string(), String::new());
+    }
+}
+
+/// Drain the proxy's event channel, logging each event. v1 surfacing only;
+/// future integrations (UI, telemetry) can replace or fan out this consumer.
+fn spawn_proxy_event_logger(
+    mut events: futures::channel::mpsc::UnboundedReceiver<ProxyEvent>,
+    cx: &mut AsyncApp,
+) {
+    cx.background_spawn(async move {
+        use futures::StreamExt as _;
+        while let Some(event) = events.next().await {
+            log_proxy_event(&event);
+        }
+    })
+    .detach();
+}
+
+fn log_proxy_event(event: &ProxyEvent) {
+    match event {
+        ProxyEvent::Ready { .. } => {}
+        ProxyEvent::RequestAttempt {
+            host,
+            port,
+            method,
+            outcome,
+        } => {
+            log::debug!(
+                "[sandbox/network] {} {host}:{port} → {outcome:?}",
+                method.as_str()
+            );
+        }
+        ProxyEvent::RequestCompleted {
+            host,
+            port,
+            method,
+            bytes_to_remote,
+            bytes_from_remote,
+            duration_ms,
+        } => {
+            log::debug!(
+                "[sandbox/network] completed {} {host}:{port} sent={bytes_to_remote} recv={bytes_from_remote} duration={duration_ms}ms",
+                method.as_str(),
+            );
+        }
     }
 }
 
@@ -351,4 +517,45 @@ pub async fn create_terminal_entity(
             )
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_proxy_env_points_all_proxy_vars_at_proxy_and_blanks_no_proxy() {
+        let mut env = HashMap::default();
+        env.insert("HTTPS_PROXY".to_string(), "http://corp:3128".to_string());
+        env.insert("NO_PROXY".to_string(), "internal.example".to_string());
+        env.insert("PATH".to_string(), "/usr/bin".to_string());
+
+        apply_proxy_env(&mut env, 54321);
+
+        for key in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            assert_eq!(
+                env.get(key).map(String::as_str),
+                Some("http://127.0.0.1:54321"),
+                "{key} should point at the in-process proxy"
+            );
+        }
+        // An inherited NO_PROXY would make clients attempt direct
+        // connections that the Seatbelt rule blocks; it must be blanked.
+        for key in ["NO_PROXY", "no_proxy"] {
+            assert_eq!(
+                env.get(key).map(String::as_str),
+                Some(""),
+                "{key} should be blanked"
+            );
+        }
+        // Unrelated variables pass through.
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+    }
 }
