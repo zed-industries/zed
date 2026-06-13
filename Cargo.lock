@@ -8547,7 +8547,11 @@ name = "http_proxy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "futures 0.3.32",
+ "httparse",
  "idna",
+ "log",
  "percent-encoding",
  "proxyvars",
  "thiserror 2.0.17",
