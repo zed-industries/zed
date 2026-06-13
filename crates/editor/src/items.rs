@@ -782,7 +782,7 @@ impl Item for Editor {
             .is_some_and(|file| file.disk_state().is_deleted());
 
         h_flex()
-            .gap_1p5()
+            .gap_1()
             .when(params.truncate_title_middle, |this| {
                 this.w_full().min_w_0().overflow_hidden()
             })
@@ -796,7 +796,9 @@ impl Item for Editor {
                     )
                 })
                 .color(label_color)
-                .when(params.truncate_title_middle, |this| this.truncate_middle())
+                .when(params.truncate_title_middle, |this| {
+                    this.truncate_middle().flex_1()
+                })
                 .when(params.preview, |this| this.italic())
                 .when(was_deleted, |this| this.strikethrough()),
             )
