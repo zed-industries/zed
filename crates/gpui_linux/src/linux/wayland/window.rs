@@ -1404,6 +1404,14 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
+        self.draw_with_damage(scene, None);
+    }
+
+    fn wants_render_damage(&self) -> bool {
+        self.borrow().renderer.damage_enabled()
+    }
+
+    fn draw_with_damage(&self, scene: &Scene, damage: Option<gpui::SceneDamage>) {
         let mut state = self.borrow_mut();
 
         if state.renderer.device_lost() {
@@ -1428,7 +1436,7 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
 
-        state.renderer_presented = state.renderer.draw(scene);
+        state.renderer_presented = state.renderer.draw_with_damage(scene, damage);
 
         if state.renderer.needs_redraw() {
             state.force_render_after_recovery = true;

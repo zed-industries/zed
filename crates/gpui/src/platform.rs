@@ -660,6 +660,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Whether the renderer consumes per-frame damage. When true, GPUI diffs
+    /// consecutive scenes and calls [`Self::draw_with_damage`].
+    fn wants_render_damage(&self) -> bool {
+        false
+    }
+    /// Like [`Self::draw`], but with the region that changed since the previous
+    /// frame. `None` means it wasn't computed, so the backend must redraw fully.
+    fn draw_with_damage(&self, scene: &Scene, _damage: Option<crate::SceneDamage>) {
+        self.draw(scene);
+    }
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;

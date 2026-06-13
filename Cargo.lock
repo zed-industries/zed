@@ -4124,7 +4124,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "windows 0.62.2",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -6067,7 +6067,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7277,7 +7277,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7695,7 +7695,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.17",
- "windows 0.62.2",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -8730,7 +8730,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.56.0",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -8984,7 +8984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "serde",
  "serde_core",
 ]
@@ -11242,7 +11242,7 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 [[package]]
 name = "naga"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -15668,7 +15668,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -18226,7 +18226,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -19153,7 +19153,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -20950,7 +20950,7 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 [[package]]
 name = "wgpu"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -20979,7 +20979,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -21011,7 +21011,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "wgpu-hal",
 ]
@@ -21019,7 +21019,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "wgpu-hal",
 ]
@@ -21027,7 +21027,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "wgpu-hal",
 ]
@@ -21035,7 +21035,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -21088,7 +21088,7 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -21097,7 +21097,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "git+https://github.com/sauliusvl/wgpu.git?rev=29b04b33e#29b04b33e38a3d9c009f93193fb04a1312ede711"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
