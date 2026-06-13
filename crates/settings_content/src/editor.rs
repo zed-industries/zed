@@ -375,6 +375,11 @@ pub struct ToolbarContent {
     ///
     /// Default: false
     pub code_actions: Option<bool>,
+    /// Whether to show clickable file path segments in the editor breadcrumb toolbar,
+    /// allowing incremental navigation through the project file hierarchy.
+    ///
+    /// Default: false
+    pub file_path_nav: Option<bool>,
 }
 
 /// Scrollbar related settings
