@@ -764,6 +764,7 @@ mod tests {
                         supports_tools: true,
                         supports_images: false,
                         supports_thinking: false,
+                        supports_disabling_thinking: false,
                         supports_fast_mode: false,
                         supported_effort_levels: Vec::new(),
                         supports_streaming_tools: false,

@@ -673,7 +673,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let stream =
                     self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
                 async move {
-                    let mapper = AnthropicEventMapper::new();
+                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
                     Ok(mapper.map_stream(stream.await?).boxed())
                 }
                 .boxed()

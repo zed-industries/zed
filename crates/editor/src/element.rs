@@ -334,6 +334,7 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
         register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
+        register_action(editor, window, Editor::select_inside_enclosing_bracket);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
         register_action(editor, window, Editor::redo_selection);
@@ -9385,8 +9386,15 @@ impl Element for EditorElement {
                         diff_hunk_control_bounds,
                     });
 
+                    let visible_horizontal_scrollbar =
+                        scrollbars_layout.as_ref().is_some_and(|scrollbars_layout| {
+                            scrollbars_layout.visible && scrollbars_layout.horizontal.is_some()
+                        });
+
                     self.editor.update(cx, |editor, _| {
-                        editor.last_position_map = Some(position_map.clone())
+                        editor.last_position_map = Some(position_map.clone());
+                        editor.last_right_margin = right_margin;
+                        editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
                     });
 
                     EditorLayout {
