@@ -30,10 +30,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
-    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
-    linear_color_stop, linear_gradient, list, pulsating_between,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListState, ObjectFit,
+    PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task, TaskExt, TextRun,
+    TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
+    linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -106,8 +106,62 @@ const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
+mod sticky_user_message_preview;
 mod thread_view;
 pub use thread_view::*;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UserMessageContentSegment {
+    Text(String),
+    Mention { uri: MentionUri, label: String },
+}
+
+pub(crate) fn parse_content_block(
+    block: &acp::ContentBlock,
+    path_style: PathStyle,
+) -> Option<UserMessageContentSegment> {
+    match block {
+        acp::ContentBlock::Text(text_content) => {
+            Some(UserMessageContentSegment::Text(text_content.text.clone()))
+        }
+        acp::ContentBlock::ResourceLink(link) => {
+            Some(match MentionUri::parse(&link.uri, path_style) {
+                Ok(uri) => UserMessageContentSegment::Mention {
+                    label: format!("@{}", uri.name()),
+                    uri,
+                },
+                Err(_) => UserMessageContentSegment::Text(format!("@{}", link.name)),
+            })
+        }
+        acp::ContentBlock::Resource(acp::EmbeddedResource {
+            resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
+            ..
+        }) => Some(match MentionUri::parse(&resource.uri, path_style) {
+            Ok(uri) => UserMessageContentSegment::Mention {
+                label: format!("@{}", uri.name()),
+                uri,
+            },
+            Err(_) => UserMessageContentSegment::Text(resource.uri.clone()),
+        }),
+        acp::ContentBlock::Image(acp::ImageContent { uri, .. }) => {
+            let mention_uri = if let Some(uri) = uri {
+                match MentionUri::parse(uri, path_style) {
+                    Ok(uri) => uri,
+                    Err(_) => return Some(UserMessageContentSegment::Text(uri.clone())),
+                }
+            } else {
+                MentionUri::PastedImage {
+                    name: "Image".to_string(),
+                }
+            };
+            Some(UserMessageContentSegment::Mention {
+                label: format!("@{}", mention_uri.name()),
+                uri: mention_uri,
+            })
+        }
+        _ => None,
+    }
+}
 
 pub struct QueuedMessage {
     pub content: Vec<acp::ContentBlock>,
@@ -3428,7 +3482,9 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
+    use gpui::{
+        ClipboardItem, EventEmitter, ListOffset, TestAppContext, VisualTestContext, point, size,
+    };
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -5655,6 +5711,69 @@ pub(crate) mod tests {
         cx.read(|cx| thread.read(cx).message_editor.clone())
     }
 
+    fn enable_sticky_user_messages(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    sticky_user_messages: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+    }
+
+    async fn setup_sticky_user_message_thread(
+        cx: &mut TestAppContext,
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let connection = StubAgentConnection::new();
+        let first_response = (1..=10)
+            .map(|line| format!("Response line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(first_response.into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread()
+                    .map(|thread| thread.read(cx).thread.clone())
+            })
+            .expect("Missing active thread");
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Prompt 1\nline 2\nline 3\nline 4\nline 5\nline 6", cx)
+            })
+            .await
+            .expect("first prompt should succeed");
+        cx.run_until_parked();
+
+        let second_response = (1..=12)
+            .map(|line| format!("Follow-up line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(second_response.into()),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Prompt 2\nline 2\nline 3\nline 4\nline 5\nline 6", cx)
+            })
+            .await
+            .expect("second prompt should succeed");
+        cx.run_until_parked();
+
+        (conversation_view, cx)
+    }
+
     #[gpui::test]
     async fn test_rewind_views(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6065,6 +6184,29 @@ pub(crate) mod tests {
             view.scroll_to_most_recent_user_prompt(cx);
             let scroll_top = view.list_state.logical_scroll_top();
             assert_eq!(scroll_top.item_ix, 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_sticky_user_message_tracks_previous_message(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_sticky_user_messages(cx);
+
+        let (conversation_view, cx) = setup_sticky_user_message_thread(cx).await;
+
+        active_thread(&conversation_view, cx).update(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: 1,
+                offset_in_item: px(0.0),
+            });
+        });
+        cx.run_until_parked();
+
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            let state = view
+                .sticky_user_message_state(cx)
+                .expect("sticky user message should track the previous message");
+            assert_eq!(state.message_index, 0);
         });
     }
 
