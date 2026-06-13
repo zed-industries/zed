@@ -20,8 +20,12 @@ pub const DOT_GIT: &str = ".git";
 pub const GITIGNORE: &str = ".gitignore";
 pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
+pub const OBJECTS_DIR: &str = "objects";
+pub const HOOKS_DIR: &str = "hooks";
+pub const LOGS_HEAD: &str = "logs/HEAD";
+pub const LOGS_REFS_HEADS_DIR: &str = "logs/refs/heads";
+pub const LOGS_REFS_REMOTES_DIR: &str = "logs/refs/remotes";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
-pub const INDEX_LOCK: &str = "index.lock";
 pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(

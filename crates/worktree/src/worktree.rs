@@ -22,8 +22,8 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, REPO_EXCLUDE,
-    status::GitSummary,
+    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, HOOKS_DIR, LFS_DIR, LOGS_HEAD,
+    LOGS_REFS_HEADS_DIR, LOGS_REFS_REMOTES_DIR, OBJECTS_DIR, REPO_EXCLUDE, status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -4420,8 +4420,16 @@ impl BackgroundScanner {
         //
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
-        let skipped_file_names_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
-        let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
+        let skipped_file_names_in_dot_git = [COMMIT_MESSAGE];
+        let skipped_dirs_in_dot_git = [
+            FSMONITOR_DAEMON,
+            LFS_DIR,
+            OBJECTS_DIR,
+            HOOKS_DIR,
+            LOGS_HEAD,
+            LOGS_REFS_HEADS_DIR,
+            LOGS_REFS_REMOTES_DIR,
+        ];
 
         let mut dot_git_abs_paths = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
@@ -4456,7 +4464,10 @@ impl BackgroundScanner {
                             .is_some_and(|file_name| file_name == OsStr::new(skipped))
                     }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
+                        || path_in_git_dir
+                            .extension()
+                            .is_some_and(|extension| extension == "lock");
                     let is_dot_git = path_in_git_dir == Path::new("")
                         && matches!(event.kind, Some(PathEventKind::Changed))
                         && self.fs.is_dir(&dot_git_abs_path).await;
