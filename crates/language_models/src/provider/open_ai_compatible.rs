@@ -345,8 +345,9 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.interleaved_reasoning,
             );
             let completions = self.stream_completion(request, cx);
+            let think_tag_parsing = self.model.capabilities.think_tag_parsing;
             async move {
-                let mapper = OpenAiEventMapper::new();
+                let mapper = OpenAiEventMapper::with_think_tag_parsing(think_tag_parsing);
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()

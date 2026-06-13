@@ -231,6 +231,7 @@ impl ModelInput {
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
                 chat_completions: self.capabilities.supports_chat_completions.selected(),
                 interleaved_reasoning: false,
+                think_tag_parsing: false,
             },
         })
     }

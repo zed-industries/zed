@@ -593,6 +593,7 @@ async fn list_models(
                 prompt_cache_key,
                 chat_completions: true,
                 interleaved_reasoning: false,
+                think_tag_parsing: false,
             },
         });
     }
