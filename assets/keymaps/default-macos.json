@@ -289,6 +289,15 @@
     },
   },
   {
+    "context": "TerminalInputOverlay > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline",
+      "cmd-alt-e": "terminal::Editor",
+    },
+  },
+  {
     "context": "AgentConfiguration",
     "bindings": {
       "ctrl--": "pane::GoBack",
@@ -1311,6 +1320,7 @@
       "ctrl-alt-left": "pane::SplitLeft",
       "ctrl-alt-right": "pane::SplitRight",
       "cmd-d": "pane::SplitRight",
+      "cmd-alt-e": "terminal::Editor",
       "cmd-alt-r": "terminal::RerunTask",
       "cmd->": "agent::AddSelectionToThread",
     },

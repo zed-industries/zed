@@ -249,6 +249,14 @@
     },
   },
   {
+    "context": "TerminalInputOverlay > Editor",
+    "bindings": {
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline",
+      "ctrl-alt-e": "terminal::Editor",
+    },
+  },
+  {
     "context": "AcpThread > ModeSelector",
     "bindings": {
       "ctrl-enter": "menu::Confirm",
@@ -1239,6 +1247,7 @@
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode",
+      "ctrl-alt-e": "terminal::Editor",
       "ctrl-shift-r": "terminal::RerunTask",
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask",
