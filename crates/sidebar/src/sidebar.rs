@@ -46,7 +46,7 @@ use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use settings::{SettingsStore, ThreadGroupBy};
+use settings::{SettingsStore, ThreadGroupBy, ThreadSourceFilter, ThreadStatusFilter};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -131,24 +131,6 @@ enum ThreadListDisplayField {
     DiffStats,
 }
 
-/// A status category the thread list can be filtered to (see the "Filter by"
-/// menu). Multiple may be active at once.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum ThreadStatusFilter {
-    Running,
-    NeedsAttention,
-    Completed,
-    Error,
-}
-
-/// A thread source the thread list can be filtered to (see the "Filter by"
-/// menu). Multiple may be active at once.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum ThreadSourceFilter {
-    Zed,
-    External,
-}
-
 const ALL_STATUS_FILTERS: &[ThreadStatusFilter] = &[
     ThreadStatusFilter::Running,
     ThreadStatusFilter::NeedsAttention,
@@ -158,6 +140,28 @@ const ALL_STATUS_FILTERS: &[ThreadStatusFilter] = &[
 
 const ALL_SOURCE_FILTERS: &[ThreadSourceFilter] =
     &[ThreadSourceFilter::Zed, ThreadSourceFilter::External];
+
+/// Reads the persisted status filters from settings into the in-memory set used
+/// for rendering and filtering.
+fn status_filter_from_settings(cx: &App) -> HashSet<ThreadStatusFilter> {
+    AgentSettings::get_global(cx)
+        .thread_filter
+        .status
+        .iter()
+        .copied()
+        .collect()
+}
+
+/// Reads the persisted source filters from settings into the in-memory set used
+/// for rendering and filtering.
+fn source_filter_from_settings(cx: &App) -> HashSet<ThreadSourceFilter> {
+    AgentSettings::get_global(cx)
+        .thread_filter
+        .source
+        .iter()
+        .copied()
+        .collect()
+}
 
 fn thread_status_filter_label(filter: ThreadStatusFilter) -> &'static str {
     match filter {
@@ -879,9 +883,10 @@ pub struct Sidebar {
     /// the "See more" row. Groups not in this set are truncated.
     groups_showing_all: HashSet<ProjectGroupKey>,
     /// Active status filters (see the "Filter by" menu). Empty means no status
-    /// filtering. Ephemeral (not persisted across restarts).
+    /// filtering. Mirrors `agent.thread_filter.status` and is persisted there.
     status_filter: HashSet<ThreadStatusFilter>,
-    /// Active source filters. Empty means no source filtering. Ephemeral.
+    /// Active source filters. Empty means no source filtering. Mirrors
+    /// `agent.thread_filter.source` and is persisted there.
     source_filter: HashSet<ThreadSourceFilter>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
@@ -980,6 +985,7 @@ impl Sidebar {
         // other settings-driven rendering) stays in sync, including changes
         // made directly in settings.json or from the group-by menu.
         cx.observe_global::<SettingsStore>(|this, cx| {
+            this.sync_filters_from_settings(cx);
             this.schedule_update_entries(false, cx);
         })
         .detach();
@@ -1031,8 +1037,8 @@ impl Sidebar {
             draft_kinds: HashMap::new(),
             collapsed_sections: HashSet::new(),
             groups_showing_all: HashSet::new(),
-            status_filter: HashSet::new(),
-            source_filter: HashSet::new(),
+            status_filter: status_filter_from_settings(cx),
+            source_filter: source_filter_from_settings(cx),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -3651,6 +3657,7 @@ impl Sidebar {
         if !self.status_filter.remove(&filter) {
             self.status_filter.insert(filter);
         }
+        self.persist_filters(cx);
         self.update_entries(cx);
     }
 
@@ -3658,6 +3665,7 @@ impl Sidebar {
         if !self.source_filter.remove(&filter) {
             self.source_filter.insert(filter);
         }
+        self.persist_filters(cx);
         self.update_entries(cx);
     }
 
@@ -3665,8 +3673,40 @@ impl Sidebar {
         if self.has_active_filter() {
             self.status_filter.clear();
             self.source_filter.clear();
+            self.persist_filters(cx);
             self.update_entries(cx);
         }
+    }
+
+    /// Re-syncs the in-memory filter sets from settings, e.g. after a change
+    /// made in another window or directly in settings.json.
+    fn sync_filters_from_settings(&mut self, cx: &App) {
+        self.status_filter = status_filter_from_settings(cx);
+        self.source_filter = source_filter_from_settings(cx);
+    }
+
+    /// Persists the active status/source filters to the user's settings so they
+    /// survive restarts. Filters are written in their canonical menu order for
+    /// stable, readable settings output.
+    fn persist_filters(&self, cx: &mut Context<Self>) {
+        let Some(fs) = self.workspace_fs(cx) else {
+            return;
+        };
+        let status: Vec<ThreadStatusFilter> = ALL_STATUS_FILTERS
+            .iter()
+            .copied()
+            .filter(|filter| self.status_filter.contains(filter))
+            .collect();
+        let source: Vec<ThreadSourceFilter> = ALL_SOURCE_FILTERS
+            .iter()
+            .copied()
+            .filter(|filter| self.source_filter.contains(filter))
+            .collect();
+        settings::update_settings_file(fs, cx, move |settings, _cx| {
+            let agent = settings.agent.get_or_insert_default();
+            agent.set_thread_status_filter(status);
+            agent.set_thread_source_filter(source);
+        });
     }
 
     fn toggle_collapse(

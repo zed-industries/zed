@@ -978,6 +978,7 @@ mod tests {
                 show_branch: true,
                 show_diff_stats: true,
             },
+            thread_filter: Default::default(),
             thinking_display: Default::default(),
         };
 
