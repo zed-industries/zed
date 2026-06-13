@@ -1137,6 +1137,13 @@
     },
   },
   {
+    "context": "RemoteServerModal > Editor",
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+    },
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode",

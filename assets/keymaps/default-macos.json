@@ -1190,6 +1190,14 @@
     },
   },
   {
+    "context": "RemoteServerModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+    },
+  },
+  {
     "context": "ChannelModal > Picker > Editor",
     "use_key_equivalents": true,
     "bindings": {
