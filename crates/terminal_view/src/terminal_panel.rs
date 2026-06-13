@@ -317,7 +317,8 @@ impl TerminalPanel {
         if let Some(workspace) = workspace.upgrade() {
             let should_focus = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
-                    workspace.active_item(cx).is_none()
+                    !workspace.has_active_modal(window, cx)
+                        && workspace.active_item(cx).is_none()
                         && workspace
                             .is_dock_at_position_open(terminal_panel.position(window, cx), cx)
                 })
@@ -904,6 +905,14 @@ impl TerminalPanel {
                                 cx,
                             )
                         }));
+
+                        let reveal_strategy = if workspace.has_active_modal(window, cx)
+                            && matches!(reveal_strategy, RevealStrategy::Always)
+                        {
+                            RevealStrategy::NoFocus
+                        } else {
+                            reveal_strategy
+                        };
 
                         match reveal_strategy {
                             RevealStrategy::Always => {
