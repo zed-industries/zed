@@ -499,6 +499,16 @@ impl Database {
                 return Err(anyhow!("room does not exist or was already joined"))?;
             }
 
+            let participant = room_participant::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(user_id)),
+                )
+                .one(&*tx)
+                .await?
+                .context("participant not found")?;
+
             let mut reshared_projects = Vec::new();
             for reshared_project in &rejoin_room.reshared_projects {
                 let project_id = ProjectId::from_proto(reshared_project.project_id);
@@ -591,6 +601,7 @@ impl Database {
                 channel,
                 rejoined_projects,
                 reshared_projects,
+                role: participant.role.unwrap_or(ChannelRole::Member),
             })
         })
         .await
@@ -791,6 +802,7 @@ impl Database {
                             branch_summary,
                             head_commit_details,
                             branch_list: Vec::new(),
+                            branch_list_error: None,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path.clone(),
@@ -823,6 +835,7 @@ impl Database {
                     id: language_server.id as u64,
                     name: language_server.name,
                     worktree_id: language_server.worktree_id.map(|id| id as u64),
+                    language_name: language_server.language_name,
                 },
                 capabilities: language_server.capabilities,
             })

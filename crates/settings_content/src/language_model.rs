@@ -11,6 +11,7 @@ use std::sync::Arc;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub anthropic_compatible: Option<HashMap<Arc<str>, AnthropicCompatibleSettingsContent>>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
@@ -32,6 +33,57 @@ pub struct AllLanguageModelSettingsContent {
 pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<AnthropicAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleAvailableModel {
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-latest
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
+    pub tool_override: Option<String>,
+    pub max_output_tokens: Option<u64>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+    #[serde(default)]
+    pub capabilities: AnthropicCompatibleModelCapabilities,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleModelCapabilities {
+    pub tools: bool,
+    pub images: bool,
+    /// Whether to send explicit `cache_control` breakpoints for prompt caching.
+    /// Leave disabled if the provider rejects requests containing them.
+    pub prompt_caching: bool,
+}
+
+impl Default for AnthropicCompatibleModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            images: false,
+            prompt_caching: false,
+        }
+    }
 }
 
 #[with_fallible_options]
@@ -60,6 +112,7 @@ pub struct AnthropicAvailableModel {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AmazonBedrockSettingsContent {
     pub available_models: Option<Vec<BedrockAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
     pub endpoint_url: Option<String>,
     pub region: Option<String>,
     pub profile: Option<String>,
@@ -104,6 +157,7 @@ pub struct OllamaSettingsContent {
     pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
     pub context_window: Option<u64>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -152,6 +206,7 @@ impl Default for KeepAlive {
 pub struct OpenCodeSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenCodeAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
     /// Whether to show OpenCode Zen models. Defaults to true.
     pub show_zen_models: Option<bool>,
     /// Whether to show OpenCode Go models. Defaults to true.
@@ -194,6 +249,7 @@ pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
     pub available_models: Option<Vec<LmStudioAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -211,6 +267,7 @@ pub struct LmStudioAvailableModel {
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<DeepseekAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -227,6 +284,7 @@ pub struct DeepseekAvailableModel {
 pub struct MistralSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<MistralAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -247,6 +305,7 @@ pub struct MistralAvailableModel {
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenAiAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -275,6 +334,7 @@ impl MergeFrom for OpenAiReasoningEffort {
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -339,6 +399,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
 pub struct VercelAiGatewaySettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<VercelAiGatewayAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -358,6 +419,7 @@ pub struct VercelAiGatewayAvailableModel {
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<GoogleAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -374,6 +436,7 @@ pub struct GoogleAvailableModel {
 pub struct XAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<XaiAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -437,6 +500,7 @@ pub enum ZedDotDevAvailableProvider {
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenRouterAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]

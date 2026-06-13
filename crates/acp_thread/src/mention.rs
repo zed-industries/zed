@@ -1,7 +1,6 @@
 use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
-use prompt_store::{PromptId, UserPromptId};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -37,8 +36,12 @@ pub enum MentionUri {
         id: acp::SessionId,
         name: String,
     },
+    /// Deprecated: kept so threads from before rules became skills still
+    /// deserialize. `id` (an opaque `prompt_store::PromptId`) is preserved
+    /// verbatim so re-saved threads stay loadable by older Zed versions.
     Rule {
-        id: PromptId,
+        #[serde(default = "default_deprecated_rule_id")]
+        id: serde_json::Value,
         name: String,
     },
     Diagnostics {
@@ -206,12 +209,14 @@ impl MentionUri {
                         name,
                     })
                 } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
+                    // Deprecated: parses legacy rule mentions.
                     let name = single_query_param(&url, "name")?.context("Missing rule name")?;
-                    let rule_id = UserPromptId(rule_id.parse()?);
-                    Ok(Self::Rule {
-                        id: rule_id.into(),
-                        name,
-                    })
+                    let id = if rule_id.is_empty() {
+                        default_deprecated_rule_id()
+                    } else {
+                        serde_json::json!({ "User": { "uuid": rule_id } })
+                    };
+                    Ok(Self::Rule { id, name })
                 } else if path == "/agent/diagnostics" {
                     let mut include_errors = default_include_errors();
                     let mut include_warnings = false;
@@ -526,9 +531,14 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
-            MentionUri::Rule { name, id } => {
+            MentionUri::Rule { id, name } => {
                 let mut url = Url::parse("zed:///").unwrap();
-                url.set_path(&format!("/agent/rule/{id}"));
+                let rule_id = id
+                    .get("User")
+                    .and_then(|user| user.get("uuid"))
+                    .and_then(|uuid| uuid.as_str())
+                    .unwrap_or_default();
+                url.set_path(&format!("/agent/rule/{rule_id}"));
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
@@ -593,6 +603,12 @@ fn default_include_errors() -> bool {
     true
 }
 
+/// Placeholder rule `id` for legacy mentions missing one, shaped so older Zed
+/// versions can still deserialize it as a `prompt_store::PromptId`.
+fn default_deprecated_rule_id() -> serde_json::Value {
+    serde_json::json!({ "User": { "uuid": "00000000-0000-0000-0000-000000000000" } })
+}
+
 fn query_param(url: &Url, name: &'static str) -> Option<String> {
     url.query_pairs()
         .find_map(|(key, value)| (key == name).then(|| value.to_string()))
@@ -622,6 +638,18 @@ pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> 
         *line_range.start() + 1,
         *line_range.end() + 1
     )
+}
+
+/// Formats a 0-based, inclusive line range as a 1-based path suffix: `:5` for a
+/// single line or `:5-9` for a span. Used for `path:line` mentions in text.
+pub fn line_range_suffix(line_range: &RangeInclusive<u32>) -> String {
+    let start = *line_range.start() + 1;
+    let end = *line_range.end() + 1;
+    if start == end {
+        format!(":{start}")
+    } else {
+        format!(":{start}-{end}")
+    }
 }
 
 #[cfg(test)]
@@ -812,17 +840,40 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rule_uri() {
+    fn test_parse_legacy_rule_uri() {
         let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some+rule";
         let parsed = MentionUri::parse(rule_uri, PathStyle::local()).unwrap();
         match &parsed {
-            MentionUri::Rule { id, name } => {
-                assert_eq!(id.to_string(), "d8694ff2-90d5-4b6f-be33-33c1763acd52");
-                assert_eq!(name, "Some rule");
-            }
+            MentionUri::Rule { name, .. } => assert_eq!(name, "Some rule"),
             _ => panic!("Expected Rule variant"),
         }
+        // The id round-trips through the URI.
         assert_eq!(parsed.to_uri().to_string(), rule_uri);
+    }
+
+    #[test]
+    fn test_legacy_rule_mention_preserves_id() {
+        // The `id` older Zed versions require must survive a load + save.
+        let json = r#"{"Rule":{"id":{"User":{"uuid":"d8694ff2-90d5-4b6f-be33-33c1763acd52"}},"name":"Some rule"}}"#;
+        let parsed: MentionUri = serde_json::from_str(json).unwrap();
+        match &parsed {
+            MentionUri::Rule { name, .. } => assert_eq!(name, "Some rule"),
+            _ => panic!("Expected Rule variant"),
+        }
+        let reserialized = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(
+            reserialized["Rule"]["id"]["User"]["uuid"],
+            "d8694ff2-90d5-4b6f-be33-33c1763acd52"
+        );
+    }
+
+    #[test]
+    fn test_legacy_rule_mention_without_id_gets_placeholder() {
+        // A mention missing its id still serializes a valid id for older versions.
+        let json = r#"{"Rule":{"name":"Some rule"}}"#;
+        let parsed: MentionUri = serde_json::from_str(json).unwrap();
+        let reserialized = serde_json::to_value(&parsed).unwrap();
+        assert!(reserialized["Rule"]["id"]["User"]["uuid"].is_string());
     }
 
     #[test]

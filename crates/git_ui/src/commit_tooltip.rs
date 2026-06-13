@@ -238,7 +238,7 @@ impl Render for CommitTooltip {
         let short_commit_id = self
             .commit
             .sha
-            .get(0..8)
+            .get(0..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
@@ -258,7 +258,11 @@ impl Render for CommitTooltip {
             .commit
             .message
             .as_ref()
-            .map(|_| MarkdownElement::new(self.markdown.clone(), markdown_style).into_any())
+            .map(|_| {
+                MarkdownElement::new(self.markdown.clone(), markdown_style)
+                    .scroll_handle(self.scroll_handle.clone())
+                    .into_any()
+            })
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = self
