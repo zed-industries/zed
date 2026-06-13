@@ -487,6 +487,14 @@ fn run() -> Result<()> {
             return mac_os::spawn_channel_cli(channel, std::env::args().skip(2).collect());
         }
     }
+
+    // Must happen before clap — SSH invokes cli.exe directly as SSH_ASKPASS
+    // and passes the socket path via env var to avoid argument parsing.
+    if let Ok(socket) = std::env::var("ZED_ASKPASS_SOCKET") {
+        askpass::main_from_args(&socket, std::env::args().skip(1));
+        return Ok(());
+    }
+
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass

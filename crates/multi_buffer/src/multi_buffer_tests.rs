@@ -1,12 +1,13 @@
 use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use gpui::{App, TestAppContext};
+use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use util::RandomCharIter;
 use util::rel_path::rel_path;
@@ -4783,21 +4784,19 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         );
     });
     cx.run_until_parked();
+    let base_text_snapshot = diff.read_with(cx, |diff, cx| diff.base_text(cx));
+    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some(base_text.into()),
-                None,
-                None,
+                buffer_snapshot,
+                &base_text_snapshot,
+                Some(Arc::from(base_text)),
                 cx,
             )
         })
         .await;
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-    })
-    .await;
+    diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4821,21 +4820,19 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         buffer.set_text("ZERO\nONE\nTWO\n", cx);
     });
     cx.run_until_parked();
+    let base_text_snapshot = diff.read_with(cx, |diff, cx| diff.base_text(cx));
+    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some(base_text.into()),
-                None,
-                None,
+                buffer_snapshot,
+                &base_text_snapshot,
+                Some(Arc::from(base_text)),
                 cx,
             )
         })
         .await;
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-    })
-    .await;
+    diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4858,13 +4855,11 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
     diff.update(cx, |diff, cx| {
         diff.set_base_text(
             Some("new base\n".into()),
-            None,
             buffer.read(cx).text_snapshot(),
             cx,
         )
     })
-    .await
-    .unwrap();
+    .await;
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4915,21 +4910,10 @@ async fn test_inverted_diff_base_text_change(cx: &mut TestAppContext) {
         ),
     );
 
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some("ddd\n".into()),
-                Some(true),
-                None,
-                cx,
-            )
-        })
-        .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
+        diff.set_base_text(Some("ddd\n".into()), buffer.read(cx).text_snapshot(), cx)
     })
-    .detach();
+    .await;
 
     let _hunks: Vec<_> = multibuffer
         .read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx))
@@ -4961,22 +4945,19 @@ async fn test_inverted_diff_secondary_version_mismatch(cx: &mut TestAppContext) 
         buffer.edit([(0..0, "ZERO\n")], None, cx);
     });
 
+    let base_text_snapshot = unstaged_diff.read_with(cx, |diff, cx| diff.base_text(cx));
+    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
     let update = unstaged_diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some(index_text.into()),
-                None,
-                None,
+                buffer_snapshot,
+                &base_text_snapshot,
+                Some(Arc::from(index_text)),
                 cx,
             )
         })
         .await;
-    unstaged_diff
-        .update(cx, |diff, cx| {
-            diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-        })
-        .await;
+    unstaged_diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));
 
     let base_text_buffer =
         uncommitted_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
