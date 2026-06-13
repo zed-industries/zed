@@ -27,10 +27,10 @@ pub(crate) struct FsWatcher {
     executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    paths: Arc<Mutex<BTreeMap<Arc<Path>, PathState>>>,
+    registrations: Arc<Mutex<BTreeMap<Arc<Path>, FsWatcherRegistration>>>,
 }
 
-enum PathState {
+enum FsWatcherRegistration {
     Pending {
         _task: Task<()>,
     },
@@ -52,7 +52,7 @@ impl FsWatcher {
             executor,
             tx,
             pending_path_events,
-            paths: Arc::new(Mutex::new(BTreeMap::new())),
+            registrations: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -70,12 +70,12 @@ impl FsWatcher {
 impl Watcher for FsWatcher {
     fn add(&self, path: &Path) -> anyhow::Result<()> {
         log::trace!("watcher add: {path:?}");
-        let mut paths = self.paths.lock();
+        let mut paths = self.registrations.lock();
 
         let path_is_covered = path.ancestors().skip(1).any(|ancestor| {
             paths.get(ancestor).is_some_and(|entry| match entry {
-                PathState::Pending { .. } => false,
-                PathState::Registered { mode, .. } => {
+                FsWatcherRegistration::Pending { .. } => false,
+                FsWatcherRegistration::Registered { mode, .. } => {
                     recursive_mode(*mode) == notify::RecursiveMode::Recursive
                 }
             })
@@ -92,11 +92,11 @@ impl Watcher for FsWatcher {
                 self.executor.clone(),
                 path.clone(),
                 self.make_callback(&path),
-                Arc::downgrade(&self.paths),
                 self.tx.clone(),
                 self.pending_path_events.clone(),
+                Arc::downgrade(&self.registrations),
             ));
-            paths.insert(path, PathState::Pending { _task: task });
+            paths.insert(path, FsWatcherRegistration::Pending { _task: task });
             return Ok(());
         }
 
@@ -108,14 +108,14 @@ impl Watcher for FsWatcher {
         let id = self
             .global
             .register(path.clone(), mode, self.make_callback(&path));
-        paths.insert(path, PathState::Registered { id, mode });
+        paths.insert(path, FsWatcherRegistration::Registered { id, mode });
         Ok(())
     }
 
     fn remove(&self, path: &Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
-        let entry = self.paths.lock().remove(path);
-        if let Some(PathState::Registered { id, .. }) = entry {
+        let entry = self.registrations.lock().remove(path);
+        if let Some(FsWatcherRegistration::Registered { id, .. }) = entry {
             self.global.unregister(id);
         }
         Ok(())
@@ -124,9 +124,9 @@ impl Watcher for FsWatcher {
 
 impl Drop for FsWatcher {
     fn drop(&mut self) {
-        let entries = std::mem::take(&mut *self.paths.lock());
+        let entries = std::mem::take(&mut *self.registrations.lock());
         for (_, entry) in entries {
-            if let PathState::Registered { id, .. } = entry {
+            if let FsWatcherRegistration::Registered { id, .. } = entry {
                 self.global.unregister(id);
             }
         }
@@ -277,9 +277,9 @@ async fn poll_path_until_created(
     executor: BackgroundExecutor,
     path: Arc<Path>,
     callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
-    entries: std::sync::Weak<Mutex<BTreeMap<Arc<Path>, PathState>>>,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    registrations: std::sync::Weak<Mutex<BTreeMap<Arc<Path>, FsWatcherRegistration>>>,
 ) {
     loop {
         executor.timer(poll_interval()).await;
@@ -288,15 +288,15 @@ async fn poll_path_until_created(
             continue;
         }
 
-        let Some(entries) = entries.upgrade() else {
+        let Some(registrations) = registrations.upgrade() else {
             return;
         };
         {
-            let mut entries = entries.lock();
-            let Some(entry) = entries.get_mut(path.as_ref()) else {
+            let mut registrations = registrations.lock();
+            let Some(entry) = registrations.get_mut(path.as_ref()) else {
                 return;
             };
-            if !matches!(entry, PathState::Pending { .. }) {
+            if !matches!(entry, FsWatcherRegistration::Pending { .. }) {
                 return;
             }
             let mode = if requires_poll_watcher(&path) {
@@ -305,7 +305,7 @@ async fn poll_path_until_created(
                 WatcherMode::Native
             };
             let id = global.register(path.clone(), mode, callback.clone());
-            *entry = PathState::Registered { id, mode };
+            *entry = FsWatcherRegistration::Registered { id, mode };
         }
 
         enqueue_path_events(
@@ -467,27 +467,35 @@ struct WatcherRegistrationState {
     mode: WatcherMode,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct PathRegistrationState {
+    count: u32,
+}
+
 struct WatcherState {
-    registrations: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
-    native_desired_paths: BTreeMap<Arc<Path>, u32>,
-    poll_desired_paths: BTreeMap<Arc<Path>, u32>,
+    watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
+    native_path_registrations: BTreeMap<Arc<Path>, PathRegistrationState>,
+    poll_path_registrations: BTreeMap<Arc<Path>, PathRegistrationState>,
     dirty_paths: Vec<(WatcherMode, Arc<Path>)>,
     pending_flushes: Vec<oneshot::Sender<()>>,
     pending_health_checks: Vec<oneshot::Sender<anyhow::Result<()>>>,
 }
 
 impl WatcherState {
-    fn desired_paths_mut(&mut self, mode: WatcherMode) -> &mut BTreeMap<Arc<Path>, u32> {
+    fn desired_paths_mut(
+        &mut self,
+        mode: WatcherMode,
+    ) -> &mut BTreeMap<Arc<Path>, PathRegistrationState> {
         match mode {
-            WatcherMode::Native => &mut self.native_desired_paths,
-            WatcherMode::Poll => &mut self.poll_desired_paths,
+            WatcherMode::Native => &mut self.native_path_registrations,
+            WatcherMode::Poll => &mut self.poll_path_registrations,
         }
     }
 
-    fn desired_paths(&self, mode: WatcherMode) -> &BTreeMap<Arc<Path>, u32> {
+    fn desired_paths(&self, mode: WatcherMode) -> &BTreeMap<Arc<Path>, PathRegistrationState> {
         match mode {
-            WatcherMode::Native => &self.native_desired_paths,
-            WatcherMode::Poll => &self.poll_desired_paths,
+            WatcherMode::Native => &self.native_path_registrations,
+            WatcherMode::Poll => &self.poll_path_registrations,
         }
     }
 }
@@ -552,9 +560,9 @@ impl GlobalWatcher {
         poll_backend: Option<Box<dyn WatchBackend>>,
     ) -> Self {
         let state = Arc::new(Mutex::new(WatcherState {
-            registrations: HashMap::new(),
-            native_desired_paths: BTreeMap::new(),
-            poll_desired_paths: BTreeMap::new(),
+            watchers: HashMap::new(),
+            native_path_registrations: BTreeMap::new(),
+            poll_path_registrations: BTreeMap::new(),
             dirty_paths: Vec::new(),
             pending_flushes: Vec::new(),
             pending_health_checks: Vec::new(),
@@ -591,7 +599,7 @@ impl GlobalWatcher {
         let id = WatcherRegistrationId(self.next_registration_id.fetch_add(1, Ordering::Relaxed));
         {
             let mut state = self.state.lock();
-            state.registrations.insert(
+            state.watchers.insert(
                 id,
                 WatcherRegistrationState {
                     callback,
@@ -599,10 +607,11 @@ impl GlobalWatcher {
                     mode,
                 },
             );
-            *state
+            state
                 .desired_paths_mut(mode)
                 .entry(path.clone())
-                .or_insert(0) += 1;
+                .or_default()
+                .count += 1;
             state.dirty_paths.push((mode, path));
         }
         self.request_sync();
@@ -612,13 +621,13 @@ impl GlobalWatcher {
     pub(crate) fn unregister(&self, id: WatcherRegistrationId) {
         {
             let mut state = self.state.lock();
-            let Some(registration) = state.registrations.remove(&id) else {
+            let Some(registration) = state.watchers.remove(&id) else {
                 return;
             };
             let desired = state.desired_paths_mut(registration.mode);
-            if let Some(count) = desired.get_mut(&registration.path) {
-                *count -= 1;
-                if *count == 0 {
+            if let Some(registration_state) = desired.get_mut(&registration.path) {
+                registration_state.count -= 1;
+                if registration_state.count == 0 {
                     desired.remove(&registration.path);
                 }
             }
@@ -1058,7 +1067,7 @@ impl BackendState {
         let callbacks = {
             let watcher_state = watcher_state.lock();
             watcher_state
-                .registrations
+                .watchers
                 .values()
                 .filter(|registration| registration.mode == self.mode && registration.path == *path)
                 .map(|registration| registration.callback.clone())
@@ -1146,7 +1155,7 @@ pub fn poll_interval() -> Duration {
     *POLL_INTERVAL
 }
 
-fn handle_event(mode: WatcherMode, shared: &Mutex<WatcherState>, event: notify::Result<Event>) {
+fn handle_event(mode: WatcherMode, state: &Mutex<WatcherState>, event: notify::Result<Event>) {
     if matches!(
         event,
         Ok(Event {
@@ -1160,9 +1169,9 @@ fn handle_event(mode: WatcherMode, shared: &Mutex<WatcherState>, event: notify::
     log::trace!("global handle event for {mode:?}: {event:?}");
 
     let callbacks = {
-        let shared = shared.lock();
-        shared
-            .registrations
+        let state = state.lock();
+        state
+            .watchers
             .values()
             .filter(|registration| registration.mode == mode)
             .map(|registration| registration.callback.clone())
