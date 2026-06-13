@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::cmp;
 use std::fmt;
 
 use gpui::{App, AsyncApp, Entity};
@@ -8,6 +8,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use text::ToPoint as _;
 use text::{Anchor, Point};
+
+/// The number of lines to search above and below when a symbol isn't found on the exact line.
+/// Agents often land on a blank line before the actual code due to selection ranges.
+const NEARBY_LINE_SEARCH_RADIUS: u32 = 4;
 
 /// Identifies a specific symbol (declaration or usage) in the source code.
 ///
@@ -101,48 +105,55 @@ impl fmt::Display for LocationDisplay {
     }
 }
 
-/// Searches for `needle` in a char iterator, returning the byte offset of the
-/// first occurrence without collecting the full iterator into a string.
-///
-/// Equivalent to [`str::find`]
-fn find_in_char_iter(chars: impl Iterator<Item = char>, needle: &str) -> Option<usize> {
-    let needle_chars: Vec<char> = needle.chars().collect();
-    if needle_chars.is_empty() {
-        return Some(0);
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '$' | '@' | '#' | '-')
+}
+
+/// Find the first occurrence of `symbol` as a complete token in `line_text`.
+/// Returns the byte offset of the match, or None.
+/// A match is "complete" when the characters immediately before and after are
+/// not identifier characters (alphanumeric, `_`, `$`, `@`, `#`, `-`).
+fn find_symbol_on_line(line_text: &str, symbol: &str) -> Option<usize> {
+    let symbol_len = symbol.len();
+    if symbol_len == 0 || symbol_len > line_text.len() {
+        return None;
     }
-
-    let mut window: VecDeque<char> = VecDeque::with_capacity(needle_chars.len());
-    let mut byte_offsets: VecDeque<usize> = VecDeque::with_capacity(needle_chars.len());
-    let mut byte_offset = 0usize;
-
-    for ch in chars {
-        window.push_back(ch);
-        byte_offsets.push_back(byte_offset);
-        byte_offset += ch.len_utf8();
-
-        if window.len() > needle_chars.len() {
-            window.pop_front();
-            byte_offsets.pop_front();
+    let mut start = 0;
+    while let Some(offset) = line_text[start..].find(symbol) {
+        let abs = start + offset;
+        let before_ok = abs == 0
+            || !line_text[..abs]
+                .chars()
+                .next_back()
+                .is_some_and(is_identifier_char);
+        let end = abs + symbol_len;
+        let after_ok =
+            end >= line_text.len() || !line_text[end..].chars().next().is_some_and(is_identifier_char);
+        if before_ok && after_ok {
+            return Some(abs);
         }
-
-        if window.len() == needle_chars.len()
-            && window.iter().zip(needle_chars.iter()).all(|(a, b)| a == b)
-        {
-            return byte_offsets.front().copied();
-        }
+        start = abs + symbol_len;
     }
-
     None
+}
+
+/// Extract the text content of a given row from a buffer snapshot.
+fn line_text_for_row(snapshot: &text::BufferSnapshot, row: u32) -> String {
+    let line_start = Point::new(row, 0);
+    let line_len = snapshot.line_len(row);
+    let line_end = Point::new(row, line_len);
+    snapshot
+        .text_for_range(line_start..line_end)
+        .collect::<String>()
 }
 
 impl SymbolLocator {
     /// Resolves this locator into a concrete buffer and position.
     ///
     /// Opens the file at `file_path`, then searches for `symbol_name` on the
-    /// specified `line`. Returns an error if the file can't be found, the line
-    /// is out of range, or the symbol name doesn't appear on that line.
-    /// If the symbol name appears multiple times on the line, uses the first
-    /// occurrence.
+    /// specified `line` using token-boundary matching. If not found on the exact
+    /// line, searches nearby lines (±4 lines) as agents often land on blank lines
+    /// before the actual code.
     pub async fn resolve(
         &self,
         project: &Entity<Project>,
@@ -176,36 +187,44 @@ impl SymbolLocator {
                 ));
             }
 
-            let line_len = snapshot.line_len(row);
-            let truncated = line_len as usize > MAX_LINE_DISPLAY_LEN;
-            let line_start = Point::new(row, 0);
-            let line_end = Point::new(row, line_len);
-            let line_chars = || {
-                snapshot
-                    .text_for_range(line_start..line_end)
-                    .flat_map(|chunk| chunk.chars())
-            };
+            let max_row = snapshot.max_point().row;
 
-            let byte_offset = find_in_char_iter(line_chars(), symbol_name).ok_or_else(|| {
-                let preview: String = line_chars()
-                    .skip_while(|c| c.is_whitespace())
-                    .take(MAX_LINE_DISPLAY_LEN)
-                    .collect();
-                format!(
-                    "Symbol '{symbol_name}' not found on line {line} of '{file_path}'. \
-                     Line content: '{}'",
-                    preview.trim_end()
-                )
-            })?;
+            // Try the exact line first
+            let target_line_text = line_text_for_row(&snapshot, row);
+            if let Some(byte_offset) = find_symbol_on_line(&target_line_text, symbol_name) {
+                let position = snapshot.anchor_before(Point::new(row, byte_offset as u32));
+                let display_text = format_line_display(&target_line_text);
+                let truncated = target_line_text.len() > MAX_LINE_DISPLAY_LEN;
+                return Ok((position, display_text, truncated));
+            }
 
-            let position = snapshot.anchor_before(Point::new(row, byte_offset as u32));
-            let display_text: String = line_chars()
+            // Search nearby lines (agents often land on blank lines before code)
+            let search_start = row.saturating_sub(NEARBY_LINE_SEARCH_RADIUS);
+            let search_end = cmp::min(row + NEARBY_LINE_SEARCH_RADIUS, max_row);
+            for candidate_row in search_start..=search_end {
+                if candidate_row == row {
+                    continue;
+                }
+                let candidate_text = line_text_for_row(&snapshot, candidate_row);
+                if let Some(byte_offset) = find_symbol_on_line(&candidate_text, symbol_name) {
+                    let position =
+                        snapshot.anchor_before(Point::new(candidate_row, byte_offset as u32));
+                    let display_text = format_line_display(&candidate_text);
+                    let truncated = candidate_text.len() > MAX_LINE_DISPLAY_LEN;
+                    return Ok((position, display_text, truncated));
+                }
+            }
+
+            let preview: String = target_line_text
+                .chars()
                 .skip_while(|c| c.is_whitespace())
                 .take(MAX_LINE_DISPLAY_LEN)
-                .collect::<String>();
-            let display_text = display_text.trim_end().to_string();
-
-            Ok((position, display_text, truncated))
+                .collect();
+            Err(format!(
+                "Symbol '{symbol_name}' not found on line {line} of '{file_path}'. \
+                 Line content: '{}'",
+                preview.trim_end()
+            ))
         })?;
 
         Ok(ResolvedSymbol {
@@ -217,20 +236,46 @@ impl SymbolLocator {
     }
 }
 
+fn format_line_display(line_text: &str) -> String {
+    let truncated = if line_text.len() > MAX_LINE_DISPLAY_LEN {
+        &line_text[..MAX_LINE_DISPLAY_LEN]
+    } else {
+        line_text
+    };
+    truncated.trim_end().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::proptest::prelude::*;
 
-    #[gpui::property_test]
-    fn find_in_char_iter_test(
-        // limited character sets to increase odds of finding matches
-        #[strategy = "[abcd]{100,1000}"] haystack: String,
-        #[strategy = "[abcd]{1,5}"] needle: String,
-    ) -> Result<(), TestCaseError> {
-        let expected = haystack.find(&needle);
-        let actual = find_in_char_iter(haystack.chars(), &needle);
-        prop_assert_eq!(actual, expected);
-        Ok::<_, TestCaseError>(())
+    #[test]
+    fn test_word_boundary_prevents_partial_match() {
+        let line = "let payment_processor = PaymentProcessor::new();";
+        // "Payment" is a substring of "PaymentProcessor" but not a standalone word
+        assert_eq!(find_symbol_on_line(line, "Payment"), None);
+    }
+
+    #[test]
+    fn test_word_boundary_matches_standalone() {
+        let line = "pub fn captureReservedPayment(Payment $payment): void";
+        // "Payment" as a standalone word at the parameter type position
+        let offset = find_symbol_on_line(line, "Payment");
+        assert!(offset.is_some());
+        assert_eq!(&line[offset.unwrap()..offset.unwrap() + 7], "Payment");
+    }
+
+    #[test]
+    fn test_special_prefix_php_variable() {
+        let line = "public function capture(Payment $payment): void";
+        let offset = find_symbol_on_line(line, "$payment");
+        assert!(offset.is_some());
+        assert_eq!(&line[offset.unwrap()..offset.unwrap() + 8], "$payment");
+    }
+
+    #[test]
+    fn test_no_match_returns_none() {
+        let line = "let x = 42;";
+        assert_eq!(find_symbol_on_line(line, "nonexistent"), None);
     }
 }
