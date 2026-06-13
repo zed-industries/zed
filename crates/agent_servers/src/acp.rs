@@ -3080,6 +3080,7 @@ mod tests {
         Arc<AtomicUsize>,
         Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
         Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
+        Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
         Task<anyhow::Result<()>>,
     ) {
         cx.update(|cx| {
@@ -3097,6 +3098,8 @@ mod tests {
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let load_session_gate: Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>> =
             Arc::new(std::sync::Mutex::new(None));
+        let new_session_updates: Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
 
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
@@ -3132,8 +3135,23 @@ mod tests {
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |_req: acp::NewSessionRequest, responder, _cx| {
-                    responder.respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                {
+                    let new_session_updates = new_session_updates.clone();
+                    async move |_req: acp::NewSessionRequest, responder, cx| {
+                        let session_id = acp::SessionId::new("new-session-1");
+                        let updates = std::mem::take(
+                            &mut *new_session_updates
+                                .lock()
+                                .expect("new_session_updates mutex poisoned"),
+                        );
+                        for update in updates {
+                            cx.send_notification(acp::SessionNotification::new(
+                                session_id.clone(),
+                                update,
+                            ))?;
+                        }
+                        responder.respond(acp::NewSessionResponse::new(session_id))
+                    }
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -3273,6 +3291,7 @@ mod tests {
             close_count,
             load_session_updates,
             load_session_gate,
+            new_session_updates,
             keep_agent_alive,
         )
     }
@@ -3286,6 +3305,7 @@ mod tests {
             close_count,
             _load_session_updates,
             _load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3377,6 +3397,7 @@ mod tests {
             _close_count,
             load_session_updates,
             _load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3431,6 +3452,57 @@ mod tests {
         );
     }
 
+    // Regression test for #55447: notifications streamed before `session/new`
+    // responds must reach the new thread.
+    #[gpui::test]
+    async fn test_new_session_applies_notifications_sent_before_response(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (
+            connection,
+            project,
+            _load_count,
+            _close_count,
+            _load_session_updates,
+            _load_session_gate,
+            new_session_updates,
+            _keep_agent_alive,
+        ) = connect_fake_agent(cx).await;
+
+        *new_session_updates
+            .lock()
+            .expect("new_session_updates mutex poisoned") =
+            vec![acp::SessionUpdate::AvailableCommandsUpdate(
+                acp::AvailableCommandsUpdate::new(vec![
+                    acp::AvailableCommand::new("init", "Initialize project"),
+                    acp::AvailableCommand::new("review", "Review code"),
+                ]),
+            )];
+
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+
+        let thread = cx
+            .update(|cx| connection.clone().new_session(project.clone(), work_dirs, cx))
+            .await
+            .expect("new_session failed");
+        cx.run_until_parked();
+
+        let observed = thread.read_with(cx, |thread, _| {
+            thread
+                .available_commands()
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            observed,
+            vec!["init".to_string(), "review".to_string()],
+            "session/update notifications fired before NewSessionResponse \
+             must reach the new AcpThread"
+        );
+    }
+
     // Regression test: if `close_session` is issued while a `load_session`
     // RPC is still in flight, the close must take effect cleanly — the load
     // must fail with a recognizable error (not return an orphaned thread),
@@ -3445,6 +3517,7 @@ mod tests {
             close_count,
             _load_session_updates,
             load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3543,6 +3616,7 @@ mod tests {
             close_count,
             _load_session_updates,
             load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
