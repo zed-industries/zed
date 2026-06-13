@@ -3697,6 +3697,10 @@ impl LocalLspStore {
             if worktree.read(cx).as_local().is_some() {
                 if let Some(glob) = Glob::new(&pattern).log_err() {
                     let worktree_id = worktree.read(cx).id();
+                    log::debug!(
+                        "language server {language_server_id}: watching {pattern} within worktree {}",
+                        worktree.read(cx).abs_path().display(),
+                    );
                     watched
                         .worktree_paths
                         .entry(worktree_id)
@@ -3766,6 +3770,9 @@ impl LocalLspStore {
             {
                 // For an unrooted glob like `**/Cargo.toml`, watch it within each worktree,
                 // rather than adding a new watcher for `/`.
+                log::debug!(
+                    "language server {language_server_id}: watching unrooted glob {pattern} within every worktree"
+                );
                 for worktree in worktrees {
                     watched
                         .worktree_paths
@@ -3780,6 +3787,10 @@ impl LocalLspStore {
                     .abs_paths
                     .entry(abs_path.clone())
                     .or_insert_with(|| {
+                        log::debug!(
+                            "language server {language_server_id}: watching {pattern} under new path {}",
+                            abs_path.display(),
+                        );
                         let task = LanguageServerWatchedPaths::spawn_abs_path_watcher(
                             abs_path,
                             fs,
@@ -3843,9 +3854,9 @@ impl LocalLspStore {
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut Context<LspStore>,
     ) {
-        log::trace!(
-            "Processing new watcher paths for language server with id {}",
-            language_server_id
+        log::debug!(
+            "language server {language_server_id}: registering {} file watcher(s) for registration id {registration_id}",
+            params.watchers.len(),
         );
 
         let worktrees: Vec<Entity<Worktree>> = self
@@ -14323,6 +14334,10 @@ impl LanguageServerWatchedPaths {
             async move |_, cx| {
                 maybe!(async move {
                     let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                    log::debug!(
+                        "language server {language_server_id}: file watch for {} is established",
+                        abs_path.display(),
+                    );
                     while let Some(update) = push_updates.0.next().await {
                         let action = lsp_store
                             .update(cx, |this, _| {

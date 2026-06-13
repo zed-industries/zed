@@ -1,11 +1,15 @@
+use futures::{FutureExt as _, channel::oneshot, select_biased};
 use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::DerefMut,
-    path::Path,
-    sync::{Arc, LazyLock, OnceLock},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, LazyLock, OnceLock,
+        atomic::{AtomicU32, Ordering},
+    },
     time::{Duration, Instant},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -576,6 +580,25 @@ impl WatcherState {
 trait WatchBackend: Send {
     fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()>;
     fn unwatch(&mut self, path: &Path) -> notify::Result<()>;
+    fn watched_paths(&self) -> notify::Result<Vec<(PathBuf, notify::RecursiveMode)>>;
+
+    fn update_paths(&mut self, ops: Vec<notify::PathOp>) -> Result<(), notify::UpdatePathsError> {
+        let mut ops = ops.into_iter();
+        while let Some(op) = ops.next() {
+            let result = match &op {
+                notify::PathOp::Watch(path, config) => self.watch(path, config.recursive_mode()),
+                notify::PathOp::Unwatch(path) => self.unwatch(path),
+            };
+            if let Err(source) = result {
+                return Err(notify::UpdatePathsError {
+                    source,
+                    origin: Some(op),
+                    remaining: ops.collect(),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<T: notify::Watcher + Send> WatchBackend for T {
@@ -585,6 +608,14 @@ impl<T: notify::Watcher + Send> WatchBackend for T {
 
     fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
         notify::Watcher::unwatch(self, path)
+    }
+
+    fn watched_paths(&self) -> notify::Result<Vec<(PathBuf, notify::RecursiveMode)>> {
+        notify::Watcher::watched_paths(self)
+    }
+
+    fn update_paths(&mut self, ops: Vec<notify::PathOp>) -> Result<(), notify::UpdatePathsError> {
+        notify::Watcher::update_paths(self, ops)
     }
 }
 
@@ -855,6 +886,803 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct GlobalWatcher2 {
+    state: Arc<Mutex<WatcherState2>>,
+    wake_tx: async_channel::Sender<()>,
+    next_registration_id: Arc<AtomicU32>,
+}
+
+impl GlobalWatcher2 {
+    pub(crate) fn new(executor: &BackgroundExecutor) -> Self {
+        Self::with_backends(executor, None, None)
+    }
+
+    fn with_backends(
+        executor: &BackgroundExecutor,
+        native_backend: Option<Box<dyn WatchBackend>>,
+        poll_backend: Option<Box<dyn WatchBackend>>,
+    ) -> Self {
+        let state = Arc::new(Mutex::new(WatcherState2 {
+            registrations: HashMap::new(),
+            native_desired_paths: BTreeMap::new(),
+            poll_desired_paths: BTreeMap::new(),
+            dirty_paths: Vec::new(),
+            pending_flushes: Vec::new(),
+        }));
+        let (wake_tx, wake_rx) = async_channel::bounded(1);
+        executor
+            .spawn(
+                Reconciler {
+                    watcher_state: state.clone(),
+                    executor: executor.clone(),
+                    native: BackendState::new(
+                        WatcherMode::Native,
+                        executor.clone(),
+                        native_backend,
+                    ),
+                    poll: BackendState::new(WatcherMode::Poll, executor.clone(), poll_backend),
+                }
+                .run(wake_rx),
+            )
+            .detach();
+        Self {
+            state,
+            wake_tx,
+            next_registration_id: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    pub(crate) fn register(
+        &self,
+        path: Arc<Path>,
+        mode: WatcherMode,
+        callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
+    ) -> WatcherRegistrationId {
+        let id = WatcherRegistrationId(self.next_registration_id.fetch_add(1, Ordering::Relaxed));
+        {
+            let mut state = self.state.lock();
+            state.registrations.insert(
+                id,
+                WatcherRegistrationState {
+                    callback,
+                    path: path.clone(),
+                    mode,
+                },
+            );
+            *state
+                .desired_paths_mut(mode)
+                .entry(path.clone())
+                .or_insert(0) += 1;
+            state.dirty_paths.push((mode, path));
+        }
+        self.request_sync();
+        id
+    }
+
+    pub(crate) fn unregister(&self, id: WatcherRegistrationId) {
+        {
+            let mut state = self.state.lock();
+            let Some(registration) = state.registrations.remove(&id) else {
+                return;
+            };
+            let desired = state.desired_paths_mut(registration.mode);
+            if let Some(count) = desired.get_mut(&registration.path) {
+                *count -= 1;
+                if *count == 0 {
+                    desired.remove(&registration.path);
+                }
+            }
+            state
+                .dirty_paths
+                .push((registration.mode, registration.path.clone()));
+        }
+        self.request_sync();
+    }
+
+    pub(crate) fn flush(&self) -> oneshot::Receiver<()> {
+        let (flush_tx, flush_rx) = oneshot::channel();
+        self.state.lock().pending_flushes.push(flush_tx);
+        self.request_sync();
+        flush_rx
+    }
+
+    fn request_sync(&self) {
+        match self.wake_tx.try_send(()) {
+            Ok(()) => {}
+            Err(async_channel::TrySendError::Full(())) => {}
+            Err(async_channel::TrySendError::Closed(())) => {
+                log::warn!("file watcher reconciler is gone; dropping sync request");
+            }
+        }
+    }
+}
+
+struct WatcherState2 {
+    registrations: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
+    native_desired_paths: BTreeMap<Arc<Path>, u32>,
+    poll_desired_paths: BTreeMap<Arc<Path>, u32>,
+    dirty_paths: Vec<(WatcherMode, Arc<Path>)>,
+    pending_flushes: Vec<oneshot::Sender<()>>,
+}
+
+impl WatcherState2 {
+    fn desired_paths_mut(&mut self, mode: WatcherMode) -> &mut BTreeMap<Arc<Path>, u32> {
+        match mode {
+            WatcherMode::Native => &mut self.native_desired_paths,
+            WatcherMode::Poll => &mut self.poll_desired_paths,
+        }
+    }
+
+    fn desired_paths(&self, mode: WatcherMode) -> &BTreeMap<Arc<Path>, u32> {
+        match mode {
+            WatcherMode::Native => &self.native_desired_paths,
+            WatcherMode::Poll => &self.poll_desired_paths,
+        }
+    }
+}
+
+struct BackendState {
+    mode: WatcherMode,
+    executor: BackgroundExecutor,
+    backend: Option<Box<dyn WatchBackend>>,
+    applied_paths: HashSet<Arc<Path>>,
+    errored_paths: HashSet<Arc<Path>>,
+    deferred_paths: HashSet<Arc<Path>>,
+    cooldown_until: Option<Instant>,
+}
+
+struct Reconciler {
+    watcher_state: Arc<Mutex<WatcherState2>>,
+    executor: BackgroundExecutor,
+    native: BackendState,
+    poll: BackendState,
+}
+
+fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+    a.into_iter().chain(b).min()
+}
+
+impl Reconciler {
+    async fn run(mut self, wake_rx: async_channel::Receiver<()>) {
+        let mut wake_at: Option<Instant> = None;
+        loop {
+            if let Some(wake_at) = wake_at {
+                let timeout = wake_at.saturating_duration_since(self.executor.now());
+                select_biased! {
+                    wake = wake_rx.recv().fuse() => {
+                        if wake.is_err() {
+                            break;
+                        }
+                    }
+                    _ = self.executor.timer(timeout).fuse() => {}
+                }
+            } else if wake_rx.recv().await.is_err() {
+                break;
+            }
+
+            let flushes;
+            (flushes, wake_at) = self.reconcile();
+
+            for flush in flushes {
+                flush.send(()).ok();
+            }
+        }
+    }
+
+    fn reconcile(&mut self) -> (Vec<oneshot::Sender<()>>, Option<Instant>) {
+        let mut native_affected_paths = HashSet::new();
+        let mut poll_affected_paths = HashSet::new();
+        let flushes;
+        {
+            let state = self.watcher_state.clone();
+            let mut state = state.lock();
+            // Taking the flushes and the dirty list in one lock acquisition is what
+            // guarantees a flush ack covers every edit that preceded the flush call.
+            flushes = std::mem::take(&mut state.pending_flushes);
+            let dirty = std::mem::take(&mut state.dirty_paths);
+            for (mode, path) in dirty {
+                let examine = match mode {
+                    WatcherMode::Native => &mut native_affected_paths,
+                    WatcherMode::Poll => &mut poll_affected_paths,
+                };
+                if recursive_mode(mode) == notify::RecursiveMode::Recursive {
+                    for (descendant, _) in state.desired_paths(mode).range::<Path, _>((
+                        std::ops::Bound::Excluded(path.as_ref()),
+                        std::ops::Bound::Unbounded,
+                    )) {
+                        if !descendant.starts_with(&path) {
+                            break;
+                        }
+                        examine.insert(descendant.clone());
+                    }
+                }
+                examine.insert(path);
+            }
+        }
+        native_affected_paths.extend(self.native.deferred_paths.iter().cloned());
+        poll_affected_paths.extend(self.poll.deferred_paths.iter().cloned());
+
+        let wake_at = earliest(
+            self.poll
+                .reconcile(poll_affected_paths, &self.watcher_state),
+            self.native
+                .reconcile(native_affected_paths, &self.watcher_state),
+        );
+
+        (flushes, wake_at)
+    }
+}
+
+impl BackendState {
+    fn new(
+        mode: WatcherMode,
+        executor: BackgroundExecutor,
+        backend: Option<Box<dyn WatchBackend>>,
+    ) -> Self {
+        Self {
+            mode,
+            executor,
+            backend,
+            applied_paths: HashSet::new(),
+            errored_paths: HashSet::new(),
+            deferred_paths: HashSet::new(),
+            cooldown_until: None,
+        }
+    }
+
+    fn reconcile(
+        &mut self,
+        affected_paths: HashSet<Arc<Path>>,
+        watcher_state: &Arc<Mutex<WatcherState2>>,
+    ) -> Option<Instant> {
+        if affected_paths.is_empty() {
+            return None;
+        }
+        let affected_count = affected_paths.len();
+        let started_at = Instant::now();
+
+        let mut to_watch = Vec::new();
+        let mut to_unwatch = Vec::new();
+        {
+            let watcher_state = watcher_state.lock();
+            let desired = watcher_state.desired_paths(self.mode);
+            for path in affected_paths {
+                let in_desired = desired.contains_key(&path);
+                if !in_desired {
+                    self.errored_paths.remove(&path);
+                    self.deferred_paths.remove(&path);
+                }
+                let covered = recursive_mode(self.mode) == notify::RecursiveMode::Recursive
+                    && path
+                        .ancestors()
+                        .skip(1)
+                        .any(|ancestor| desired.contains_key(ancestor));
+                let should_watch = in_desired && !covered;
+                let applied = self.applied_paths.contains(&path);
+                if should_watch && !applied {
+                    if !self.errored_paths.contains(&path) {
+                        to_watch.push(path);
+                    }
+                } else if !should_watch && applied {
+                    to_unwatch.push(path);
+                }
+            }
+        }
+        to_watch.sort();
+        to_unwatch.sort();
+        let watch_count = to_watch.len();
+        let unwatch_count = to_unwatch.len();
+
+        let wake_at = earliest(
+            self.apply_unwatches(to_unwatch),
+            self.apply_watches(to_watch, watcher_state),
+        );
+
+        self.verify_backend_watches();
+
+        log::debug!(
+            "fs watcher reconcile ({:?}): examined {affected_count}, watched {watch_count}, unwatched {unwatch_count}, {} applied total, took {:?}",
+            self.mode,
+            self.applied_paths.len(),
+            started_at.elapsed(),
+        );
+
+        wake_at
+    }
+
+    // The backend may legitimately retain paths we have demoted to deferred:
+    // after a stream-restart failure the path operations were applied even
+    // though the error made us schedule re-establishment. Anything else is a
+    // divergence bug in the reconciler's bookkeeping.
+    fn verify_backend_watches(&self) {
+        let Some(backend) = self.backend.as_ref() else {
+            return;
+        };
+        let backend_paths = match backend.watched_paths() {
+            Ok(paths) => paths,
+            Err(error) => {
+                log::debug!(
+                    "cannot verify watched paths for {:?} backend: {error}",
+                    self.mode
+                );
+                return;
+            }
+        };
+        let backend_paths = backend_paths
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<HashSet<PathBuf>>();
+        let missing = self
+            .applied_paths
+            .iter()
+            .filter(|path| !backend_paths.contains(path.as_ref()))
+            .collect::<Vec<_>>();
+        let unexpected = backend_paths
+            .iter()
+            .filter(|path| {
+                !self.applied_paths.contains(path.as_path())
+                    && !self.deferred_paths.contains(path.as_path())
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() || !unexpected.is_empty() {
+            if cfg!(test) {
+                panic!(
+                    "fs watcher state diverged from {:?} backend: missing from backend: {missing:?}, unexpected in backend: {unexpected:?}",
+                    self.mode,
+                )
+            } else {
+                log::warn!(
+                    "fs watcher state diverged from {:?} backend: missing from backend: {missing:?}, unexpected in backend: {unexpected:?}",
+                    self.mode,
+                );
+            }
+        }
+    }
+
+    fn apply_unwatches(&mut self, paths: Vec<Arc<Path>>) -> Option<Instant> {
+        if paths.is_empty() {
+            return None;
+        }
+        for path in &paths {
+            self.applied_paths.remove(path);
+        }
+        let Some(backend) = self.backend.as_mut() else {
+            return None;
+        };
+
+        let mut queue = paths;
+        let mut any_succeeded = false;
+        let mut restart_failure = None;
+        while !queue.is_empty() {
+            let ops = queue
+                .iter()
+                .map(|path| notify::PathOp::unwatch(path.as_ref()))
+                .collect();
+            match backend.update_paths(ops) {
+                Ok(()) => {
+                    any_succeeded = true;
+                    break;
+                }
+                Err(error) => {
+                    let applied_count =
+                        queue.len() - error.remaining.len() - usize::from(error.origin.is_some());
+                    any_succeeded |= applied_count > 0;
+                    if error.origin.is_none() {
+                        restart_failure = Some(error.source);
+                        break;
+                    }
+                    log::warn!(
+                        "failed to unwatch {:?}: {:#}",
+                        error.origin.as_ref().map(|op| op.as_path()),
+                        error.source
+                    );
+                    queue.drain(..queue.len() - error.remaining.len());
+                }
+            }
+        }
+
+        if any_succeeded {
+            self.cooldown_until = None;
+        }
+        restart_failure.map(|source| self.handle_stream_restart_failure(Vec::new(), &source))
+    }
+
+    fn apply_watches(
+        &mut self,
+        paths: Vec<Arc<Path>>,
+        watcher_state: &Arc<Mutex<WatcherState2>>,
+    ) -> Option<Instant> {
+        let recursive_mode = recursive_mode(self.mode);
+        let mut queue = paths;
+        let mut wake_at = None;
+        while !queue.is_empty() {
+            if self.is_cooldown_active() {
+                self.deferred_paths.extend(queue);
+                return earliest(wake_at, self.cooldown_until);
+            }
+
+            let backend = match self.ensure_backend(watcher_state) {
+                Ok(backend) => backend,
+                Err(error) => {
+                    log::warn!(
+                        "failed to create file watcher backend for {:?}: {error:#}; will retry",
+                        self.mode,
+                    );
+                    let retry_at = self.executor.now() + *NATIVE_WATCH_LIMIT_COOLDOWN;
+                    self.deferred_paths.extend(queue);
+                    return earliest(wake_at, Some(retry_at));
+                }
+            };
+
+            let ops = queue
+                .iter()
+                .map(|path| match recursive_mode {
+                    notify::RecursiveMode::Recursive => {
+                        notify::PathOp::watch_recursive(path.as_ref())
+                    }
+                    notify::RecursiveMode::NonRecursive => {
+                        notify::PathOp::watch_non_recursive(path.as_ref())
+                    }
+                })
+                .collect();
+            match backend.update_paths(ops) {
+                Ok(()) => {
+                    for path in queue {
+                        self.mark_watched(path, watcher_state);
+                    }
+                    return wake_at;
+                }
+                Err(error) => {
+                    if error.origin.is_none() {
+                        let restart_at = self.handle_stream_restart_failure(queue, &error.source);
+                        return earliest(wake_at, Some(restart_at));
+                    }
+
+                    let applied_count = queue.len() - error.remaining.len() - 1;
+                    let mut rest = queue.split_off(applied_count);
+                    for path in queue {
+                        self.mark_watched(path, watcher_state);
+                    }
+
+                    let failed = rest.remove(0);
+                    if self.mode == WatcherMode::Native
+                        && matches!(error.source.kind, notify::ErrorKind::MaxFilesWatch)
+                    {
+                        self.start_cooldown(&failed);
+                        self.deferred_paths.insert(failed);
+                        wake_at = earliest(wake_at, self.cooldown_until);
+                    } else {
+                        log::warn!("failed to watch {failed:?}: {:#}", error.source);
+                        self.errored_paths.insert(failed);
+                    }
+                    queue = rest;
+                }
+            }
+        }
+        wake_at
+    }
+
+    fn mark_watched(&mut self, path: Arc<Path>, watcher_state: &Mutex<WatcherState2>) {
+        let recovered = self.deferred_paths.remove(&path);
+        self.applied_paths.insert(path.clone());
+        if recovered {
+            self.emit_rescan(&path, watcher_state);
+        }
+    }
+
+    // An error with no origin means the backend applied our path operations but
+    // could not restart its event stream afterwards (seen with FSEvents in the
+    // field), so every applied watch is suspect: defer them all and re-establish
+    // them in one batch once the returned deadline fires, emitting rescans on
+    // recovery so consumers learn about the gap.
+    fn handle_stream_restart_failure(
+        &mut self,
+        pending: Vec<Arc<Path>>,
+        source: &notify::Error,
+    ) -> Instant {
+        log::warn!(
+            "file watcher backend for {:?} failed to restart its event stream: {source:#}; re-establishing all watches",
+            self.mode,
+        );
+        let applied = std::mem::take(&mut self.applied_paths);
+        self.deferred_paths.extend(applied);
+        self.deferred_paths.extend(pending);
+        self.executor.now() + *NATIVE_WATCH_LIMIT_COOLDOWN
+    }
+
+    fn is_cooldown_active(&self) -> bool {
+        self.cooldown_until
+            .is_some_and(|cooldown_until| cooldown_until > self.executor.now())
+    }
+
+    fn start_cooldown(&mut self, path: &Path) {
+        let should_log = !self.is_cooldown_active();
+        self.cooldown_until = Some(self.executor.now() + *NATIVE_WATCH_LIMIT_COOLDOWN);
+        if should_log {
+            log::warn!(
+                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
+                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
+            );
+        }
+    }
+
+    fn emit_rescan(&self, path: &Arc<Path>, watcher_state: &Mutex<WatcherState2>) {
+        let callbacks = {
+            let watcher_state = watcher_state.lock();
+            watcher_state
+                .registrations
+                .values()
+                .filter(|registration| registration.mode == self.mode && registration.path == *path)
+                .map(|registration| registration.callback.clone())
+                .collect::<Vec<_>>()
+        };
+        let event = Event::new(EventKind::Other)
+            .add_path(path.to_path_buf())
+            .set_flag(notify::event::Flag::Rescan);
+        for callback in callbacks {
+            callback(&event);
+        }
+    }
+
+    fn ensure_backend(
+        &mut self,
+        watcher_state: &Arc<Mutex<WatcherState2>>,
+    ) -> anyhow::Result<&mut Box<dyn WatchBackend>> {
+        if self.backend.is_none() {
+            self.backend = Some(create_backend(self.mode, watcher_state.clone())?);
+        }
+        Ok(self.backend.as_mut().expect("backend was just initialized"))
+    }
+}
+
+fn create_backend(
+    mode: WatcherMode,
+    watcher_state: Arc<Mutex<WatcherState2>>,
+) -> anyhow::Result<Box<dyn WatchBackend>> {
+    match mode {
+        WatcherMode::Native => {
+            let config = notify::Config::default().with_event_kinds(notify::EventKindMask::CORE);
+            let watcher = <notify::RecommendedWatcher as notify::Watcher>::new(
+                move |event: notify::Result<Event>| {
+                    handle_event2(WatcherMode::Native, &watcher_state, event);
+                },
+                config,
+            )?;
+            Ok(Box::new(watcher))
+        }
+        WatcherMode::Poll => {
+            let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
+            let watcher = notify::PollWatcher::new(
+                move |event: notify::Result<Event>| {
+                    handle_event2(WatcherMode::Poll, &watcher_state, event);
+                },
+                config,
+            )?;
+            Ok(Box::new(watcher))
+        }
+    }
+}
+
+fn handle_event2(mode: WatcherMode, shared: &Mutex<WatcherState2>, event: notify::Result<Event>) {
+    if matches!(
+        event,
+        Ok(Event {
+            kind: EventKind::Access(_),
+            ..
+        })
+    ) {
+        return;
+    }
+
+    log::trace!("global handle event for {mode:?}: {event:?}");
+
+    let callbacks = {
+        let shared = shared.lock();
+        shared
+            .registrations
+            .values()
+            .filter(|registration| registration.mode == mode)
+            .map(|registration| registration.callback.clone())
+            .collect::<Vec<_>>()
+    };
+
+    match event {
+        Ok(event) => {
+            if event.need_rescan() {
+                log::warn!(
+                    "filesystem watcher lost sync for {mode:?}; scheduling rescans for {} registrations",
+                    callbacks.len()
+                );
+            }
+            for callback in callbacks {
+                callback(&event);
+            }
+        }
+        Err(error) => {
+            log::warn!("watcher error for {mode:?}: {error}");
+        }
+    }
+}
+
+fn recursive_mode(mode: WatcherMode) -> notify::RecursiveMode {
+    match mode {
+        WatcherMode::Native => {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
+                notify::RecursiveMode::Recursive
+            } else {
+                notify::RecursiveMode::NonRecursive
+            }
+        }
+        WatcherMode::Poll => notify::RecursiveMode::Recursive,
+    }
+}
+
+pub(crate) struct FsWatcher2 {
+    global: GlobalWatcher2,
+    executor: BackgroundExecutor,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    paths: Arc<Mutex<BTreeMap<Arc<Path>, PathState>>>,
+}
+
+enum PathState {
+    Pending {
+        _task: Task<()>,
+    },
+    Registered {
+        id: WatcherRegistrationId,
+        mode: WatcherMode,
+    },
+}
+
+impl FsWatcher2 {
+    pub(crate) fn new(
+        global: GlobalWatcher2,
+        executor: BackgroundExecutor,
+        tx: async_channel::Sender<()>,
+        pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    ) -> Self {
+        Self {
+            global,
+            executor,
+            tx,
+            pending_path_events,
+            paths: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    fn make_callback(&self, path: &Arc<Path>) -> Arc<dyn Fn(&notify::Event) + Send + Sync> {
+        let tx = self.tx.clone();
+        let pending_path_events = self.pending_path_events.clone();
+        let root_path = SanitizedPath::new_arc(path.as_ref());
+        let path = path.clone();
+        Arc::new(move |event| {
+            push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event)
+        })
+    }
+}
+
+impl Watcher for FsWatcher2 {
+    fn add(&self, path: &Path) -> anyhow::Result<()> {
+        log::trace!("watcher add: {path:?}");
+        let mut paths = self.paths.lock();
+
+        let path_is_covered = path.ancestors().skip(1).any(|ancestor| {
+            paths.get(ancestor).is_some_and(|entry| match entry {
+                PathState::Pending { .. } => false,
+                PathState::Registered { mode, .. } => {
+                    recursive_mode(*mode) == notify::RecursiveMode::Recursive
+                }
+            })
+        });
+        if path_is_covered || paths.contains_key(path) {
+            log::trace!("path to watch is covered or already requested: {path:?}");
+            return Ok(());
+        }
+
+        let path: Arc<Path> = path.into();
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            let task = self.executor.spawn(watch_path_when_created(
+                self.global.clone(),
+                self.executor.clone(),
+                path.clone(),
+                self.make_callback(&path),
+                Arc::downgrade(&self.paths),
+                self.tx.clone(),
+                self.pending_path_events.clone(),
+            ));
+            paths.insert(path, PathState::Pending { _task: task });
+            return Ok(());
+        }
+
+        let mode = if requires_poll_watcher(&path) {
+            WatcherMode::Poll
+        } else {
+            WatcherMode::Native
+        };
+        let id = self
+            .global
+            .register(path.clone(), mode, self.make_callback(&path));
+        paths.insert(path, PathState::Registered { id, mode });
+        Ok(())
+    }
+
+    fn remove(&self, path: &Path) -> anyhow::Result<()> {
+        log::trace!("remove watched path: {path:?}");
+        let entry = self.paths.lock().remove(path);
+        if let Some(PathState::Registered { id, .. }) = entry {
+            self.global.unregister(id);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for FsWatcher2 {
+    fn drop(&mut self) {
+        let entries = std::mem::take(&mut *self.paths.lock());
+        for (_, entry) in entries {
+            if let PathState::Registered { id, .. } = entry {
+                self.global.unregister(id);
+            }
+        }
+    }
+}
+
+async fn watch_path_when_created(
+    global: GlobalWatcher2,
+    executor: BackgroundExecutor,
+    path: Arc<Path>,
+    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
+    entries: std::sync::Weak<Mutex<BTreeMap<Arc<Path>, PathState>>>,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+) {
+    loop {
+        executor.timer(poll_interval()).await;
+
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            continue;
+        }
+
+        let Some(entries) = entries.upgrade() else {
+            return;
+        };
+        {
+            let mut entries = entries.lock();
+            let Some(entry) = entries.get_mut(path.as_ref()) else {
+                return;
+            };
+            if !matches!(entry, PathState::Pending { .. }) {
+                return;
+            }
+            let mode = if requires_poll_watcher(&path) {
+                WatcherMode::Poll
+            } else {
+                WatcherMode::Native
+            };
+            let id = global.register(path.clone(), mode, callback.clone());
+            *entry = PathState::Registered { id, mode };
+        }
+
+        enqueue_path_events(
+            &tx,
+            &pending_path_events,
+            vec![
+                PathEvent {
+                    path: path.to_path_buf(),
+                    kind: Some(PathEventKind::Created),
+                },
+                PathEvent {
+                    path: path.to_path_buf(),
+                    kind: Some(PathEventKind::Rescan),
+                },
+            ],
+        );
+        return;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,12 +1702,25 @@ mod tests {
         }
     }
 
+    fn watch_limit_error() -> notify::Error {
+        notify::Error::new(notify::ErrorKind::MaxFilesWatch)
+    }
+
+    fn generic_error() -> notify::Error {
+        notify::Error::generic("watch failed")
+    }
+
+    fn stream_restart_error() -> notify::Error {
+        notify::Error::generic("simulated stream restart failure")
+    }
+
     #[derive(Default)]
     struct FakeWatchBackend {
         watched_paths: HashSet<PathBuf>,
         watch_calls: Vec<PathBuf>,
         unwatch_calls: Vec<PathBuf>,
-        fail_with_watch_limit: bool,
+        watch_error: Option<fn() -> notify::Error>,
+        stream_restart_error: Option<fn() -> notify::Error>,
     }
 
     struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
@@ -889,8 +1730,8 @@ mod tests {
             let path = path.to_path_buf();
             let mut backend = self.0.lock();
             backend.watch_calls.push(path.clone());
-            if backend.fail_with_watch_limit {
-                return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+            if let Some(make_error) = backend.watch_error {
+                return Err(make_error());
             }
             backend.watched_paths.insert(path);
             Ok(())
@@ -906,34 +1747,45 @@ mod tests {
                 Err(notify::Error::generic("path was not watched"))
             }
         }
-    }
 
-    fn test_watcher(poll_watcher: Arc<Mutex<FakeWatchBackend>>) -> GlobalWatcher {
-        test_watcher_with_backends(None, Some(poll_watcher))
-    }
+        fn watched_paths(&self) -> notify::Result<Vec<(PathBuf, notify::RecursiveMode)>> {
+            Ok(self
+                .0
+                .lock()
+                .watched_paths
+                .iter()
+                .map(|path| (path.clone(), notify::RecursiveMode::Recursive))
+                .collect())
+        }
 
-    fn test_watcher_with_backends(
-        native_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
-        poll_watcher: Option<Arc<Mutex<FakeWatchBackend>>>,
-    ) -> GlobalWatcher {
-        GlobalWatcher {
-            state: Mutex::new(WatcherState {
-                watchers: Default::default(),
-                native_path_registrations: Default::default(),
-                poll_path_registrations: Default::default(),
-                cooldown_until: None,
-                last_registration: Default::default(),
-            }),
-            native_watcher: Mutex::new(
-                native_watcher.map(|watcher| {
-                    Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
-                }),
-            ),
-            poll_watcher: Mutex::new(
-                poll_watcher.map(|watcher| {
-                    Box::new(SharedFakeWatchBackend(watcher)) as Box<dyn WatchBackend>
-                }),
-            ),
+        fn update_paths(
+            &mut self,
+            ops: Vec<notify::PathOp>,
+        ) -> Result<(), notify::UpdatePathsError> {
+            let mut ops_iter = ops.into_iter();
+            while let Some(op) = ops_iter.next() {
+                let result = match &op {
+                    notify::PathOp::Watch(path, config) => {
+                        WatchBackend::watch(self, path, config.recursive_mode())
+                    }
+                    notify::PathOp::Unwatch(path) => WatchBackend::unwatch(self, path),
+                };
+                if let Err(source) = result {
+                    return Err(notify::UpdatePathsError {
+                        source,
+                        origin: Some(op),
+                        remaining: ops_iter.collect(),
+                    });
+                }
+            }
+            if let Some(make_error) = self.0.lock().stream_restart_error {
+                return Err(notify::UpdatePathsError {
+                    source: make_error(),
+                    origin: None,
+                    remaining: Vec::new(),
+                });
+            }
+            Ok(())
         }
     }
 
@@ -943,55 +1795,6 @@ mod tests {
         path_events: Vec<PathEvent>,
         expected_pending_paths: Vec<PathEvent>,
         expected_path_events: Vec<PathEvent>,
-    }
-
-    #[test]
-    fn covered_child_registration_is_not_unwatched_after_parent_is_removed() {
-        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher(backend.clone());
-        let parent = Arc::<Path>::from(Path::new("/repo"));
-        let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
-
-        let parent_registration = watcher
-            .add(parent.as_ref().into(), WatcherMode::Poll, |_| {})
-            .expect("add parent watch")
-            .expect("parent watch registered");
-        let child_registration = watcher
-            .add(child.as_ref().into(), WatcherMode::Poll, |_| {})
-            .expect("add covered child watch")
-            .expect("child watch registered");
-
-        watcher.remove(parent_registration);
-        watcher.remove(child_registration);
-
-        let backend = backend.lock();
-        assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
-        assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
-    }
-
-    #[test]
-    fn native_watch_limit_cools_down_subsequent_native_registrations() {
-        let native_backend = Arc::new(Mutex::new(FakeWatchBackend {
-            fail_with_watch_limit: true,
-            ..Default::default()
-        }));
-        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
-        let watcher = test_watcher_with_backends(Some(native_backend.clone()), Some(poll_backend));
-        let first_path = Arc::<Path>::from(Path::new("/repo/first"));
-        let second_path = Arc::<Path>::from(Path::new("/repo/second"));
-
-        let first_registration = watcher
-            .add(first_path.clone(), WatcherMode::Native, |_| {})
-            .expect("native watch limit is handled");
-        let second_registration = watcher
-            .add(second_path, WatcherMode::Native, |_| {})
-            .expect("native watch limit backoff is handled");
-
-        assert!(first_registration.is_none());
-        assert!(second_registration.is_none());
-
-        let native_backend = native_backend.lock();
-        assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
     }
 
     #[test]
@@ -1055,6 +1858,519 @@ mod tests {
                 test_case.name
             );
         }
+    }
+
+    fn test_global_v2(
+        executor: &BackgroundExecutor,
+        native_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+        poll_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+    ) -> GlobalWatcher2 {
+        GlobalWatcher2::with_backends(
+            executor,
+            native_backend
+                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+            poll_backend
+                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+        )
+    }
+
+    fn noop_callback() -> Arc<dyn Fn(&notify::Event) + Send + Sync> {
+        Arc::new(|_| {})
+    }
+
+    fn collecting_callback() -> (
+        Arc<Mutex<Vec<Event>>>,
+        Arc<dyn Fn(&notify::Event) + Send + Sync>,
+    ) {
+        let events: Arc<Mutex<Vec<Event>>> = Default::default();
+        let callback = {
+            let events = events.clone();
+            Arc::new(move |event: &notify::Event| events.lock().push(event.clone()))
+                as Arc<dyn Fn(&notify::Event) + Send + Sync>
+        };
+        (events, callback)
+    }
+
+    #[gpui::test]
+    async fn v2_watch_and_unwatch_call_the_backend_once_per_path(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path = Arc::<Path>::from(Path::new("/repo"));
+
+        let first = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        let second = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[PathBuf::from("/repo")]);
+
+        global.unregister(first);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().unwatch_calls, Vec::<PathBuf>::new());
+
+        global.unregister(second);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().unwatch_calls, &[PathBuf::from("/repo")]);
+        assert!(backend.lock().watched_paths.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_covered_child_is_promoted_when_parent_is_unregistered(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, None, Some(backend.clone()));
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
+
+        let parent_id = global.register(parent.clone(), WatcherMode::Poll, noop_callback());
+        let child_id = global.register(child.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[parent.to_path_buf()]);
+
+        global.unregister(parent_id);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().unwatch_calls, &[parent.to_path_buf()]);
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[parent.to_path_buf(), child.to_path_buf()],
+            "covered child is promoted to its own watch once the parent goes away"
+        );
+        assert!(backend.lock().watched_paths.contains(child.as_ref()));
+
+        global.unregister(child_id);
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_child_is_demoted_when_covering_parent_is_registered(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, None, Some(backend.clone()));
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+
+        global.register(child.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[child.to_path_buf()]);
+
+        global.register(parent.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[child.to_path_buf(), parent.to_path_buf()]
+        );
+        assert_eq!(
+            backend.unwatch_calls,
+            &[child.to_path_buf()],
+            "the child's own watch is removed once the recursive parent covers it"
+        );
+        assert!(backend.watched_paths.contains(parent.as_ref()));
+        assert!(!backend.watched_paths.contains(child.as_ref()));
+    }
+
+    #[gpui::test]
+    async fn v2_removing_a_covered_child_issues_no_unwatch(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, None, Some(backend.clone()));
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
+
+        let parent_id = global.register(parent.clone(), WatcherMode::Poll, noop_callback());
+        let child_id = global.register(child.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[parent.to_path_buf()],
+            "the covered child never gets its own OS watch"
+        );
+
+        global.unregister(child_id);
+        executor.run_until_parked();
+        assert_eq!(
+            backend.lock().unwatch_calls,
+            Vec::<PathBuf>::new(),
+            "removing a covered child issues no OS unwatch, since it never had one"
+        );
+        assert!(backend.lock().watched_paths.contains(parent.as_ref()));
+
+        global.unregister(parent_id);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().unwatch_calls, &[parent.to_path_buf()]);
+        assert!(backend.lock().watched_paths.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_unregister_then_register_same_path_coalesces(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path = Arc::<Path>::from(Path::new("/repo"));
+
+        let first = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[path.to_path_buf()]);
+
+        global.unregister(first);
+        let second = global.register(path.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+
+        {
+            let backend = backend.lock();
+            assert!(backend.watched_paths.contains(path.as_ref()));
+            assert_eq!(
+                backend.watch_calls,
+                &[path.to_path_buf()],
+                "reconciler coalesces the remove/add pair into a no-op"
+            );
+            assert_eq!(backend.unwatch_calls, Vec::<PathBuf>::new());
+        }
+
+        global.unregister(second);
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_failed_watch_is_abandoned_until_reregistered(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            watch_error: Some(generic_error),
+            ..Default::default()
+        }));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+
+        let first = global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[path_a.to_path_buf()]);
+
+        global.register(path_b.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[path_a.to_path_buf(), path_b.to_path_buf()],
+            "the abandoned path is not retried on later passes"
+        );
+
+        backend.lock().watch_error = None;
+        global.unregister(first);
+        executor.run_until_parked();
+
+        global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert!(
+            backend.lock().watched_paths.contains(path_a.as_ref()),
+            "re-registering after the path left desired state retries the watch"
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_events_are_dispatched_to_matching_mode_only(executor: BackgroundExecutor) {
+        let native_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, Some(native_backend), Some(poll_backend));
+
+        let (native_events, native_callback) = collecting_callback();
+        let (poll_events, poll_callback) = collecting_callback();
+
+        let native_id = global.register(
+            Arc::<Path>::from(Path::new("/native")),
+            WatcherMode::Native,
+            native_callback,
+        );
+        global.register(
+            Arc::<Path>::from(Path::new("/poll")),
+            WatcherMode::Poll,
+            poll_callback,
+        );
+        executor.run_until_parked();
+
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(PathBuf::from("/native/file.txt"));
+        handle_event2(WatcherMode::Native, &global.state, Ok(event));
+
+        assert_eq!(native_events.lock().len(), 1);
+        assert_eq!(poll_events.lock().len(), 0);
+
+        let access_event = Event::new(EventKind::Access(notify::event::AccessKind::Read))
+            .add_path(PathBuf::from("/native/file.txt"));
+        handle_event2(WatcherMode::Native, &global.state, Ok(access_event));
+
+        assert_eq!(native_events.lock().len(), 1);
+
+        global.unregister(native_id);
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(PathBuf::from("/native/file.txt"));
+        handle_event2(WatcherMode::Native, &global.state, Ok(event));
+        assert_eq!(native_events.lock().len(), 1);
+    }
+
+    #[gpui::test]
+    async fn v2_cooldown_defers_watches_without_further_syscalls(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            watch_error: Some(watch_limit_error),
+            ..Default::default()
+        }));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+
+        global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        global.register(path_b.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[path_a.to_path_buf()],
+            "the first failure starts the cooldown and the rest of the pass is skipped"
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_deferred_watches_recover_after_cooldown(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            watch_error: Some(watch_limit_error),
+            ..Default::default()
+        }));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+
+        let (events_a, callback_a) = collecting_callback();
+        let (events_b, callback_b) = collecting_callback();
+        global.register(path_a.clone(), WatcherMode::Native, callback_a);
+        global.register(path_b.clone(), WatcherMode::Native, callback_b);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 1);
+
+        backend.lock().watch_error = None;
+
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        {
+            let backend = backend.lock();
+            assert!(backend.watched_paths.contains(path_a.as_ref()));
+            assert!(backend.watched_paths.contains(path_b.as_ref()));
+        }
+        let events_a = events_a.lock();
+        let events_b = events_b.lock();
+        assert_eq!(events_a.len(), 1, "recovered path got a rescan event");
+        assert!(events_a[0].need_rescan());
+        assert_eq!(events_b.len(), 1, "recovered path got a rescan event");
+        assert!(events_b[0].need_rescan());
+    }
+
+    #[gpui::test]
+    async fn v2_unwatch_clears_the_cooldown(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+
+        let first = global.register(path_a.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(path_a.as_ref()));
+
+        backend.lock().watch_error = Some(watch_limit_error);
+        global.register(path_b.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert!(!backend.lock().watched_paths.contains(path_b.as_ref()));
+
+        backend.lock().watch_error = None;
+        global.unregister(first);
+        executor.run_until_parked();
+
+        let backend = backend.lock();
+        assert_eq!(backend.unwatch_calls, &[path_a.to_path_buf()]);
+        assert!(
+            backend.watched_paths.contains(path_b.as_ref()),
+            "freeing a watch slot clears the cooldown and the deferred path is watched in the same pass"
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_stream_restart_failure_reestablishes_all_watches(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+
+        let (events_a, callback_a) = collecting_callback();
+        global.register(path_a.clone(), WatcherMode::Native, callback_a);
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(path_a.as_ref()));
+
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        let (events_b, callback_b) = collecting_callback();
+        global.register(path_b.clone(), WatcherMode::Native, callback_b);
+        executor.run_until_parked();
+
+        backend.lock().stream_restart_error = None;
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        {
+            let backend = backend.lock();
+            assert!(backend.watched_paths.contains(path_a.as_ref()));
+            assert!(backend.watched_paths.contains(path_b.as_ref()));
+        }
+        let events_a = events_a.lock();
+        let events_b = events_b.lock();
+        assert_eq!(
+            events_a.len(),
+            1,
+            "watch that predated the stream failure got a rescan after re-establishment"
+        );
+        assert!(events_a[0].need_rescan());
+        assert_eq!(events_b.len(), 1);
+        assert!(events_b[0].need_rescan());
+    }
+
+    #[gpui::test]
+    async fn v2_flush_resolves_after_reconcile(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global_v2(&executor, Some(backend.clone()), None);
+        let path = Arc::<Path>::from(Path::new("/repo"));
+
+        global.register(path.clone(), WatcherMode::Native, noop_callback());
+        let mut flushed = global.flush();
+        executor.run_until_parked();
+
+        assert_eq!(flushed.try_recv(), Ok(Some(())));
+        assert!(backend.lock().watched_paths.contains(path.as_ref()));
+    }
+
+    fn test_sink(
+        executor: &BackgroundExecutor,
+        native_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+        poll_backend: Option<Arc<Mutex<FakeWatchBackend>>>,
+    ) -> (
+        FsWatcher2,
+        async_channel::Receiver<()>,
+        Arc<Mutex<Vec<PathEvent>>>,
+    ) {
+        let global = GlobalWatcher2::with_backends(
+            executor,
+            native_backend
+                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+            poll_backend
+                .map(|backend| Box::new(SharedFakeWatchBackend(backend)) as Box<dyn WatchBackend>),
+        );
+        let (tx, rx) = async_channel::unbounded();
+        let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let sink = FsWatcher2::new(global, executor.clone(), tx, pending_path_events.clone());
+        (sink, rx, pending_path_events)
+    }
+
+    #[gpui::test]
+    async fn v2_sink_establishes_watch_for_existing_path(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(&executor, Some(backend.clone()), None);
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+
+        sink.add(dir.path()).expect("add succeeds");
+        sink.add(dir.path()).expect("duplicate add succeeds");
+        executor.run_until_parked();
+
+        assert_eq!(backend.lock().watch_calls, &[dir.path().to_path_buf()]);
+
+        drop(sink);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().unwatch_calls, &[dir.path().to_path_buf()]);
+        assert!(backend.lock().watched_paths.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_sink_waits_for_path_creation(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, rx, pending_path_events) = test_sink(&executor, Some(backend.clone()), None);
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let file = dir.path().join("missing.txt");
+
+        sink.add(&file).expect("add succeeds");
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, Vec::<PathBuf>::new());
+
+        std::fs::write(&file, "hello").expect("create file");
+        executor.advance_clock(poll_interval() + Duration::from_millis(1));
+        executor.run_until_parked();
+
+        assert_eq!(backend.lock().watch_calls, &[file.clone()]);
+        assert!(rx.try_recv().is_ok(), "consumer was signalled");
+        // The promotion emits Created + Rescan, but enqueue_path_events merges by
+        // path alone, so only one event per path survives a single batch. This
+        // matches the old FsWatcher's pending-path promotion behavior exactly.
+        assert_eq!(
+            std::mem::take(&mut *pending_path_events.lock()),
+            vec![PathEvent {
+                path: file.clone(),
+                kind: Some(PathEventKind::Created),
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_sink_remove_cancels_pending_watch(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(&executor, Some(backend.clone()), None);
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let file = dir.path().join("missing.txt");
+
+        sink.add(&file).expect("add succeeds");
+        executor.run_until_parked();
+
+        sink.remove(&file).expect("remove succeeds");
+        std::fs::write(&file, "hello").expect("create file");
+        executor.advance_clock(poll_interval() + Duration::from_millis(1));
+        executor.run_until_parked();
+
+        let backend = backend.lock();
+        assert_eq!(backend.watch_calls, Vec::<PathBuf>::new());
+        assert_eq!(backend.unwatch_calls, Vec::<PathBuf>::new());
+    }
+
+    #[gpui::test]
+    async fn v2_sink_recovers_deferred_watch_and_emits_rescan(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend {
+            watch_error: Some(watch_limit_error),
+            ..Default::default()
+        }));
+        let (sink, _rx, pending_path_events) = test_sink(&executor, Some(backend.clone()), None);
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+
+        sink.add(dir.path()).expect("add succeeds");
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls.len(), 1);
+        assert!(pending_path_events.lock().is_empty());
+
+        backend.lock().watch_error = None;
+
+        executor.advance_clock(Duration::from_secs(1));
+        executor.run_until_parked();
+        assert_eq!(
+            backend.lock().watch_calls.len(),
+            1,
+            "no retry happens before the cooldown expires"
+        );
+
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN);
+        executor.run_until_parked();
+
+        assert_eq!(backend.lock().watch_calls.len(), 2);
+        assert!(
+            backend
+                .lock()
+                .watched_paths
+                .contains(&dir.path().to_path_buf())
+        );
+        assert_eq!(
+            std::mem::take(&mut *pending_path_events.lock()),
+            vec![PathEvent {
+                path: dir.path().to_path_buf(),
+                kind: Some(PathEventKind::Rescan),
+            }]
+        );
     }
 }
 

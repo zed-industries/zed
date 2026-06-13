@@ -1,5 +1,6 @@
 pub mod fs_watcher;
 
+use fs_watcher::GlobalWatcher2;
 pub use fs_watcher::requires_poll_watcher;
 
 use parking_lot::Mutex;
@@ -401,6 +402,7 @@ pub struct RealFs {
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     is_case_sensitive: AtomicU8,
+    global_watcher: GlobalWatcher2,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -503,12 +505,14 @@ pub struct RealWatcher {}
 
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
+        let global_watcher = GlobalWatcher2::new(&executor);
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             is_case_sensitive: Default::default(),
+            global_watcher,
         }
     }
 
@@ -1075,16 +1079,14 @@ impl Fs for RealFs {
         let (tx, rx) = async_channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
-        let watcher: Arc<dyn Watcher> = Arc::new(fs_watcher::FsWatcher::new(
+        let watcher = Arc::new(fs_watcher::FsWatcher2::new(
+            self.global_watcher.clone(),
             executor.clone(),
-            tx.clone(),
+            tx,
             pending_paths.clone(),
         ));
 
-        if let Err(e) = watcher.add(path) {
-            log::warn!("Failed to watch {}:\n{e}", path.display());
-        }
-
+        let mut paths_to_watch = vec![path.to_path_buf()];
         // Check if path is a symlink and follow the target parent
         if let Some(mut target) = self.read_link(path).await.ok() {
             log::trace!("watch symlink {path:?} -> {target:?}");
@@ -1097,10 +1099,27 @@ impl Fs for RealFs {
                     target = SanitizedPath::new(&canonical).as_path().to_path_buf();
                 }
             }
-            watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
-                watcher.add(parent).log_err();
-            }
+            let parent = target.parent().map(|parent| parent.to_path_buf());
+            paths_to_watch.push(target);
+            paths_to_watch.extend(parent);
+        }
+
+        // Registration probes the filesystem (existence checks, filesystem type
+        // detection), so run it on the background executor instead of whichever
+        // thread is polling this future.
+        executor
+            .spawn({
+                let watcher = watcher.clone();
+                async move {
+                    for path_to_watch in paths_to_watch {
+                        watcher.add(&path_to_watch).log_err();
+                    }
+                }
+            })
+            .await;
+
+        if self.global_watcher.flush().await.is_err() {
+            log::warn!("file watcher reconciler is gone; watches may not be established");
         }
 
         (
