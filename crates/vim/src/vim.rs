@@ -54,6 +54,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme_settings::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use util::ResultExt;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -600,12 +601,21 @@ impl Vim {
             running_command: None,
 
             editor: editor.downgrade(),
-            _subscriptions: vec![
-                cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
-                    this.handle_editor_event(event, window, cx)
-                }),
-            ],
+            _subscriptions: {
+                let this = cx.weak_entity();
+                vec![
+                    cx.intercept_keystrokes(move |event, window, cx| {
+                        this.update(cx, |vim: &mut Vim, cx| {
+                            vim.intercept_flash_jump_input(event, window, cx)
+                        })
+                        .log_err();
+                    }),
+                    cx.observe_keystrokes(Self::observe_keystrokes),
+                    cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
+                        this.handle_editor_event(event, window, cx)
+                    }),
+                ]
+            },
         })
     }
 

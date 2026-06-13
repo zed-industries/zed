@@ -7,13 +7,12 @@ use editor::{
     Anchor, Bias, Editor, MultiBufferOffset, NavigationOverlayKey, NavigationOverlayLabel,
     NavigationTargetOverlay, ToOffset,
 };
-use gpui::{Context, Font, Hsla, Pixels, Window, WindowTextSystem, actions};
+use gpui::{Context, Font, Hsla, KeystrokeEvent, Pixels, Window, WindowTextSystem, actions};
 use multi_buffer::MultiBufferSnapshot;
-use settings::Settings;
 use ui::px;
 
 use crate::{
-    ClearOperators, Vim, VimSettings,
+    ClearOperators, Vim,
     motion::{self, Motion},
     state::{FlashJumpLabel, Operator},
 };
@@ -78,6 +77,52 @@ impl Vim {
             window,
             cx,
         );
+    }
+
+    pub(crate) fn intercept_flash_jump_input(
+        &mut self,
+        keystroke_event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.operator_stack.last(), Some(Operator::FlashJump { .. })) {
+            return;
+        }
+
+        let Some(input) = keystroke_event.keystroke.key_char.as_deref() else {
+            return;
+        };
+        if input.is_empty() {
+            return;
+        }
+
+        let push_flash = PushFlash;
+        let push_flash_would_run = window
+            .bindings_for_action(&push_flash)
+            .iter()
+            .any(|binding| {
+                binding
+                    .match_keystrokes(std::slice::from_ref(&keystroke_event.keystroke))
+                    .is_some_and(|pending| !pending)
+            });
+        if !push_flash_would_run {
+            return;
+        }
+
+        let editor_is_focused = self
+            .editor()
+            .is_some_and(|editor| editor.read(cx).is_focused(window));
+        if !editor_is_focused {
+            return;
+        }
+
+        for input_char in input.chars() {
+            if !matches!(self.operator_stack.last(), Some(Operator::FlashJump { .. })) {
+                break;
+            }
+            self.handle_flash_jump_input(input_char, window, cx);
+        }
+        cx.stop_propagation();
     }
 
     fn flash_backspace(&mut self, _: &FlashBackspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -156,21 +201,13 @@ impl Vim {
             return;
         }
 
-        let smartcase = VimSettings::get_global(cx).use_smartcase_find;
         let applied = self.update_editor(cx, |_, editor, cx| {
             let FlashJumpUiData {
                 labels,
                 target,
                 overlays,
                 match_ranges,
-            } = Self::collect_flash_jump_data(
-                editor,
-                &pattern,
-                &previous_labels,
-                smartcase,
-                window,
-                cx,
-            );
+            } = Self::collect_flash_jump_data(editor, &pattern, &previous_labels, true, window, cx);
 
             if match_ranges.is_empty() {
                 // abort_flash_jump tears the UI down.
@@ -570,7 +607,6 @@ mod test {
     use editor::{HighlightKey, MultiBufferOffset, ToOffset};
     use gpui::KeyBinding;
     use language::Point;
-    use settings::SettingsStore;
 
     use super::{
         FLASH_JUMP_MAX_MATCHES, FLASH_JUMP_MAX_SEARCH_BYTES, FLASH_JUMP_OVERLAY_KEY, PushFlash,
@@ -589,6 +625,10 @@ mod test {
                 Some("vim_mode == normal || vim_mode == visual || vim_mode == operator"),
             )])
         });
+    }
+
+    fn bind_flash_globally(cx: &mut VimTestContext) {
+        cx.update(|_, cx| cx.bind_keys([KeyBinding::new("s", PushFlash, None)]));
     }
 
     fn active_flash_labels(cx: &mut VimTestContext) -> Vec<(char, String, usize)> {
@@ -791,26 +831,49 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_flash_jump_binding_key_can_be_label(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash_globally(&mut cx);
+        cx.set_state("ˇbeta beta", Mode::Normal);
+
+        cx.simulate_keystrokes("s b e");
+        assert_eq!(flash_label_at(&mut cx, 5), "s");
+        cx.simulate_keystrokes("s");
+
+        cx.assert_state("beta ˇbeta", Mode::Normal);
+        assert_flash_cleared(&mut cx);
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_binding_key_can_extend_pattern(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash_globally(&mut cx);
+        cx.set_state("ˇserver extension", Mode::Normal);
+
+        cx.simulate_keystrokes("s s e r");
+        let labels = active_flash_labels(&mut cx);
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].1, "ser");
+        assert_eq!(labels[0].2, 0);
+        cx.simulate_keystrokes("escape");
+    }
+
+    #[gpui::test]
     async fn test_flash_jump_smartcase(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings(cx, |s| {
-                s.vim.get_or_insert_default().use_smartcase_find = Some(true);
-            });
-        });
         bind_flash(&mut cx);
-        cx.set_state("ˇHello hello", Mode::Normal);
+        cx.set_state("ˇkey Key", Mode::Normal);
 
         // A lowercase pattern matches both cases.
-        cx.simulate_keystrokes("s h e");
+        cx.simulate_keystrokes("s k e");
         assert_eq!(active_flash_labels(&mut cx).len(), 2);
         cx.simulate_keystrokes("escape");
 
         // An uppercase pattern only matches exactly.
-        cx.simulate_keystrokes("s shift-h");
+        cx.simulate_keystrokes("s shift-k e");
         let labels = active_flash_labels(&mut cx);
         assert_eq!(labels.len(), 1);
-        assert_eq!(labels[0].2, 0);
+        assert_eq!(labels[0].2, 4);
         cx.simulate_keystrokes("escape");
     }
 
