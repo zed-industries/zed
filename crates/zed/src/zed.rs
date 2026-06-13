@@ -540,7 +540,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         .detach();
 
         #[cfg(not(any(test, target_os = "macos")))]
-        initialize_file_watcher(window, cx);
+        initialize_file_watcher(workspace.app_state().fs.clone(), window, cx);
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
@@ -630,8 +630,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[allow(unused)]
-fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
-    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+fn initialize_file_watcher(fs: Arc<dyn fs::Fs>, window: &mut Window, cx: &mut Context<Workspace>) {
+    cx.spawn_in(window, async move |_, cx| {
+        let Err(e) = fs.watcher_health().await else {
+            return;
+        };
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -640,29 +643,35 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             "#},
             e
         );
-        let prompt = window.prompt(
-            PromptLevel::Critical,
-            "Could not start inotify",
-            Some(&message),
-            &["Troubleshoot and Quit"],
-            cx,
-        );
-        cx.spawn(async move |_, cx| {
-            if prompt.await == Ok(0) {
-                cx.update(|cx| {
-                    cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
-                    cx.quit();
-                });
-            }
-        })
-        .detach()
-    }
+        let Ok(prompt) = cx.update(|window, cx| {
+            window.prompt(
+                PromptLevel::Critical,
+                "Could not start inotify",
+                Some(&message),
+                &["Troubleshoot and Quit"],
+                cx,
+            )
+        }) else {
+            return;
+        };
+        if prompt.await == Ok(0) {
+            cx.update(|_, cx| {
+                cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
+                cx.quit();
+            })
+            .ok();
+        }
+    })
+    .detach()
 }
 
 #[cfg(target_os = "windows")]
 #[allow(unused)]
-fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
-    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+fn initialize_file_watcher(fs: Arc<dyn fs::Fs>, window: &mut Window, cx: &mut Context<Workspace>) {
+    cx.spawn_in(window, async move |_, cx| {
+        let Err(e) = fs.watcher_health().await else {
+            return;
+        };
         let message = format!(
             db::indoc! {r#"
             ReadDirectoryChangesW initialization failed: {}
@@ -671,23 +680,26 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             "#},
             e
         );
-        let prompt = window.prompt(
-            PromptLevel::Critical,
-            "Could not start ReadDirectoryChangesW",
-            Some(&message),
-            &["Troubleshoot and Quit"],
-            cx,
-        );
-        cx.spawn(async move |_, cx| {
-            if prompt.await == Ok(0) {
-                cx.update(|cx| {
-                    cx.open_url("https://zed.dev/docs/windows");
-                    cx.quit()
-                });
-            }
-        })
-        .detach()
-    }
+        let Ok(prompt) = cx.update(|window, cx| {
+            window.prompt(
+                PromptLevel::Critical,
+                "Could not start ReadDirectoryChangesW",
+                Some(&message),
+                &["Troubleshoot and Quit"],
+                cx,
+            )
+        }) else {
+            return;
+        };
+        if prompt.await == Ok(0) {
+            cx.update(|_, cx| {
+                cx.open_url("https://zed.dev/docs/windows");
+                cx.quit();
+            })
+            .ok();
+        }
+    })
+    .detach()
 }
 
 fn show_software_emulation_warning_if_needed(

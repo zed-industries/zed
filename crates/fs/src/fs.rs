@@ -155,6 +155,13 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
+    /// Reports whether the OS file watcher can be initialized, surfacing errors
+    /// such as the inotify instance limit on Linux. Used at startup to warn the
+    /// user when file watching is unavailable.
+    async fn watcher_health(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn open_repo(
         &self,
         abs_dot_git: &Path,
@@ -500,8 +507,6 @@ impl FileHandle for std::fs::File {
         Ok(PathBuf::from(os_str))
     }
 }
-
-pub struct RealWatcher {}
 
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
@@ -1142,6 +1147,13 @@ impl Fs for RealFs {
         )
     }
 
+    async fn watcher_health(&self) -> Result<()> {
+        self.global_watcher
+            .check_health()
+            .await
+            .context("file watcher reconciler is no longer running")?
+    }
+
     fn open_repo(
         &self,
         dotgit_path: &Path,
@@ -1317,17 +1329,6 @@ impl Fs for RealFs {
             .expect("The OS can spawn a threads");
         rx.await.expect("Restore all never panics")?;
         Ok(restored_item_path)
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-impl Watcher for RealWatcher {
-    fn add(&self, _: &Path) -> Result<()> {
-        Ok(())
-    }
-
-    fn remove(&self, _: &Path) -> Result<()> {
-        Ok(())
     }
 }
 

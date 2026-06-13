@@ -1752,10 +1752,11 @@ async fn test_write_file(cx: &mut TestAppContext) {
         "ignored-dir": {}
     }));
 
+    let fs = Arc::new(RealFs::new(None, cx.executor()));
     let worktree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::new(None, cx.executor())),
+        fs.clone(),
         Default::default(),
         true,
         WorktreeId::from_proto(0),
@@ -1765,7 +1766,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .unwrap();
 
     #[cfg(not(target_os = "macos"))]
-    fs::fs_watcher::global(|_| {}).unwrap();
+    fs.watcher_health().await.unwrap();
 
     cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
         .await;
