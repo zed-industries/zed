@@ -6,6 +6,7 @@ mod timestamp;
 pub mod websocket_protocol;
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -131,12 +132,16 @@ pub struct SubmitEditPredictionFeedbackBody {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitEditPredictionSettledBody {
     pub request_id: String,
+    #[serde(default)]
+    pub trigger: EditPredictionTrigger,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settled_editable_region: Option<String>,
     pub ts_error_count_before_prediction: usize,
     pub ts_error_count_after_prediction: usize,
     pub can_collect_data: bool,
     pub is_in_open_source_repo: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_data: Option<SubmitEditPredictionSettledSampleData>,
     #[serde(flatten)]
     pub kept_chars: EditPredictionSettledKeptChars,
     pub example: Option<serde_json::Value>,
@@ -146,41 +151,39 @@ pub struct SubmitEditPredictionSettledBody {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitEditPredictionSettledResponse {}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitEditPredictionJumpExampleBody {
-    pub request_id: uuid::Uuid,
-    pub trigger: JumpExampleTrigger,
+pub struct SubmitEditPredictionSettledSampleData {
     pub repository_url: Option<String>,
     pub revision: Option<String>,
     /// Note: this is only the uncommitted diff for files in `edit_history`
     /// This is done to avoid excessive memory usage
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncommitted_diff: Option<String>,
-    pub recently_opened_files: Vec<JumpExampleRecentFile>,
-    pub recently_viewed_files: Vec<JumpExampleRecentFile>,
-    pub cursor_path: Arc<Path>,
-    pub cursor_position: String,
-    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
-    pub diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
-    pub future_edit_history: String,
-    pub navigation_history: Vec<JumpExampleRecentFile>,
-    pub is_in_open_source_repo: bool,
-    pub can_collect_data: bool,
+    pub editable_path: Arc<Path>,
+    pub editable_offset_range: Range<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub buffer_diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub future_edit_history_events: Vec<Arc<zeta_prompt::Event>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub navigation_history: Vec<EditPredictionRecentFile>,
+    pub edit_events_before_quiescence: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_edit_cursor_offset: Option<usize>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct SubmitEditPredictionJumpExampleResponse {}
+pub struct SubmitEditPredictionSettledResponse {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum JumpExampleTrigger {
+pub enum EditPredictionTrigger {
+    #[default]
     Prediction,
     Diagnostic,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct JumpExampleRecentFile {
+pub struct EditPredictionRecentFile {
     pub path: Arc<Path>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_position: Option<usize>,
