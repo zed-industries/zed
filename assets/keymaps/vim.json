@@ -548,6 +548,10 @@
       "space /": "pane::DeploySearch",
 
       // Other
+      // View mode (Helix uses z prefix for view commands)
+      "z m": "editor::ScrollCursorCenter",
+      "z t": "editor::ScrollCursorTop",
+      "z b": "editor::ScrollCursorBottom",
       ":": "command_palette::Toggle",
       "m": "vim::PushHelixMatch",
       "]": ["vim::PushHelixNext", { "around": true }],
