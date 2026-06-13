@@ -213,7 +213,7 @@ pub(crate) struct DevContainer {
     user_env_probe: Option<UserEnvProbe>,
     pub(crate) override_command: Option<bool>,
     shutdown_action: Option<ShutdownAction>,
-    init: Option<bool>,
+    pub(crate) init: Option<bool>,
     pub(crate) privileged: Option<bool>,
     pub(crate) cap_add: Option<Vec<String>>,
     pub(crate) security_opt: Option<Vec<String>>,
