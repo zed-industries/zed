@@ -1,6 +1,6 @@
 pub mod fs_watcher;
 
-use fs_watcher::GlobalWatcher2;
+use fs_watcher::GlobalWatcher;
 pub use fs_watcher::requires_poll_watcher;
 
 use parking_lot::Mutex;
@@ -409,7 +409,7 @@ pub struct RealFs {
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     is_case_sensitive: AtomicU8,
-    global_watcher: GlobalWatcher2,
+    global_watcher: GlobalWatcher,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -510,7 +510,7 @@ impl FileHandle for std::fs::File {
 
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
-        let global_watcher = GlobalWatcher2::new(&executor);
+        let global_watcher = GlobalWatcher::new(&executor);
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,
@@ -1084,7 +1084,7 @@ impl Fs for RealFs {
         let (tx, rx) = async_channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
-        let watcher = Arc::new(fs_watcher::FsWatcher2::new(
+        let watcher = Arc::new(fs_watcher::FsWatcher::new(
             self.global_watcher.clone(),
             executor.clone(),
             tx,
