@@ -28,6 +28,7 @@ use crate::{
 };
 
 const PICKER_THRESHOLD: usize = 5;
+const USER_SPECIFIED_MODELS_GROUP: &str = "User-Specified Models";
 
 pub struct ConfigOptionsView {
     config_options: Rc<dyn AgentSessionConfigOptions>,
@@ -269,14 +270,20 @@ impl ConfigOptionSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let option_count = config_options
+        let config_opt = config_options
             .config_options()
-            .iter()
-            .find(|opt| opt.id == config_id)
-            .map(count_config_options)
-            .unwrap_or(0);
+            .into_iter()
+            .find(|opt| opt.id == config_id);
 
-        let is_searchable = option_count >= PICKER_THRESHOLD;
+        let option_count = config_opt.as_ref().map(count_config_options).unwrap_or(0);
+
+        let is_model_category = config_opt
+            .as_ref()
+            .and_then(|o| o.category.as_ref())
+            .is_some_and(|c| *c == acp::SessionConfigOptionCategory::Model);
+
+        // Model pickers are always searchable so users can type custom model IDs.
+        let is_searchable = option_count >= PICKER_THRESHOLD || is_model_category;
 
         let picker = {
             let config_options = config_options.clone();
@@ -336,7 +343,7 @@ impl ConfigOptionSelector {
         match &option.kind {
             acp::SessionConfigKind::Select(select) => {
                 find_option_name(&select.options, &select.current_value)
-                    .unwrap_or_else(|| "Unknown".to_string())
+                    .unwrap_or_else(|| select.current_value.0.to_string())
             }
             _ => "Unknown".to_string(),
         }
@@ -470,6 +477,8 @@ impl Render for ConfigOptionSelector {
 enum ConfigOptionPickerEntry {
     Separator(SharedString),
     Option(ConfigOptionValue),
+    CustomOption(String),
+    AddCustom(String),
 }
 
 #[derive(Clone)]
@@ -490,6 +499,11 @@ struct ConfigOptionPickerDelegate {
     selected_index: usize,
     selected_description: Option<(usize, SharedString)>,
     favorites: HashSet<acp::SessionConfigValueId>,
+    custom_models: Vec<acp::SessionConfigValueId>,
+    is_model_picker: bool,
+    /// Tracks the locally-selected model value. Used when the ACP hasn't yet
+    /// confirmed a new selection (e.g. a custom model the ACP previously rejected).
+    selected_model_override: Option<acp::SessionConfigValueId>,
     _settings_subscription: Subscription,
 }
 
@@ -503,15 +517,42 @@ impl ConfigOptionPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let favorites = agent_server.favorite_config_option_value_ids(&config_id, cx);
+        let custom_models = agent_server.custom_config_option_value_ids(&config_id, cx);
+
+        let is_model_picker = config_options
+            .config_options()
+            .iter()
+            .find(|opt| opt.id == config_id)
+            .and_then(|opt| opt.category.as_ref())
+            .is_some_and(|cat| *cat == acp::SessionConfigOptionCategory::Model);
+
+        // If the stored default is a custom model, track it as the effective selection
+        // so it shows as selected even if the ACP hasn't confirmed it yet.
+        let selected_model_override = if is_model_picker {
+            agent_server
+                .default_config_option(config_id.0.as_ref(), cx)
+                .and_then(|default| {
+                    custom_models
+                        .iter()
+                        .find(|m| m.0.as_ref() == default.as_str())
+                        .cloned()
+                })
+        } else {
+            None
+        };
 
         let all_options = extract_options(&config_options, &config_id);
-        let filtered_entries = options_to_picker_entries(&all_options, &favorites);
+        let filtered_entries = build_picker_entries(&all_options, &favorites, &custom_models, is_model_picker, "");
 
         let current_value = get_current_value(&config_options, &config_id);
         let selected_index = current_value
             .and_then(|current| {
-                filtered_entries.iter().position(|entry| {
-                    matches!(entry, ConfigOptionPickerEntry::Option(opt) if opt.value == current)
+                filtered_entries.iter().position(|entry| match entry {
+                    ConfigOptionPickerEntry::Option(opt) => opt.value == current,
+                    ConfigOptionPickerEntry::CustomOption(v) => {
+                        acp::SessionConfigValueId::new(v.clone()) == current
+                    }
+                    _ => false,
                 })
             })
             .unwrap_or(0);
@@ -522,8 +563,32 @@ impl ConfigOptionPickerDelegate {
             cx.observe_global_in::<SettingsStore>(window, move |picker, window, cx| {
                 let new_favorites = agent_server_for_subscription
                     .favorite_config_option_value_ids(&config_id_for_subscription, cx);
+                let new_custom = if picker.delegate.is_model_picker {
+                    agent_server_for_subscription
+                        .custom_config_option_value_ids(&config_id_for_subscription, cx)
+                } else {
+                    Vec::new()
+                };
+                let mut changed = false;
                 if new_favorites != picker.delegate.favorites {
                     picker.delegate.favorites = new_favorites;
+                    changed = true;
+                }
+                if new_custom != picker.delegate.custom_models {
+                    // Re-compute whether the stored default is a custom model.
+                    let new_override = agent_server_for_subscription
+                        .default_config_option(config_id_for_subscription.0.as_ref(), cx)
+                        .and_then(|default| {
+                            new_custom
+                                .iter()
+                                .find(|m| m.0.as_ref() == default.as_str())
+                                .cloned()
+                        });
+                    picker.delegate.custom_models = new_custom;
+                    picker.delegate.selected_model_override = new_override;
+                    changed = true;
+                }
+                if changed {
                     picker.refresh(window, cx);
                 }
             });
@@ -540,11 +605,17 @@ impl ConfigOptionPickerDelegate {
             selected_index,
             selected_description: None,
             favorites,
+            custom_models,
+            is_model_picker,
+            selected_model_override,
             _settings_subscription: settings_subscription,
         }
     }
 
     fn current_value(&self) -> Option<acp::SessionConfigValueId> {
+        if let Some(ref override_val) = self.selected_model_override {
+            return Some(override_val.clone());
+        }
         get_current_value(&self.config_options, &self.config_id)
     }
 }
@@ -567,13 +638,19 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(ConfigOptionPickerEntry::Option(_)) => true,
+            Some(ConfigOptionPickerEntry::Option(_))
+            | Some(ConfigOptionPickerEntry::CustomOption(_))
+            | Some(ConfigOptionPickerEntry::AddCustom(_)) => true,
             Some(ConfigOptionPickerEntry::Separator(_)) | None => false,
         }
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select an option…".into()
+        if self.is_model_picker {
+            "Select or type a custom model…".into()
+        } else {
+            "Select an option…".into()
+        }
     }
 
     fn update_matches(
@@ -583,6 +660,8 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_options = self.all_options.clone();
+        let custom_models = self.custom_models.clone();
+        let is_model_picker = self.is_model_picker;
 
         cx.spawn_in(window, async move |this, cx| {
             let filtered_options = match this
@@ -601,14 +680,23 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
             };
 
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_entries =
-                    options_to_picker_entries(&filtered_options, &this.delegate.favorites);
+                this.delegate.filtered_entries = build_picker_entries(
+                    &filtered_options,
+                    &this.delegate.favorites,
+                    &custom_models,
+                    is_model_picker,
+                    &query,
+                );
 
                 let current_value = this.delegate.current_value();
                 let new_index = current_value
                     .and_then(|current| {
-                        this.delegate.filtered_entries.iter().position(|entry| {
-                            matches!(entry, ConfigOptionPickerEntry::Option(opt) if opt.value == current)
+                        this.delegate.filtered_entries.iter().position(|entry| match entry {
+                            ConfigOptionPickerEntry::Option(opt) => opt.value == current,
+                            ConfigOptionPickerEntry::CustomOption(v) => {
+                                acp::SessionConfigValueId::new(v.clone()) == current
+                            }
+                            _ => false,
                         })
                     })
                     .unwrap_or(0);
@@ -621,29 +709,82 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(ConfigOptionPickerEntry::Option(option)) =
-            self.filtered_entries.get(self.selected_index)
-        {
-            self.agent_server.set_default_config_option(
-                self.config_id.0.as_ref(),
-                Some(option.value.0.as_ref()),
-                self.fs.clone(),
-                cx,
-            );
-            let task = self.config_options.set_config_option(
-                self.config_id.clone(),
-                option.value.clone(),
-                cx,
-            );
-
-            cx.spawn(async move |_, _| {
-                if let Err(err) = task.await {
-                    log::error!("Failed to set config option: {:?}", err);
-                }
-            })
-            .detach();
-
-            cx.emit(DismissEvent);
+        match self.filtered_entries.get(self.selected_index).cloned() {
+            Some(ConfigOptionPickerEntry::Option(option)) => {
+                // Clear override when switching back to a standard ACP model.
+                self.selected_model_override = None;
+                self.agent_server.set_default_config_option(
+                    self.config_id.0.as_ref(),
+                    Some(option.value.0.as_ref()),
+                    self.fs.clone(),
+                    cx,
+                );
+                let task = self.config_options.set_config_option(
+                    self.config_id.clone(),
+                    option.value.clone(),
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    if let Err(err) = task.await {
+                        log::error!("Failed to set config option: {:?}", err);
+                    }
+                })
+                .detach();
+                cx.emit(DismissEvent);
+            }
+            Some(ConfigOptionPickerEntry::CustomOption(value_str)) => {
+                let value_id = acp::SessionConfigValueId::new(value_str.clone());
+                // Track selection locally so the checkmark shows immediately.
+                self.selected_model_override = Some(value_id.clone());
+                self.agent_server.set_default_config_option(
+                    self.config_id.0.as_ref(),
+                    Some(value_str.as_str()),
+                    self.fs.clone(),
+                    cx,
+                );
+                let task = self.config_options.set_config_option(
+                    self.config_id.clone(),
+                    value_id,
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    if let Err(err) = task.await {
+                        log::error!("Failed to set config option: {:?}", err);
+                    }
+                })
+                .detach();
+                cx.emit(DismissEvent);
+            }
+            Some(ConfigOptionPickerEntry::AddCustom(value_str)) => {
+                let value_id = acp::SessionConfigValueId::new(value_str.clone());
+                // Track selection locally so the checkmark shows immediately.
+                self.selected_model_override = Some(value_id.clone());
+                self.agent_server.add_custom_config_option_value(
+                    self.config_id.clone(),
+                    value_id.clone(),
+                    self.fs.clone(),
+                    cx,
+                );
+                self.agent_server.set_default_config_option(
+                    self.config_id.0.as_ref(),
+                    Some(value_str.as_str()),
+                    self.fs.clone(),
+                    cx,
+                );
+                let task = self.config_options.set_config_option(
+                    self.config_id.clone(),
+                    value_id,
+                    cx,
+                );
+                cx.spawn(async move |_, _| {
+                    if let Err(err) = task.await {
+                        log::error!("Failed to set config option: {:?}", err);
+                    }
+                })
+                .detach();
+                cx.emit(DismissEvent);
+            }
+            _ => {}
         }
     }
 
@@ -738,6 +879,30 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                         .into_any_element(),
                 )
             }
+            ConfigOptionPickerEntry::CustomOption(value_str) => {
+                Some(self.render_custom_option(ix, selected, value_str, cx))
+            }
+            ConfigOptionPickerEntry::AddCustom(query) => Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Plus)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
+                            .child(
+                                Label::new(format!("Use \"{}\" as custom model", query))
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
         }
     }
 
@@ -760,6 +925,56 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
 
     fn documentation_aside_index(&self) -> Option<usize> {
         self.selected_description.as_ref().map(|(ix, _)| *ix)
+    }
+}
+
+impl ConfigOptionPickerDelegate {
+    fn render_custom_option(
+        &self,
+        ix: usize,
+        selected: bool,
+        value_str: &str,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> AnyElement {
+        let current_value = self.current_value();
+        let value_id = acp::SessionConfigValueId::new(value_str.to_string());
+        let is_selected = current_value.as_ref() == Some(&value_id);
+
+        let config_id = self.config_id.clone();
+        let agent_server = self.agent_server.clone();
+        let fs = self.fs.clone();
+        let value_str_clone = value_str.to_string();
+
+        ListItem::new(ix)
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .child(
+                h_flex()
+                    .w_full()
+                    .child(Label::new(value_str.to_string()).truncate()),
+            )
+            .end_slot(div().pr_2().when(is_selected, |this| {
+                this.child(Icon::new(IconName::Check).color(Color::Accent))
+            }))
+            .end_slot_on_hover(
+                div().pr_1p5().child(
+                    IconButton::new(("remove-custom-model", ix), IconName::Close)
+                        .layer(ElevationIndex::ElevatedSurface)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Remove custom model"))
+                        .on_click(move |_, _, cx| {
+                            agent_server.remove_custom_config_option_value(
+                                config_id.clone(),
+                                acp::SessionConfigValueId::new(value_str_clone.clone()),
+                                fs.clone(),
+                                cx,
+                            );
+                        }),
+                ),
+            )
+            .into_any_element()
     }
 }
 
@@ -857,6 +1072,50 @@ fn options_to_picker_entries(
             current_group = option.group.clone();
         }
         entries.push(ConfigOptionPickerEntry::Option(option.clone()));
+    }
+
+    entries
+}
+
+fn build_picker_entries(
+    options: &[ConfigOptionValue],
+    favorites: &HashSet<acp::SessionConfigValueId>,
+    custom_models: &[acp::SessionConfigValueId],
+    is_model_picker: bool,
+    query: &str,
+) -> Vec<ConfigOptionPickerEntry> {
+    let mut entries = options_to_picker_entries(options, favorites);
+
+    if is_model_picker {
+        let filtered_custom: Vec<_> = if query.is_empty() {
+            custom_models.to_vec()
+        } else {
+            let q = query.to_lowercase();
+            custom_models
+                .iter()
+                .filter(|m| m.0.to_lowercase().contains(&q))
+                .cloned()
+                .collect()
+        };
+
+        if !filtered_custom.is_empty() {
+            entries.push(ConfigOptionPickerEntry::Separator(
+                USER_SPECIFIED_MODELS_GROUP.into(),
+            ));
+            for model in &filtered_custom {
+                entries.push(ConfigOptionPickerEntry::CustomOption(
+                    model.0.to_string(),
+                ));
+            }
+        }
+
+        if !query.is_empty() {
+            let already_exists = options.iter().any(|o| o.value.0.as_ref() == query)
+                || custom_models.iter().any(|m| m.0.as_ref() == query);
+            if !already_exists {
+                entries.push(ConfigOptionPickerEntry::AddCustom(query.to_string()));
+            }
+        }
     }
 
     entries

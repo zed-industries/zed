@@ -101,6 +101,32 @@ pub trait AgentServer: Send {
         _cx: &App,
     ) {
     }
+
+    fn custom_config_option_value_ids(
+        &self,
+        _config_id: &acp_schema::SessionConfigId,
+        _cx: &App,
+    ) -> Vec<acp_schema::SessionConfigValueId> {
+        Vec::new()
+    }
+
+    fn add_custom_config_option_value(
+        &self,
+        _config_id: acp_schema::SessionConfigId,
+        _value_id: acp_schema::SessionConfigValueId,
+        _fs: Arc<dyn Fs>,
+        _cx: &App,
+    ) {
+    }
+
+    fn remove_custom_config_option_value(
+        &self,
+        _config_id: acp_schema::SessionConfigId,
+        _value_id: acp_schema::SessionConfigValueId,
+        _fs: Arc<dyn Fs>,
+        _cx: &App,
+    ) {
+    }
 }
 
 impl dyn AgentServer {
