@@ -556,11 +556,11 @@ fn html_style_from_html_styles(styles: HashMap<String, String>) -> Option<HtmlHi
     let mut html_style = HtmlHighlightStyle::default();
 
     if let Some(text_decoration) = styles.get("text-decoration") {
-        match text_decoration.to_lowercase().as_str() {
-            "underline" => {
+        match text_decoration.as_str() {
+            underline if underline.eq_ignore_ascii_case("underline") => {
                 html_style.underline = true;
             }
-            "line-through" => {
+            strikethrough if strikethrough.eq_ignore_ascii_case("line-through") => {
                 html_style.strikethrough = true;
             }
             _ => {}
@@ -568,11 +568,11 @@ fn html_style_from_html_styles(styles: HashMap<String, String>) -> Option<HtmlHi
     }
 
     if let Some(font_style) = styles.get("font-style") {
-        match font_style.to_lowercase().as_str() {
-            "italic" => {
+        match font_style.as_str() {
+            italic if italic.eq_ignore_ascii_case("italic") => {
                 html_style.italic = true;
             }
-            "oblique" => {
+            oblique if oblique.eq_ignore_ascii_case("oblique") => {
                 html_style.oblique = true;
             }
             _ => {}
@@ -580,11 +580,11 @@ fn html_style_from_html_styles(styles: HashMap<String, String>) -> Option<HtmlHi
     }
 
     if let Some(font_weight) = styles.get("font-weight") {
-        match font_weight.to_lowercase().as_str() {
-            "bold" => {
+        match font_weight.as_str() {
+            bold if bold.eq_ignore_ascii_case("bold") => {
                 html_style.weight = FontWeight::BOLD;
             }
-            "lighter" => {
+            lighter if lighter.eq_ignore_ascii_case("lighter") => {
                 html_style.weight = FontWeight::THIN;
             }
             _ => {

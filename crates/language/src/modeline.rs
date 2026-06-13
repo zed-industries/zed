@@ -158,40 +158,43 @@ fn parse_emacs_key_value(part: &str, settings: &mut ModelineSettings, bare: bool
         let key = key.trim();
         let value = value.trim();
 
-        match key.to_lowercase().as_str() {
-            "mode" => {
+        match key {
+            key_name if key_name.eq_ignore_ascii_case("mode") => {
                 settings.mode = Some(value.to_string());
             }
-            "c-basic-offset" | "python-indent-offset" => {
+            key_name
+                if key_name.eq_ignore_ascii_case("c-basic-offset")
+                    || key_name.eq_ignore_ascii_case("python-indent-offset") =>
+            {
                 if let Ok(size) = value.parse::<NonZeroU32>() {
                     settings.indent_size = Some(size);
                 }
             }
-            "fill-column" => {
+            key_name if key_name.eq_ignore_ascii_case("fill-column") => {
                 if let Ok(size) = value.parse::<NonZeroU32>() {
                     settings.preferred_line_length = Some(size);
                 }
             }
-            "tab-width" => {
+            key_name if key_name.eq_ignore_ascii_case("tab-width") => {
                 if let Ok(size) = value.parse::<NonZeroU32>() {
                     settings.tab_size = Some(size);
                 }
             }
-            "indent-tabs-mode" => {
+            key_name if key_name.eq_ignore_ascii_case("indent-tabs-mode") => {
                 settings.hard_tabs = Some(value != "nil");
             }
-            "electric-indent-mode" => {
+            key_name if key_name.eq_ignore_ascii_case("electric-indent-mode") => {
                 settings.auto_indent = Some(value != "nil");
             }
-            "require-final-newline" => {
+            key_name if key_name.eq_ignore_ascii_case("require-final-newline") => {
                 settings.ensure_final_newline = Some(value != "nil");
             }
-            "show-trailing-whitespace" => {
+            key_name if key_name.eq_ignore_ascii_case("show-trailing-whitespace") => {
                 settings.show_trailing_whitespace = Some(value != "nil");
             }
-            key => settings
+            key_name => settings
                 .emacs_extra_variables
-                .push((key.to_string(), value.to_string())),
+                .push((key_name.to_string(), value.to_string())),
         }
     } else if bare {
         // Handle bare mode specification (e.g., -*- rust -*-)

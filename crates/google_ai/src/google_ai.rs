@@ -286,11 +286,11 @@ pub enum ThinkingLevel {
 
 impl ThinkingLevel {
     pub fn from_effort(effort: &str) -> Option<Self> {
-        match effort.to_lowercase().as_str() {
-            "minimal" => Some(Self::Minimal),
-            "low" => Some(Self::Low),
-            "medium" => Some(Self::Medium),
-            "high" => Some(Self::High),
+        match effort {
+            minial if minial.eq_ignore_ascii_case("minimal") => Some(Self::Minimal),
+            low if low.eq_ignore_ascii_case("low") => Some(Self::Low),
+            medium if medium.eq_ignore_ascii_case("medium") => Some(Self::Medium),
+            high if high.eq_ignore_ascii_case("high") => Some(Self::High),
             _ => None,
         }
     }

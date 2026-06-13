@@ -432,19 +432,19 @@ impl CodegenAlternative {
             });
             self.generation = self.handle_completion(model, completion_events, cx);
         } else {
-            let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
-                if user_prompt.trim().to_lowercase() == "delete" {
-                    async { Ok(LanguageModelTextStream::default()) }.boxed_local()
-                } else {
-                    let request = self.build_request(&model, user_prompt, context_task, cx)?;
-                    cx.spawn({
-                        let model = model.clone();
-                        async move |_, cx| {
-                            Ok(model.stream_completion_text(request.await, cx).await?)
-                        }
-                    })
-                    .boxed_local()
-                };
+            let stream: LocalBoxFuture<Result<LanguageModelTextStream>> = if user_prompt
+                .trim()
+                .eq_ignore_ascii_case("delete")
+            {
+                async { Ok(LanguageModelTextStream::default()) }.boxed_local()
+            } else {
+                let request = self.build_request(&model, user_prompt, context_task, cx)?;
+                cx.spawn({
+                    let model = model.clone();
+                    async move |_, cx| Ok(model.stream_completion_text(request.await, cx).await?)
+                })
+                .boxed_local()
+            };
             self.generation =
                 self.handle_stream(model, /* strip_invalid_spans: */ true, stream, cx);
         }

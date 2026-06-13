@@ -1244,7 +1244,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .iter()
             .filter_map(|mount| {
                 if let Some(mount_type) = &mount.mount_type
-                    && mount_type.to_lowercase() == "volume"
+                    && mount_type.eq_ignore_ascii_case("volume")
                     && let Some(source) = &mount.source
                 {
                     Some((
@@ -2823,7 +2823,10 @@ fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -
             Some(target) => {
                 let parts = from_line.split(' ').collect::<Vec<&str>>();
                 if parts.len() >= 3
-                    && parts.get(parts.len() - 2).unwrap_or(&"").to_lowercase() == "as"
+                    && parts
+                        .get(parts.len() - 2)
+                        .unwrap_or(&"")
+                        .eq_ignore_ascii_case("as")
                 {
                     parts.last().unwrap_or(&"").to_lowercase() == target.to_lowercase()
                 } else {

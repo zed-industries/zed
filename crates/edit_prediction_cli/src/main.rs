@@ -412,11 +412,22 @@ impl std::str::FromStr for TeacherBackend {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
-            "sonnet46" => Ok(TeacherBackend::Sonnet46),
-            "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
-            "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
+        match s {
+            sonnet45
+                if sonnet45.eq_ignore_ascii_case("sonnet45")
+                    || sonnet45.eq_ignore_ascii_case("sonnet")
+                    || sonnet45.eq_ignore_ascii_case("claude") =>
+            {
+                Ok(TeacherBackend::Sonnet45)
+            }
+            sonnet46 if sonnet46.eq_ignore_ascii_case("sonnet46") => Ok(TeacherBackend::Sonnet46),
+            gpt if gpt.eq_ignore_ascii_case("gpt52")
+                || gpt.eq_ignore_ascii_case("gpt")
+                || gpt.eq_ignore_ascii_case("openai") =>
+            {
+                Ok(TeacherBackend::Gpt52)
+            }
+            v0 if v0.eq_ignore_ascii_case("v0114180editableregion") => Ok(TeacherBackend::Sonnet45),
             _ => anyhow::bail!(
                 "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52"
             ),
@@ -483,38 +494,44 @@ impl std::str::FromStr for PredictionProvider {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (provider, arg) = s.split_once(':').map_or((s, None), |(p, a)| (p, Some(a)));
 
-        let provider_lower = provider.to_lowercase();
-        match provider_lower.as_str() {
-            "mercury" => Ok(PredictionProvider::Mercury),
-            "zeta1" => Ok(PredictionProvider::Zeta1),
-            "zeta2" => {
+        match provider {
+            mercury if mercury.eq_ignore_ascii_case("mercury") => Ok(PredictionProvider::Mercury),
+            zeta1 if zeta1.eq_ignore_ascii_case("zeta1") => Ok(PredictionProvider::Zeta1),
+            zeta2 if zeta2.eq_ignore_ascii_case("zeta2") => {
                 let format = arg.map(ZetaFormat::parse).transpose()?.unwrap_or_default();
                 Ok(PredictionProvider::Zeta2(format))
             }
-            "teacher" => {
+            teacher if teacher.eq_ignore_ascii_case("teacher") => {
                 let (backend, format) = parse_teacher_args(arg)?;
                 Ok(PredictionProvider::Teacher(backend, format))
             }
-            "teacher-non-batching" | "teacher_non_batching" => {
+            tnb if tnb.eq_ignore_ascii_case("teacher-non-batching")
+                || tnb.eq_ignore_ascii_case("teacher_non_batching") =>
+            {
                 let (backend, format) = parse_teacher_args(arg)?;
                 Ok(PredictionProvider::TeacherNonBatching(backend, format))
             }
-            "teacher-multi-region" | "teacher_multi_region" => {
+            tmr if tmr.eq_ignore_ascii_case("teacher-multi-region")
+                || tmr.eq_ignore_ascii_case("teacher_multi_region") =>
+            {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherMultiRegion(backend))
             }
-            "teacher-multi-region-non-batching" | "teacher_multi_region_non_batching" => {
+            tmrnb
+                if tmrnb.eq_ignore_ascii_case("teacher-multi-region-non-batching")
+                    || tmrnb.eq_ignore_ascii_case("teacher_multi_region_non_batching") =>
+            {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherMultiRegionNonBatching(backend))
             }
-            "repair" => Ok(PredictionProvider::Repair),
-            "baseten" => {
+            repair if repair.eq_ignore_ascii_case("repair") => Ok(PredictionProvider::Repair),
+            baseten if baseten.eq_ignore_ascii_case("baseten") => {
                 let format = arg
                     .map(ZetaFormat::parse)
                     .transpose()?

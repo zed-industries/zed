@@ -1411,10 +1411,12 @@ impl ExtensionsPage {
         if let Some(id) = search.strip_prefix("id:") {
             self.upsells.clear();
 
-            let upsell = match id.to_lowercase().as_str() {
-                "ruff" => Some(Feature::ExtensionRuff),
-                "basedpyright" => Some(Feature::ExtensionBasedpyright),
-                "ty" => Some(Feature::ExtensionTy),
+            let upsell = match id {
+                ruff if ruff.eq_ignore_ascii_case("ruff") => Some(Feature::ExtensionRuff),
+                basedpyright if basedpyright.eq_ignore_ascii_case("basedpyright") => {
+                    Some(Feature::ExtensionBasedpyright)
+                }
+                ty if ty.eq_ignore_ascii_case("ty") => Some(Feature::ExtensionTy),
                 _ => None,
             };
 

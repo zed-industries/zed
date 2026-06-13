@@ -2517,7 +2517,7 @@ fn get_scale_factor(
     let env_dpi = std::env::var(GPUI_X11_SCALE_FACTOR_ENV)
         .ok()
         .map(|var| {
-            if var.to_lowercase() == "randr" {
+            if var.eq_ignore_ascii_case("randr") {
                 DpiMode::Randr
             } else if let Ok(scale) = var.parse::<f32>() {
                 if valid_scale_factor(scale) {

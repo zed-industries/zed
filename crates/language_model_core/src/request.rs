@@ -36,8 +36,8 @@ impl LanguageModelImage {
         let mut source = None;
 
         for (k, v) in obj.iter() {
-            match k.to_lowercase().as_str() {
-                "source" => source = v.as_str(),
+            match k.as_str() {
+                k if k.eq_ignore_ascii_case("source") => source = v.as_str(),
                 _ => {}
             }
         }
@@ -169,14 +169,14 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
             if let (Some(type_value), Some(text_value)) =
                 (get_field(obj, "type"), get_field(obj, "text"))
                 && let Some(type_str) = type_value.as_str()
-                && type_str.to_lowercase() == "text"
+                && type_str.eq_ignore_ascii_case("text")
                 && let Some(text) = text_value.as_str()
             {
                 return Ok(Self::Text(Arc::from(text)));
             }
 
             // Check for wrapped Text variant: { "text": "..." }
-            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.to_lowercase() == "text")
+            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.eq_ignore_ascii_case("text"))
                 && obj.len() == 1
             {
                 if let Some(text) = value.as_str() {
@@ -185,7 +185,7 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
             }
 
             // Check for wrapped Image variant: { "image": { "source": "...", "size": ... } }
-            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.to_lowercase() == "image")
+            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.eq_ignore_ascii_case("image"))
                 && obj.len() == 1
             {
                 if let Some(image_obj) = value.as_object()

@@ -1815,9 +1815,9 @@ impl PromptButton {
 
 impl From<&str> for PromptButton {
     fn from(value: &str) -> Self {
-        match value.to_lowercase().as_str() {
-            "ok" => PromptButton::Ok("OK".into()),
-            "cancel" => PromptButton::Cancel("Cancel".into()),
+        match value {
+            yes if yes.eq_ignore_ascii_case("ok") => PromptButton::Ok("OK".into()),
+            cancel if cancel.eq_ignore_ascii_case("cancel") => PromptButton::Cancel("Cancel".into()),
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }
     }
