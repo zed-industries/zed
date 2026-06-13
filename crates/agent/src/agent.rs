@@ -1726,36 +1726,19 @@ impl NativeAgent {
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
-        if thread.read(cx).is_empty() {
-            return;
-        }
-
         let id = thread.read(cx).id().clone();
+        let Some(session) = self.sessions.get(&id) else {
+            return;
+        };
+        let Some((id, folder_paths, db_thread)) = self.thread_save_payload(session, cx) else {
+            return;
+        };
+
+        let database_future = ThreadsDatabase::connect(cx);
+        let thread_store = self.thread_store.clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-
-        let project_id = session.project_id;
-        let Some(state) = self.projects.get(&project_id) else {
-            return;
-        };
-
-        let folder_paths = PathList::new(
-            &state
-                .project
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect::<Vec<_>>(),
-        );
-
-        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
-        let database_future = ThreadsDatabase::connect(cx);
-        let db_thread = thread.update(cx, |thread, cx| {
-            thread.set_draft_prompt(draft_prompt);
-            thread.to_db(cx)
-        });
-        let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return Ok(());
@@ -1770,6 +1753,35 @@ impl NativeAgent {
         });
     }
 
+    /// Builds everything needed to persist a session's thread content,
+    /// capturing the current draft prompt from the ACP thread. Returns `None`
+    /// if the thread is empty or its project state is gone.
+    fn thread_save_payload(
+        &self,
+        session: &Session,
+        cx: &mut App,
+    ) -> Option<(acp::SessionId, PathList, Task<DbThread>)> {
+        if session.thread.read(cx).is_empty() {
+            return None;
+        }
+        let state = self.projects.get(&session.project_id)?;
+        let folder_paths = PathList::new(
+            &state
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+        );
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
+        let id = session.thread.read(cx).id().clone();
+        let db_thread = session.thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(draft_prompt);
+            thread.to_db(cx)
+        });
+        Some((id, folder_paths, db_thread))
+    }
+
     /// Commits every non-empty thread's content on shutdown so the async
     /// `save_thread` losing the race can't leave metadata without content.
     fn flush_threads_on_quit(
@@ -1780,35 +1792,26 @@ impl NativeAgent {
 
         let mut saves = Vec::new();
         for session in self.sessions.values() {
-            let thread = session.thread.read(cx);
-            if thread.is_empty() {
-                continue;
-            }
-            let Some(state) = self.projects.get(&session.project_id) else {
-                continue;
-            };
-            let folder_paths = PathList::new(
-                &state
-                    .project
-                    .read(cx)
-                    .visible_worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                    .collect::<Vec<_>>(),
-            );
-            saves.push((thread.id().clone(), folder_paths, thread.to_db(cx)));
+            saves.extend(self.thread_save_payload(session, cx));
         }
 
         async move {
-            let Ok(database) = database_future.await else {
+            let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return;
             };
-            for (id, folder_paths, db_thread) in saves {
-                let db_thread = db_thread.await;
-                database
-                    .save_thread(id, db_thread, folder_paths)
-                    .await
-                    .log_err();
-            }
+            // All quit observers share `gpui::SHUTDOWN_TIMEOUT`, so run the
+            // saves concurrently instead of one at a time.
+            future::join_all(saves.into_iter().map(|(id, folder_paths, db_thread)| {
+                let database = database.clone();
+                async move {
+                    let db_thread = db_thread.await;
+                    database
+                        .save_thread(id, db_thread, folder_paths)
+                        .await
+                        .log_err();
+                }
+            }))
+            .await;
         }
     }
 
@@ -3808,11 +3811,26 @@ mod internal_tests {
     async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
 
-        // Give the thread content so it's no longer an empty draft.
+        // A second session whose thread stays empty must be skipped by the
+        // quit flush rather than persisted as an empty row.
+        let empty_acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let empty_session_id = cx.update(|cx| empty_acp_thread.read(cx).session_id().clone());
+
+        // Give the first thread content so it's no longer an empty draft, plus
+        // an in-progress draft prompt that the flush must capture.
         cx.update(|cx| {
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
@@ -3822,6 +3840,10 @@ mod internal_tests {
                     path_style,
                     cx,
                 );
+            });
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread
+                    .set_draft_prompt(Some(vec![acp::ContentBlock::from("draft in progress")]), cx);
             });
         });
         cx.run_until_parked();
@@ -3840,9 +3862,9 @@ mod internal_tests {
             "precondition: content row should be missing before the quit flush"
         );
 
-        // Quitting must re-commit the content so the thread can be restored.
-        let flush = cx.update(|cx| agent.update(cx, |agent, cx| agent.flush_threads_on_quit(cx)));
-        flush.await;
+        // Quit through the real shutdown path so the `on_app_quit`
+        // registration is exercised, not just the flush itself.
+        cx.update(|cx| cx.shutdown());
 
         let restored = database
             .load_thread(session_id.clone())
@@ -3853,6 +3875,19 @@ mod internal_tests {
             restored.messages.len(),
             1,
             "the user message should survive the quit flush"
+        );
+        assert_eq!(
+            restored.draft_prompt,
+            Some(vec![acp::ContentBlock::from("draft in progress")]),
+            "the current draft prompt should be captured by the quit flush"
+        );
+        assert!(
+            database
+                .load_thread(empty_session_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "empty threads should not be persisted by the quit flush"
         );
     }
 
