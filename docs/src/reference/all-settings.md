@@ -192,6 +192,28 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Update extensions
+
+- Description: Disable auto-updates for specific extensions.
+- Setting: `auto_update_extensions`
+- Default: `{}`
+
+**Options**
+
+By default, every installed extension is auto-updated when Zed starts.
+Add an extension here with `false` to pin it to its currently installed version.
+
+```json [settings]
+{
+  "auto_update_extensions": {
+    "html": false
+  }
+}
+```
+
+Selecting **Install Another Version…** from an extension's `⋯` menu on the Extensions
+page ({#action zed::Extensions}) does this automatically.
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
@@ -2054,6 +2076,32 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
   "file_scan_inclusions": [".env*"]
 }
 ```
+
+## Scan Symbolic Links
+
+- Description: When to scan content of linked directories.
+- Setting: `scan_symlinks`
+- Default: `expanded`
+
+**Options**
+
+1. Only scan symlinked directories when they've been expanded in the workspace (default):
+
+```json [settings]
+{
+  "scan_symlinks": "expanded"
+}
+```
+
+2. Always scan symlinked directories:
+
+```json [settings]
+{
+  "scan_symlinks": "always"
+}
+```
+
+When set to `expanded`, symbolic links are only scanned after you explicitly expand them in the project panel. When set to `always`, Zed follows all symbolic links and scans their contents when indexing the project, unless they match gitignore rules. The `always` option may have performance implications for projects with many or deeply nested symlinks.
 
 ## File Types
 
@@ -5305,7 +5353,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
 
 ## Collaboration Panel
 
