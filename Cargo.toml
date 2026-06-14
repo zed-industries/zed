@@ -1049,3 +1049,10 @@ ignored = [
     "documented",
     "sea-orm-macros",
 ]
+
+# Dylint discovers our custom lints through this entry, so `cargo dylint --all`
+# runs them without a `--path` argument. The `lints` package pins its own
+# nightly toolchain (see `tooling/lints/rust-toolchain.toml`) and is kept out of
+# this workspace on purpose.
+[workspace.metadata.dylint]
+libraries = [{ path = "tooling/lints" }]
