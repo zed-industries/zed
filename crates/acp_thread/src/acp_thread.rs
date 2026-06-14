@@ -5874,6 +5874,88 @@ mod tests {
         });
     }
 
+    /// Regression test for the `update_fields` fallback that the fix for
+    /// issue #57230 relies on: after a thread restart, `Thread::replay`
+    /// emits a `ToolCall` (no content / no `raw_output`) followed by a
+    /// `ToolCallUpdate` containing only the saved `raw_output`. This
+    /// fallback turns that `raw_output` into displayable markdown content
+    /// so `tool_call.content` is non-empty for the UI — which in turn lets
+    /// the agent panel decide the call is collapsible and show a
+    /// disclosure widget for the saved output.
+    #[gpui::test]
+    async fn test_raw_output_update_populates_content_when_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("replayed-terminal-tool-call");
+        let saved_output = "```\ntotal 0\ndrwxr-xr-x  2 user user  64 Jan  1 00:00 .\n```";
+
+        thread.update(cx, |thread, cx| {
+            // Initial ToolCall event, as emitted by `Thread::replay` via
+            // `send_tool_call`: kind/title/raw_input but no content and no
+            // raw_output.
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "ls -al")
+                            .kind(acp::ToolKind::Execute)
+                            .raw_input(json!({ "command": "ls -al" })),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            // Followed by the status + raw_output update emitted at the end
+            // of `replay_tool_call` for tools that don't implement `replay`
+            // (e.g. the terminal tool).
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Completed)
+                            .raw_output(json!(saved_output)),
+                    )),
+                    cx,
+                )
+                .unwrap();
+
+            let tool_call = thread
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::ToolCall(call) if call.id == tool_call_id => Some(call),
+                    _ => None,
+                })
+                .expect("replayed tool call should be present");
+
+            assert!(
+                !tool_call.content.is_empty(),
+                "raw_output should be converted to displayable content so the tool block has \
+                 expand/collapse controls after replay (issue #57230)"
+            );
+
+            let ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) =
+                &tool_call.content[0]
+            else {
+                panic!(
+                    "expected markdown content block from raw_output, got: {:?}",
+                    tool_call.content[0]
+                );
+            };
+            assert_eq!(markdown.read(cx).source(), saved_output);
+        });
+    }
+
     /// Tests that restoring a checkpoint properly cleans up terminals that were
     /// created after that checkpoint, and cancels any in-progress generation.
     ///
