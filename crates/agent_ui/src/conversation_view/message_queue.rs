@@ -2,9 +2,6 @@ use std::collections::VecDeque;
 
 use super::*;
 
-/// Stable identifier for a queued message entry. Unlike positional indices,
-/// these don't shift when entries are removed, so closures can safely capture
-/// them without risk of operating on the wrong message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueueEntryId(usize);
 
@@ -20,12 +17,9 @@ pub struct QueueEntry {
     pub _subscription: Subscription,
 }
 
-// Controls whether the queue auto-sends after generation completes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessingState {
-    // Normal: auto-send next queued message when generation completes.
     AutoProcess,
-    // Queue is paused because the user stopped generation.
     Paused,
     // Sending a message out of turn cancelled the current generation; we must
     // absorb the Stopped event from that cancellation before resuming
@@ -35,9 +29,6 @@ enum ProcessingState {
 
 /// Holds follow-up messages typed while the agent is generating, along with
 /// the state machine that decides when they're auto-sent.
-///
-/// All fields are private so every state transition goes through an
-/// intent-based method, which keeps the flag bookkeeping in one place.
 pub struct MessageQueue {
     entries: VecDeque<QueueEntry>,
     processing_state: ProcessingState,
@@ -77,8 +68,8 @@ impl MessageQueue {
         self.entries.back().map(|entry| entry.id)
     }
 
-    /// Whether the next message to be delivered wants to interrupt the agent at
-    /// the next turn boundary. Drives the native thread's boundary flag.
+    /// Whether the next message should interrupt the agent at the next turn
+    /// boundary. Drives the native thread's boundary flag.
     pub fn front_wants_steer(&self) -> bool {
         self.entries.front().is_some_and(|entry| entry.steer)
     }

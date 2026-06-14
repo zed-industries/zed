@@ -4244,12 +4244,11 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.message_editor.focus_handle(cx);
+
         Button::new(("steer", index), "Steer")
             .label_size(LabelSize::Small)
             .toggle_state(steer_on)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            // Only the first entry is reachable by the action, so only it shows
-            // the keybinding hint.
             .when(is_next, |this| {
                 this.key_binding(
                     KeyBinding::for_action_in(&ToggleSteerFirstQueuedMessage, &focus_handle, cx)
@@ -4280,8 +4279,6 @@ impl ThreadView {
 
         let queue_len = self.message_queue.len();
         let can_fast_track = self.message_queue.can_fast_track();
-        // Steering only applies to the native agent, where we can end the turn
-        // at a message boundary. External agents have no such control.
         let is_native = self.as_native_thread(cx).is_some();
 
         v_flex()
@@ -4301,6 +4298,8 @@ impl ThreadView {
                 let editor_focused = editor.focus_handle(cx).is_focused(_window);
                 let keybinding_size = rems_from_px(12.);
                 let steer_on = entry.steer;
+
+                let min_width = rems_from_px(160.);
 
                 h_flex()
                     .group("queue_entry")
@@ -4326,13 +4325,8 @@ impl ThreadView {
                     .child(if editor_focused {
                         h_flex()
                             .gap_1()
-                            .min_w(rems_from_px(150.))
+                            .min_w(min_width)
                             .justify_end()
-                            .when(is_native, |row| {
-                                row.child(self.render_queue_steer_button(
-                                    entry_id, index, is_next, steer_on, cx,
-                                ))
-                            })
                             .child(
                                 IconButton::new(("edit", index), IconName::Pencil)
                                     .icon_size(IconSize::Small)
@@ -4350,6 +4344,11 @@ impl ThreadView {
                                         );
                                     })),
                             )
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
+                            })
                             .child(
                                 Button::new(("send_now_focused", index), "Send Now")
                                     .label_size(LabelSize::Small)
@@ -4370,13 +4369,8 @@ impl ThreadView {
                         h_flex()
                             .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                             .gap_1()
-                            .min_w(rems_from_px(150.))
+                            .min_w(min_width)
                             .justify_end()
-                            .when(is_native, |row| {
-                                row.child(self.render_queue_steer_button(
-                                    entry_id, index, is_next, steer_on, cx,
-                                ))
-                            })
                             .child(
                                 IconButton::new(("delete", index), IconName::Trash)
                                     .icon_size(IconSize::Small)
@@ -4424,6 +4418,11 @@ impl ThreadView {
                                         );
                                     })),
                             )
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
+                            })
                             .child(
                                 Button::new(("send_now", index), "Send Now")
                                     .label_size(LabelSize::Small)
@@ -10790,8 +10789,6 @@ impl Render for ThreadView {
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleSteerFirstQueuedMessage, _, cx| {
-                    // Steering only has an effect on the native agent; ignore it for
-                    // external agents, which have no turn-boundary control.
                     if this.as_native_thread(cx).is_none() {
                         return;
                     }
