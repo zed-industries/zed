@@ -5,7 +5,7 @@ use crate::{
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema as acp;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
 use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
@@ -584,6 +584,9 @@ pub struct ThreadView {
     /// Tracks which context compaction entries (by entry index) have their
     /// summary expanded.
     expanded_compactions: HashSet<usize>,
+    /// User message rows (by entry index) the user has expanded inline. Long
+    /// user messages are collapsed to a few lines by default once sent.
+    expanded_user_messages: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -630,6 +633,26 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
+    /// The user-message row currently shown as the pinned sticky header, if
+    /// any. The list renders a spacer for this row so the real component is
+    /// rendered exactly once (in the header).
+    pinned_user_message_ix: Cell<Option<usize>>,
+    /// Height of the spacer to render for the pinned row. Captured in `render`
+    /// (where borrowing the list is safe) so the list's item closure can read
+    /// it without re-borrowing `ListState` mid-layout, which would panic.
+    pinned_user_message_height: Cell<Pixels>,
+    /// Set only while building the pinned sticky header. The user-message bubble
+    /// reads this to force its background opaque, so the floating header stays
+    /// readable over the scrolling conversation (its `editor_background` can be
+    /// translucent on transparent window themes) without affecting the inline
+    /// message rendering.
+    rendering_pinned_user_message: Cell<bool>,
+    /// True until we've scheduled the one extra render needed for the pinned
+    /// header to appear on first open. The header is derived from list layout
+    /// (`viewport_bounds`/`bounds_for_item`), which isn't populated until after
+    /// the list's first paint, so the very first render can't compute it; this
+    /// triggers a single follow-up render once layout is available.
+    sticky_header_awaiting_layout: Cell<bool>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -967,6 +990,7 @@ impl ThreadView {
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
             expanded_compactions: HashSet::default(),
+            expanded_user_messages: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -1003,6 +1027,10 @@ impl ThreadView {
             generating_indicator_in_list: false,
             skill_loading_issues: Vec::new(),
             dismissed_skill_loading_issues: HashSet::default(),
+            pinned_user_message_ix: Cell::new(None),
+            pinned_user_message_height: Cell::new(px(0.)),
+            rendering_pinned_user_message: Cell::new(false),
+            sticky_header_awaiting_layout: Cell::new(true),
         };
 
         this.sync_generating_indicator(cx);
@@ -5455,6 +5483,14 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
+                // While a user message is pinned as the sticky header, render an
+                // equal-height spacer in its place so the real component renders
+                // exactly once (in the header) without the row collapsing and
+                // jumping the scroll position.
+                if this.pinned_user_message_ix.get() == Some(index) {
+                    let height = this.pinned_user_message_height.get();
+                    return div().h(height).w_full().into_any_element();
+                }
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
@@ -5472,6 +5508,122 @@ impl ThreadView {
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
         .flex_grow_1()
+    }
+
+    /// Render the user message for the section currently being read, pinned to
+    /// the top of the conversation. It reuses the real message component (so it
+    /// has exactly the same formatting as the inline message), while the list
+    /// renders an equal-height spacer in its place so the component is only
+    /// rendered once. As the next user message scrolls up toward the top, the
+    /// pinned header is smoothly pushed up and out of view so the next section's
+    /// header slides into its place; scrolling the other way reverses the
+    /// motion, snapping it back. This mirrors the sticky section headers used
+    /// elsewhere (e.g. the editor).
+    fn render_sticky_user_message(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        // Clear any previous pin first so that every early return below leaves
+        // the list rendering the real row rather than a stale spacer.
+        self.pinned_user_message_ix.set(None);
+
+        let entries = self.thread.read(cx).entries();
+        if entries.is_empty() {
+            return None;
+        }
+
+        let viewport = self.list_state.viewport_bounds();
+        if viewport.size.height <= px(0.) {
+            return None;
+        }
+        let viewport_top = viewport.top();
+        let scroll_top = self.list_state.logical_scroll_top();
+
+        let is_user_message =
+            |ix: usize| matches!(entries.get(ix), Some(AgentThreadEntry::UserMessage(_)));
+
+        // The active section is the last user message at or before the scroll
+        // anchor (so it includes the one currently scrolling off the top).
+        let active_ix = (0..=scroll_top.item_ix.min(entries.len().saturating_sub(1)))
+            .rev()
+            .find(|&ix| is_user_message(ix))?;
+
+        // The active row's full measured height (persists once the list has
+        // measured it, even after it scrolls out of view). The header renders the
+        // row identically to the inline list item — including the same collapse
+        // state — so this is also the header's height, making it a true sticky
+        // header (content scrolls underneath it). Unknown if the row has never
+        // been laid out (e.g. opening scrolled to the bottom of a long section);
+        // then the header sizes to its content and we skip the swap-for-spacer.
+        let header_height = self.list_state.measured_height_for_item(active_ix);
+
+        // Pin only once the row has scrolled off the top: either it's entirely
+        // above the scroll anchor, or it is the anchor but scrolled into.
+        let is_fully_above = active_ix < scroll_top.item_ix;
+        if !is_fully_above && scroll_top.offset_in_item <= px(0.5) {
+            return None;
+        }
+
+        // Don't pin a message that's being edited inline in the list (and isn't
+        // scrolled off); the live editor must stay where it is.
+        if self.editing_message == Some(active_ix) && !is_fully_above {
+            return None;
+        }
+
+        // When the next user message approaches the top, push the current header
+        // up so it slides away as the next section arrives.
+        let next_ix = (active_ix + 1..entries.len()).find(|&ix| is_user_message(ix));
+        let push_up = header_height
+            .zip(next_ix)
+            .map(|(header_height, next_ix)| {
+                if next_ix < scroll_top.item_ix {
+                    return header_height;
+                }
+                let Some(next_top) = self.list_state.bounds_for_item(next_ix).map(|b| b.top())
+                else {
+                    return px(0.);
+                };
+                let distance = (next_top - viewport_top).max(px(0.));
+                (header_height - distance).max(px(0.))
+            })
+            .unwrap_or(px(0.));
+
+        let entry = entries.get(active_ix)?;
+        // The bubble is rendered opaque (via `rendering_pinned_user_message`) so
+        // it stays readable over the conversation; otherwise this is exactly the
+        // inline row, including its collapse/expand chevron.
+        self.rendering_pinned_user_message.set(true);
+        let content = self.render_entry(active_ix, entries.len(), entry, window, cx);
+        self.rendering_pinned_user_message.set(false);
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+
+        // Swap the list row for an equal-height spacer (so the real component is
+        // rendered only once, here) when we know its full height. Without a
+        // measured height the row isn't laid out by the list anyway, so there's
+        // nothing to duplicate and a spacer would corrupt its measurement.
+        if let Some(full) = header_height {
+            self.pinned_user_message_height.set(full);
+            self.pinned_user_message_ix.set(Some(active_ix));
+        }
+
+        let content = h_flex().w_full().justify_center().child(
+            div()
+                .when_some(max_content_width, |this, max_w| this.max_w(max_w))
+                .w_full()
+                .child(content),
+        );
+
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .overflow_hidden()
+                .child(div().relative().w_full().top(-push_up).child(content))
+                .into_any_element(),
+        )
     }
 
     fn render_entry(
@@ -5524,6 +5676,38 @@ impl ThreadView {
                     self.agent_id.clone()
                 };
 
+                // Collapse long inline user messages to a few lines once sent,
+                // with a chevron to expand/collapse. The pinned header has its
+                // own capping, and a focused (editing) message always shows in
+                // full.
+                //
+                // Cap to whole *editor* lines (the message body is rendered with
+                // the agent buffer font, which is smaller than the UI line
+                // height) so the clip lands on a line boundary and the bubble's
+                // top and bottom padding stay symmetric.
+                let editor_line_height = {
+                    let settings = theme_settings::ThemeSettings::get_global(cx);
+                    settings.agent_buffer_font_size(cx) * settings.buffer_line_height.value()
+                };
+                let collapsed_body_cap = editor_line_height * 4.;
+                // A message is "long" (and gets collapsed) when its rendered body
+                // would exceed a few lines. Count newlines in text blocks plus a
+                // row per attachment (image/resource), so attachment-heavy
+                // messages collapse too — markdown text-line counting alone misses
+                // them.
+                let estimated_body_lines: usize = message
+                    .chunks
+                    .iter()
+                    .map(|chunk| match chunk {
+                        acp::ContentBlock::Text(text) => text.text.lines().count().max(1),
+                        _ => 1,
+                    })
+                    .sum();
+                let is_long_message = estimated_body_lines > 4;
+                let inline_collapsible = is_long_message && !editor_focus;
+                let inline_expanded = self.expanded_user_messages.contains(&entry_ix);
+                let inline_collapsed = inline_collapsible && !inline_expanded;
+
                 v_flex()
                     .id(("user_message", entry_ix))
                     .map(|this| {
@@ -5564,7 +5748,18 @@ impl ThreadView {
                                     .py_3()
                                     .px_2()
                                     .rounded_md()
-                                    .bg(cx.theme().colors().editor_background)
+                                    .bg({
+                                        let mut bubble_bg =
+                                            cx.theme().colors().editor_background;
+                                        // When this bubble is the pinned sticky
+                                        // header, force it opaque so the scrolling
+                                        // conversation behind it doesn't show
+                                        // through.
+                                        if self.rendering_pinned_user_message.get() {
+                                            bubble_bg.a = 1.0;
+                                        }
+                                        bubble_bg
+                                    })
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().when(opaque_window, |this| {
@@ -5591,7 +5786,21 @@ impl ThreadView {
                                             })
                                     })
                                     .text_xs()
-                                    .child(editor.clone().into_any_element())
+                                    .child({
+                                        let editor = editor.clone().into_any_element();
+                                        // Collapse a long message body to a few
+                                        // lines (the bubble keeps its rounded
+                                        // corners and border around the clip).
+                                        if inline_collapsed {
+                                            div()
+                                                .max_h(collapsed_body_cap)
+                                                .overflow_hidden()
+                                                .child(editor)
+                                                .into_any_element()
+                                        } else {
+                                            editor
+                                        }
+                                    })
                             )
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
@@ -5670,6 +5879,49 @@ impl ThreadView {
                                                 }))),
                                     )
                                 }
+                            })
+                            .when(inline_collapsible, |this| {
+                                let bubble_bg = cx.theme().colors().editor_background;
+                                this.child(
+                                    h_flex()
+                                        .absolute()
+                                        .bottom_0()
+                                        .left_0()
+                                        .right_0()
+                                        .h(window.line_height() + px(8.))
+                                        .justify_center()
+                                        .items_end()
+                                        .when(inline_collapsed, |this| {
+                                            this.bg(gpui::linear_gradient(
+                                                180.,
+                                                gpui::linear_color_stop(bubble_bg.opacity(0.), 0.),
+                                                gpui::linear_color_stop(bubble_bg, 1.),
+                                            ))
+                                        })
+                                        .child(
+                                            IconButton::new(
+                                                ("toggle-user-message", entry_ix),
+                                                if inline_expanded {
+                                                    IconName::ChevronUp
+                                                } else {
+                                                    IconName::ChevronDown
+                                                },
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .tooltip(Tooltip::text(if inline_expanded {
+                                                "Collapse message"
+                                            } else {
+                                                "Expand message"
+                                            }))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if !this.expanded_user_messages.remove(&entry_ix) {
+                                                    this.expanded_user_messages.insert(entry_ix);
+                                                }
+                                                cx.notify();
+                                            })),
+                                        ),
+                                )
                             }),
                     )
                     .into_any()
@@ -10537,6 +10789,14 @@ impl Render for ThreadView {
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
 
+        // The pinned header is derived from list layout, which isn't available
+        // until after the list's first paint. Schedule a single follow-up
+        // render the first time we have messages so the header shows on open
+        // without waiting for the user to scroll.
+        if has_messages && self.sticky_header_awaiting_layout.replace(false) {
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+        }
+
         let conversation = v_flex()
             .when(self.resumed_without_history, |this| {
                 this.child(Self::render_resume_notice(cx))
@@ -10545,7 +10805,14 @@ impl Render for ThreadView {
                 if has_messages {
                     this.flex_1()
                         .size_full()
-                        .child(self.render_entries(cx))
+                        .child(
+                            v_flex()
+                                .relative()
+                                .flex_1()
+                                .size_full()
+                                .child(self.render_entries(cx))
+                                .children(self.render_sticky_user_message(window, cx)),
+                        )
                         .vertical_scrollbar_for(&list_state, window, cx)
                         .into_any()
                 } else {
