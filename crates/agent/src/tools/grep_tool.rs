@@ -5,7 +5,7 @@ use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, SearchResults, WorktreeSettings,
+    Project, ProjectPath, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use util::RangeExt;
-use util::markdown::MarkdownInlineCode;
+use util::markdown::{MarkdownCodeBlock, MarkdownInlineCode};
 use util::paths::PathMatcher;
 
 /// Searches the contents of files in the project with a regular expression
@@ -178,6 +178,8 @@ impl AgentTool for GrepTool {
             futures::pin_mut!(rx);
 
             let mut output = String::new();
+            let mut content = Vec::new();
+            let mut locations = Vec::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
@@ -203,24 +205,38 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
-                    (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
-                }) else {
+                let (Some((path, project_path)), mut parse_status) =
+                    buffer.read_with(cx, |buffer, cx| {
+                        (
+                            buffer.file().map(|file| {
+                                (
+                                    file.full_path(cx),
+                                    ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    },
+                                )
+                            }),
+                            buffer.parse_status(),
+                        )
+                    })
+                else {
                     continue;
                 };
 
                 // Check if this file should be excluded based on its worktree settings
-                if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
-                    project.find_project_path(&path, cx)
+                if cx.update(|cx| {
+                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                    worktree_settings.is_path_excluded(&project_path.path)
+                        || worktree_settings.is_path_private(&project_path.path)
                 }) {
-                    if cx.update(|cx| {
-                        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-                        worktree_settings.is_path_excluded(&project_path.path)
-                            || worktree_settings.is_path_private(&project_path.path)
-                    }) {
-                        continue;
-                    }
+                    continue;
                 }
+
+                let abs_path = project
+                    .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
+                    .ok()
+                    .flatten();
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await.map_err(|e| e.to_string())?;
@@ -298,17 +314,40 @@ impl AgentTool for GrepTool {
                             .ok();
                     }
 
-                    if range.start.row == end_row {
-                        writeln!(output, "L{}", range.start.row + 1)
-                            .ok();
+                    let line_label = if range.start.row == end_row {
+                        format!("L{}", range.start.row + 1)
                     } else {
-                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)
-                            .ok();
-                    }
+                        format!("L{}-{}", range.start.row + 1, end_row + 1)
+                    };
+                    writeln!(output, "{line_label}").ok();
 
+                    let snippet: String = snapshot.text_for_range(range.clone()).collect();
                     output.push_str("```\n");
-                    output.extend(snapshot.text_for_range(range));
+                    output.push_str(&snippet);
                     output.push_str("\n```\n");
+
+                    if let Some(abs_path) = &abs_path {
+                        content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                format!("{}#{}", path.display(), line_label),
+                                format!("file://{}#{}", abs_path.display(), line_label),
+                            )),
+                        )));
+                        locations.push(
+                            acp::ToolCallLocation::new(abs_path).line(Some(range.start.row)),
+                        );
+                    }
+                    // Use a fence longer than any backtick run in the snippet so
+                    // matches containing code fences don't break the rendering.
+                    content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            MarkdownCodeBlock {
+                                tag: "",
+                                text: &snippet,
+                            }
+                            .to_string(),
+                        )),
+                    )));
 
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
@@ -319,6 +358,14 @@ impl AgentTool for GrepTool {
 
                     matches_found += 1;
                 }
+            }
+
+            if !content.is_empty() {
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new()
+                        .content(content)
+                        .locations(locations),
+                );
             }
 
             if matches_found == 0 {
