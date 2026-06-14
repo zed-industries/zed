@@ -16,7 +16,7 @@ use fs::Fs;
 use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
@@ -179,12 +179,13 @@ impl Search {
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
-        let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
-        let matching_buffers = grab_buffer_snapshot_rx.clone();
+        let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
+            unbounded::<(Entity<Buffer>, u32)>();
+        let (matching_buffers_tx, matching_buffers_rx) = unbounded::<Entity<Buffer>>();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
-                    _ = grab_buffer_snapshot_tx.send(buffer).await;
+                    _ = grab_buffer_snapshot_tx.send((buffer, 0)).await;
                 }
 
                 let (find_all_matches_tx, find_all_matches_rx) =
@@ -196,7 +197,8 @@ impl Search {
                         let fill_requests = cx
                             .background_spawn(async move {
                                 for buffer in open_buffers {
-                                    if let Err(_) = grab_buffer_snapshot_tx.send(buffer).await {
+                                    if let Err(_) = grab_buffer_snapshot_tx.send((buffer, 0)).await
+                                    {
                                         return;
                                     }
                                 }
@@ -304,8 +306,9 @@ impl Search {
 
                                     let forward_buffers = cx.background_spawn(async move {
                                         while let Ok(buffer) = buffer_rx.recv().await {
-                                            let _ =
-                                                grab_buffer_snapshot_tx.send(buffer.await?).await;
+                                            let _ = grab_buffer_snapshot_tx
+                                                .send((buffer.await?, 0))
+                                                .await;
                                         }
                                         anyhow::Ok(())
                                     });
@@ -366,6 +369,7 @@ impl Search {
                 // Grabbing buffer snapshots is only necessary when we're looking for all matches. If the caller decided that they're not interested
                 // in all matches, running that task unconditionally would hinder caller's ability to observe all matching file paths.
                 let buffer_snapshots = if should_find_all_matches {
+                    drop(matching_buffers_tx);
                     Some(
                         Self::grab_buffer_snapshots(
                             grab_buffer_snapshot_rx,
@@ -377,8 +381,16 @@ impl Search {
                     )
                 } else {
                     drop(find_all_matches_tx);
-
-                    None
+                    Some(
+                        cx.background_spawn(async move {
+                            while let Ok((buffer, _)) = grab_buffer_snapshot_rx.recv().await {
+                                if matching_buffers_tx.send(buffer).await.is_err() {
+                                    break;
+                                }
+                            }
+                        })
+                        .boxed_local(),
+                    )
                 };
                 let ensure_matches_are_reported_in_order = if should_find_all_matches {
                     Some(
@@ -403,7 +415,7 @@ impl Search {
 
         SearchResultsHandle {
             results: rx,
-            matching_buffers,
+            matching_buffers: matching_buffers_rx,
             trigger_search,
         }
     }
@@ -412,7 +424,7 @@ impl Search {
         worktrees: Vec<Entity<Worktree>>,
         query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
-        results: Sender<oneshot::Receiver<ProjectPath>>,
+        results: Sender<oneshot::Receiver<(ProjectPath, u32)>>,
         results_tx: Sender<SearchResult>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
@@ -495,18 +507,22 @@ impl Search {
     }
 
     async fn maintain_sorted_search_results(
-        rx: Receiver<oneshot::Receiver<ProjectPath>>,
-        paths_for_full_scan: Sender<ProjectPath>,
+        rx: Receiver<oneshot::Receiver<(ProjectPath, u32)>>,
+        paths_for_full_scan: Sender<(ProjectPath, u32)>,
         limit: usize,
     ) {
         let mut rx = pin!(rx);
         let mut matched = 0;
         while let Some(mut next_path_result) = rx.next().await {
-            let Some(successful_path) = next_path_result.next().await else {
+            let Some((successful_path, line_hint)) = next_path_result.next().await else {
                 // This file did not produce a match, hence skip it.
                 continue;
             };
-            if paths_for_full_scan.send(successful_path).await.is_err() {
+            if paths_for_full_scan
+                .send((successful_path, line_hint))
+                .await
+                .is_err()
+            {
                 return;
             };
             matched += 1;
@@ -519,23 +535,25 @@ impl Search {
     /// Background workers cannot open buffers by themselves, hence main thread will do it on their behalf.
     async fn open_buffers(
         buffer_store: Entity<BufferStore>,
-        rx: Receiver<ProjectPath>,
-        find_all_matches_tx: Sender<Entity<Buffer>>,
+        rx: Receiver<(ProjectPath, u32)>,
+        find_all_matches_tx: Sender<(Entity<Buffer>, u32)>,
         mut cx: AsyncApp,
     ) {
         let mut rx = pin!(rx.ready_chunks(64));
         _ = maybe!(async move {
             while let Some(requested_paths) = rx.next().await {
+                let line_hints: Vec<u32> = requested_paths.iter().map(|(_, line)| *line).collect();
                 let mut buffers = buffer_store.update(&mut cx, |this, cx| {
                     requested_paths
                         .into_iter()
-                        .map(|path| this.open_buffer(path, cx))
+                        .map(|(path, _)| this.open_buffer(path, cx))
                         .collect::<FuturesOrdered<_>>()
                 });
-
+                let mut line_hints = line_hints.into_iter();
                 while let Some(buffer) = buffers.next().await {
+                    let line_hint = line_hints.next().unwrap_or(0);
                     if let Some(buffer) = buffer.log_err() {
-                        find_all_matches_tx.send(buffer).await?;
+                        find_all_matches_tx.send((buffer, line_hint)).await?;
                     }
                 }
             }
@@ -545,20 +563,23 @@ impl Search {
     }
 
     async fn grab_buffer_snapshots(
-        rx: Receiver<Entity<Buffer>>,
+        rx: Receiver<(Entity<Buffer>, u32)>,
         find_all_matches_tx: Sender<(
             Entity<Buffer>,
             BufferSnapshot,
+            u32,
             oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         )>,
         results: Sender<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         mut cx: AsyncApp,
     ) {
         _ = maybe!(async move {
-            while let Ok(buffer) = rx.recv().await {
+            while let Ok((buffer, line_hint)) = rx.recv().await {
                 let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot());
                 let (tx, rx) = oneshot::channel();
-                find_all_matches_tx.send((buffer, snapshot, tx)).await?;
+                find_all_matches_tx
+                    .send((buffer, snapshot, line_hint, tx))
+                    .await?;
                 results.send(rx).await?;
             }
             debug_assert!(rx.is_empty());
@@ -648,6 +669,7 @@ struct Worker {
     find_all_matches_rx: Receiver<(
         Entity<Buffer>,
         BufferSnapshot,
+        u32,
         oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
     )>,
 }
@@ -732,18 +754,28 @@ struct RequestHandler<'worker> {
 impl RequestHandler<'_> {
     async fn handle_find_all_matches(
         &self,
-        (buffer, snapshot, mut report_matches): (
+        (buffer, snapshot, line_hint, mut report_matches): (
             Entity<Buffer>,
             BufferSnapshot,
+            u32,
             oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         ),
     ) {
+        let range_offset = if line_hint > 0 {
+            snapshot.point_to_offset(Point::new(line_hint, 0))
+        } else {
+            0
+        };
+        let subrange = (range_offset > 0).then(|| range_offset..snapshot.len());
         let ranges = self
             .query
-            .search(&snapshot, None)
+            .search(&snapshot, subrange)
             .await
             .iter()
-            .map(|range| snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
+            .map(|range| {
+                snapshot.anchor_before(range.start + range_offset)
+                    ..snapshot.anchor_after(range.end + range_offset)
+            })
             .collect::<Vec<_>>();
 
         _ = report_matches.send((buffer, ranges)).await;
@@ -777,9 +809,9 @@ impl RequestHandler<'_> {
                 return Ok(());
             }
 
-            if self.query.detect(file).await.unwrap_or(false) {
+            if let Some(line_hint) = self.query.detect(file).await.ok().flatten() {
                 // Yes, we should scan the whole file.
-                entry.should_scan_tx.send(entry.path).await?;
+                entry.should_scan_tx.send((entry.path, line_hint)).await?;
             }
             Ok(())
         }
@@ -816,10 +848,13 @@ impl RequestHandler<'_> {
                 // The buffer is already in memory and that's the version we want to scan;
                 // hence skip the dilly-dally and look for all matches straight away.
                 should_scan_tx
-                    .send(ProjectPath {
-                        worktree_id: snapshot.id(),
-                        path: entry.path.clone(),
-                    })
+                    .send((
+                        ProjectPath {
+                            worktree_id: snapshot.id(),
+                            path: entry.path.clone(),
+                        },
+                        0,
+                    ))
                     .await?;
             } else {
                 self.confirm_contents_will_match_tx
@@ -843,13 +878,13 @@ impl RequestHandler<'_> {
 struct InputPath {
     entry: Entry,
     snapshot: Snapshot,
-    should_scan_tx: oneshot::Sender<ProjectPath>,
+    should_scan_tx: oneshot::Sender<(ProjectPath, u32)>,
 }
 
 struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
-    should_scan_tx: oneshot::Sender<ProjectPath>,
+    should_scan_tx: oneshot::Sender<(ProjectPath, u32)>,
 }
 
 /// This struct encapsulates the logic to decide whether a given gitignored directory should be
