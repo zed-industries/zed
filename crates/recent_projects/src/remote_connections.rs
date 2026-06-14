@@ -134,6 +134,7 @@ pub async fn open_remote_project(
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
+    let paths = normalize_remote_paths_for_matching(&connection_options, paths, cx).await;
 
     let (existing, open_visible) = find_existing_workspace(
         &paths,
@@ -437,6 +438,76 @@ pub async fn open_remote_project(
         })
         .ok();
     Ok(window)
+}
+
+fn path_needs_remote_normalization(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.starts_with("/~") || path.starts_with('~')
+}
+
+fn remote_path_for_metadata_lookup(path: &Path) -> String {
+    let mut path = path.to_string_lossy().into_owned();
+    if path.starts_with("/~") {
+        path = path[1..].to_string();
+    }
+    if path.is_empty() {
+        path = "~/".to_string();
+    }
+    path
+}
+
+async fn normalize_remote_paths_for_matching(
+    connection_options: &RemoteConnectionOptions,
+    paths: Vec<PathBuf>,
+    cx: &mut AsyncApp,
+) -> Vec<PathBuf> {
+    if !paths
+        .iter()
+        .any(|path| path_needs_remote_normalization(path))
+    {
+        return paths;
+    }
+
+    let project = cx.update(|cx| {
+        workspace::workspace_windows_for_location(
+            &SerializedWorkspaceLocation::Remote(connection_options.clone()),
+            cx,
+        )
+        .into_iter()
+        .find_map(|window| {
+            window.read(cx).ok().and_then(|multi_workspace| {
+                multi_workspace.workspaces().find_map(|workspace| {
+                    let project = workspace.read(cx).project().clone();
+                    project.read(cx).remote_client()?;
+                    Some(project)
+                })
+            })
+        })
+    });
+
+    let Some(project) = project else {
+        return paths;
+    };
+
+    let mut normalized_paths = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !path_needs_remote_normalization(&path) {
+            normalized_paths.push(path);
+            continue;
+        }
+
+        let lookup_path = remote_path_for_metadata_lookup(&path);
+        let resolved_path = cx.update(|cx| project.read(cx).resolve_abs_path(&lookup_path, cx));
+        match resolved_path
+            .await
+            .and_then(|resolved_path| resolved_path.into_abs_path())
+        {
+            Some(resolved_path) => normalized_paths.push(PathBuf::from(resolved_path)),
+            None => normalized_paths.push(path),
+        }
+    }
+
+    normalized_paths
 }
 
 pub fn navigate_to_positions(
@@ -826,6 +897,141 @@ mod tests {
         assert!(
             open_results[0].is_none(),
             "reopening a remote root directory should not try to open it as a file"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reuse_existing_remote_workspace_window_with_tilde_path(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        let remote_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME should be set in remote path reuse tests");
+        let canonical_project_path = remote_home.join("remote-reuse-tilde-project");
+        remote_fs
+            .insert_tree(
+                &canonical_project_path,
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                    "README.md": "# Test Project",
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let proxy = Arc::new(ExtensionHostProxy::new());
+
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy: proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            opts.clone(),
+            vec![canonical_project_path.clone()],
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("first open_remote_project should succeed");
+
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "First open should create exactly one window"
+        );
+
+        let first_window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let project_path_relative_to_home = canonical_project_path
+            .strip_prefix(&remote_home)
+            .expect("project should be inside the fake remote home directory");
+        let tilde_project_path = PathBuf::from(format!(
+            "/~/{}/src/main.rs",
+            project_path_relative_to_home.to_string_lossy()
+        ));
+        let normalized_paths = normalize_remote_paths_for_matching(
+            &opts,
+            vec![tilde_project_path.clone()],
+            &mut async_cx,
+        )
+        .await;
+        assert_eq!(
+            normalized_paths,
+            vec![canonical_project_path.join("src/main.rs")],
+            "/~/ paths should be normalized to the canonical remote home path before matching"
+        );
+
+        match futures::future::select(
+            Box::pin(open_remote_project(
+                opts,
+                vec![tilde_project_path],
+                app_state,
+                workspace::OpenOptions::default(),
+                &mut async_cx,
+            )),
+            Box::pin(executor.timer(std::time::Duration::from_secs(1))),
+        )
+        .await
+        {
+            futures::future::Either::Left((result, _)) => {
+                result.expect("second open_remote_project should complete");
+            }
+            futures::future::Either::Right(_) => {
+                panic!(
+                    "second open_remote_project timed out instead of reusing the existing window"
+                );
+            }
+        }
+
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "Opening the same remote path via /~/ should reuse the existing window"
+        );
+
+        let still_first_window =
+            cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        assert_eq!(
+            still_first_window, first_window,
+            "The window handle should be the same after reusing a /~/ remote path"
         );
     }
 
