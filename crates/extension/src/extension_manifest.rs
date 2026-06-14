@@ -181,9 +181,36 @@ impl ExtensionManifest {
     }
 
     pub fn allow_remote_load(&self) -> bool {
-        !self.language_servers.is_empty()
+        self.remote_load().is_some()
+    }
+
+    pub fn remote_load(&self) -> Option<RemoteLoad<'_>> {
+        (!self.language_servers.is_empty()
             || !self.debug_adapters.is_empty()
-            || !self.debug_locators.is_empty()
+            || !self.debug_locators.is_empty())
+        .then_some(RemoteLoad { manifest: self })
+    }
+}
+
+pub struct RemoteLoad<'a> {
+    manifest: &'a ExtensionManifest,
+}
+
+impl RemoteLoad<'_> {
+    pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        let language_server_dependencies = self
+            .manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server_config| language_server_config.languages());
+
+        let debug_adapter_dependencies = self
+            .manifest
+            .debug_adapters
+            .values()
+            .flat_map(|debug_adapter_config| debug_adapter_config.languages());
+
+        language_server_dependencies.chain(debug_adapter_dependencies)
     }
 }
 
@@ -345,9 +372,18 @@ pub struct SlashCommandManifestEntry {
     pub requires_argument: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
+    #[serde(default)]
     pub schema_path: Option<RelPathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<LanguageName>,
+}
+
+impl DebugAdapterManifestEntry {
+    pub fn languages(&self) -> impl Iterator<Item = LanguageName> + '_ {
+        self.languages.iter().cloned()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -475,6 +511,7 @@ mod tests {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {
             schema_path: Some(rel_path_buf("foo/bar")),
+            ..Default::default()
         };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
@@ -484,7 +521,7 @@ mod tests {
     #[test]
     fn test_build_adapter_schema_path_without_schema_path() {
         let adapter_name = Arc::from("my_adapter");
-        let entry = DebugAdapterManifestEntry { schema_path: None };
+        let entry = DebugAdapterManifestEntry::default();
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
         assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));

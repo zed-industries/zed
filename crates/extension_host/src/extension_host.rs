@@ -11,7 +11,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{Client, proto, telemetry::Telemetry};
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
-use collections::{BTreeMap, BTreeSet, FxHashSet, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, FxHashSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -176,6 +176,49 @@ pub struct ExtensionIndex {
     #[serde(default)]
     pub icon_themes: BTreeMap<Arc<str>, ExtensionIndexIconThemeEntry>,
     pub languages: BTreeMap<LanguageName, ExtensionIndexLanguageEntry>,
+}
+
+impl ExtensionIndex {
+    fn extensions_to_sync_to_remote(&self) -> RemoteSyncExtensions {
+        let mut extensions = RemoteSyncExtensions::default();
+
+        for (id, entry) in &self.extensions {
+            if entry.manifest.remote_load().is_some() {
+                extensions.insert(self, id);
+            }
+        }
+
+        extensions
+    }
+}
+
+#[derive(Default)]
+struct RemoteSyncExtensions(HashMap<Arc<str>, ExtensionIndexEntry>);
+
+impl RemoteSyncExtensions {
+    fn insert(&mut self, index: &ExtensionIndex, id: &Arc<str>) {
+        let Some(entry) = index.extensions.get(id) else {
+            return;
+        };
+
+        if self.0.insert(id.clone(), entry.clone()).is_some() {
+            return;
+        }
+
+        let Some(remote_load) = entry.manifest.remote_load() else {
+            return;
+        };
+
+        for language in remote_load.language_dependencies() {
+            if let Some(language_entry) = index.languages.get(&language) {
+                self.insert(index, &language_entry.extension);
+            }
+        }
+    }
+
+    fn into_entries(self) -> impl Iterator<Item = (Arc<str>, ExtensionIndexEntry)> {
+        self.0.into_iter()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -1812,17 +1855,12 @@ impl ExtensionStore {
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
             this.extension_index
-                .extensions
-                .iter()
-                .filter_map(|(id, entry)| {
-                    if !entry.manifest.allow_remote_load() {
-                        return None;
-                    }
-                    Some(proto::Extension {
-                        id: id.to_string(),
-                        version: entry.manifest.version.to_string(),
-                        dev: entry.dev,
-                    })
+                .extensions_to_sync_to_remote()
+                .into_entries()
+                .map(|(id, entry)| proto::Extension {
+                    id: id.to_string(),
+                    version: entry.manifest.version.to_string(),
+                    dev: entry.dev,
                 })
                 .collect()
         })?;
