@@ -2040,6 +2040,7 @@ impl ThreadView {
             id,
             content,
             tracked_buffers,
+            steer: false,
             editor,
             _subscription: subscription,
         });
@@ -2116,11 +2117,19 @@ impl ThreadView {
         removed
     }
 
+    fn toggle_queue_entry_steer(&mut self, id: QueueEntryId, cx: &mut Context<Self>) {
+        self.message_queue.toggle_steer(id);
+        self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
+    }
+
     pub fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
         if let Some(native_thread) = self.as_native_thread(cx) {
-            let has_queued = self.has_queued_messages();
+            // By default queued messages wait for the turn to fully complete.
+            // Only a "steering" front message ends the turn at the next boundary.
+            let end_at_boundary = self.message_queue.front_wants_steer();
             native_thread.update(cx, |thread, _| {
-                thread.set_has_queued_message(has_queued);
+                thread.set_end_turn_at_next_boundary(end_at_boundary);
             });
         }
     }
@@ -4226,6 +4235,41 @@ impl ThreadView {
             .into_any()
     }
 
+    fn render_queue_steer_button(
+        &self,
+        entry_id: QueueEntryId,
+        index: usize,
+        is_next: bool,
+        steer_on: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+        Button::new(("steer", index), "Steer")
+            .label_size(LabelSize::Small)
+            .toggle_state(steer_on)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            // Only the first entry is reachable by the action, so only it shows
+            // the keybinding hint.
+            .when(is_next, |this| {
+                this.key_binding(
+                    KeyBinding::for_action_in(&ToggleSteerFirstQueuedMessage, &focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+            })
+            .tooltip(move |_window, cx| {
+                Tooltip::with_meta(
+                    "Steer",
+                    None,
+                    "Interrupt the agent at its next step to send this message. \
+                     When off, queued messages wait for the agent to finish.",
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_queue_entry_steer(entry_id, cx);
+            }))
+    }
+
     fn render_message_queue_entries(
         &self,
         _window: &mut Window,
@@ -4236,6 +4280,9 @@ impl ThreadView {
 
         let queue_len = self.message_queue.len();
         let can_fast_track = self.message_queue.can_fast_track();
+        // Steering only applies to the native agent, where we can end the turn
+        // at a message boundary. External agents have no such control.
+        let is_native = self.as_native_thread(cx).is_some();
 
         v_flex()
             .id("message_queue_list")
@@ -4253,6 +4300,7 @@ impl ThreadView {
 
                 let editor_focused = editor.focus_handle(cx).is_focused(_window);
                 let keybinding_size = rems_from_px(12.);
+                let steer_on = entry.steer;
 
                 h_flex()
                     .group("queue_entry")
@@ -4280,6 +4328,11 @@ impl ThreadView {
                             .gap_1()
                             .min_w(rems_from_px(150.))
                             .justify_end()
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
+                            })
                             .child(
                                 IconButton::new(("edit", index), IconName::Pencil)
                                     .icon_size(IconSize::Small)
@@ -4319,6 +4372,11 @@ impl ThreadView {
                             .gap_1()
                             .min_w(rems_from_px(150.))
                             .justify_end()
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
+                            })
                             .child(
                                 IconButton::new(("delete", index), IconName::Trash)
                                     .icon_size(IconSize::Small)
@@ -10730,6 +10788,18 @@ impl Render for ThreadView {
                     this.move_queued_message_to_main_editor(id, None, None, window, cx);
                 }
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleSteerFirstQueuedMessage, _, cx| {
+                    // Steering only has an effect on the native agent; ignore it for
+                    // external agents, which have no turn-boundary control.
+                    if this.as_native_thread(cx).is_none() {
+                        return;
+                    }
+                    if let Some(id) = this.message_queue.first_id() {
+                        this.toggle_queue_entry_steer(id, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.clear_queue(cx);
             }))

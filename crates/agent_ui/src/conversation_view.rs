@@ -98,7 +98,8 @@ use crate::{
     ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown, ScrollOutputPageUp,
     ScrollOutputToBottom, ScrollOutputToNextMessage, ScrollOutputToPreviousMessage,
     ScrollOutputToTop, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
-    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
+    ToggleProfileSelector, ToggleSteerFirstQueuedMessage, ToggleThinkingEffortMenu,
+    ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -3464,6 +3465,47 @@ pub(crate) mod tests {
             0,
             "No notification should fire when a queued message will be auto-sent on Stopped"
         );
+    }
+
+    #[gpui::test]
+    async fn test_queued_message_steer_defaults_off_and_toggles(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let id = active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued".to_string(),
+                ))],
+                vec![],
+                window,
+                cx,
+            );
+            thread.message_queue.first_id().unwrap()
+        });
+        cx.run_until_parked();
+
+        // Default: steering is off, so the message waits for end-of-generation
+        // rather than interrupting the agent at the next boundary.
+        active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            assert!(
+                !thread.message_queue.front_wants_steer(),
+                "steering should default off"
+            );
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |thread, _cx| {
+            thread.message_queue.toggle_steer(id);
+        });
+        active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            assert!(
+                thread.message_queue.front_wants_steer(),
+                "steering should be on after toggling"
+            );
+        });
     }
 
     #[gpui::test]

@@ -12,6 +12,10 @@ pub struct QueueEntry {
     pub id: QueueEntryId,
     pub content: Vec<acp::ContentBlock>,
     pub tracked_buffers: Vec<Entity<Buffer>>,
+    /// When true, this message interrupts the agent at the next turn boundary
+    /// instead of waiting for generation to fully complete. Only the front
+    /// entry's value matters, since messages are delivered in FIFO order.
+    pub steer: bool,
     pub editor: Entity<MessageEditor>,
     pub _subscription: Subscription,
 }
@@ -71,6 +75,18 @@ impl MessageQueue {
 
     pub fn last_id(&self) -> Option<QueueEntryId> {
         self.entries.back().map(|entry| entry.id)
+    }
+
+    /// Whether the next message to be delivered wants to interrupt the agent at
+    /// the next turn boundary. Drives the native thread's boundary flag.
+    pub fn front_wants_steer(&self) -> bool {
+        self.entries.front().is_some_and(|entry| entry.steer)
+    }
+
+    pub fn toggle_steer(&mut self, id: QueueEntryId) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+            entry.steer = !entry.steer;
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &QueueEntry> {

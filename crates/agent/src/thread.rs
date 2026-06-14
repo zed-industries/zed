@@ -1151,9 +1151,10 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
-    /// Flag indicating the UI has a queued message waiting to be sent.
-    /// Used to signal that the turn should end at the next message boundary.
-    has_queued_message: bool,
+    /// When set, the current turn ends at the next message boundary instead of
+    /// running to completion. The UI sets this to deliver a "steering" queued
+    /// message mid-task; by default queued messages wait for the turn to finish.
+    end_turn_at_next_boundary: bool,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
@@ -1290,7 +1291,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            has_queued_message: false,
+            end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -1669,7 +1670,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            has_queued_message: false,
+            end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -2042,12 +2043,12 @@ impl Thread {
         })
     }
 
-    pub fn set_has_queued_message(&mut self, has_queued: bool) {
-        self.has_queued_message = has_queued;
+    pub fn set_end_turn_at_next_boundary(&mut self, end_at_boundary: bool) {
+        self.end_turn_at_next_boundary = end_at_boundary;
     }
 
-    pub fn has_queued_message(&self) -> bool {
-        self.has_queued_message
+    pub fn end_turn_at_next_boundary(&self) -> bool {
+        self.end_turn_at_next_boundary
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
@@ -2777,9 +2778,10 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
-                if has_queued {
-                    log::debug!("Queued message found, ending turn at message boundary");
+                let end_at_boundary =
+                    this.update(cx, |this, _| this.end_turn_at_next_boundary())?;
+                if end_at_boundary {
+                    log::debug!("Steering message queued, ending turn at message boundary");
                     return Ok(());
                 }
                 intent = CompletionIntent::ToolResults;
