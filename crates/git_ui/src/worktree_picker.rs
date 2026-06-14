@@ -671,6 +671,72 @@ impl WorktreePickerDelegate {
         .detach_and_log_err(cx);
     }
 
+    /// Finds the workspace in this window (other than the picker's own
+    /// workspace) that has `worktree_path` open as a visible worktree.
+    fn workspace_for_open_worktree(
+        &self,
+        worktree_path: &Path,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Entity<Workspace>> {
+        if self.active_worktree_paths.contains(worktree_path) {
+            return None;
+        }
+        let multi_workspace = window.root::<MultiWorkspace>().flatten()?;
+        let workspace = self.workspace.upgrade()?;
+        let group_key = workspace.read(cx).project_group_key(cx);
+        multi_workspace
+            .read(cx)
+            .workspaces_for_project_group(&group_key, cx)?
+            .into_iter()
+            .find(|group_workspace| {
+                *group_workspace != workspace
+                    && group_workspace
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .any(|worktree| worktree.read(cx).abs_path().as_ref() == worktree_path)
+            })
+    }
+
+    fn remove_worktree_from_window(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(WorktreeEntry::Worktree { worktree, .. }) = self.matches.get(ix) else {
+            return;
+        };
+        let Some(workspace_to_remove) =
+            self.workspace_for_open_worktree(&worktree.path, window, cx)
+        else {
+            return;
+        };
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+            return;
+        };
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let removed = window_handle
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.close_workspace(&workspace_to_remove, window, cx)
+                })?
+                .await?;
+
+            if removed {
+                picker.update_in(cx, |picker, window, cx| {
+                    picker.delegate.refresh_project_worktree_paths(window, cx);
+                    picker.refresh(window, cx);
+                })?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn sync_selected_index(&mut self, has_query: bool) {
         if !has_query {
             return;
@@ -698,7 +764,7 @@ impl PickerDelegate for WorktreePickerDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a worktree…".into()
+        "Select or type to create a worktree…".into()
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
@@ -1091,6 +1157,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let is_current = self.active_worktree_paths.contains(&worktree.path);
                 let is_deleting = self.deleting_worktree_paths.contains(&worktree.path);
                 let can_delete = self.can_delete_worktree(worktree);
+                let can_remove_from_window =
+                    !is_current && self.project_worktree_paths.contains(&worktree.path);
 
                 let entry_icon = if is_current {
                     IconName::Check
@@ -1246,10 +1314,23 @@ impl PickerDelegate for WorktreePickerDelegate {
                                         })),
                                 );
 
+                            let remove_from_window_button = IconButton::new(
+                                ("remove-worktree-from-window", ix),
+                                IconName::Close,
+                            )
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Remove Worktree from Window"))
+                            .on_click(cx.listener(move |picker, _, window, cx| {
+                                picker.delegate.remove_worktree_from_window(ix, window, cx);
+                            }));
+
                             this.end_slot(
                                 h_flex()
                                     .gap_0p5()
                                     .child(open_in_new_window_button)
+                                    .when(can_remove_from_window, |this| {
+                                        this.child(remove_from_window_button)
+                                    })
                                     .when(can_delete, |this| this.child(delete_button)),
                             )
                             .show_end_slot_on_hover()
@@ -2053,5 +2134,131 @@ mod tests {
                 );
             })
         });
+    }
+
+    #[gpui::test]
+    async fn test_remove_open_worktree_workspace_from_window(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    ".git": {},
+                    "file.txt": "buffer_text",
+                },
+                "worktrees": {},
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/root/project/.git").as_ref(),
+            &[("file.txt", "buffer_text".to_string())],
+            "deadbeef",
+        );
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let worktree_path = PathBuf::from(path!("/root/worktrees/open-wt"));
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "open-wt".to_string(),
+                        base_sha: Some("deadbeef".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        let worktree_project = Project::test(fs.clone(), [worktree_path.as_path()], cx).await;
+        cx.executor().run_until_parked();
+
+        let main_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+        let worktree_group_key =
+            worktree_project.read_with(cx, |project, cx| project.project_group_key(cx));
+        assert_eq!(
+            main_group_key, worktree_group_key,
+            "the worktree workspace should belong to the same project group as the main repo"
+        );
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let worktree_workspace = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let worktree_workspace =
+                    cx.new(|cx| Workspace::test_new(worktree_project.clone(), window, cx));
+                multi_workspace.add(worktree_workspace.clone(), window, cx);
+                worktree_workspace
+            })
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let worktree_picker = cx.update(|window, cx| {
+            cx.new(|cx| WorktreePicker::new(project, workspace.downgrade(), window, cx))
+        });
+        cx.run_until_parked();
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                assert!(
+                    picker
+                        .delegate
+                        .project_worktree_paths
+                        .contains(&worktree_path),
+                    "the worktree should be considered open in this window"
+                );
+            })
+        });
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker
+                    .delegate
+                    .remove_worktree_from_window(index, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        window_handle
+            .read_with(&cx, |multi_workspace, _| {
+                assert!(
+                    multi_workspace
+                        .workspaces()
+                        .all(|workspace| *workspace != worktree_workspace),
+                    "the worktree workspace should be removed from the window"
+                );
+            })
+            .unwrap();
+
+        worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                assert!(
+                    !picker
+                        .delegate
+                        .project_worktree_paths
+                        .contains(&worktree_path),
+                    "the worktree should no longer be considered open in this window"
+                );
+            })
+        });
+
+        assert!(
+            repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
+            "removing the worktree from the window should not delete the git worktree"
+        );
     }
 }

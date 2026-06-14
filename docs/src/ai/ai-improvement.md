@@ -6,10 +6,13 @@ description: Understand opt-in AI feedback ratings, Edit Prediction training dat
 # Feedback and Training Data
 
 Normal AI requests are not retained by Zed. For
-[Zed-hosted models](../account/zed-hosted-models.md), provider agreements require
-zero data retention and prohibit training on your prompts or code context. This
-page covers the cases where Zed may retain AI data because you explicitly shared
-it or opted in.
+[Zed-hosted models](../account/zed-hosted-models.md), provider agreements
+prohibit training on your prompts or code context and require zero data
+retention, except for
+[provider-designated models with safety retention](./privacy-and-security.md#provider-safety-retention),
+such as Anthropic's Mythos-class models.
+This page covers the cases where Zed may retain AI data because you explicitly
+shared it or opted in.
 
 AI features in Zed include:
 
@@ -23,7 +26,9 @@ For the broader request path and provider data boundaries, see
 
 ## Zed-Hosted Model Commitments {#data-retention-and-training}
 
-Zed-hosted model zero-data-retention and no-training commitments are documented
+Zed-hosted model zero-data-retention and no-training commitments, including the
+exception for provider-designated models with safety retention (such as
+Anthropic's Mythos-class models), are documented
 on [AI Privacy](./privacy-and-security.md#data-retention-and-training).
 
 ## Response Ratings and Feedback {#ai-feedback-with-ratings}

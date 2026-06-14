@@ -261,7 +261,7 @@
       "ctrl-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
       "ctrl-alt-p": "agent::ManageProfiles",
-      "ctrl-alt-l": "agent::OpenRulesLibrary",
+      "ctrl-alt-l": "agent::ManageSkills",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
@@ -602,15 +602,15 @@
   {
     "context": "Workspace",
     "bindings": {
-      "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
+      "alt-open": "projects::OpenRecent",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
-      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
-      "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      "alt-ctrl-o": "projects::OpenRecent",
+      "ctrl-r": "projects::OpenRecent",
+      "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false }],
       // Change to open path modal for existing remote connection by setting the parameter
-      // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
-      "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      // "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": true }],
+      "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false }],
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-ctrl-shift-w": "git::Worktree",
       "alt-shift-enter": "toast::RunAction",
@@ -1516,6 +1516,7 @@
       "ctrl--": "image_viewer::ZoomOut",
       "ctrl-0": "image_viewer::ResetZoom",
       "ctrl-1": "image_viewer::ZoomToActualSize",
+      "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-shift-0": "image_viewer::FitToView",
     },
   },

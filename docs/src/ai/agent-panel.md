@@ -131,7 +131,7 @@ The Agent Panel can host Terminal Threads alongside your agent threads. For open
 The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
 Add context by typing `@` in the message editor.
-You can mention files, directories, symbols, previous threads, skills, instruction files, and diagnostics.
+You can mention files, directories, symbols, previous threads, skills, diagnostics, branch diffs, and URLs to fetch.
 
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
@@ -148,12 +148,15 @@ OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0
 To add an image, you can either search in your project's folder by @-mentioning it, or drag it from your file system directly into the Agent Panel message editor.
 Copying an image and pasting it is also supported.
 
-## Token Usage {#token-usage}
+## Token Usage and Compaction {#token-usage}
 
 Zed surfaces how many tokens you are consuming for your currently active thread near the profile selector in the panel's message editor.
 
-Once you approach the model's context window, a banner appears above the message editor suggesting to start a new thread with the current one summarized and added as context.
-You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right, where you'll see a "New from Summary" button, as well as simply @-mentioning a past thread in a new one.
+Zed automatically compacts long Zed Agent threads as they approach the configured token threshold. Compaction summarizes earlier messages and replaces them in the model context with that summary, leaving more room for the next turn. The thread shows a **Context Compacted** entry that you can expand to inspect the summary. You can compact manually by typing `/compact` in the message editor.
+
+If the selected model's context window is too small for automatic compaction (less than 80000 tokens), a banner appears above the message editor as you approach the token limit. Use **Start New Thread** from that banner, or choose **New From Summary** from the New Thread menu (the `+` button on the top right), to continue in a new thread seeded with a summary. You can also @-mention a past thread in a new one.
+
+Configure automatic compaction with `agent.auto_compact`. See [Agent Settings](./agent-settings.md#automatic-compaction) for options.
 
 ## Changing Models {#changing-models}
 
