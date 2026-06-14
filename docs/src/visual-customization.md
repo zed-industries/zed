@@ -559,7 +559,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left",               // Where to dock: left, right
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
-    "sort_by_path": false,        // Sort by path (false) or status (true)
+    "sort_by": "path",            // path, name
+    "group_by": "status",         // none, status
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }
