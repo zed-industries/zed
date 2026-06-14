@@ -21,6 +21,8 @@ pub(crate) struct DockerPs {
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerState {
     pub(crate) running: bool,
+    #[serde(default)]
+    pub(crate) started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -145,6 +147,8 @@ pub(crate) struct DockerComposeService {
     pub(crate) build: Option<DockerComposeServiceBuild>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) privileged: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) init: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -163,6 +167,12 @@ pub(crate) struct DockerComposeService {
         deserialize_with = "deserialize_nullable_vec"
     )]
     pub(crate) command: Vec<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_environment"
+    )]
+    pub(crate) environment: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -266,11 +276,17 @@ impl Docker {
 #[async_trait]
 impl DockerClient for Docker {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
-        // Try to pull the image, continue on failure; Image may be local only, id a reference to a running container
+        // Always try inspect first — avoid pulling unless necessary.
+        let command = self.create_docker_inspect(id);
+        match evaluate_json_command::<DockerInspect>(command).await {
+            Ok(Some(docker_inspect)) => return Ok(docker_inspect),
+            Ok(None) | Err(_) => {}
+        }
+
+        // Inspect failed — try pulling and retry.
         self.pull_image(id).await.ok();
 
         let command = self.create_docker_inspect(id);
-
         let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await?
         else {
             log::error!("Docker inspect produced no deserializable output");
@@ -480,6 +496,41 @@ pub(crate) trait DockerClient {
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
     fn docker_cli(&self) -> String;
+}
+
+fn deserialize_environment<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<serde_json_lenient::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json_lenient::Value::Object(object) => Ok(Some(
+            object
+                .into_iter()
+                .filter_map(|(key, value)| match value {
+                    serde_json_lenient::Value::Null => None,
+                    serde_json_lenient::Value::String(value) => Some((key, value)),
+                    other => Some((key, other.to_string())),
+                })
+                .collect(),
+        )),
+        serde_json_lenient::Value::Array(values) => Ok(Some(
+            values
+                .into_iter()
+                .filter_map(|value| {
+                    let value = value.as_str()?;
+                    let (key, value) = value.split_once('=').unwrap_or((value, ""));
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect(),
+        )),
+        _ => Ok(None),
+    }
 }
 
 fn deserialize_labels<'de, D>(deserializer: D) -> Result<Option<HashMap<String, String>>, D::Error>
@@ -1059,6 +1110,13 @@ mod test {
                                 name: Some("custom port".to_string()),
                             },
                         ],
+                        environment: Some(HashMap::from([
+                            ("POSTGRES_DB".to_string(), "postgres".to_string()),
+                            ("POSTGRES_HOSTNAME".to_string(), "localhost".to_string()),
+                            ("POSTGRES_PASSWORD".to_string(), "postgres".to_string()),
+                            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+                            ("POSTGRES_USER".to_string(), "postgres".to_string()),
+                        ])),
                         ..Default::default()
                     },
                 ),
@@ -1071,6 +1129,13 @@ mod test {
                             source: Some("postgres-data".to_string()),
                             target: "/var/lib/postgresql/data".to_string(),
                         }],
+                        environment: Some(HashMap::from([
+                            ("POSTGRES_DB".to_string(), "postgres".to_string()),
+                            ("POSTGRES_HOSTNAME".to_string(), "localhost".to_string()),
+                            ("POSTGRES_PASSWORD".to_string(), "postgres".to_string()),
+                            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+                            ("POSTGRES_USER".to_string(), "postgres".to_string()),
+                        ])),
                         ..Default::default()
                     },
                 ),
