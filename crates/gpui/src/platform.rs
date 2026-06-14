@@ -690,6 +690,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn toggle_window_tab_overview(&self) {}
     fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
 
+    /// Encode the window's native restorable state (frame plus the macOS Space the window is on)
+    /// into an opaque blob. Returns `None` if the platform doesn't support it or encoding fails.
+    fn encode_restorable_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Restore the window's native state (frame plus macOS Space) from a blob previously produced
+    /// by `encode_restorable_state`. A no-op on platforms that don't support it.
+    fn restore_native_state(&self, _state: &[u8]) {}
+
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
 
