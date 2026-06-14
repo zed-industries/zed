@@ -9,6 +9,7 @@ use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
 use language::LanguageName;
+use latex_render::{LatexColor, LatexRenderer, MathPlacement, latex_formula_element};
 
 use log::Level;
 use mermaid::{
@@ -382,6 +383,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    latex_renderer: Arc<LatexRenderer>,
     _mermaid_theme_subscription: Option<Subscription>,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
@@ -398,6 +400,7 @@ pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
+    pub render_math: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
 }
@@ -549,6 +552,11 @@ impl Markdown {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
+        let latex_renderer = Arc::new(LatexRenderer::for_view(
+            cx.background_executor().clone(),
+            cx,
+        ));
+
         let theme_subscription = if options.render_mermaid_diagrams {
             Some(
                 cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
@@ -574,6 +582,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            latex_renderer,
             _mermaid_theme_subscription: theme_subscription,
             mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
@@ -1279,6 +1288,88 @@ impl MarkdownElement {
         self
     }
 
+    fn push_markdown_math(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        range: Range<usize>,
+        content: &SharedString,
+        display: bool,
+        latex_renderer: &Arc<LatexRenderer>,
+        window: &Window,
+    ) {
+        // Display math gets a modest visual size bump (KaTeX uses ~1.21x via CSS).
+        // RaTeX's MathStyle::Display already handles limits/spacing; this multiplier
+        // only affects the visible em size.
+        const DISPLAY_FONT_SCALE: f32 = 1.2;
+        // Width reservation per glyph while a formula is still parsing. Keeps the
+        // surrounding text from shifting when the placeholder is swapped out.
+        const PLACEHOLDER_EM_PER_CHAR: f32 = 0.5;
+
+        let text_style = builder.text_style();
+        let rem_size = window.rem_size();
+        let base_font_size = text_style.font_size.to_pixels(rem_size);
+        let render_font_size = if display {
+            base_font_size * DISPLAY_FONT_SCALE
+        } else {
+            base_font_size
+        };
+        let rgba = gpui::Rgba::from(text_style.color);
+        let color = LatexColor::new(
+            (rgba.r.clamp(0.0, 1.0) * 255.0) as u8,
+            (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
+            (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
+            (rgba.a.clamp(0.0, 1.0) * 255.0) as u8,
+        );
+
+        let math_element: AnyElement = match latex_renderer.render(content.as_ref(), color, display)
+        {
+            Some(Ok(formula)) => {
+                // The element resolves font size, line height, baseline, and
+                // color from the inherited text style during its own layout
+                // and paint, the same way sibling text elements do.
+                let (placement, font_scale) = if display {
+                    (MathPlacement::Display, DISPLAY_FONT_SCALE)
+                } else {
+                    (MathPlacement::Inline, 1.0)
+                };
+                latex_formula_element(formula, placement, font_scale).into_any_element()
+            }
+            Some(Err(error)) => div()
+                .child(format!("Math error: {error}"))
+                .text_color(gpui::red())
+                .into_any_element(),
+            None => {
+                let placeholder_width =
+                    render_font_size * (content.chars().count() as f32) * PLACEHOLDER_EM_PER_CHAR;
+                div()
+                    .w(placeholder_width)
+                    .h(render_font_size)
+                    .into_any_element()
+            }
+        };
+
+        if display {
+            // Display math owns its own line: a centered block child of the paragraph's
+            // text runs. Avoid mutating the paragraph div so surrounding text wraps
+            // normally.
+            let block = div()
+                .flex()
+                .flex_row()
+                .justify_center()
+                .w_full()
+                .my_2()
+                .child(math_element)
+                .into_any_element();
+            builder.push_sourced_element(range, block);
+        } else {
+            // Match the regular image path: paragraph becomes flex_wrap so text and the
+            // math element share a line, with `items_baseline` aligning the element's
+            // bottom (which the renderer sets to the formula baseline) with text.
+            builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_baseline());
+            builder.push_sourced_element(range, math_element);
+        }
+    }
+
     fn push_markdown_code_span(
         &self,
         builder: &mut MarkdownElementBuilder,
@@ -1963,7 +2054,15 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            mermaid_state,
+            render_math,
+            latex_renderer,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -1971,6 +2070,8 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.options.render_math,
+                markdown.latex_renderer.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -2634,6 +2735,22 @@ impl Element for MarkdownElement {
                     builder.push_text_style(self.style.link.clone());
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
+                }
+                MarkdownEvent::Math { display, content } => {
+                    if render_math {
+                        self.push_markdown_math(
+                            &mut builder,
+                            range.clone(),
+                            content,
+                            *display,
+                            &latex_renderer,
+                            window,
+                        );
+                    } else {
+                        let delimiter = if *display { "$$" } else { "$" };
+                        builder
+                            .push_text(&format!("{delimiter}{content}{delimiter}"), range.clone());
+                    }
                 }
             }
         }
