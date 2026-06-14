@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
@@ -19,18 +19,18 @@ use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
     MarkdownOptions, MarkdownStyle,
 };
-use project::Project;
 use project::search::SearchQuery;
+use project::{Project, ProjectPath};
 use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
-use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions};
+use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{Pane, Workspace};
+use workspace::{ItemId, Pane, Workspace, WorkspaceId, delete_unloaded_items};
 
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
@@ -59,6 +59,22 @@ pub enum MarkdownPreviewMode {
     Default,
     /// The preview will "follow" the currently active editor.
     Follow,
+}
+
+impl MarkdownPreviewMode {
+    fn to_db(self) -> i64 {
+        match self {
+            Self::Default => 0,
+            Self::Follow => 1,
+        }
+    }
+
+    fn from_db(value: i64) -> Self {
+        match value {
+            1 => Self::Follow,
+            _ => Self::Default,
+        }
+    }
 }
 
 struct EditorState {
@@ -142,15 +158,26 @@ impl MarkdownPreviewView {
         editor: &Entity<Editor>,
         cx: &App,
     ) -> Option<usize> {
+        let target_buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
         pane.items_of_type::<MarkdownPreviewView>()
             .find(|view| {
                 let view_read = view.read(cx);
-                // Only look for independent (Default mode) previews, not Follow previews
+                // Only look for independent (Default mode) previews, not Follow previews.
+                // Match by buffer entity rather than editor entity so the lookup survives
+                // workspace restoration, where the preview's bound editor may differ from
+                // the editor the user is currently invoking the action on even though both
+                // wrap the same source buffer.
                 view_read.mode == MarkdownPreviewMode::Default
-                    && view_read
-                        .active_editor
-                        .as_ref()
-                        .is_some_and(|active_editor| active_editor.editor == *editor)
+                    && view_read.active_editor.as_ref().is_some_and(|active_editor| {
+                        active_editor
+                            .editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .as_ref()
+                            == Some(&target_buffer)
+                    })
             })
             .and_then(|view| pane.index_for_item(&view))
     }
@@ -211,7 +238,7 @@ impl MarkdownPreviewView {
         workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let markdown = cx.new(|cx| {
@@ -250,15 +277,31 @@ impl MarkdownPreviewView {
 
             this.set_editor(active_editor, window, cx);
 
-            if mode == MarkdownPreviewMode::Follow {
-                if let Some(workspace) = &workspace.upgrade() {
-                    cx.observe_in(workspace, window, |this, workspace, window, cx| {
-                        let item = workspace.read(cx).active_item(cx);
-                        this.workspace_updated(item, window, cx);
-                    })
-                    .detach();
-                } else {
-                    log::error!("Failed to listen to workspace updates");
+            match mode {
+                MarkdownPreviewMode::Follow => {
+                    if let Some(workspace) = &workspace.upgrade() {
+                        cx.observe_in(workspace, window, |this, workspace, window, cx| {
+                            let item = workspace.read(cx).active_item(cx);
+                            this.workspace_updated(item, window, cx);
+                        })
+                        .detach();
+                    } else {
+                        log::error!("Failed to listen to workspace updates");
+                    }
+                }
+                MarkdownPreviewMode::Default => {
+                    // After workspace restoration the bound editor may be an orphan that
+                    // wraps the right buffer but isn't the canonical Editor instance in
+                    // any pane. Re-binding to the workspace's editor for our buffer is
+                    // what restores cursor-driven scroll sync — `SelectionsChanged` only
+                    // fires from the editor the user actually interacts with.
+                    //
+                    // Subscribing to `workspace::Event` (rather than `observe`) keeps the
+                    // rebind check off the cursor-move hot path; `observe` would fire on
+                    // every workspace `cx.notify`.
+                    if let Some(workspace) = &workspace.upgrade() {
+                        cx.subscribe_in(workspace, window, Self::on_workspace_event).detach();
+                    }
                 }
             }
 
@@ -331,6 +374,54 @@ impl MarkdownPreviewView {
         });
 
         self.update_markdown_from_active_editor(false, true, window, cx);
+    }
+
+    fn on_workspace_event(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        event: &workspace::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(
+            event,
+            workspace::Event::ItemAdded { .. } | workspace::Event::ItemRemoved { .. }
+        ) {
+            return;
+        }
+        let candidate = self.find_canonical_editor(workspace.read(cx), cx);
+        if let Some(editor) = candidate
+            && self
+                .active_editor
+                .as_ref()
+                .is_none_or(|s| s.editor != editor)
+        {
+            self.set_editor(editor, window, cx);
+        }
+    }
+
+    fn find_canonical_editor(
+        &self,
+        workspace: &Workspace,
+        cx: &App,
+    ) -> Option<Entity<Editor>> {
+        let our_buffer = self
+            .active_editor
+            .as_ref()?
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()?;
+        workspace.items_of_type::<Editor>(cx).find(|editor| {
+            editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .as_ref()
+                == Some(&our_buffer)
+        })
     }
 
     fn update_markdown_from_active_editor(
@@ -897,6 +988,25 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode != MarkdownPreviewMode::Default {
+            return;
+        }
+        if let Some(editor) = self.find_canonical_editor(workspace, cx)
+            && self
+                .active_editor
+                .as_ref()
+                .is_none_or(|s| s.editor != editor)
+        {
+            self.set_editor(editor, window, cx);
+        }
+    }
+
     fn can_save(&self, cx: &App) -> bool {
         self.active_editor
             .as_ref()
@@ -1160,6 +1270,147 @@ impl SearchableItem for MarkdownPreviewView {
                 .iter()
                 .rposition(|m| m.start <= current_source_index)
                 .or(Some(matches.len().saturating_sub(1))),
+        }
+    }
+}
+
+impl SerializableItem for MarkdownPreviewView {
+    fn serialized_item_kind() -> &'static str {
+        "MarkdownPreviewView"
+    }
+
+    fn deserialize(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let db = persistence::MarkdownPreviewDb::global(cx);
+        window.spawn(cx, async move |cx| {
+            let (abs_path, mode_value) = db
+                .get_preview(item_id, workspace_id)?
+                .context("No markdown preview entry found")?;
+            let mode = MarkdownPreviewMode::from_db(mode_value);
+
+            let (worktree, relative_path) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_worktree(abs_path.clone(), false, cx)
+                })
+                .await
+                .context("Path not found")?;
+            let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+            let project_path = ProjectPath {
+                worktree_id,
+                path: relative_path,
+            };
+
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+
+            cx.update(|window, cx| {
+                let language_registry = project.read(cx).languages().clone();
+                let editor =
+                    cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
+                MarkdownPreviewView::new(mode, editor, workspace, language_registry, window, cx)
+            })
+        })
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let db = persistence::MarkdownPreviewDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "markdown_previews", &db, cx)
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let editor = self.active_editor.as_ref()?.editor.clone();
+        let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
+        let file = buffer.read(cx).file()?;
+        let worktree_id = file.worktree_id(cx);
+        let abs_path = workspace
+            .project()
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)?
+            .read(cx)
+            .absolutize(file.path());
+        let mode = self.mode.to_db();
+        let db = persistence::MarkdownPreviewDb::global(cx);
+        Some(cx.background_spawn(async move {
+            db.save_preview(item_id, workspace_id, abs_path, mode).await
+        }))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+}
+
+mod persistence {
+    use std::path::PathBuf;
+
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
+    use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+
+    pub struct MarkdownPreviewDb(ThreadSafeConnection);
+
+    impl Domain for MarkdownPreviewDb {
+        const NAME: &str = stringify!(MarkdownPreviewDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
+            CREATE TABLE markdown_previews (
+                workspace_id INTEGER,
+                item_id INTEGER,
+                abs_path BLOB,
+                mode INTEGER NOT NULL DEFAULT 0,
+
+                PRIMARY KEY(workspace_id, item_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+            ) STRICT;
+        )];
+    }
+
+    db::static_connection!(MarkdownPreviewDb, [WorkspaceDb]);
+
+    impl MarkdownPreviewDb {
+        query! {
+            pub async fn save_preview(
+                item_id: ItemId,
+                workspace_id: WorkspaceId,
+                abs_path: PathBuf,
+                mode: i64
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO markdown_previews(item_id, workspace_id, abs_path, mode)
+                VALUES (?, ?, ?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_preview(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(PathBuf, i64)>> {
+                SELECT abs_path, mode
+                FROM markdown_previews
+                WHERE item_id = ? AND workspace_id = ?
+            }
         }
     }
 }
