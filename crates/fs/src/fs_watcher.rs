@@ -707,6 +707,7 @@ struct BackendState {
     suspect_paths: HashSet<Arc<Path>>,
     /// Paths that were registered and that we intend to ask the backend to watch in the future.
     deferred_paths: HashSet<Arc<Path>>,
+    stream_restart_rescan_pending: bool,
     cooldown_until: Option<Instant>,
 }
 
@@ -818,6 +819,7 @@ impl BackendState {
             applied_paths: HashSet::new(),
             suspect_paths: HashSet::new(),
             deferred_paths: HashSet::new(),
+            stream_restart_rescan_pending: false,
             cooldown_until: None,
         }
     }
@@ -839,19 +841,27 @@ impl BackendState {
 
         let mut to_watch = Vec::new();
         let mut to_unwatch = Vec::new();
+        let mut recovered_by_coverage = Vec::new();
         {
             let watcher_state = watcher_state.lock();
             let registrations = watcher_state.path_registrations(self.mode);
             for path in affected_paths {
                 let is_desired = registrations.contains_key(&path);
                 let is_covered = self.is_recursive()
-                    && path
-                        .ancestors()
-                        .skip(1)
-                        .any(|ancestor| registrations.contains_key(ancestor));
+                    && path.ancestors().skip(1).any(|ancestor| {
+                        registrations.contains_key(ancestor)
+                            && self.applied_paths.contains(ancestor)
+                    });
                 let should_watch = is_desired && !is_covered;
                 if !should_watch {
-                    self.deferred_paths.remove(&path);
+                    let was_deferred = self.deferred_paths.remove(&path);
+                    if was_deferred
+                        && is_desired
+                        && is_covered
+                        && !self.stream_restart_rescan_pending
+                    {
+                        recovered_by_coverage.push(path.clone());
+                    }
                 }
                 if cfg!(any(test, debug_assertions)) {
                     assert!(
@@ -878,6 +888,12 @@ impl BackendState {
             self.apply_unwatches(to_unwatch),
             self.apply_watches(to_watch, watcher_state),
         );
+        for path in recovered_by_coverage {
+            self.emit_rescan(&path, watcher_state);
+        }
+        if self.deferred_paths.is_empty() {
+            self.stream_restart_rescan_pending = false;
+        }
 
         self.verify_backend_watches();
 
@@ -950,26 +966,6 @@ impl BackendState {
             "a path is both applied and deferred for {:?}",
             self.mode,
         );
-
-        // Check that no path in the applied set is a strict child of another,
-        // if the backend is recursive, since this would be redundant.
-        if self.is_recursive() {
-            let mut applied_paths = self
-                .applied_paths
-                .iter()
-                .map(|path| path.as_ref())
-                .collect::<Vec<&Path>>();
-            applied_paths.sort();
-            for pair in applied_paths.windows(2) {
-                assert!(
-                    !pair[1].starts_with(pair[0]),
-                    "{:?} backend holds nested applied watches: {:?} covers {:?}",
-                    self.mode,
-                    pair[0],
-                    pair[1],
-                );
-            }
-        }
     }
 
     fn apply_unwatches(&mut self, paths: Vec<Arc<Path>>) -> Option<Instant> {
@@ -1045,12 +1041,10 @@ impl BackendState {
                 Ok(backend) => backend,
                 Err(error) => {
                     log::warn!(
-                        "failed to create file watcher backend for {:?}: {error:#}; will retry",
+                        "failed to create file watcher backend for {:?}: {error:#}",
                         self.mode,
                     );
-                    let retry_at = self.executor.now() + *NATIVE_WATCH_LIMIT_COOLDOWN;
-                    self.deferred_paths.extend(queue);
-                    return earliest(wake_at, Some(retry_at));
+                    return wake_at;
                 }
             };
 
@@ -1067,9 +1061,15 @@ impl BackendState {
                 .collect();
             match backend.update_paths(ops) {
                 Ok(()) => {
+                    let mut recovered_paths = Vec::new();
+                    let mut applied_count = 0;
                     for path in queue {
-                        self.mark_watched(path, watcher_state);
+                        applied_count += 1;
+                        if self.mark_watched(path.clone()) {
+                            recovered_paths.push(path);
+                        }
                     }
+                    self.emit_recovery_rescans(applied_count, recovered_paths, watcher_state);
                     return wake_at;
                 }
                 Err(error) => {
@@ -1080,11 +1080,16 @@ impl BackendState {
 
                     let applied_count = queue.len() - error.remaining.len() - 1;
                     let mut rest = queue.split_off(applied_count);
+                    let mut recovered_paths = Vec::new();
                     for path in queue {
-                        self.mark_watched(path, watcher_state);
+                        if self.mark_watched(path.clone()) {
+                            recovered_paths.push(path);
+                        }
                     }
+                    self.emit_recovery_rescans(applied_count, recovered_paths, watcher_state);
 
                     let failed = rest.remove(0);
+                    self.deferred_paths.remove(&failed);
                     if self.mode == WatcherMode::Native
                         && matches!(error.source.kind, notify::ErrorKind::MaxFilesWatch)
                     {
@@ -1101,13 +1106,11 @@ impl BackendState {
         wake_at
     }
 
-    fn mark_watched(&mut self, path: Arc<Path>, watcher_state: &Mutex<WatcherState>) {
+    fn mark_watched(&mut self, path: Arc<Path>) -> bool {
         let recovered = self.deferred_paths.remove(&path);
         self.suspect_paths.remove(&path);
-        self.applied_paths.insert(path.clone());
-        if recovered {
-            self.emit_rescan(&path, watcher_state);
-        }
+        self.applied_paths.insert(path);
+        recovered
     }
 
     // An error with no origin means the backend applied our path operations but
@@ -1134,7 +1137,10 @@ impl BackendState {
         self.suspect_paths.extend(pending.iter().cloned());
         self.deferred_paths.extend(applied);
         self.deferred_paths.extend(pending);
-        self.executor.now() + *NATIVE_WATCH_LIMIT_COOLDOWN
+        self.stream_restart_rescan_pending = true;
+        let retry_at = self.executor.now() + *FILE_WATCHER_RETRY_DELAY;
+        self.cooldown_until = Some(retry_at);
+        retry_at
     }
 
     fn is_cooldown_active(&self) -> bool {
@@ -1153,6 +1159,24 @@ impl BackendState {
         }
     }
 
+    fn emit_recovery_rescans(
+        &mut self,
+        applied_count: usize,
+        recovered_paths: Vec<Arc<Path>>,
+        watcher_state: &Mutex<WatcherState>,
+    ) {
+        if self.stream_restart_rescan_pending {
+            if applied_count > 0 {
+                self.emit_backend_rescan(watcher_state);
+                self.stream_restart_rescan_pending = false;
+            }
+        } else {
+            for path in recovered_paths {
+                self.emit_rescan(&path, watcher_state);
+            }
+        }
+    }
+
     fn emit_rescan(&self, path: &Arc<Path>, watcher_state: &Mutex<WatcherState>) {
         let callbacks = {
             let watcher_state = watcher_state.lock();
@@ -1166,6 +1190,22 @@ impl BackendState {
         let event = Event::new(EventKind::Other)
             .add_path(path.to_path_buf())
             .set_flag(notify::event::Flag::Rescan);
+        for callback in callbacks {
+            callback(&event);
+        }
+    }
+
+    fn emit_backend_rescan(&self, watcher_state: &Mutex<WatcherState>) {
+        let callbacks = {
+            let watcher_state = watcher_state.lock();
+            watcher_state
+                .watchers
+                .values()
+                .filter(|registration| registration.mode == self.mode)
+                .map(|registration| registration.callback.clone())
+                .collect::<Vec<_>>()
+        };
+        let event = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
         for callback in callbacks {
             callback(&event);
         }
@@ -1244,6 +1284,15 @@ static NATIVE_WATCH_LIMIT_COOLDOWN: LazyLock<Duration> = LazyLock::new(|| {
         .unwrap_or(5)
         .clamp(0, 300);
     Duration::from_secs(cooldown_seconds)
+});
+
+static FILE_WATCHER_RETRY_DELAY: LazyLock<Duration> = LazyLock::new(|| {
+    let retry_seconds: u64 = std::env::var("ZED_FILE_WATCHER_RETRY_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(5)
+        .clamp(0, 300);
+    Duration::from_secs(retry_seconds)
 });
 
 pub fn poll_interval() -> Duration {
@@ -1566,6 +1615,7 @@ mod tests {
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
         let parent_id = global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
         let child_id = global.add(child.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert_eq!(backend.lock().watch_calls, &[parent.to_path_buf()]);
@@ -1586,7 +1636,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn child_is_demoted_when_covering_parent_is_registered(executor: BackgroundExecutor) {
+    async fn existing_child_is_not_demoted_when_covering_parent_is_registered(
+        executor: BackgroundExecutor,
+    ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let global = test_global(
             &executor,
@@ -1608,13 +1660,37 @@ mod tests {
             backend.watch_calls,
             &[child.to_path_buf(), parent.to_path_buf()]
         );
-        assert_eq!(
-            backend.unwatch_calls,
-            &[child.to_path_buf()],
-            "the child's own watch is removed once the recursive parent covers it"
-        );
+        assert_eq!(backend.unwatch_calls, Vec::<PathBuf>::new());
         assert!(backend.watched_paths.contains(parent.as_ref()));
-        assert!(!backend.watched_paths.contains(child.as_ref()));
+        assert!(backend.watched_paths.contains(child.as_ref()));
+    }
+
+    #[gpui::test]
+    async fn failed_recursive_parent_does_not_cover_child(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+        backend
+            .lock()
+            .watch_errors
+            .insert(parent.to_path_buf(), generic_error);
+
+        global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        global.add(child.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+
+        let backend = backend.lock();
+        assert_eq!(
+            backend.watch_calls,
+            &[parent.to_path_buf(), child.to_path_buf()]
+        );
+        assert!(!backend.watched_paths.contains(parent.as_ref()));
+        assert!(backend.watched_paths.contains(child.as_ref()));
     }
 
     #[gpui::test]
@@ -1698,6 +1774,7 @@ mod tests {
         let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
 
         let parent_id = global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
         let child_id = global.add(child.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert_eq!(
@@ -1722,7 +1799,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn nested_registrations_keep_applied_as_an_antichain(executor: BackgroundExecutor) {
+    async fn existing_nested_registrations_can_leave_nested_applied_paths(
+        executor: BackgroundExecutor,
+    ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let global = test_global(
             &executor,
@@ -1733,9 +1812,6 @@ mod tests {
         let child = Arc::<Path>::from(Path::new("/repo/a"));
         let grandchild = Arc::<Path>::from(Path::new("/repo/a/b"));
 
-        // Register from the leaf up: each newly covering ancestor must demote the
-        // descendants it now covers, so `applied` never holds nested watches (the
-        // antichain invariant checked in `verify_backend_watches`).
         global.add(grandchild.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.contains(grandchild.as_ref()));
@@ -1743,20 +1819,19 @@ mod tests {
         global.add(child.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.contains(child.as_ref()));
-        assert!(!backend.lock().watched_paths.contains(grandchild.as_ref()));
+        assert!(backend.lock().watched_paths.contains(grandchild.as_ref()));
 
         global.add(parent.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
         let backend = backend.lock();
-        assert_eq!(
-            backend.watched_paths.iter().cloned().collect::<Vec<_>>(),
-            vec![parent.to_path_buf()],
-            "only the top of the nested registration tree keeps a direct watch"
-        );
+        assert!(backend.watched_paths.contains(parent.as_ref()));
+        assert!(backend.watched_paths.contains(child.as_ref()));
+        assert!(!backend.watched_paths.contains(grandchild.as_ref()));
+        assert_eq!(backend.unwatch_calls, &[grandchild.to_path_buf()]);
     }
 
     #[gpui::test]
-    async fn deferred_child_is_not_retained_as_intent_once_covered(executor: BackgroundExecutor) {
+    async fn deferred_child_recovers_even_when_parent_is_registered(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let global = test_global(
             &executor,
@@ -1774,30 +1849,21 @@ mod tests {
         global.add(child.clone(), WatcherMode::Poll, child_callback);
         executor.run_until_parked();
 
-        // A recursive parent is registered while the child is still deferred. The
-        // child is now covered by the parent, so it has no live intent to be
-        // watched directly and must be dropped from `deferred` (it is not desired
-        // *and uncovered* anymore).
         backend.lock().stream_restart_error = None;
         let parent_id = global.add(parent.clone(), WatcherMode::Poll, noop_callback());
         executor.run_until_parked();
 
-        // Let the cooldown expire so the parent watch is established; the parent's
-        // recovery rescan already covers the child's subtree.
-        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
         executor.run_until_parked();
-        assert!(backend.lock().watched_paths.contains(parent.as_ref()));
 
-        // Removing the parent promotes the child to its own watch. Because the
-        // child became covered (not because its own watch finally succeeded), it
-        // must not emit a spurious rescan here.
+        assert!(backend.lock().watched_paths.contains(parent.as_ref()));
+        assert!(backend.lock().watched_paths.contains(child.as_ref()));
+        assert_eq!(child_events.lock().len(), 1);
+        assert!(child_events.lock()[0].need_rescan());
+
         global.remove(parent_id);
         executor.run_until_parked();
         assert!(backend.lock().watched_paths.contains(child.as_ref()));
-        assert!(
-            child_events.lock().is_empty(),
-            "a child that was only ever covered (never recovered) emits no rescan when promoted"
-        );
     }
 
     #[gpui::test]
@@ -2018,6 +2084,48 @@ mod tests {
             "the path deferred behind the failure also gets a rescan"
         );
         assert!(events_c.lock()[0].need_rescan());
+    }
+
+    #[gpui::test]
+    async fn watch_limit_deferred_child_gets_rescan_when_recovered_by_parent_coverage(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+        let (child_events, child_callback) = collecting_callback();
+        backend
+            .lock()
+            .watch_errors
+            .insert(child.to_path_buf(), watch_limit_error);
+
+        global.add(child.clone(), WatcherMode::Native, child_callback);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[child.to_path_buf()]);
+        assert!(backend.lock().watched_paths.is_empty());
+
+        global.add(parent.clone(), WatcherMode::Native, noop_callback());
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        assert!(backend.lock().watched_paths.contains(parent.as_ref()));
+        assert!(!backend.lock().watched_paths.contains(child.as_ref()));
+        assert!(child_events.lock().is_empty());
+
+        backend.lock().watch_errors.clear();
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        assert!(backend.lock().watched_paths.contains(parent.as_ref()));
+        assert!(!backend.lock().watched_paths.contains(child.as_ref()));
+        assert_eq!(child_events.lock().len(), 1);
+        assert!(child_events.lock()[0].need_rescan());
+        assert_eq!(child_events.lock()[0].paths, vec![child.to_path_buf()]);
     }
 
     #[gpui::test]
@@ -2242,7 +2350,7 @@ mod tests {
         executor.run_until_parked();
 
         backend.lock().stream_restart_error = None;
-        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
         executor.run_until_parked();
 
         {
@@ -2260,6 +2368,147 @@ mod tests {
         assert!(events_a[0].need_rescan());
         assert_eq!(events_b.len(), 1);
         assert!(events_b[0].need_rescan());
+    }
+
+    #[gpui::test]
+    async fn stream_restart_backend_rescan_reaches_covered_descendant(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            None,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+        );
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+        let other = Arc::<Path>::from(Path::new("/other"));
+        let (tx, _rx) = async_channel::unbounded();
+        let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let child_callback = {
+            let tx = tx.clone();
+            let pending_path_events = pending_path_events.clone();
+            let root_path = SanitizedPath::new_arc(child.as_ref());
+            let child = child.clone();
+            Arc::new(move |event: &notify::Event| {
+                push_notify_event(&tx, &pending_path_events, &root_path, child.as_ref(), event)
+            }) as Arc<dyn Fn(&notify::Event) + Send + Sync>
+        };
+
+        global.add(parent.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+        global.add(child.clone(), WatcherMode::Poll, child_callback);
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[parent.to_path_buf()]);
+
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        global.add(other.clone(), WatcherMode::Poll, noop_callback());
+        executor.run_until_parked();
+
+        backend.lock().stream_restart_error = None;
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        {
+            let backend = backend.lock();
+            assert!(backend.watched_paths.contains(parent.as_ref()));
+            assert!(!backend.watched_paths.contains(child.as_ref()));
+            assert!(backend.watched_paths.contains(other.as_ref()));
+        }
+        assert_eq!(
+            std::mem::take(&mut *pending_path_events.lock()),
+            vec![PathEvent {
+                path: child.to_path_buf(),
+                kind: Some(PathEventKind::Rescan),
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn stream_restart_backend_rescan_is_not_repeated_by_watch_limit_recovery(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+        let path_c = Arc::<Path>::from(Path::new("/repo/c"));
+        let (events_a, callback_a) = collecting_callback();
+        let (events_b, callback_b) = collecting_callback();
+        let (events_c, callback_c) = collecting_callback();
+
+        global.add(path_a.clone(), WatcherMode::Native, callback_a);
+        executor.run_until_parked();
+
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        global.add(path_b.clone(), WatcherMode::Native, callback_b);
+        global.add(path_c.clone(), WatcherMode::Native, callback_c);
+        executor.run_until_parked();
+
+        backend.lock().stream_restart_error = None;
+        backend
+            .lock()
+            .watch_errors
+            .insert(path_b.to_path_buf(), watch_limit_error);
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        assert_eq!(events_a.lock().len(), 1);
+        assert_eq!(events_b.lock().len(), 1);
+        assert_eq!(events_c.lock().len(), 1);
+        assert!(events_a.lock()[0].paths.is_empty());
+        assert!(events_a.lock()[0].need_rescan());
+
+        backend.lock().watch_errors.clear();
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+
+        assert_eq!(events_a.lock().len(), 1);
+        assert_eq!(events_b.lock().len(), 2);
+        assert_eq!(events_c.lock().len(), 2);
+        assert_eq!(events_b.lock()[1].paths, vec![path_b.to_path_buf()]);
+        assert_eq!(events_c.lock()[1].paths, vec![path_c.to_path_buf()]);
+    }
+
+    #[gpui::test]
+    async fn stream_restart_failure_retry_delay_is_not_bypassed_by_wake(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            Some((
+                backend.clone(),
+                platform_recursive_mode(WatcherMode::Native),
+            )),
+            None,
+        );
+        let path_a = Arc::<Path>::from(Path::new("/repo/a"));
+        let path_b = Arc::<Path>::from(Path::new("/repo/b"));
+        let path_c = Arc::<Path>::from(Path::new("/repo/c"));
+
+        global.add(path_a.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        global.add(path_b.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+
+        backend.lock().stream_restart_error = None;
+        let watch_calls_before_wake = backend.lock().watch_calls.clone();
+        global.add(path_c.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, watch_calls_before_wake);
+
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
+        executor.run_until_parked();
+        assert!(backend.lock().watched_paths.contains(path_a.as_ref()));
+        assert!(backend.lock().watched_paths.contains(path_b.as_ref()));
+        assert!(backend.lock().watched_paths.contains(path_c.as_ref()));
     }
 
     #[gpui::test]
@@ -2340,7 +2589,7 @@ mod tests {
         assert!(!backend.lock().watched_paths.contains(path_a.as_ref()));
 
         backend.lock().stream_restart_error = None;
-        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
         executor.run_until_parked();
 
         assert!(backend.lock().watched_paths.contains(path_b.as_ref()));
