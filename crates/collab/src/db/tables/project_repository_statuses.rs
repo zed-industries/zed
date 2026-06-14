@@ -19,6 +19,10 @@ pub struct Model {
     pub second_status: Option<i32>,
     pub lines_added: Option<i32>,
     pub lines_deleted: Option<i32>,
+    pub staged_lines_added: Option<i32>,
+    pub staged_lines_deleted: Option<i32>,
+    pub unstaged_lines_added: Option<i32>,
+    pub unstaged_lines_deleted: Option<i32>,
     pub scan_id: i64,
     pub is_deleted: bool,
 }

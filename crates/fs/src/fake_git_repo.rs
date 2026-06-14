@@ -1122,8 +1122,9 @@ impl GitRepository for FakeGitRepository {
         future::ready(Ok(String::new())).boxed()
     }
 
-    fn diff_stat(
+    fn diff_stat_for_kind(
         &self,
+        kind: git::repository::DiffStatKind,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
@@ -1174,6 +1175,7 @@ impl GitRepository for FakeGitRepository {
             let all_paths: HashSet<&RepoPath> = state
                 .head_contents
                 .keys()
+                .chain(state.index_contents.keys())
                 .chain(
                     worktree_files
                         .keys()
@@ -1185,8 +1187,14 @@ impl GitRepository for FakeGitRepository {
                     continue;
                 }
                 let head = state.head_contents.get(path);
+                let index = state.index_contents.get(path);
                 let worktree = worktree_files.get(path);
-                match (head, worktree) {
+                let (old, new) = match kind {
+                    git::repository::DiffStatKind::Aggregate => (head, worktree),
+                    git::repository::DiffStatKind::Staged => (head, index),
+                    git::repository::DiffStatKind::Unstaged => (index, worktree),
+                };
+                match (old, new) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),
