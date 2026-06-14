@@ -2641,7 +2641,7 @@ async fn test_single_file_search_result_split_open(cx: &mut gpui::TestAppContext
             active_editor.read(cx).active_project_path(cx),
             Some(ProjectPath {
                 worktree_id,
-                path: RelPath::empty().into_arc(),
+                path: RelPath::empty_arc(),
             }),
             "Should split-open the single-file worktree root with an empty relative path"
         );

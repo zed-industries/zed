@@ -31,7 +31,7 @@ use project::{
     agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{Settings, SettingsContent, SettingsStore, update_settings_file};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ButtonStyle, Chip, ContextMenu,
     ContextMenuEntry, Disclosure, Divider, DividerColor, ElevationIndex, LabelSize, PopoverMenu,
@@ -396,14 +396,7 @@ impl AgentConfiguration {
                 update_settings_file(fs.clone(), cx, {
                     let provider_id = provider_id.clone();
                     move |settings, _| {
-                        if let Some(ref mut openai_compatible) = settings
-                            .language_models
-                            .as_mut()
-                            .and_then(|lm| lm.openai_compatible.as_mut())
-                        {
-                            let key_to_remove: Arc<str> = Arc::from(provider_id.0.as_ref());
-                            openai_compatible.remove(&key_to_remove);
-                        }
+                        remove_compatible_provider(settings, provider_id.0.as_ref());
                     }
                 });
             })
@@ -444,22 +437,24 @@ impl AgentConfiguration {
             .menu({
                 let workspace = self.workspace.clone();
                 move |window, cx| {
+                    let open_modal = |provider: LlmCompatibleProvider| {
+                        let workspace = workspace.clone();
+                        move |window: &mut Window, cx: &mut App| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    AddLlmProviderModal::toggle(provider, workspace, window, cx);
+                                })
+                                .log_err();
+                        }
+                    };
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                        menu.header("Compatible APIs").entry("OpenAI", None, {
-                            let workspace = workspace.clone();
-                            move |window, cx| {
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        AddLlmProviderModal::toggle(
-                                            LlmCompatibleProvider::OpenAi,
-                                            workspace,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .log_err();
-                            }
-                        })
+                        menu.header("Compatible APIs")
+                            .entry("OpenAI", None, open_modal(LlmCompatibleProvider::OpenAi))
+                            .entry(
+                                "Anthropic",
+                                None,
+                                open_modal(LlmCompatibleProvider::Anthropic),
+                            )
                     }))
                 }
             })
@@ -1535,13 +1530,144 @@ fn find_text_in_buffer(
     }
 }
 
-// OpenAI-compatible providers are user-configured and can be removed,
+// API-compatible providers are user-configured and can be removed,
 // whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
 //
 // If in the future we have more "API-compatible-type" of providers,
 // they should be included here as removable providers.
 fn is_removable_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
-    AllLanguageModelSettings::get_global(cx)
+    let settings = AllLanguageModelSettings::get_global(cx);
+    settings
         .openai_compatible
         .contains_key(provider_id.0.as_ref())
+        || settings
+            .anthropic_compatible
+            .contains_key(provider_id.0.as_ref())
+}
+
+fn remove_compatible_provider(settings: &mut SettingsContent, provider_id: &str) {
+    // Mirrors the OpenAI-wins precedence used at registration time: only the
+    // entry that is actually registered gets removed. A shadowed
+    // `anthropic_compatible` entry with the same name takes over instead of
+    // being silently deleted.
+    let Some(language_models) = settings.language_models.as_mut() else {
+        return;
+    };
+    let removed_from_openai = language_models
+        .openai_compatible
+        .as_mut()
+        .and_then(|providers| providers.remove(provider_id))
+        .is_some();
+    if !removed_from_openai && let Some(providers) = language_models.anthropic_compatible.as_mut() {
+        providers.remove(provider_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use settings::{AnthropicCompatibleSettingsContent, OpenAiCompatibleSettingsContent};
+
+    fn settings_with_compatible_providers(openai: &[&str], anthropic: &[&str]) -> SettingsContent {
+        let mut settings = SettingsContent::default();
+        let language_models = settings.language_models.get_or_insert_default();
+        language_models.openai_compatible = Some(
+            openai
+                .iter()
+                .map(|id| {
+                    (
+                        Arc::from(*id),
+                        OpenAiCompatibleSettingsContent {
+                            api_url: "https://example.com".to_string(),
+                            available_models: Vec::new(),
+                            custom_headers: None,
+                        },
+                    )
+                })
+                .collect(),
+        );
+        language_models.anthropic_compatible = Some(
+            anthropic
+                .iter()
+                .map(|id| {
+                    (
+                        Arc::from(*id),
+                        AnthropicCompatibleSettingsContent {
+                            api_url: "https://example.com".to_string(),
+                            available_models: Vec::new(),
+                            custom_headers: None,
+                        },
+                    )
+                })
+                .collect(),
+        );
+        settings
+    }
+
+    fn compatible_provider_keys(settings: &SettingsContent) -> (Vec<&str>, Vec<&str>) {
+        fn keys<T>(providers: Option<&HashMap<Arc<str>, T>>) -> Vec<&str> {
+            providers
+                .map(|providers| providers.keys().map(|key| key.as_ref()).collect())
+                .unwrap_or_default()
+        }
+
+        let language_models = settings
+            .language_models
+            .as_ref()
+            .expect("language_models settings should exist");
+        (
+            keys(language_models.openai_compatible.as_ref()),
+            keys(language_models.anthropic_compatible.as_ref()),
+        )
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_openai_only() {
+        let mut settings = settings_with_compatible_providers(&["acme"], &[]);
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(openai, Vec::<&str>::new());
+        assert_eq!(anthropic, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_anthropic_only() {
+        let mut settings = settings_with_compatible_providers(&[], &["acme"]);
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(openai, Vec::<&str>::new());
+        assert_eq!(anthropic, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_collision_removes_only_openai_entry() {
+        let mut settings = settings_with_compatible_providers(&["acme"], &["acme"]);
+
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(
+            openai,
+            Vec::<&str>::new(),
+            "the registered (OpenAI-compatible) entry should be removed"
+        );
+        assert_eq!(
+            anthropic,
+            vec!["acme"],
+            "the shadowed anthropic_compatible entry should survive"
+        );
+
+        // A second removal deletes the entry that took over.
+        remove_compatible_provider(&mut settings, "acme");
+        let (_, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(anthropic, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_leaves_other_providers_untouched() {
+        let mut settings = settings_with_compatible_providers(&["acme", "globex"], &["initech"]);
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(openai, vec!["globex"]);
+        assert_eq!(anthropic, vec!["initech"]);
+    }
 }

@@ -82,7 +82,7 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Item, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
@@ -826,7 +826,7 @@ impl GitPanel {
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                workspace.show_error(error, cx);
+                                workspace.show_error(format!("{error}"), cx);
                             })
                             .ok();
                     }
@@ -1469,6 +1469,44 @@ impl GitPanel {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
                             show_error_toast(workspace, "add to .gitignore", e, cx);
+                        });
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
+    fn add_to_git_info_exclude(
+        &mut self,
+        _: &git::AddToGitInfoExclude,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let list_entry = self.entries.get(self.selected_entry?)?.clone();
+            let entry = list_entry.status_entry()?.to_owned();
+
+            if !entry.status.is_created() {
+                return Some(());
+            }
+
+            let active_repository = self.active_repository.clone()?;
+            let workspace = self.workspace.clone();
+            let repo_path = entry.repo_path;
+
+            let receiver = active_repository.update(cx, |repo, _| {
+                repo.add_path_to_git_info_exclude(&repo_path, false)
+            });
+
+            cx.spawn(async move |_, cx| {
+                if let Err(e) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            show_error_toast(workspace, "add to .git/info/exclude", e, cx);
                         });
                     }
                 }
@@ -2275,7 +2313,7 @@ impl GitPanel {
             return;
         };
         let error_spawn = |message, window: &mut Window, cx: &mut App| {
-            let prompt = window.prompt(PromptLevel::Warning, message, None, &["Ok"], cx);
+            let prompt = window.prompt(PromptLevel::Warning, message, None, &["OK"], cx);
             cx.spawn(async move |_| {
                 prompt.await.ok();
             })
@@ -2952,7 +2990,7 @@ impl GitPanel {
                 PromptLevel::Warning,
                 "Unable to initialize a git repository",
                 Some("Open a directory first"),
-                &["Ok"],
+                &["OK"],
                 cx,
             );
             cx.background_executor()
@@ -4080,16 +4118,7 @@ impl GitPanel {
     {
         if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
             let _ = workspace.update(cx, |workspace, cx| {
-                struct CommitMessageError;
-                let notification_id = NotificationId::unique::<CommitMessageError>();
-                workspace.show_notification(notification_id, cx, |cx| {
-                    cx.new(|cx| {
-                        ErrorMessagePrompt::new(
-                            format!("Failed to generate commit message: {err}"),
-                            cx,
-                        )
-                    })
-                });
+                workspace.show_error(format!("Failed to generate commit message: {err}"), cx);
             });
         }
     }
@@ -5102,15 +5131,36 @@ impl GitPanel {
 
     fn render_history_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().flex_1().size_full().overflow_hidden().map(|this| {
-            if let Some(history) = self.render_commit_history(window, cx) {
-                this.child(history)
-            } else {
+            let has_repo = self.active_repository.is_some();
+            let has_commits = self
+                .commit_history_shas
+                .as_ref()
+                .map_or(false, |shas| !shas.is_empty());
+            let is_loading = self.commit_history_shas.is_none() && has_repo;
+            if is_loading {
                 this.child(
                     h_flex()
                         .flex_1()
                         .justify_center()
                         .child(Label::new("Loading Commit History…").color(Color::Muted)),
                 )
+            } else if !has_repo || !has_commits {
+                this.child(
+                    h_flex()
+                        .flex_1()
+                        .justify_center()
+                        .child(Label::new("No commits yet").color(Color::Muted)),
+                )
+            } else {
+                match self.render_commit_history(window, cx) {
+                    Some(history) => this.child(history),
+                    None => this.child(
+                        h_flex()
+                            .flex_1()
+                            .justify_center()
+                            .child(Label::new("Failed to load commits").color(Color::Muted)),
+                    ),
+                }
             }
         })
     }
@@ -5955,10 +6005,16 @@ impl GitPanel {
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .separator()
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
                     git::AddToGitignore.boxed_clone(),
+                )
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .git/info/exclude",
+                    git::AddToGitInfoExclude.boxed_clone(),
                 )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
@@ -6276,7 +6332,7 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // TODO: Have not yet plugin the self.marked_entries. Not sure when and why we need that
+        // TODO: Have not yet plugged in self.marked_entries. Not sure when and why we need that
         let selected = self.selected_entry == Some(ix);
         let label_color = Color::Muted;
 
@@ -6679,6 +6735,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::restore_tracked_files))
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::add_to_gitignore))
+                    .on_action(cx.listener(Self::add_to_git_info_exclude))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
