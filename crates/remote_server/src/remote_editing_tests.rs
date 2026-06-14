@@ -546,6 +546,121 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 }
 
 #[gpui::test]
+async fn test_remote_settings_synced_before_connect(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // This test verifies that user settings are synced to the remote server
+    // even when they were already set *before* the SSH connection is established.
+    // Regression test for https://github.com/zed-industries/zed/issues/33449
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    init_logger();
+
+    let (opts, ssh_server_client, _) = RemoteClient::fake_server(cx, server_cx);
+    let http_client = Arc::new(BlockedHttpClient);
+    let node_runtime = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    server_cx.update(HeadlessProject::init);
+    let headless = server_cx.new(|cx| {
+        HeadlessProject::new(
+            crate::HeadlessAppState {
+                session: ssh_server_client,
+                fs: fs.clone(),
+                http_client,
+                node_runtime,
+                languages,
+                extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let ssh = RemoteClient::connect_mock(opts, cx).await;
+
+    // Set user settings BEFORE creating the remote project.
+    cx.update(|cx| {
+        if !cx.has_global::<SettingsStore>() {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        }
+    });
+    cx.update_global(|settings_store: &mut SettingsStore, cx| {
+        settings_store
+            .set_user_settings(
+                r#"{"languages":{"Rust":{"language_servers":["from-pre-connect-settings"]}}}"#,
+                cx,
+            )
+            .unwrap();
+    });
+
+    let client = cx.update(|cx| {
+        Client::new(
+            Arc::new(FakeSystemClock::new()),
+            FakeHttpClient::with_404_response(),
+            cx,
+        )
+    });
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+    let remote_languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    let remote_fs = FakeFs::new(cx.executor());
+    cx.update(|cx| {
+        Project::init(&client, cx);
+    });
+    let project = cx.update(|cx| {
+        Project::remote(
+            ssh,
+            client,
+            NodeRuntime::unavailable(),
+            user_store,
+            remote_languages,
+            remote_fs,
+            false,
+            cx,
+        )
+    });
+    project
+        .update(cx, {
+            let headless = headless.clone();
+            |_, cx| cx.on_release(|_, _| drop(headless))
+        })
+        .detach();
+
+    cx.run_until_parked();
+
+    // The settings should have been synced to the remote server immediately
+    // upon connection, without needing a subsequent change.
+    server_cx.read(|cx| {
+        assert_eq!(
+            AllLanguageSettings::get_global(cx)
+                .language(None, Some(&"Rust".into()), cx)
+                .language_servers,
+            ["from-pre-connect-settings"],
+            "User language settings should be synced to server on connect, even when set before the connection was established"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
