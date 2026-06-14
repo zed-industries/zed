@@ -9373,6 +9373,7 @@ dependencies = [
  "settings",
  "snippet_provider",
  "task",
+ "tempfile",
  "theme",
  "util",
 ]
