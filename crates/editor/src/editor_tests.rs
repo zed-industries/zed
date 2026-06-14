@@ -34480,6 +34480,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
+            e.flush_scroll_animation(window, cx);
         });
         cx.run_until_parked();
         cx.simulate_click(
