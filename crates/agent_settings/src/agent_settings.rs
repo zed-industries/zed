@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, Shell, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay,
+    ToolPermissionMode, update_settings_file, update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -238,6 +238,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
+    pub terminal_command: Option<Shell>,
     pub sandbox_permissions: SandboxPermissions,
 }
 
@@ -769,6 +770,7 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            terminal_command: agent.terminal_command,
             sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
     }
