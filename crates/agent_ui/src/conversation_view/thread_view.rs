@@ -591,10 +591,7 @@ pub struct ThreadView {
     pub editor_expanded: bool,
     pub should_be_following: bool,
     pub editing_message: Option<usize>,
-    pub local_queued_messages: Vec<QueuedMessage>,
-    pub queued_message_editors: Vec<Entity<MessageEditor>>,
-    pub queued_message_editor_subscriptions: Vec<Subscription>,
-    pub last_synced_queue_length: usize,
+    pub message_queue: MessageQueue,
     pub turn_fields: TurnFields,
     pub discarded_partial_edits: HashSet<acp::ToolCallId>,
     pub is_loading_contents: bool,
@@ -604,9 +601,6 @@ pub struct ThreadView {
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
-    pub skip_queue_processing_count: usize,
-    pub user_interrupted_generation: bool,
-    pub can_fast_track_queue: bool,
     pub hovered_edited_file_buttons: Option<usize>,
     pub in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     pub _subscriptions: Vec<Subscription>,
@@ -974,10 +968,7 @@ impl ThreadView {
             editor_expanded: false,
             should_be_following: false,
             editing_message: None,
-            local_queued_messages: Vec::new(),
-            queued_message_editors: Vec::new(),
-            queued_message_editor_subscriptions: Vec::new(),
-            last_synced_queue_length: 0,
+            message_queue: MessageQueue::default(),
             turn_fields: TurnFields::default(),
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
@@ -986,9 +977,6 @@ impl ThreadView {
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
-            skip_queue_processing_count: 0,
-            user_interrupted_generation: false,
-            can_fast_track_queue: false,
             hovered_edited_file_buttons: None,
             in_flight_prompt: None,
             message_editor,
@@ -1163,7 +1151,7 @@ impl ThreadView {
     }
 
     pub fn has_queued_messages(&self) -> bool {
-        !self.local_queued_messages.is_empty()
+        !self.message_queue.is_empty()
     }
 
     pub fn is_imported_thread(&self, cx: &App) -> bool {
@@ -1400,14 +1388,10 @@ impl ThreadView {
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
-        let has_queued = self.has_queued_messages();
-        if is_editor_empty && self.can_fast_track_queue && has_queued {
-            self.can_fast_track_queue = false;
-            self.send_queued_message_at_index(0, true, window, cx);
-            return;
-        }
-
         if is_editor_empty {
+            if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
+                self.dispatch_queued_entry(entry, window, cx);
+            }
             return;
         }
 
@@ -1516,7 +1500,7 @@ impl ThreadView {
                 // Queue the remainder first, then start the command turn; the
                 // queue auto-processes when the command turn stops.
                 if !content.is_empty() {
-                    this.add_to_queue(content, tracked_buffers, cx);
+                    this.add_to_queue(content, tracked_buffers, window, cx);
                 }
                 this.send_content(
                     Task::ready(Ok(Some((vec![command_block], Vec::new())))),
@@ -1541,6 +1525,9 @@ impl ThreadView {
         self.thread_error.take();
         self.thread_feedback.clear();
         self.editing_message.take();
+        // Sending a message is active engagement: un-freeze the queue if it
+        // was paused by a manual stop.
+        self.message_queue.resume();
 
         if self.should_be_following {
             self.workspace
@@ -1749,8 +1736,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let thread = self.thread.clone();
-        self.skip_queue_processing_count = 0;
-        self.user_interrupted_generation = true;
+        self.message_queue.pause();
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
@@ -1887,7 +1873,7 @@ impl ThreadView {
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_retry_status.take();
         self.thread_error.take();
-        self.user_interrupted_generation = true;
+        self.message_queue.pause();
         self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
         self.sync_generating_indicator(cx);
         cx.notify();
@@ -2003,8 +1989,7 @@ impl ThreadView {
             }
 
             this.update_in(cx, |this, window, cx| {
-                this.add_to_queue(content, tracked_buffers, cx);
-                this.can_fast_track_queue = true;
+                this.add_to_queue(content, tracked_buffers, window, cx);
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
@@ -2019,55 +2004,165 @@ impl ThreadView {
         &mut self,
         content: Vec<acp::ContentBlock>,
         tracked_buffers: Vec<Entity<Buffer>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.local_queued_messages.push(QueuedMessage {
+        // The ID must be allocated up front so the editor event subscription
+        // can capture it before the entry (which owns the subscription) exists.
+        let id = self.message_queue.next_id();
+
+        let editor = cx.new(|cx| {
+            let mut editor = MessageEditor::new(
+                self.workspace.clone(),
+                self.project.clone(),
+                None,
+                self.session_capabilities.clone(),
+                self.agent_id.clone(),
+                "",
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(10),
+                },
+                window,
+                cx,
+            );
+            editor.set_read_only(true, cx);
+            editor.set_message(content.clone(), window, cx);
+            editor
+        });
+
+        let subscription =
+            cx.subscribe_in(&editor, window, move |this, _editor, event, window, cx| {
+                this.handle_queue_editor_event(id, event, window, cx);
+            });
+
+        self.message_queue.enqueue(QueueEntry {
+            id,
             content,
             tracked_buffers,
+            steer: false,
+            editor,
+            _subscription: subscription,
         });
         self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
+    }
+
+    fn handle_queue_editor_event(
+        &mut self,
+        id: QueueEntryId,
+        event: &MessageEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            MessageEditorEvent::InputAttempted {
+                attempt,
+                cursor_offset,
+            } => {
+                self.move_queued_message_to_main_editor(
+                    id,
+                    Some(attempt.clone()),
+                    Some(*cursor_offset),
+                    window,
+                    cx,
+                );
+            }
+            MessageEditorEvent::LostFocus => {
+                self.save_queued_message(id, cx);
+            }
+            MessageEditorEvent::Cancel | MessageEditorEvent::Send => {
+                window.focus(&self.message_editor.focus_handle(cx), cx);
+            }
+            MessageEditorEvent::SendImmediately => {
+                self.send_queued_message_now(id, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn save_queued_message(&mut self, id: QueueEntryId, cx: &mut Context<Self>) {
+        let Some(entry) = self.message_queue.entry_by_id(id) else {
+            return;
+        };
+        let contents_task = entry
+            .editor
+            .update(cx, |editor, cx| editor.contents(false, cx));
+
+        cx.spawn(async move |this, cx| {
+            let (content, tracked_buffers) = contents_task.await?;
+
+            this.update(cx, |this, cx| {
+                if let Some(entry) = this.message_queue.entry_by_id_mut(id) {
+                    entry.content = content;
+                    entry.tracked_buffers = tracked_buffers;
+                }
+                cx.notify();
+            })?;
+
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn remove_from_queue(
         &mut self,
-        index: usize,
+        id: QueueEntryId,
         cx: &mut Context<Self>,
-    ) -> Option<QueuedMessage> {
-        if index < self.local_queued_messages.len() {
-            let removed = self.local_queued_messages.remove(index);
+    ) -> Option<QueueEntry> {
+        let removed = self.message_queue.remove(id);
+        if removed.is_some() {
             self.sync_queue_flag_to_native_thread(cx);
-            Some(removed)
-        } else {
-            None
         }
+        removed
+    }
+
+    fn toggle_queue_entry_steer(&mut self, id: QueueEntryId, cx: &mut Context<Self>) {
+        self.message_queue.toggle_steer(id);
+        self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
     }
 
     pub fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
         if let Some(native_thread) = self.as_native_thread(cx) {
-            let has_queued = self.has_queued_messages();
+            // By default queued messages wait for the turn to fully complete.
+            // Only a "steering" front message ends the turn at the next boundary.
+            let end_at_boundary = self.message_queue.front_wants_steer();
             native_thread.update(cx, |thread, _| {
-                thread.set_has_queued_message(has_queued);
+                thread.set_end_turn_at_next_boundary(end_at_boundary);
             });
         }
     }
 
-    pub fn send_queued_message_at_index(
+    pub fn send_queued_message_now(
         &mut self,
-        index: usize,
-        is_send_now: bool,
+        id: QueueEntryId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(queued) = self.remove_from_queue(index, cx) else {
-            return;
-        };
+        let is_generating = self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+        if let Some(entry) = self.message_queue.send_now(id, is_generating) {
+            self.dispatch_queued_entry(entry, window, cx);
+        }
+    }
+
+    /// The shared "actually send this entry" path, used by fast-track,
+    /// auto-processing on Stopped, and "Send Now". The entry must already have
+    /// been removed from the queue.
+    pub fn dispatch_queued_entry(
+        &mut self,
+        entry: QueueEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_queue_flag_to_native_thread(cx);
 
         cx.emit(AcpThreadViewEvent::Interacted);
 
         self.message_editor.focus_handle(cx).focus(window, cx);
 
-        let content = queued.content;
-        let tracked_buffers = queued.tracked_buffers;
+        let content = entry.content;
+        let tracked_buffers = entry.tracked_buffers;
 
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
@@ -2083,16 +2178,6 @@ impl ThreadView {
                 leading_native_command(text, self.session_capabilities.read().available_commands())
             })
             .is_some();
-
-        // Only increment skip count for "Send Now" operations (out-of-order sends)
-        // Normal auto-processing from the Stopped handler doesn't need to skip.
-        // We only skip the Stopped event from the cancelled generation, NOT the
-        // Stopped event from the newly sent message (which should trigger queue processing).
-        if is_send_now {
-            let is_generating =
-                self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
-            self.skip_queue_processing_count += if is_generating { 1 } else { 0 };
-        }
 
         let cancelled = self.thread.update(cx, |thread, cx| thread.cancel(cx));
 
@@ -2117,13 +2202,13 @@ impl ThreadView {
 
     pub fn move_queued_message_to_main_editor(
         &mut self,
-        index: usize,
+        id: QueueEntryId,
         attempt: Option<InputAttempt>,
         cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(queued_message) = self.remove_from_queue(index, cx) else {
+        let Some(queued_message) = self.remove_from_queue(id, cx) else {
             return false;
         };
         let queued_content = queued_message.content;
@@ -2170,12 +2255,15 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.message_editor.read(cx).is_empty(cx) || self.local_queued_messages.is_empty() {
+        if !self.message_editor.read(cx).is_empty(cx) {
             cx.propagate();
             return;
         }
-        let last_index = self.local_queued_messages.len() - 1;
-        self.move_queued_message_to_main_editor(last_index, None, None, window, cx);
+        let Some(last_id) = self.message_queue.last_id() else {
+            cx.propagate();
+            return;
+        };
+        self.move_queued_message_to_main_editor(last_id, None, None, window, cx);
     }
 
     // editor methods
@@ -3365,7 +3453,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let queue_count = self.local_queued_messages.len();
+        let queue_count = self.message_queue.len();
         let title: SharedString = if queue_count == 1 {
             "1 Queued Message".into()
         } else {
@@ -3400,16 +3488,15 @@ impl ThreadView {
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.clear_queue(cx);
-                        this.can_fast_track_queue = false;
-                        cx.notify();
                     })),
             )
             .into_any_element()
     }
 
     fn clear_queue(&mut self, cx: &mut Context<Self>) {
-        self.local_queued_messages.clear();
+        self.message_queue.clear();
         self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
     }
 
     fn render_plan_summary(
@@ -4148,6 +4235,40 @@ impl ThreadView {
             .into_any()
     }
 
+    fn render_queue_steer_button(
+        &self,
+        entry_id: QueueEntryId,
+        index: usize,
+        is_next: bool,
+        steer_on: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+
+        Button::new(("steer", index), "Steer")
+            .label_size(LabelSize::Small)
+            .toggle_state(steer_on)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .when(is_next, |this| {
+                this.key_binding(
+                    KeyBinding::for_action_in(&ToggleSteerFirstQueuedMessage, &focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+            })
+            .tooltip(move |_window, cx| {
+                Tooltip::with_meta(
+                    "Steer",
+                    None,
+                    "Interrupt the agent at its next step to send this message. \
+                     When off, queued messages wait for the agent to finish.",
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_queue_entry_steer(entry_id, cx);
+            }))
+    }
+
     fn render_message_queue_entries(
         &self,
         _window: &mut Window,
@@ -4156,176 +4277,178 @@ impl ThreadView {
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
 
-        let queued_message_editors = &self.queued_message_editors;
-        let queue_len = queued_message_editors.len();
-        let can_fast_track = self.can_fast_track_queue && queue_len > 0;
+        let queue_len = self.message_queue.len();
+        let can_fast_track = self.message_queue.can_fast_track();
+        let is_native = self.as_native_thread(cx).is_some();
 
         v_flex()
             .id("message_queue_list")
             .max_h_40()
             .overflow_y_scroll()
-            .children(
-                queued_message_editors
-                    .iter()
-                    .enumerate()
-                    .map(|(index, editor)| {
-                        let is_next = index == 0;
-                        let (icon_color, tooltip_text) = if is_next {
-                            (Color::Accent, "Next in Queue")
-                        } else {
-                            (Color::Muted, "In Queue")
-                        };
+            .children(self.message_queue.iter().enumerate().map(|(index, entry)| {
+                let entry_id = entry.id;
+                let editor = &entry.editor;
+                let is_next = index == 0;
+                let (icon_color, tooltip_text) = if is_next {
+                    (Color::Accent, "Next in Queue")
+                } else {
+                    (Color::Muted, "In Queue")
+                };
 
-                        let editor_focused = editor.focus_handle(cx).is_focused(_window);
-                        let keybinding_size = rems_from_px(12.);
+                let editor_focused = editor.focus_handle(cx).is_focused(_window);
+                let keybinding_size = rems_from_px(12.);
+                let steer_on = entry.steer;
 
+                let min_width = rems_from_px(160.);
+
+                h_flex()
+                    .group("queue_entry")
+                    .w_full()
+                    .p_1p5()
+                    .gap_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .when(index < queue_len - 1, |this| {
+                        this.border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
+                    .child(
+                        div()
+                            .id("next_in_queue")
+                            .child(
+                                Icon::new(IconName::Circle)
+                                    .size(IconSize::Small)
+                                    .color(icon_color),
+                            )
+                            .tooltip(Tooltip::text(tooltip_text)),
+                    )
+                    .child(editor.clone())
+                    .child(if editor_focused {
                         h_flex()
-                            .group("queue_entry")
-                            .w_full()
-                            .p_1p5()
                             .gap_1()
-                            .bg(cx.theme().colors().editor_background)
-                            .when(index < queue_len - 1, |this| {
-                                this.border_b_1()
-                                    .border_color(cx.theme().colors().border_variant)
+                            .min_w(min_width)
+                            .justify_end()
+                            .child(
+                                IconButton::new(("edit", index), IconName::Pencil)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::with_meta(
+                                            "Edit Queued Message",
+                                            None,
+                                            "Type anything to edit",
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.move_queued_message_to_main_editor(
+                                            entry_id, None, None, window, cx,
+                                        );
+                                    })),
+                            )
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
                             })
                             .child(
-                                div()
-                                    .id("next_in_queue")
-                                    .child(
-                                        Icon::new(IconName::Circle)
-                                            .size(IconSize::Small)
-                                            .color(icon_color),
+                                Button::new(("send_now_focused", index), "Send Now")
+                                    .label_size(LabelSize::Small)
+                                    .style(ButtonStyle::Outlined)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &SendImmediately,
+                                            &editor.focus_handle(cx),
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(keybinding_size)),
                                     )
-                                    .tooltip(Tooltip::text(tooltip_text)),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.send_queued_message_now(entry_id, window, cx);
+                                    })),
                             )
-                            .child(editor.clone())
-                            .child(if editor_focused {
-                                h_flex()
-                                    .gap_1()
-                                    .min_w(rems_from_px(150.))
-                                    .justify_end()
-                                    .child(
-                                        IconButton::new(("edit", index), IconName::Pencil)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(|_window, cx| {
-                                                Tooltip::with_meta(
-                                                    "Edit Queued Message",
-                                                    None,
-                                                    "Type anything to edit",
+                    } else {
+                        h_flex()
+                            .when(!is_next, |this| this.visible_on_hover("queue_entry"))
+                            .gap_1()
+                            .min_w(min_width)
+                            .justify_end()
+                            .child(
+                                IconButton::new(("delete", index), IconName::Trash)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            if is_next {
+                                                Tooltip::for_action_in(
+                                                    "Remove Message from Queue",
+                                                    &RemoveFirstQueuedMessage,
+                                                    &focus_handle,
                                                     cx,
                                                 )
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.move_queued_message_to_main_editor(
-                                                    index, None, None, window, cx,
-                                                );
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(("send_now_focused", index), "Send Now")
-                                            .label_size(LabelSize::Small)
-                                            .style(ButtonStyle::Outlined)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &SendImmediately,
-                                                    &editor.focus_handle(cx),
+                                            } else {
+                                                Tooltip::simple("Remove Message from Queue", cx)
+                                            }
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_from_queue(entry_id, cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                IconButton::new(("edit", index), IconName::Pencil)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            if is_next {
+                                                Tooltip::for_action_in(
+                                                    "Edit",
+                                                    &EditFirstQueuedMessage,
+                                                    &focus_handle,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(keybinding_size)),
-                                            )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.send_queued_message_at_index(
-                                                    index, true, window, cx,
-                                                );
-                                            })),
-                                    )
-                            } else {
-                                h_flex()
-                                    .when(!is_next, |this| this.visible_on_hover("queue_entry"))
-                                    .gap_1()
-                                    .min_w(rems_from_px(150.))
-                                    .justify_end()
-                                    .child(
-                                        IconButton::new(("delete", index), IconName::Trash)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    if is_next {
-                                                        Tooltip::for_action_in(
-                                                            "Remove Message from Queue",
-                                                            &RemoveFirstQueuedMessage,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        Tooltip::simple(
-                                                            "Remove Message from Queue",
-                                                            cx,
-                                                        )
-                                                    }
-                                                }
-                                            })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.remove_from_queue(index, cx);
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        IconButton::new(("edit", index), IconName::Pencil)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    if is_next {
-                                                        Tooltip::for_action_in(
-                                                            "Edit",
-                                                            &EditFirstQueuedMessage,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        Tooltip::simple("Edit", cx)
-                                                    }
-                                                }
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.move_queued_message_to_main_editor(
-                                                    index, None, None, window, cx,
-                                                );
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(("send_now", index), "Send Now")
-                                            .label_size(LabelSize::Small)
-                                            .when(is_next, |this| this.style(ButtonStyle::Outlined))
-                                            .when(is_next && message_editor.is_empty(cx), |this| {
-                                                let action: Box<dyn gpui::Action> =
-                                                    if can_fast_track {
-                                                        Box::new(Chat)
-                                                    } else {
-                                                        Box::new(SendNextQueuedMessage)
-                                                    };
-
-                                                this.key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        action.as_ref(),
-                                                        &focus_handle.clone(),
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(keybinding_size)),
-                                                )
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.send_queued_message_at_index(
-                                                    index, true, window, cx,
-                                                );
-                                            })),
-                                    )
+                                            } else {
+                                                Tooltip::simple("Edit", cx)
+                                            }
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.move_queued_message_to_main_editor(
+                                            entry_id, None, None, window, cx,
+                                        );
+                                    })),
+                            )
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
                             })
-                    }),
-            )
+                            .child(
+                                Button::new(("send_now", index), "Send Now")
+                                    .label_size(LabelSize::Small)
+                                    .when(is_next, |this| this.style(ButtonStyle::Outlined))
+                                    .when(is_next && message_editor.is_empty(cx), |this| {
+                                        let action: Box<dyn gpui::Action> = if can_fast_track {
+                                            Box::new(Chat)
+                                        } else {
+                                            Box::new(SendNextQueuedMessage)
+                                        };
+
+                                        this.key_binding(
+                                            KeyBinding::for_action_in(
+                                                action.as_ref(),
+                                                &focus_handle.clone(),
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(keybinding_size)),
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.send_queued_message_now(entry_id, window, cx);
+                                    })),
+                            )
+                    })
+            }))
             .into_any_element()
     }
 
@@ -10649,20 +10772,33 @@ impl Render for ThreadView {
                 }),
             )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
-                this.send_queued_message_at_index(0, true, window, cx);
+                if let Some(id) = this.message_queue.first_id() {
+                    this.send_queued_message_now(id, window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
-                this.remove_from_queue(0, cx);
-                cx.notify();
+                if let Some(id) = this.message_queue.first_id() {
+                    this.remove_from_queue(id, cx);
+                    cx.notify();
+                }
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                this.move_queued_message_to_main_editor(0, None, None, window, cx);
+                if let Some(id) = this.message_queue.first_id() {
+                    this.move_queued_message_to_main_editor(id, None, None, window, cx);
+                }
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleSteerFirstQueuedMessage, _, cx| {
+                    if this.as_native_thread(cx).is_none() {
+                        return;
+                    }
+                    if let Some(id) = this.message_queue.first_id() {
+                        this.toggle_queue_entry_steer(id, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
-                this.local_queued_messages.clear();
-                this.sync_queue_flag_to_native_thread(cx);
-                this.can_fast_track_queue = false;
-                cx.notify();
+                this.clear_queue(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(config_options_view) = this.config_options_view.clone() {
