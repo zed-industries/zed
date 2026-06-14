@@ -957,73 +957,89 @@ impl From<language_model_core::Speed> for Speed {
 
 impl From<AnthropicError> for language_model_core::LanguageModelCompletionError {
     fn from(error: AnthropicError) -> Self {
-        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
-        match error {
-            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
-            AnthropicError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            AnthropicError::HttpResponseError {
-                status_code,
-                message,
-            } => Self::HttpResponseError {
-                provider,
-                status_code,
-                message,
-            },
-            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
-                retry_after: Some(retry_after),
-            },
-            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            AnthropicError::ApiError(api_error) => api_error.into(),
-        }
+        completion_error_from_anthropic(error, language_model_core::ANTHROPIC_PROVIDER_NAME)
     }
 }
 
 impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        use ApiErrorCode::*;
-        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
-        match error.code() {
-            Some(code) => match code {
-                InvalidRequestError => Self::BadRequestFormat {
-                    provider,
-                    message: error.message,
-                },
-                AuthenticationError => Self::AuthenticationError {
-                    provider,
-                    message: error.message,
-                },
-                PermissionError => Self::PermissionError {
-                    provider,
-                    message: error.message,
-                },
-                NotFoundError => Self::ApiEndpointNotFound { provider },
-                RequestTooLarge => Self::PromptTooLarge {
-                    tokens: language_model_core::parse_prompt_too_long(&error.message),
-                },
-                RateLimitError => Self::RateLimitExceeded {
-                    provider,
-                    retry_after: None,
-                },
-                ApiError => Self::ApiInternalServerError {
-                    provider,
-                    message: error.message,
-                },
-                OverloadedError => Self::ServerOverloaded {
-                    provider,
-                    retry_after: None,
-                },
-            },
-            None => Self::Other(error.into()),
+        completion_error_from_anthropic_api(error, language_model_core::ANTHROPIC_PROVIDER_NAME)
+    }
+}
+
+pub fn completion_error_from_anthropic(
+    error: AnthropicError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> language_model_core::LanguageModelCompletionError {
+    use language_model_core::LanguageModelCompletionError as Error;
+    match error {
+        AnthropicError::SerializeRequest(error) => Error::SerializeRequest { provider, error },
+        AnthropicError::BuildRequestBody(error) => Error::BuildRequestBody { provider, error },
+        AnthropicError::HttpSend(error) => Error::HttpSend { provider, error },
+        AnthropicError::DeserializeResponse(error) => {
+            Error::DeserializeResponse { provider, error }
         }
+        AnthropicError::ReadResponse(error) => Error::ApiReadResponseError { provider, error },
+        AnthropicError::HttpResponseError {
+            status_code,
+            message,
+        } => Error::HttpResponseError {
+            provider,
+            status_code,
+            message,
+        },
+        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
+            provider,
+            retry_after: Some(retry_after),
+        },
+        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
+            provider,
+            retry_after,
+        },
+        AnthropicError::ApiError(api_error) => {
+            completion_error_from_anthropic_api(api_error, provider)
+        }
+    }
+}
+
+pub fn completion_error_from_anthropic_api(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> language_model_core::LanguageModelCompletionError {
+    use ApiErrorCode::*;
+    use language_model_core::LanguageModelCompletionError as Error;
+    match error.code() {
+        Some(code) => match code {
+            InvalidRequestError => Error::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Error::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PermissionError => Error::PermissionError {
+                provider,
+                message: error.message,
+            },
+            NotFoundError => Error::ApiEndpointNotFound { provider },
+            RequestTooLarge => Error::PromptTooLarge {
+                tokens: language_model_core::parse_prompt_too_long(&error.message),
+            },
+            RateLimitError => Error::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Error::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Error::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
+        },
+        None => Error::Other(error.into()),
     }
 }
 

@@ -2164,6 +2164,20 @@ impl ThreadView {
         true
     }
 
+    fn handle_message_editor_move_up(
+        &mut self,
+        _: &zed_actions::editor::MoveUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.message_editor.read(cx).is_empty(cx) || self.local_queued_messages.is_empty() {
+            cx.propagate();
+            return;
+        }
+        let last_index = self.local_queued_messages.len() - 1;
+        self.move_queued_message_to_main_editor(last_index, None, None, window, cx);
+    }
+
     // editor methods
 
     pub fn expand_message_editor(
@@ -2853,13 +2867,10 @@ impl ThreadView {
                     .border_color(cx.theme().colors().border)
                     .rounded_t_md()
                     .when(opaque_window, |this| {
-                        this.shadow(vec![gpui::BoxShadow {
-                            color: gpui::black().opacity(0.12),
-                            offset: point(px(1.), px(-1.)),
-                            blur_radius: px(2.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        }])
+                        this.shadow(vec![
+                            gpui::BoxShadow::new(px(1.), px(-1.), gpui::black().opacity(0.12))
+                                .blur_radius(px(2.)),
+                        ])
                     })
                     .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
@@ -4042,6 +4053,7 @@ impl ThreadView {
             .p_2()
             .bg(editor_bg_color)
             .justify_center()
+            .on_action(cx.listener(Self::handle_message_editor_move_up))
             .map(|this| {
                 if has_messages {
                     this.on_action(cx.listener(Self::expand_message_editor))

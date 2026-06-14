@@ -3,14 +3,13 @@ use mach2::exception_types::{
 };
 use mach2::port::{MACH_PORT_NULL, mach_port_t};
 use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
-use smol::Unblock;
+use smol::Async;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
 use std::ptr;
@@ -230,79 +229,30 @@ impl Command {
 
 #[derive(Debug)]
 pub struct Child {
-    pid: libc::pid_t,
-    pub stdin: Option<Unblock<std::fs::File>>,
-    pub stdout: Option<Unblock<std::fs::File>>,
-    pub stderr: Option<Unblock<std::fs::File>>,
-    kill_on_drop: bool,
-    status: Option<ExitStatus>,
-}
-
-impl Drop for Child {
-    fn drop(&mut self) {
-        if self.kill_on_drop && self.status.is_none() {
-            let _ = self.kill();
-        }
-    }
+    inner: smol::process::Child,
+    pub stdin: Option<Async<std::fs::File>>,
+    pub stdout: Option<Async<std::fs::File>>,
+    pub stderr: Option<Async<std::fs::File>>,
 }
 
 impl Child {
     pub fn id(&self) -> u32 {
-        self.pid as u32
+        self.inner.id()
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
-        let result = unsafe { libc::kill(self.pid, libc::SIGKILL) };
-        if result == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        self.inner.kill()
     }
 
     pub fn try_status(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.status {
-            return Ok(Some(status));
-        }
-
-        let mut status: libc::c_int = 0;
-        let result = unsafe { libc::waitpid(self.pid, &mut status, libc::WNOHANG) };
-
-        if result == -1 {
-            Err(io::Error::last_os_error())
-        } else if result == 0 {
-            Ok(None)
-        } else {
-            let exit_status = ExitStatus::from_raw(status);
-            self.status = Some(exit_status);
-            Ok(Some(exit_status))
-        }
+        self.inner.try_status()
     }
 
     pub fn status(
         &mut self,
     ) -> impl std::future::Future<Output = io::Result<ExitStatus>> + Send + 'static {
         self.stdin.take();
-
-        let pid = self.pid;
-        let cached_status = self.status;
-
-        async move {
-            if let Some(status) = cached_status {
-                return Ok(status);
-            }
-
-            smol::unblock(move || {
-                let mut status: libc::c_int = 0;
-                let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-                if result == -1 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    Ok(ExitStatus::from_raw(status))
-                }
-            })
-            .await
-        }
+        self.inner.status()
     }
 
     pub async fn output(mut self) -> io::Result<Output> {
@@ -526,13 +476,13 @@ fn spawn_posix_spawn(
 
         cvt_nz(spawn_result)?;
 
+        let inner = smol::process::Child::adopt_raw_pid(pid as u32, true, kill_on_drop)?;
+
         Ok(Child {
-            pid,
-            stdin: stdin_write.map(|fd| Unblock::new(fd)),
-            stdout: stdout_read.map(|fd| Unblock::new(fd)),
-            stderr: stderr_read.map(|fd| Unblock::new(fd)),
-            kill_on_drop,
-            status: None,
+            inner,
+            stdin: stdin_write.map(Async::new).transpose()?,
+            stdout: stdout_read.map(Async::new).transpose()?,
+            stderr: stderr_read.map(Async::new).transpose()?,
         })
     }
 }
@@ -603,6 +553,8 @@ fn invalid_input_error() -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+
     use super::*;
     use futures_lite::AsyncWriteExt;
 
@@ -644,6 +596,47 @@ mod tests {
             stdout,
             format!("{read_fd} WAS NOT INHERITED\n{write_fd} WAS NOT INHERITED\nDONE\n")
         );
+    }
+
+    fn wait_until_gone(pid: u32) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+            if result == -1 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "process {pid} was not reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn test_drop_reaps_child() {
+        smol::block_on(async {
+            let child = Command::new("/usr/bin/true")
+                .spawn()
+                .expect("failed to spawn command");
+            let pid = child.id();
+            drop(child);
+            wait_until_gone(pid);
+        });
+    }
+
+    #[test]
+    fn test_kill_on_drop_kills_and_reaps_child() {
+        smol::block_on(async {
+            let child = Command::new("/bin/sleep")
+                .arg("60")
+                .kill_on_drop(true)
+                .spawn()
+                .expect("failed to spawn command");
+            let pid = child.id();
+            drop(child);
+            wait_until_gone(pid);
+        });
     }
 
     #[test]

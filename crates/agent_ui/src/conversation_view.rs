@@ -33,7 +33,7 @@ use gpui::{
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
     ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
     TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
-    linear_color_stop, linear_gradient, list, point, pulsating_between,
+    linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -3428,7 +3428,7 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, size};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -8808,6 +8808,65 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_move_up_in_empty_editor_restores_last_queued_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        active_thread(&conversation_view, cx).update(cx, |thread, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "first queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "second queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.focus(&editor);
+
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(
+            queue_len, 1,
+            "Up arrow should pull the last queued message out of the queue"
+        );
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "second queued",
+            "Main editor should contain the last queued message"
+        );
+
+        // With a non-empty editor, another MoveUp must not consume the queue.
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 1, "Queue should be untouched");
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "second queued");
     }
 
     #[gpui::test]
