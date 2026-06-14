@@ -1,0 +1,1007 @@
+mod unified_palette_tests;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use file_icons::FileIcons;
+use fuzzy::StringMatchCandidate;
+use gpui::{
+    actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, Render, SharedString, 
+    Task, Window, WeakEntity, prelude::*,
+};
+use gpui_util::ResultExt;
+use language::{ToPointUtf16, Unclipped};
+use lsp;
+use picker::{Picker, PickerDelegate};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
+use settings::Settings;
+use ui::{prelude::*, Icon, Label, ListItem, ListItemSpacing};
+use util::paths::PathWithPosition;
+use util::rel_path::RelPath;
+use workspace::{ModalView, Workspace};
+
+actions!(unified_palette, [ToggleUnifiedPalette]);
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(UnifiedPalette::register).detach();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteMode {
+    FileFinder,
+    CommandPalette,
+    ProjectSymbols,
+    Outline,
+    GoToLine,
+}
+
+pub struct UnifiedPalette {
+    picker: Entity<Picker<UnifiedPaletteDelegate>>,
+    _workspace: WeakEntity<workspace::Workspace>,
+    _subscription: gpui::Subscription,
+}
+
+#[derive(Clone)]
+enum Match {
+    File(FileMatch),
+    Command(CommandMatch),
+    Line(LineMatch),
+    Symbol(SymbolMatch),
+}
+
+#[derive(Clone)]
+struct FileMatch {
+    worktree_id: WorktreeId,
+    path: Arc<RelPath>,
+    display_path: String,
+    row: Option<u32>,
+    column: Option<u32>,
+    match_positions: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct CommandMatch {
+    name: String,
+    action: Arc<dyn Action>,
+    match_positions: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct LineMatch {
+    line_number: u32,
+}
+
+#[derive(Clone)]
+struct SymbolMatch {
+    symbol: project::Symbol,
+    highlight_ranges: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
+    match_positions: Vec<usize>,
+}
+
+pub struct UnifiedPaletteDelegate {
+    mode: PaletteMode,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<project::Project>,
+    unified_palette: WeakEntity<UnifiedPalette>,
+    focus_handle: FocusHandle,
+    
+    // Match data
+    matches: Vec<Match>,
+    selected_index: usize,
+    last_query: String,
+    
+    // File history
+    file_history: Vec<ProjectPath>,
+    
+    // Search management
+    search_count: usize,
+    latest_search_id: usize,
+    cancel_flag: Arc<AtomicBool>,
+}
+
+impl UnifiedPalette {
+    fn register(
+        workspace: &mut workspace::Workspace,
+        _window: Option<&mut Window>,
+        _cx: &mut Context<workspace::Workspace>,
+    ) {
+        workspace.register_action(
+            |workspace, _action: &workspace::ToggleFileFinder, window, cx| {
+                let project = workspace.project().clone();
+                let workspace_handle = cx.entity().downgrade();
+                let file_history = workspace.file_history().to_vec();
+                
+                workspace.toggle_modal(window, cx, move |window, cx| {
+                    let focus_handle = cx.focus_handle();
+                    let delegate = UnifiedPaletteDelegate::new(
+                        workspace_handle.clone(),
+                        project,
+                        cx.entity().downgrade(),
+                        file_history.clone(),
+                        focus_handle,
+                        cx,
+                    );
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+                    
+                    let subscription = cx.subscribe(&picker, |_this, _, _: &DismissEvent, cx| {
+                        cx.emit(DismissEvent);
+                    });
+                    
+                    UnifiedPalette {
+                        picker,
+                        _workspace: workspace_handle,
+                        _subscription: subscription,
+                    }
+                });
+            },
+        );
+    }
+    
+    pub fn new(
+        workspace: &mut workspace::Workspace,
+        window: &mut Window,
+        cx: &mut Context<workspace::Workspace>,
+    ) -> Entity<Self> {
+        let workspace_handle = cx.entity().downgrade();
+        let project = workspace.project().clone();
+        let file_history = workspace.file_history().to_vec();
+        
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            let delegate = UnifiedPaletteDelegate::new(
+                workspace_handle.clone(),
+                project,
+                cx.entity().downgrade(),
+                file_history,
+                focus_handle,
+                cx,
+            );
+            let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+            
+            let subscription = cx.subscribe(&picker, |_this, _, _: &DismissEvent, cx| {
+                cx.emit(DismissEvent);
+            });
+            
+            Self {
+                picker,
+                _workspace: workspace_handle,
+                _subscription: subscription,
+            }
+        })
+    }
+}
+
+impl UnifiedPaletteDelegate {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        project: Entity<project::Project>,
+        unified_palette: WeakEntity<UnifiedPalette>,
+        file_history: Vec<ProjectPath>,
+        focus_handle: FocusHandle,
+        _cx: &mut App,
+    ) -> Self {
+        Self {
+            mode: PaletteMode::FileFinder,
+            workspace,
+            project,
+            unified_palette,
+            focus_handle,
+            matches: Vec::new(),
+            selected_index: 0,
+            last_query: String::new(),
+            file_history,
+            search_count: 0,
+            latest_search_id: 0,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    
+    fn search_files(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
+        if query.is_empty() {
+            // Show recent files on empty query
+            self.matches = self.file_history
+                .iter()
+                .take(10)
+                .map(|path| Match::File(FileMatch {
+                    worktree_id: path.worktree_id,
+                    path: path.path.clone(),
+                    display_path: format!("{:?}", path.path).trim_matches('"').to_string(),
+                    row: None,
+                    column: None,
+                    match_positions: Vec::new(),
+                }))
+                .collect();
+            self.selected_index = 0;
+            return Task::ready(());
+        }
+        
+        // Parse path with position (e.g., "file.rs:42:10")
+        let path_with_position = PathWithPosition::parse_str(query);
+        let search_query = path_with_position.path.to_string_lossy().to_string();
+        let row = path_with_position.row;
+        let column = path_with_position.column;
+        
+        let worktree_store = self.project.read(cx).worktree_store();
+        let worktrees = worktree_store
+            .read(cx)
+            .visible_worktrees_and_single_files(cx)
+            .collect::<Vec<_>>();
+        
+        let candidate_sets = worktrees
+            .into_iter()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                PathMatchCandidateSet {
+                    snapshot: worktree.snapshot(),
+                    include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
+                    include_root_name: false,
+                    candidates: project::Candidates::Files,
+                }
+            })
+            .collect::<Vec<_>>();
+        
+        let search_id = util::post_inc(&mut self.search_count);
+        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            let matches = fuzzy_nucleo::match_path_sets(
+                candidate_sets.as_slice(),
+                &search_query,
+                &None,
+                false,
+                100,
+                &cancel_flag,
+                cx.background_executor().clone(),
+            )
+            .await;
+            
+            let did_cancel = cancel_flag.load(Ordering::Acquire);
+            
+            picker.update(cx, |picker, cx| {
+                if search_id >= picker.delegate.latest_search_id && !did_cancel {
+                    picker.delegate.latest_search_id = search_id;
+                    picker.delegate.matches = matches
+                        .into_iter()
+                        .map(|m| Match::File(FileMatch {
+                            worktree_id: WorktreeId::from_usize(m.worktree_id),
+                            path: m.path.clone(),
+                            display_path: format!("{:?}", m.path).trim_matches('"').to_string(),
+                            row,
+                            column,
+                            match_positions: m.positions,
+                        }))
+                        .collect();
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                }
+            }).log_err();
+        })
+    }
+    
+    fn search_commands(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
+        let actions = window.available_actions(cx);
+        let all_commands: Vec<_> = actions
+            .into_iter()
+            .map(|action| (action.name().to_string(), Arc::from(action)))
+            .collect();
+        
+        if query.is_empty() {
+            self.matches = all_commands
+                .into_iter()
+                .take(100)
+                .map(|(name, action)| Match::Command(CommandMatch { 
+                    name, 
+                    action,
+                    match_positions: Vec::new(),
+                }))
+                .collect();
+            self.selected_index = 0;
+            return Task::ready(());
+        }
+        
+        let query = query.to_string();
+        let search_id = util::post_inc(&mut self.search_count);
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            let candidates: Vec<_> = all_commands
+                .iter()
+                .enumerate()
+                .map(|(ix, (name, _))| fuzzy::StringMatchCandidate::new(ix, name))
+                .collect();
+            
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                false,
+                100,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+            
+            picker.update(cx, |picker, cx| {
+                if search_id >= picker.delegate.latest_search_id {
+                    picker.delegate.latest_search_id = search_id;
+                    picker.delegate.matches = matches
+                        .into_iter()
+                        .map(|m| {
+                            let (name, action) = &all_commands[m.candidate_id];
+                            Match::Command(CommandMatch {
+                                name: name.clone(),
+                                action: action.clone(),
+                                match_positions: m.positions,
+                            })
+                        })
+                        .collect();
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                }
+            }).log_err();
+        })
+    }
+    
+    fn search_line(&mut self, query: &str, _cx: &mut Context<Picker<Self>>) {
+        if let Ok(line_number) = query.parse::<u32>() {
+            self.matches = vec![Match::Line(LineMatch { line_number })];
+        } else {
+            self.matches.clear();
+        }
+        self.selected_index = 0;
+    }
+    
+    fn search_project_symbols(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let search_id = util::post_inc(&mut self.search_count);
+        
+        if query.is_empty() {
+            self.matches.clear();
+            self.selected_index = 0;
+            self.latest_search_id = search_id;
+            return;
+        }
+
+        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
+
+        let project = self.project.clone();
+        let query_string = query.to_string();
+        
+        let symbols_task = project.update(cx, |project, cx| {
+            project.symbols(&query_string, cx)
+        });
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            if let Ok(symbols) = symbols_task.await {
+                let did_cancel = cancel_flag.load(Ordering::Acquire);
+                
+                picker.update_in(cx, |picker, _window, cx| {
+                    let delegate = &mut picker.delegate;
+                    
+                    if search_id >= delegate.latest_search_id && !did_cancel {
+                        delegate.latest_search_id = search_id;
+                        
+                        // Convert symbols to matches (limit to 100)
+                        delegate.matches = symbols
+                            .into_iter()
+                            .take(100)
+                            .map(|symbol| Match::Symbol(SymbolMatch { 
+                                symbol,
+                                highlight_ranges: Vec::new(),
+                                match_positions: Vec::new(),
+                            }))
+                            .collect();
+                        
+                        delegate.selected_index = 0;
+                        cx.notify();
+                    }
+                }).ok();
+            }
+        }).detach();
+    }
+    
+    fn search_outline(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let search_id = util::post_inc(&mut self.search_count);
+        
+        // Get active editor from workspace
+        let Some(workspace) = self.workspace.upgrade() else {
+            self.matches.clear();
+            self.selected_index = 0;
+            self.latest_search_id = search_id;
+            return;
+        };
+        
+        let editor = workspace.read(cx).active_item(cx)
+            .and_then(|item| item.downcast::<editor::Editor>());
+        
+        let Some(editor) = editor else {
+            log::warn!("UnifiedPalette: No active editor for outline mode");
+            self.matches.clear();
+            self.selected_index = 0;
+            self.latest_search_id = search_id;
+            return;
+        };
+        
+        // Get buffer and outline items
+        let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let Some(buffer_snapshot) = multibuffer.as_singleton() else {
+            log::warn!("UnifiedPalette: Active editor has multiple buffers");
+            self.matches.clear();
+            self.selected_index = 0;
+            return;
+        };
+        
+        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
+        
+        let buffer_id = buffer_snapshot.remote_id();
+        let file_path = buffer_snapshot.file().map(|f| f.path().clone());
+        let outline_task = editor.update(cx, |editor, cx| {
+            editor.buffer_outline_items(buffer_id, cx)
+        });
+        
+        let query_lower = query.to_lowercase();
+        let project = self.project.clone();
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            let items = outline_task.await;
+            
+            let did_cancel = cancel_flag.load(Ordering::Acquire);
+            if did_cancel {
+                return;
+            }
+            
+            // Use fuzzy matching for outline items
+            let filtered_items: Vec<_> = if query_lower.is_empty() {
+                items.into_iter().take(100).map(|item| (item, Vec::new())).collect()
+            } else {
+                let candidates: Vec<StringMatchCandidate> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(id, item)| StringMatchCandidate::new(id, item.text.as_ref()))
+                    .collect();
+                
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query_lower,
+                    false,
+                    false,
+                    100,
+                    &Default::default(),
+                    cx.background_executor().clone(),
+                )
+                .await;
+                
+                matches
+                    .into_iter()
+                    .map(|m| (items[m.candidate_id].clone(), m.positions))
+                    .collect()
+            };
+            
+            picker.update_in(cx, |picker, _window, cx| {
+                let delegate = &mut picker.delegate;
+                
+                let did_cancel = cancel_flag.load(Ordering::Acquire);
+                if search_id >= delegate.latest_search_id && !did_cancel {
+                    delegate.latest_search_id = search_id;
+                    
+                    let buffer_snapshot = multibuffer.as_singleton();
+                    
+                    // Convert filtered items to Symbol matches
+                    delegate.matches = filtered_items
+                        .into_iter()
+                        .filter_map(|(item, match_positions)| {
+                            let buffer_snapshot = buffer_snapshot.as_ref()?;
+                            let file_path = file_path.as_ref()?;
+                            
+                            // Convert anchor range to PointUtf16
+                            let start_point = item.range.start.to_point_utf16(buffer_snapshot);
+                            let end_point = item.range.end.to_point_utf16(buffer_snapshot);
+                            
+                            // Get worktree_id from project
+                            let worktree_id = project.read(cx)
+                                .worktrees(cx)
+                                .next()?
+                                .read(cx)
+                                .id();
+                            
+                            // Create a Symbol from the outline item
+                            let symbol = project::Symbol {
+                                language_server_name: language::LanguageServerName(SharedString::from("outline")),
+                                source_worktree_id: worktree_id,
+                                source_language_server_id: language::LanguageServerId(0),
+                                path: project::lsp_store::SymbolLocation::InProject(ProjectPath {
+                                    worktree_id,
+                                    path: file_path.clone(),
+                                }),
+                                label: language::CodeLabel {
+                                    text: item.text.clone(),
+                                    runs: Vec::new(),
+                                    filter_range: 0..item.text.len(),
+                                },
+                                name: item.text.clone(),
+                                kind: lsp::SymbolKind::FUNCTION,
+                                range: Unclipped(start_point)..Unclipped(end_point),
+                                container_name: None,
+                            };
+                            Some(Match::Symbol(SymbolMatch { 
+                                symbol,
+                                highlight_ranges: item.highlight_ranges.clone(),
+                                match_positions,
+                            }))
+                        })
+                        .collect();
+                    
+                    delegate.selected_index = 0;
+                    cx.notify();
+                }
+            }).ok();
+        }).detach();
+    }
+}
+
+impl PickerDelegate for UnifiedPaletteDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix;
+        
+        // For outline mode, navigate to the symbol as you move through the list
+        if self.mode == PaletteMode::Outline {
+            if let Some(Match::Symbol(symbol_match)) = self.matches.get(ix) {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(active_item) = workspace.active_item(cx) {
+                            if let Some(editor) = active_item.downcast::<editor::Editor>() {
+                                let symbol = &symbol_match.symbol;
+                                let position = symbol.range.start.0;
+                                
+                                editor.update(cx, |editor, cx| {
+                                    // Move selection to the symbol with autoscroll
+                                    editor.change_selections(
+                                        editor::SelectionEffects::scroll(editor::scroll::Autoscroll::center()),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges([position..position]),
+                                    );
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        match self.mode {
+            PaletteMode::FileFinder => "Go to file...".into(),
+            PaletteMode::CommandPalette => "Execute a command...".into(),
+            PaletteMode::ProjectSymbols => "Go to symbol...".into(),
+            PaletteMode::Outline => "Go to symbol in editor...".into(),
+            PaletteMode::GoToLine => "Go to line...".into(),
+        }
+    }
+
+    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
+        // Store the raw query
+        self.last_query = query.clone();
+        
+        // Detect mode from prefix
+        let (new_mode, stripped_query) = if let Some(detected_mode) = detect_mode_from_query(&query) {
+            let stripped = query.chars().skip(1).collect::<String>();
+            (detected_mode, stripped)
+        } else {
+            (PaletteMode::FileFinder, query.clone())
+        };
+        
+        // Switch mode if changed
+        if new_mode != self.mode {
+            self.mode = new_mode;
+            self.matches.clear();
+            // Cancel any pending searches when mode changes
+            self.cancel_flag.store(true, Ordering::Release);
+            cx.notify();
+        }
+        
+        // Search based on mode
+        match self.mode {
+            PaletteMode::FileFinder => {
+                self.search_files(&stripped_query, window, cx)
+            }
+            PaletteMode::CommandPalette => {
+                self.search_commands(&stripped_query, window, cx)
+            }
+            PaletteMode::GoToLine => {
+                self.search_line(&stripped_query, cx);
+                cx.notify();
+                Task::ready(())
+            }
+            PaletteMode::ProjectSymbols => {
+                self.search_project_symbols(&stripped_query, window, cx);
+                Task::ready(())
+            }
+            PaletteMode::Outline => {
+                self.search_outline(&stripped_query, window, cx);
+                cx.notify();
+                Task::ready(())
+            }
+        }
+    }
+
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        // Don't confirm if there are no matches
+        let Some(selected_match) = self.matches.get(self.selected_index).cloned() else {
+            return;
+        };
+        
+        let Some(workspace) = self.workspace.upgrade() else {
+            self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            return;
+        };
+        
+        match selected_match {
+            Match::File(file_match) => {
+                let project_path = ProjectPath {
+                    worktree_id: file_match.worktree_id,
+                    path: file_match.path.clone(),
+                };
+                
+                // Update workspace file history
+                workspace.update(cx, |workspace, _cx| {
+                    workspace.add_to_file_history(project_path.clone());
+                });
+                
+                // Also update delegate's local copy
+                self.file_history.retain(|p| p != &project_path);
+                self.file_history.insert(0, project_path.clone());
+                self.file_history.truncate(10);
+                
+                let row = file_match.row;
+                let column = file_match.column;
+                
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    let allow_preview = workspace::PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+                    if secondary {
+                        workspace.split_path_preview(project_path, allow_preview, None, window, cx)
+                    } else {
+                        workspace.open_path_preview(project_path, None, true, allow_preview, true, window, cx)
+                    }
+                });
+                
+                let palette = self.unified_palette.clone();
+                cx.spawn_in(window, async move |_, cx| {
+                    let item = open_task.await.log_err();
+                    
+                    // Navigate to line/column if specified
+                    if let Some(row) = row
+                        && let Some(item) = item
+                        && let Some(editor) = item.downcast::<editor::Editor>()
+                    {
+                        editor.downgrade().update_in(cx, |editor, window, cx| {
+                            let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                                return;
+                            };
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let row = row.saturating_sub(1);
+                            let col = column.unwrap_or(0);
+                            let point = buffer_snapshot.point_from_external_input(row, col);
+                            editor.go_to_singleton_buffer_point(point, window, cx);
+                        }).log_err();
+                    }
+                    
+                    palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                }).detach();
+            }
+            Match::Command(command_match) => {
+                window.dispatch_action(command_match.action.as_ref().boxed_clone(), cx);
+                self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            }
+            Match::Line(line_match) => {
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(active_item) = workspace.active_item(cx) {
+                        if let Some(editor) = active_item.downcast::<editor::Editor>() {
+                            editor.update(cx, |editor, cx| {
+                                let point = language::Point::new(line_match.line_number.saturating_sub(1), 0);
+                                editor.change_selections(
+                                    editor::SelectionEffects::default(),
+                                    window,
+                                    cx,
+                                    |s| {
+                                        s.select_ranges([point..point]);
+                                    },
+                                );
+                            });
+                        }
+                    }
+                });
+                self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            }
+            Match::Symbol(symbol_match) => {
+                // Check if this is an outline symbol (from current file)
+                if self.mode == PaletteMode::Outline {
+                    // For outline mode, navigate within the current editor
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(active_item) = workspace.active_item(cx) {
+                            if let Some(editor) = active_item.downcast::<editor::Editor>() {
+                                let symbol = &symbol_match.symbol;
+                                let position = symbol.range.start.0; // Unwrap Unclipped
+                                
+                                editor.update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        editor::SelectionEffects::scroll(editor::scroll::Autoscroll::center()),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges([position..position]),
+                                    );
+                                });
+                            }
+                        }
+                    });
+                    self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+                } else {
+                    // For project symbols, open the buffer and navigate
+                    let symbol = symbol_match.symbol.clone();
+                    let buffer = self.project.update(cx, |project, cx| {
+                        project.open_buffer_for_symbol(&symbol, cx)
+                    });
+                    
+                    let workspace = self.workspace.clone();
+                    let palette = self.unified_palette.clone();
+                    
+                    cx.spawn_in(window, async move |_, cx| {
+                        let buffer = buffer.await.log_err()?;
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            let position = buffer
+                                .read(cx)
+                                .clip_point_utf16(symbol.range.start, editor::Bias::Left);
+                            
+                            let pane = if secondary {
+                                workspace.adjacent_pane(window, cx)
+                            } else {
+                                workspace.active_pane().clone()
+                            };
+                            
+                            let editor = workspace.open_project_item::<editor::Editor>(
+                                pane, buffer, true, true, true, true, window, cx,
+                            );
+                            
+                            editor.update(cx, |editor, cx| {
+                                let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
+                                    return;
+                                };
+                                let text_anchor = buffer_snapshot.anchor_before(position);
+                                let Some(anchor) = multibuffer_snapshot.anchor_in_buffer(text_anchor) else {
+                                    return;
+                                };
+                                editor.change_selections(
+                                    editor::SelectionEffects::scroll(editor::scroll::Autoscroll::center()),
+                                    window,
+                                    cx,
+                                    |s| s.select_ranges([anchor..anchor]),
+                                );
+                            });
+                        }).log_err();
+                        
+                        palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                        Some(())
+                    }).detach();
+                }
+            }
+        }
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
+        // Modal dismissed
+    }
+
+    fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
+        let match_item = self.matches.get(ix)?;
+        
+        match match_item {
+            Match::File(m) => self.render_file_match(ix, selected, m, cx),
+            Match::Command(m) => self.render_command_match(ix, selected, m, cx),
+            Match::Line(m) => self.render_line_match(ix, selected, m, cx),
+            Match::Symbol(m) if self.mode == PaletteMode::Outline => 
+                self.render_outline_match(ix, selected, m, cx),
+            Match::Symbol(m) => self.render_project_symbol_match(ix, selected, m, cx),
+        }
+    }
+}
+
+impl UnifiedPaletteDelegate {
+    fn render_file_match(&self, ix: usize, selected: bool, file_match: &FileMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        use std::path::Path;
+        let path = Path::new(&file_match.display_path);
+        let icon = FileIcons::get_icon(path, cx)
+            .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted));
+        
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .start_slot::<Icon>(icon)
+                .child(
+                    ui::HighlightedLabel::new(
+                        file_match.display_path.clone(),
+                        file_match.match_positions.clone()
+                    )
+                )
+        )
+    }
+
+    fn render_command_match(&self, ix: usize, selected: bool, command_match: &CommandMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .child(
+                            ui::HighlightedLabel::new(
+                                command_match.name.clone(),
+                                command_match.match_positions.clone()
+                            )
+                        )
+                        .child(ui::KeyBinding::for_action_in(
+                            &*command_match.action,
+                            &self.focus_handle,
+                            cx,
+                        ))
+                )
+        )
+    }
+
+    fn render_line_match(&self, ix: usize, selected: bool, line_match: &LineMatch, _cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(Label::new(format!("Go to line {}", line_match.line_number)))
+        )
+    }
+
+    fn render_outline_match(&self, ix: usize, selected: bool, symbol_match: &SymbolMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        use gpui::{StyledText, HighlightStyle, TextStyle, relative};
+        use theme_settings::ThemeSettings;
+        
+        let highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
+            ..Default::default()
+        };
+        let custom_highlights = symbol_match.match_positions
+            .windows(2)
+            .map(|w| (w[0]..w[1], highlight_style));
+
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(1.),
+            ..Default::default()
+        };
+        
+        let highlights = gpui::combine_highlights(
+            custom_highlights,
+            symbol_match.highlight_ranges.iter().cloned(),
+        );
+        
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    StyledText::new(symbol_match.symbol.label.text.clone())
+                        .with_default_highlights(&text_style, highlights)
+                )
+        )
+    }
+
+    fn render_project_symbol_match(&self, ix: usize, selected: bool, symbol_match: &SymbolMatch, _cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        let symbol = &symbol_match.symbol;
+        
+        let path = match &symbol.path {
+            project::lsp_store::SymbolLocation::InProject(path) => {
+                format!("{:?}", path.path).trim_matches('"').to_string()
+            }
+            project::lsp_store::SymbolLocation::OutsideProject { abs_path, .. } => {
+                abs_path.display().to_string()
+            }
+        };
+        
+        // Truncate long paths with middle elision
+        let display_path = if path.len() > 60 {
+            let start = &path[..25];
+            let end = &path[path.len().saturating_sub(30)..];
+            format!("{}...{}", start, end)
+        } else {
+            path
+        };
+        
+        let line_number = symbol.range.start.0.row + 1;
+        
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    v_flex()
+                        .child(Label::new(symbol.label.text.clone()))
+                        .child(
+                            h_flex()
+                                .child(Label::new(display_path).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(":{}", line_number))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder)
+                                )
+                        )
+                )
+        )
+    }
+}
+
+impl EventEmitter<DismissEvent> for UnifiedPalette {}
+impl ModalView for UnifiedPalette {}
+
+impl Focusable for UnifiedPalette {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.read(cx).focus_handle(cx)
+    }
+}
+
+impl Render for UnifiedPalette {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .min_w(rems(34.))
+            .child(self.picker.clone())
+    }
+}
+
+// Helper functions
+pub fn detect_mode_from_query(query: &str) -> Option<PaletteMode> {
+    if query.starts_with('>') {
+        Some(PaletteMode::CommandPalette)
+    } else if query.starts_with('#') {
+        Some(PaletteMode::ProjectSymbols)
+    } else if query.starts_with('@') {
+        Some(PaletteMode::Outline)
+    } else if query.starts_with(':') {
+        Some(PaletteMode::GoToLine)
+    } else {
+        None
+    }
+}
+
+pub fn is_mode_available(mode: PaletteMode, has_active_editor: bool) -> bool {
+    match mode {
+        PaletteMode::Outline | PaletteMode::GoToLine => has_active_editor,
+        _ => true,
+    }
+}

@@ -251,7 +251,7 @@ members = [
 
     "tooling/compliance",
     "tooling/perf",
-    "tooling/xtask",
+    "tooling/xtask", "crates/unified_palette",
 ]
 default-members = ["crates/zed"]
 
@@ -333,6 +333,7 @@ feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
+unified_palette = { path = "crates/unified_palette" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fuzzy = { path = "crates/fuzzy" }
