@@ -298,6 +298,12 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    /// Whether thinking can be turned off entirely for this model, allowing
+    /// clients to offer an "off" choice alongside `supported_effort_levels`.
+    /// Some models (e.g. Claude Fable 5) always think and cannot honor an
+    /// "off" request. Only meaningful when `supports_thinking` is `true`.
+    #[serde(default)]
+    pub supports_disabling_thinking: bool,
     #[serde(default)]
     pub supports_fast_mode: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,

@@ -69,6 +69,10 @@ impl MessageQueue {
         self.entries.front().map(|entry| entry.id)
     }
 
+    pub fn last_id(&self) -> Option<QueueEntryId> {
+        self.entries.back().map(|entry| entry.id)
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &QueueEntry> {
         self.entries.iter()
     }

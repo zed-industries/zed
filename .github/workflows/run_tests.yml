@@ -399,7 +399,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:15
+        image: postgres:15@sha256:1b92e7a80c021647bf70f5d3eb66066a998e4f5cf43c07bb9dc9f729782cf88e
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -794,12 +794,12 @@ jobs:
           echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
         fi
     - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_setup_action
-      uses: bufbuild/buf-setup-action@v1
+      uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99
       with:
         version: v1.29.0
         github_token: ${{ secrets.GITHUB_TOKEN }}
     - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
-      uses: bufbuild/buf-breaking-action@v1
+      uses: bufbuild/buf-breaking-action@c57b3d842a5c3f3b454756ef65305a50a587c5ba
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/

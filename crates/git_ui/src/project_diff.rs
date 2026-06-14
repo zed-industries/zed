@@ -836,7 +836,6 @@ impl ProjectDiff {
                     );
                 }
                 buffer_diff::BufferDiffEvent::BaseTextChanged
-                | buffer_diff::BufferDiffEvent::LanguageChanged
                 | buffer_diff::BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
             }
         });

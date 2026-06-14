@@ -27,7 +27,8 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
+    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, get_prefill,
+    parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -309,7 +310,27 @@ pub fn request_prediction_with_zeta(
                 cursor_offset_in_new_editable_region: cursor_offset_in_output,
             }) = output
             else {
-                return Ok((Some((request_id, None, model_version)), None));
+                let editable_range_in_excerpt =
+                    excerpt_range_for_format(zeta_format, &prompt_input.excerpt_ranges).0;
+                let editable_range_in_buffer = editable_range_in_excerpt.start
+                    + full_context_offset_range.start
+                    ..editable_range_in_excerpt.end + full_context_offset_range.start;
+
+                return Ok((
+                    Some((
+                        request_id,
+                        Some(Prediction {
+                            prompt_input,
+                            buffer,
+                            snapshot: snapshot.clone(),
+                            edits: Vec::new(),
+                            cursor_position: None,
+                            editable_range_in_buffer,
+                        }),
+                        model_version,
+                    )),
+                    usage,
+                ));
             };
 
             let editable_range_in_buffer = editable_range_in_excerpt.start
@@ -381,6 +402,7 @@ pub fn request_prediction_with_zeta(
             return Ok(Some(EditPredictionResult {
                 id,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                display_prediction: None,
                 model_version,
                 e2e_latency: request_duration,
             }));
@@ -395,6 +417,7 @@ pub fn request_prediction_with_zeta(
             Some(edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer.clone())),
             inputs,
             model_version,
+            trigger,
             request_duration,
             cx,
         )
