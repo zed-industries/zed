@@ -1,15 +1,14 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, ImageSource,
-    RenderImage, StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
+    StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use ui::CopyButton;
-use ui::prelude::*;
+use ui::{CopyButton, TintColor, prelude::*};
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
@@ -340,9 +339,7 @@ pub(crate) fn render_mermaid_diagram(
                         img(ImageSource::Render(render_image.clone()))
                             .max_w_full()
                             .with_fallback(|| {
-                                div()
-                                    .child(Label::new("Failed to load mermaid diagram"))
-                                    .into_any_element()
+                                Label::new("Failed to Load Mermaid Diagram").into_any_element()
                             }),
                     )
                     .into_any_element()
@@ -452,58 +449,41 @@ fn render_mermaid_tab_header(
 
     h_flex()
         .gap_0p5()
-        .p_0p5()
-        .mb_1()
-        .child(render_mermaid_tab_button(
-            "Preview",
-            source_offset,
-            !showing_code,
-            move |_event, _window, cx| {
+        .mb_2p5()
+        .child(
+            Button::new(
+                ElementId::named_usize("mermaid-tab-preview", source_offset),
+                "Preview",
+            )
+            .label_size(LabelSize::Small)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .toggle_state(!showing_code)
+            .on_click(move |_event, _window, cx| {
                 preview_markdown.update(cx, |md, cx| {
                     if md.is_mermaid_showing_code(source_offset) {
                         md.toggle_mermaid_tab(source_offset);
                         cx.notify();
                     }
                 });
-            },
-        ))
-        .child(render_mermaid_tab_button(
-            "Code",
-            source_offset,
-            showing_code,
-            move |_event, _window, cx| {
+            }),
+        )
+        .child(
+            Button::new(
+                ElementId::named_usize("mermaid-tab-code", source_offset),
+                "Code",
+            )
+            .label_size(LabelSize::Small)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .toggle_state(showing_code)
+            .on_click(move |_event, _window, cx| {
                 code_markdown.update(cx, |md, cx| {
                     if !md.is_mermaid_showing_code(source_offset) {
                         md.toggle_mermaid_tab(source_offset);
                         cx.notify();
                     }
                 });
-            },
-        ))
-}
-
-fn render_mermaid_tab_button(
-    label: &'static str,
-    source_offset: usize,
-    is_selected: bool,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(ElementId::named_usize(
-            SharedString::from(format!("mermaid-tab-{label}")),
-            source_offset,
-        ))
-        .cursor_pointer()
-        .px_1p5()
-        .py_0p5()
-        .rounded_md()
-        .text_size(rems(0.75))
-        .when(is_selected, |this| this.bg(gpui::hsla(0., 0., 0.5, 0.15)))
-        .when(!is_selected, |this| {
-            this.hover(|this| this.bg(gpui::hsla(0., 0., 0.5, 0.08)))
-        })
-        .child(label)
-        .on_click(on_click)
+            }),
+        )
 }
 
 fn render_mermaid_copy_button(
@@ -513,33 +493,30 @@ fn render_mermaid_copy_button(
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-mermaid-code", source_offset);
 
-    h_flex()
-        .w_4()
-        .absolute()
-        .top_0()
-        .right_0()
-        .justify_end()
-        .visible_on_hover("code_block")
-        .child(CopyButton::new(id.clone(), code.clone()).custom_on_click({
-            move |_window, cx| {
-                let id = id.clone();
-                markdown.update(cx, |this, cx| {
-                    this.copied_code_blocks.insert(id.clone());
-                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(Duration::from_secs(2)).await;
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.copied_code_blocks.remove(&id);
-                                cx.notify();
+    div().absolute().top_1().right_1().justify_end().child(
+        CopyButton::new(id.clone(), code.clone())
+            .visible_on_hover("code_block")
+            .custom_on_click({
+                move |_window, cx| {
+                    let id = id.clone();
+                    markdown.update(cx, |this, cx| {
+                        this.copied_code_blocks.insert(id.clone());
+                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.copied_code_blocks.remove(&id);
+                                    cx.notify();
+                                })
                             })
+                            .ok();
                         })
-                        .ok();
-                    })
-                    .detach();
-                });
-            }
-        }))
+                        .detach();
+                    });
+                }
+            }),
+    )
 }
 
 fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {

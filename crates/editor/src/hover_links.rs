@@ -409,6 +409,11 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
+    // Record the requested position so a mouse move on the same point short-circuits
+    // instead of re-querying, even when the server returns no `originSelectionRange`
+    // (which would otherwise leave `symbol_range` empty).
+    hovered_link_state.last_trigger_point = trigger_point.clone();
+
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             // LSP document links take priority: the server explicitly
@@ -568,6 +573,16 @@ pub fn show_link_definition(
                                 }
                             });
 
+                        // When the server reports no `originSelectionRange`, fall back
+                        // to the highlighted word as the symbol range so that hovering
+                        // elsewhere within the same symbol reuses this result instead
+                        // of issuing another request.
+                        if let Some(hovered_link_state) = editor.hovered_link_state.as_mut()
+                            && hovered_link_state.symbol_range.is_none()
+                        {
+                            hovered_link_state.symbol_range = Some(highlight_range.clone());
+                        }
+
                         match highlight_range {
                             RangeInEditor::Text(text_range) => editor.highlight_text(
                                 HighlightKey::HoveredLinkState,
@@ -600,7 +615,11 @@ pub fn show_link_definition(
                         cx,
                     );
                 } else {
-                    editor.hide_hovered_link(cx);
+                    // When no links are found, we don't want to completely
+                    // throw away the `HoveredLinkState`, we'll want to at least
+                    // keep the `trigger_point` around in order to avoid sending
+                    // multiple requests for the same point.
+                    hovered_link_state.links.clear();
                 }
             })?;
 
@@ -1066,6 +1085,8 @@ mod tests {
     use multi_buffer::MultiBufferOffset;
     use settings::InlayHintSettingsContent;
     use std::str::FromStr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 
@@ -1236,6 +1257,132 @@ mod tests {
             struct «Aˇ»;
             let variable = A;
         "});
+    }
+
+    #[gpui::test]
+    async fn test_go_to_definition_link_dedup(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn ˇtest() { do_work(); }
+            fn do_work() { test(); }
+        "});
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let _requests = cx.set_request_handler::<GotoDefinition, _, _>({
+            let request_count = request_count.clone();
+            move |url, _, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    // Return a bare `Location`, not an `originSelectionRange`
+                    // so we can confirm that jiggling the mouse within the same
+                    // symbol range does not trigger a second request, even
+                    // though `originSelectionRange` was not returned.
+                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                        uri: url,
+                        range: lsp::Range::default(),
+                    })))
+                }
+            }
+        });
+
+        let symbol_start = cx.pixel_position(indoc! {"
+            fn test() { ˇdo_work(); }
+            fn do_work() { test(); }
+        "});
+        let symbol_end = cx.pixel_position(indoc! {"
+            fn test() { do_worˇk(); }
+            fn do_work() { test(); }
+        "});
+        let other_symbol = cx.pixel_position(indoc! {"
+            fn test() { do_work(); }
+            fn do_work() { teˇst(); }
+        "});
+
+        cx.simulate_mouse_move(symbol_start, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(symbol_end, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(other_symbol, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            2,
+            "expected one request per symbol, reused within a symbol"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_go_to_definition_link_dedup_no_link(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn ˇtest() { do_work(); }
+            fn do_work() { test(); }
+        "});
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let _requests = cx.set_request_handler::<GotoDefinition, _, _>({
+            let request_count = request_count.clone();
+
+            move |_, _, _| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+
+                // Simulate response from the language server, reporting
+                // that no link was found.
+                async move { Ok(None) }
+            }
+        });
+
+        let first_point = cx.pixel_position(indoc! {"
+            fn test() { do_wˇork(); }
+            fn do_work() { test(); }
+        "});
+        let second_point = cx.pixel_position(indoc! {"
+            fn test() { do_woˇrk(); }
+            fn do_work() { test(); }
+        "});
+
+        cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        // Jiggle within the same character should not produce a new request,
+        // even though the previous response was empty and produced no link to
+        // highlight.
+        cx.simulate_mouse_move(second_point, None, Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            2,
+            "expected one definition request per distinct position"
+        );
     }
 
     #[gpui::test]

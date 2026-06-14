@@ -398,6 +398,15 @@ actions!(
 );
 
 actions!(
+    markdown,
+    [
+        /// Toggles a block quote (`> `) prefix on the selected lines (or the
+        /// current line) while in Markdown files.
+        ToggleBlockQuote,
+    ]
+);
+
+actions!(
     editor,
     [
         /// Accepts the full edit prediction.
@@ -764,6 +773,8 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects inside the innermost enclosing bracket pair.
+        SelectInsideEnclosingBracket,
         /// Selects to the start of the next larger syntax node.
         SelectToStartOfLargerSyntaxNode,
         /// Selects to the end of the next larger syntax node.

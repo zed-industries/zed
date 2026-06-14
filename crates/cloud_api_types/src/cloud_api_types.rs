@@ -77,10 +77,9 @@ pub struct AcceptTermsOfServiceResponse {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct LlmToken(pub String);
 
-#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CreateLlmTokenBody {
-    #[serde(default)]
-    pub organization_id: Option<OrganizationId>,
+    pub organization_id: OrganizationId,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -155,6 +154,8 @@ pub struct SubmitEditPredictionJumpExampleBody {
     pub trigger: JumpExampleTrigger,
     pub repository_url: Option<String>,
     pub revision: Option<String>,
+    /// Note: this is only the uncommitted diff for files in `edit_history`
+    /// This is done to avoid excessive memory usage
     pub uncommitted_diff: Option<String>,
     pub recently_opened_files: Vec<JumpExampleRecentFile>,
     pub recently_viewed_files: Vec<JumpExampleRecentFile>,

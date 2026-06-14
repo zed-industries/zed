@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap, btree_map, hash_map};
+use collections::{BTreeMap, HashMap, TypeIdHashMap, btree_map, hash_map};
 use fs::Fs;
 use futures::{
     FutureExt, StreamExt,
@@ -143,7 +143,7 @@ pub struct SettingsLocation<'a> {
 }
 
 pub struct SettingsStore {
-    setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
+    setting_values: TypeIdHashMap<Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
     user_settings: Option<UserSettingsContent>,
     global_settings: Option<Box<SettingsContent>>,
@@ -286,8 +286,16 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        Self::new_with_semantic_tokens(cx, default_settings)
+    }
+
+    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let default_settings = Self::parse_default_settings(default_settings).unwrap();
+        Self::from_settings_content(cx, default_settings)
+    }
+
+    fn from_settings_content(cx: &mut App, default_settings: SettingsContent) -> Self {
+        let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         if !cx.has_global::<DefaultSemanticTokenRules>() {
             cx.set_global::<DefaultSemanticTokenRules>(
                 crate::parse_json_with_comments::<SemanticTokenRules>(
@@ -504,7 +512,11 @@ impl SettingsStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Self {
-        Self::new(cx, &crate::test_settings())
+        static CACHED_SETTINGS_CONTENT: std::sync::LazyLock<SettingsContent> =
+            std::sync::LazyLock::new(|| {
+                SettingsContent::parse_json_with_comments(crate::test_settings()).unwrap()
+            });
+        Self::from_settings_content(cx, CACHED_SETTINGS_CONTENT.clone())
     }
 
     /// Updates the value of a setting in the user's global configuration.
@@ -1157,10 +1169,10 @@ impl SettingsStore {
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, &ProjectSettingsContent)> {
         self.local_settings
             .range(
-                (root_id, RelPath::empty().into())
+                (root_id, RelPath::empty_arc())
                     ..(
                         WorktreeId::from_usize(root_id.to_usize() + 1),
-                        RelPath::empty().into(),
+                        RelPath::empty_arc(),
                     ),
             )
             .map(|((_, path), content)| (path.clone(), &content.project))
@@ -2554,7 +2566,7 @@ mod tests {
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
             .unwrap();
-        let local = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local = (WorktreeId::from_usize(0), RelPath::empty_arc());
         store
             .set_local_settings(
                 local.0,
@@ -2614,7 +2626,7 @@ mod tests {
         store.register_setting::<DefaultLanguageSettings>();
         store.register_setting::<AutoUpdateSetting>();
 
-        let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let local_1 = (WorktreeId::from_usize(0), RelPath::empty_arc());
 
         let local_1_child = (
             WorktreeId::from_usize(0),
@@ -2626,7 +2638,7 @@ mod tests {
             .into_arc(),
         );
 
-        let local_2 = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let local_2 = (WorktreeId::from_usize(1), RelPath::empty_arc());
         let local_2_child = (
             WorktreeId::from_usize(1),
             RelPath::new(
@@ -2747,11 +2759,11 @@ mod tests {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
 
-        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty_arc());
         let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
         let wt0_child2 = (WorktreeId::from_usize(0), rel_path("child2").into_arc());
 
-        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty_arc());
         let wt1_subdir = (WorktreeId::from_usize(1), rel_path("subdir").into_arc());
 
         fn get(content: &SettingsContent) -> &Option<u32> {
@@ -2869,15 +2881,13 @@ mod tests {
 
     #[test]
     fn test_file_ord() {
-        let wt0_root =
-            SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty().into_arc()));
+        let wt0_root = SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty_arc()));
         let wt0_child1 =
             SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child1").into_arc()));
         let wt0_child2 =
             SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child2").into_arc()));
 
-        let wt1_root =
-            SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty().into_arc()));
+        let wt1_root = SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty_arc()));
         let wt1_subdir =
             SettingsFile::Project((WorktreeId::from_usize(1), rel_path("subdir").into_arc()));
 
