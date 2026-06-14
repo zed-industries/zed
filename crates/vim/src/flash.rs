@@ -588,11 +588,17 @@ impl Vim {
         });
 
         // Matches keep the label they had on the previous keystroke when
-        // possible, so labels don't shuffle while the user types.
+        // possible, so labels don't shuffle while the user types. Like
+        // flash.nvim's default `label.reuse = "lowercase"`, only lowercase
+        // labels are reused: an uppercase label is only handed out when there
+        // are more matches than the lowercase alphabet, so once the pattern
+        // narrows we drop it and let the match reclaim a freed-up lowercase
+        // label rather than forcing the user to press shift.
         let mut available = allowed_labels;
         let mut assignments = vec![None; ordered.len()];
         for (slot, match_index) in ordered.iter().enumerate() {
             if let Some(previous) = previous_labels.get(&matches[*match_index].range.start)
+                && previous.is_ascii_lowercase()
                 && let Some(position) = available.iter().position(|label| label == previous)
             {
                 assignments[slot] = Some(available.remove(position));
@@ -872,6 +878,42 @@ mod test {
         assert_eq!(
             first_round, second_round,
             "expected the match to keep its label as the pattern grows"
+        );
+
+        cx.simulate_keystrokes("escape");
+    }
+
+    #[gpui::test]
+    async fn test_flash_jump_drops_uppercase_labels_as_pattern_narrows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_flash(&mut cx);
+
+        // More "x" matches than the lowercase alphabet forces uppercase labels.
+        // Only the last match is followed by "y", so narrowing to "xy" leaves a
+        // single match that should reclaim a lowercase label instead of keeping
+        // the uppercase one it was given while the pattern was just "x".
+        let prefix = (0..FLASH_JUMP_LOWERCASE_ALPHABET.len())
+            .map(|_| "x")
+            .collect::<Vec<_>>()
+            .join(" ");
+        cx.set_state(&format!("ˇ{prefix} xy"), Mode::Normal);
+
+        cx.simulate_keystrokes("s x");
+        let target_offset = prefix.len() + " ".len();
+        assert!(
+            flash_label_at(&mut cx, target_offset)
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase()),
+            "expected an uppercase label once the lowercase alphabet is exhausted"
+        );
+
+        cx.simulate_keystrokes("y");
+        let narrowed = flash_label_at(&mut cx, target_offset);
+        assert!(
+            narrowed.chars().all(|ch| ch.is_ascii_lowercase()),
+            "expected the remaining match to take a lowercase label after narrowing, got {narrowed:?}"
         );
 
         cx.simulate_keystrokes("escape");
