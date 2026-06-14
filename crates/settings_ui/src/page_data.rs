@@ -5585,6 +5585,7 @@ fn panels_page() -> SettingsPage {
                 title: "Starts Open",
                 description: "Whether the terminal panel should open on startup.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("terminal.starts_open"),
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.starts_open.as_ref()
@@ -5893,6 +5894,7 @@ fn panels_page() -> SettingsPage {
                 title: "Starts Open",
                 description: "Whether the git panel should open on startup.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("git_panel.starts_open"),
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.starts_open.as_ref()
