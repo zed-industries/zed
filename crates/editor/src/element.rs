@@ -7966,6 +7966,14 @@ impl Element for EditorElement {
                         );
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
 
+                        if let Some(animation) = editor.scroll_manager.update_animation() {
+                            editor.set_scroll_position(animation.position(), window, cx);
+
+                            if animation.is_animating() {
+                                window.request_animation_frame();
+                            }
+                        }
+
                         if matches!(
                             editor.mode,
                             EditorMode::AutoHeight { .. } | EditorMode::Minimap { .. }
