@@ -71,6 +71,79 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// How threads in the agent sidebar's thread list are grouped.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadGroupBy {
+    /// Group threads by the workspace (project group) they belong to.
+    #[default]
+    Workspace,
+    /// Group threads by when they were last updated (Today, Yesterday, This
+    /// Week, etc.). This matches the dedicated thread history view.
+    Updated,
+    /// Group threads by their current status (running, waiting, completed,
+    /// etc.).
+    Status,
+}
+
+/// A status category the agent sidebar's thread list can be filtered to (see
+/// the "Filter by" menu). Multiple may be active at once.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadStatusFilter {
+    /// Threads that are currently running.
+    Running,
+    /// Threads waiting on the user (e.g. tool confirmation).
+    NeedsAttention,
+    /// Threads that have finished.
+    Completed,
+    /// Threads that ended in an error.
+    Error,
+}
+
+/// A thread source the agent sidebar's thread list can be filtered to (see the
+/// "Filter by" menu). Multiple may be active at once.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadSourceFilter {
+    /// Threads created by the built-in Zed agent.
+    Zed,
+    /// Threads created by external agents.
+    External,
+}
+
+/// Persisted state of the agent sidebar's "Filter by" menu. An empty (or
+/// missing) list for a category means that category is not filtered.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadFilterSettingsContent {
+    /// Restrict the thread list to threads matching any of these statuses.
+    ///
+    /// Default: []
+    pub status: Option<Vec<ThreadStatusFilter>>,
+    /// Restrict the thread list to threads from any of these sources.
+    ///
+    /// Default: []
+    pub source: Option<Vec<ThreadSourceFilter>>,
+}
+
 /// Threshold at which agent auto-compaction runs. See
 /// [`AutoCompactSettingsContent::threshold`] for the accepted formats.
 ///
@@ -188,6 +261,26 @@ pub struct AutoCompactSettingsContent {
     pub threshold: Option<AutoCompactThreshold>,
 }
 
+/// Controls which metadata is shown for each thread in the agent sidebar's
+/// thread list.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ThreadListDisplaySettingsContent {
+    /// Whether to show each thread's last-updated timestamp.
+    ///
+    /// Default: true
+    pub show_timestamp: Option<bool>,
+    /// Whether to show the git branch / linked-worktree chips for each thread.
+    ///
+    /// Default: true
+    pub show_branch: Option<bool>,
+    /// Whether to show the diff stats (added/removed line counts) for each
+    /// thread.
+    ///
+    /// Default: true
+    pub show_diff_stats: Option<bool>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -211,6 +304,16 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// How threads in the agent sidebar's thread list are grouped.
+    ///
+    /// Default: workspace
+    pub thread_group_by: Option<ThreadGroupBy>,
+    /// Controls which metadata is shown for each thread in the sidebar's
+    /// thread list.
+    pub thread_list_display: Option<ThreadListDisplaySettingsContent>,
+    /// Which threads are shown in the sidebar's thread list (the "Filter by"
+    /// menu). Empty lists mean no filtering is applied.
+    pub thread_filter: Option<ThreadFilterSettingsContent>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -349,6 +452,18 @@ impl AgentSettingsContent {
 
     pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
         self.sidebar_side = Some(position);
+    }
+
+    pub fn set_thread_group_by(&mut self, group_by: ThreadGroupBy) {
+        self.thread_group_by = Some(group_by);
+    }
+
+    pub fn set_thread_status_filter(&mut self, status: Vec<ThreadStatusFilter>) {
+        self.thread_filter.get_or_insert_default().status = Some(status);
+    }
+
+    pub fn set_thread_source_filter(&mut self, source: Vec<ThreadSourceFilter>) {
+        self.thread_filter.get_or_insert_default().source = Some(source);
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {

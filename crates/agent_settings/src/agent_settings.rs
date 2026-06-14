@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ThreadGroupBy,
+    ThreadSourceFilter, ThreadStatusFilter, ToolPermissionMode, update_settings_file,
+    update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -172,6 +173,19 @@ pub struct AutoCompactSettings {
     pub threshold: AutoCompactThreshold,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThreadListDisplaySettings {
+    pub show_timestamp: bool,
+    pub show_branch: bool,
+    pub show_diff_stats: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ThreadFilterSettings {
+    pub status: Vec<ThreadStatusFilter>,
+    pub source: Vec<ThreadSourceFilter>,
+}
+
 fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshold> {
     let trimmed = raw.trim();
     if let Some(percent) = trimmed.strip_suffix('%') {
@@ -208,6 +222,9 @@ pub struct AgentSettings {
     pub dock: DockPosition,
     pub flexible: bool,
     pub sidebar_side: SidebarDockPosition,
+    pub thread_group_by: ThreadGroupBy,
+    pub thread_list_display: ThreadListDisplaySettings,
+    pub thread_filter: ThreadFilterSettings,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -718,6 +735,22 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
+            thread_group_by: agent.thread_group_by.unwrap(),
+            thread_list_display: {
+                let display = agent.thread_list_display.unwrap();
+                ThreadListDisplaySettings {
+                    show_timestamp: display.show_timestamp.unwrap(),
+                    show_branch: display.show_branch.unwrap(),
+                    show_diff_stats: display.show_diff_stats.unwrap(),
+                }
+            },
+            thread_filter: {
+                let filter = agent.thread_filter.unwrap_or_default();
+                ThreadFilterSettings {
+                    status: filter.status.unwrap_or_default(),
+                    source: filter.source.unwrap_or_default(),
+                }
+            },
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
             max_content_width: if agent.limit_content_width.unwrap() {
@@ -1464,6 +1497,79 @@ mod tests {
         let content: ToolPermissionsContent = serde_json::from_value(json_deny).unwrap();
         let permissions = compile_tool_permissions(Some(content));
         assert_eq!(permissions.default, ToolPermissionMode::Deny);
+    }
+
+    #[gpui::test]
+    fn test_thread_list_display_settings(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        // Defaults: every metadata field is shown.
+        let display = AgentSettings::get_global(cx).thread_list_display;
+        assert!(display.show_timestamp);
+        assert!(display.show_branch);
+        assert!(display.show_diff_stats);
+
+        // A user override flips a single field, leaving the others at default.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "thread_list_display": { "show_timestamp": false } } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let display = AgentSettings::get_global(cx).thread_list_display;
+        assert!(!display.show_timestamp);
+        assert!(display.show_branch);
+        assert!(display.show_diff_stats);
+    }
+
+    #[gpui::test]
+    fn test_thread_filter_settings(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        // Defaults: grouping is by workspace and no filters are active.
+        let settings = AgentSettings::get_global(cx);
+        assert_eq!(settings.thread_group_by, ThreadGroupBy::Workspace);
+        assert!(settings.thread_filter.status.is_empty());
+        assert!(settings.thread_filter.source.is_empty());
+
+        // A user override (mirroring what the "Group & Filter Threads" menu
+        // writes) persists the grouping and the active filters.
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{
+                        "agent": {
+                            "thread_group_by": "status",
+                            "thread_filter": {
+                                "status": ["running", "needs_attention"],
+                                "source": ["external"]
+                            }
+                        }
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let settings = AgentSettings::get_global(cx);
+        assert_eq!(settings.thread_group_by, ThreadGroupBy::Status);
+        assert_eq!(
+            settings.thread_filter.status,
+            vec![ThreadStatusFilter::Running, ThreadStatusFilter::NeedsAttention]
+        );
+        assert_eq!(
+            settings.thread_filter.source,
+            vec![ThreadSourceFilter::External]
+        );
     }
 
     #[gpui::test]

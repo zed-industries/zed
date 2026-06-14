@@ -22,7 +22,7 @@ use agent_ui::{
     ThreadTitleRegenerationResult, channels_with_threads, import_threads_from_other_channels,
 };
 use agent_ui::{MessageEditorEvent, StateChange, thread_worktree_archive};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
 use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
@@ -46,6 +46,7 @@ use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use settings::{SettingsStore, ThreadGroupBy, ThreadSourceFilter, ThreadStatusFilter};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -104,6 +105,10 @@ const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 
+/// In the workspace grouping mode, each project group shows at most this many
+/// rows before a "See more" row is shown to reveal the rest.
+const GROUP_THREAD_LIMIT: usize = 2;
+
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
     #[default]
@@ -116,6 +121,62 @@ enum SerializedSidebarView {
 enum NewEntryTarget {
     LastCreatedKind,
     Terminal,
+}
+
+/// A toggleable thread-list display option (see the "Display" menu).
+#[derive(Clone, Copy)]
+enum ThreadListDisplayField {
+    Timestamp,
+    Branch,
+    DiffStats,
+}
+
+const ALL_STATUS_FILTERS: &[ThreadStatusFilter] = &[
+    ThreadStatusFilter::Running,
+    ThreadStatusFilter::NeedsAttention,
+    ThreadStatusFilter::Completed,
+    ThreadStatusFilter::Error,
+];
+
+const ALL_SOURCE_FILTERS: &[ThreadSourceFilter] =
+    &[ThreadSourceFilter::Zed, ThreadSourceFilter::External];
+
+/// Reads the persisted status filters from settings into the in-memory set used
+/// for rendering and filtering.
+fn status_filter_from_settings(cx: &App) -> HashSet<ThreadStatusFilter> {
+    AgentSettings::get_global(cx)
+        .thread_filter
+        .status
+        .iter()
+        .copied()
+        .collect()
+}
+
+/// Reads the persisted source filters from settings into the in-memory set used
+/// for rendering and filtering.
+fn source_filter_from_settings(cx: &App) -> HashSet<ThreadSourceFilter> {
+    AgentSettings::get_global(cx)
+        .thread_filter
+        .source
+        .iter()
+        .copied()
+        .collect()
+}
+
+fn thread_status_filter_label(filter: ThreadStatusFilter) -> &'static str {
+    match filter {
+        ThreadStatusFilter::Running => "Running",
+        ThreadStatusFilter::NeedsAttention => "Needs Attention",
+        ThreadStatusFilter::Completed => "Completed",
+        ThreadStatusFilter::Error => "Error",
+    }
+}
+
+fn thread_source_filter_label(filter: ThreadSourceFilter) -> &'static str {
+    match filter {
+        ThreadSourceFilter::Zed => "Zed Agent",
+        ThreadSourceFilter::External => "External Agents",
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -399,6 +460,23 @@ enum ListEntry {
         is_active: bool,
         has_threads: bool,
     },
+    /// A text section header used by the non-workspace grouping modes
+    /// (updated, status, ...). Unlike [`ListEntry::ProjectHeader`]
+    /// this is a lightweight, mode-agnostic header rendered in the
+    /// thread-history style.
+    SectionHeader {
+        /// Stable identifier used to persist this section's collapsed state.
+        id: SharedString,
+        label: SharedString,
+        is_collapsed: bool,
+        has_notifications: bool,
+    },
+    /// A "See more" row shown when a workspace group is truncated to the first
+    /// [`GROUP_THREAD_LIMIT`] rows. Clicking it reveals the rest of the group.
+    SeeMore {
+        key: ProjectGroupKey,
+        hidden_count: usize,
+    },
     Thread(Arc<ThreadEntry>),
     Terminal(TerminalEntry),
 }
@@ -426,7 +504,9 @@ impl ActivatableEntry {
                 metadata: terminal.metadata.clone(),
                 workspace: terminal.workspace.clone(),
             }),
-            ListEntry::ProjectHeader { .. } => None,
+            ListEntry::ProjectHeader { .. }
+            | ListEntry::SectionHeader { .. }
+            | ListEntry::SeeMore { .. } => None,
         }
     }
 
@@ -468,7 +548,10 @@ impl ListEntry {
     fn session_id(&self) -> Option<&acp::SessionId> {
         match self {
             ListEntry::Thread(thread_entry) => thread_entry.metadata.session_id.as_ref(),
-            ListEntry::Terminal(_) | ListEntry::ProjectHeader { .. } => None,
+            ListEntry::Terminal(_)
+            | ListEntry::ProjectHeader { .. }
+            | ListEntry::SectionHeader { .. }
+            | ListEntry::SeeMore { .. } => None,
         }
     }
 
@@ -489,6 +572,8 @@ impl ListEntry {
             ListEntry::ProjectHeader { key, .. } => multi_workspace
                 .workspaces_for_project_group(key, cx)
                 .unwrap_or_default(),
+            ListEntry::SectionHeader { .. } => Vec::new(),
+            ListEntry::SeeMore { .. } => Vec::new(),
         }
     }
 }
@@ -507,7 +592,14 @@ impl From<TerminalEntry> for ListEntry {
 
 #[derive(Default)]
 struct SidebarContents {
+    /// The rendered entries: workspace groups truncated to
+    /// [`GROUP_THREAD_LIMIT`] with "See more" rows. Used for rendering,
+    /// selection, and keyboard navigation.
     entries: Vec<ListEntry>,
+    /// Every entry, untruncated. Used by consumers that must see all threads
+    /// regardless of "See more" truncation (the thread switcher and thread
+    /// cycling).
+    all_entries: Vec<ListEntry>,
     notified_threads: HashSet<agent_ui::ThreadId>,
     notified_terminals: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
@@ -526,6 +618,14 @@ enum EntryShape {
         // Determines whether the "No threads yet" row is rendered (only shown when
         // `!is_collapsed && !has_threads`).
         is_collapsed: bool,
+    },
+    SectionHeader {
+        id: SharedString,
+        is_collapsed: bool,
+    },
+    SeeMore {
+        key: ProjectGroupKey,
+        hidden_count: usize,
     },
     Thread(ThreadId),
     Terminal(TerminalId),
@@ -774,6 +874,20 @@ pub struct Sidebar {
     /// that when a draft that was empty gains content again, we refresh
     /// its interaction time.
     draft_kinds: HashMap<ThreadId, DraftKind>,
+    /// Collapsed state for the text section headers used by the non-workspace
+    /// grouping modes, keyed by [`ListEntry::SectionHeader::id`]. Workspace
+    /// grouping uses the multi-workspace's own per-group collapse state
+    /// instead.
+    collapsed_sections: HashSet<SharedString>,
+    /// Workspace groups the user has expanded past [`GROUP_THREAD_LIMIT`] via
+    /// the "See more" row. Groups not in this set are truncated.
+    groups_showing_all: HashSet<ProjectGroupKey>,
+    /// Active status filters (see the "Filter by" menu). Empty means no status
+    /// filtering. Mirrors `agent.thread_filter.status` and is persisted there.
+    status_filter: HashSet<ThreadStatusFilter>,
+    /// Active source filters. Empty means no source filtering. Mirrors
+    /// `agent.thread_filter.source` and is persisted there.
+    source_filter: HashSet<ThreadSourceFilter>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -867,6 +981,15 @@ impl Sidebar {
         )
         .detach();
 
+        // Rebuild when settings change so the thread grouping mode (and any
+        // other settings-driven rendering) stays in sync, including changes
+        // made directly in settings.json or from the group-by menu.
+        cx.observe_global::<SettingsStore>(|this, cx| {
+            this.sync_filters_from_settings(cx);
+            this.schedule_update_entries(false, cx);
+        })
+        .detach();
+
         let channels_with_threads = channels_with_threads(cx);
         cx.spawn(async move |this, cx| {
             let channels = channels_with_threads.await;
@@ -886,6 +1009,7 @@ impl Sidebar {
                     this.subscribe_to_workspace(workspace, window, cx);
                 }
             }
+            this.apply_thread_group_by(AgentSettings::get_global(cx).thread_group_by, window, cx);
             this.schedule_update_entries(false, cx);
         });
 
@@ -911,6 +1035,10 @@ impl Sidebar {
             pending_thread_activation: None,
             live_thread_statuses: HashMap::new(),
             draft_kinds: HashMap::new(),
+            collapsed_sections: HashSet::new(),
+            groups_showing_all: HashSet::new(),
+            status_filter: status_filter_from_settings(cx),
+            source_filter: source_filter_from_settings(cx),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -929,6 +1057,17 @@ impl Sidebar {
         cx.emit(workspace::SidebarEvent::SerializeNeeded);
     }
 
+    fn is_section_collapsed(&self, id: &SharedString) -> bool {
+        self.collapsed_sections.contains(id)
+    }
+
+    fn toggle_section_collapsed(&mut self, id: &SharedString, cx: &mut Context<Self>) {
+        if !self.collapsed_sections.remove(id) {
+            self.collapsed_sections.insert(id.clone());
+        }
+        self.update_entries(cx);
+    }
+
     fn is_group_collapsed(&self, key: &ProjectGroupKey, cx: &App) -> bool {
         self.multi_workspace
             .upgrade()
@@ -940,7 +1079,12 @@ impl Sidebar {
             .unwrap_or(false)
     }
 
-    fn set_group_expanded(&self, key: &ProjectGroupKey, expanded: bool, cx: &mut Context<Self>) {
+    fn set_group_expanded(&mut self, key: &ProjectGroupKey, expanded: bool, cx: &mut Context<Self>) {
+        if !expanded {
+            // Collapsing a group resets its "See more" expansion, so reopening
+            // it returns to the truncated set.
+            self.groups_showing_all.remove(key);
+        }
         if let Some(mw) = self.multi_workspace.upgrade() {
             mw.update(cx, |mw, cx| {
                 if let Some(state) = mw.group_state_by_key_mut(key) {
@@ -1326,6 +1470,122 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    /// Regroups a flat list of thread/terminal entries into text section
+    /// headers for the non-workspace grouping modes.
+    ///
+    /// Returns the new entry list (section headers interleaved with their
+    /// entries, collapsed sections omitting their entries) along with the
+    /// indices of the section headers (used for sticky headers).
+    fn regroup_entries_into_sections(
+        &self,
+        mut flat: Vec<ListEntry>,
+        group_by: ThreadGroupBy,
+        notified_threads: &HashSet<agent_ui::ThreadId>,
+        notified_terminals: &HashSet<TerminalId>,
+    ) -> (Vec<ListEntry>, Vec<usize>) {
+        let today = Local::now().naive_local().date();
+
+        // Sort by display time (most recent first) so entries within each
+        // section are ordered by recency.
+        flat.sort_by_key(|entry| std::cmp::Reverse(list_entry_display_time(entry)));
+
+        struct Section {
+            order: u32,
+            id: SharedString,
+            label: SharedString,
+            entries: Vec<ListEntry>,
+        }
+
+        let mut sections: Vec<Section> = Vec::new();
+        let mut index_by_id: HashMap<SharedString, usize> = HashMap::new();
+
+        for entry in flat {
+            let (order, id, label) = section_descriptor_for_entry(&entry, group_by, today);
+            let section_ix = *index_by_id.entry(id.clone()).or_insert_with(|| {
+                sections.push(Section {
+                    order,
+                    id,
+                    label,
+                    entries: Vec::new(),
+                });
+                sections.len() - 1
+            });
+            sections[section_ix].entries.push(entry);
+        }
+
+        sections.sort_by_key(|section| section.order);
+
+        let mut entries: Vec<ListEntry> = Vec::new();
+        let mut header_indices: Vec<usize> = Vec::new();
+        for section in sections {
+            if section.entries.is_empty() {
+                continue;
+            }
+            let is_collapsed = self.is_section_collapsed(&section.id);
+            let has_notifications = section.entries.iter().any(|entry| match entry {
+                ListEntry::Thread(thread) => {
+                    notified_threads.contains(&thread.metadata.thread_id)
+                }
+                ListEntry::Terminal(terminal) => {
+                    notified_terminals.contains(&terminal.metadata.terminal_id)
+                }
+                _ => false,
+            });
+
+            header_indices.push(entries.len());
+            entries.push(ListEntry::SectionHeader {
+                id: section.id,
+                label: section.label,
+                is_collapsed,
+                has_notifications,
+            });
+            if !is_collapsed {
+                entries.extend(section.entries);
+            }
+        }
+
+        (entries, header_indices)
+    }
+
+    /// Prepends the already-collected pinned threads as a "Pinned" section at
+    /// the top of the list. When nothing is pinned, the input is returned
+    /// unchanged (and the header indices are left untouched).
+    fn prepend_pinned_section(
+        &self,
+        mut pinned: Vec<ListEntry>,
+        entries: Vec<ListEntry>,
+        header_indices: Vec<usize>,
+        notified_threads: &HashSet<agent_ui::ThreadId>,
+    ) -> (Vec<ListEntry>, Vec<usize>) {
+        if pinned.is_empty() {
+            return (entries, header_indices);
+        }
+
+        pinned.sort_by_key(|entry| std::cmp::Reverse(list_entry_display_time(entry)));
+
+        let id: SharedString = "pinned".into();
+        let is_collapsed = self.is_section_collapsed(&id);
+        let has_notifications = pinned.iter().any(|entry| match entry {
+            ListEntry::Thread(thread) => notified_threads.contains(&thread.metadata.thread_id),
+            _ => false,
+        });
+
+        let mut out = Vec::with_capacity(entries.len() + 1 + pinned.len());
+        out.push(ListEntry::SectionHeader {
+            id,
+            label: "Pinned".into(),
+            is_collapsed,
+            has_notifications,
+        });
+        if !is_collapsed {
+            out.extend(pinned);
+        }
+        out.extend(entries);
+
+        let header_indices = list_entry_header_indices(&out);
+        (out, header_indices)
+    }
+
     /// Rebuilds the sidebar contents from current workspace and thread state.
     ///
     /// Iterates [`MultiWorkspace::project_group_keys`] to determine project
@@ -1354,6 +1614,15 @@ impl Sidebar {
             .map(|ws| ws.read(cx).project().read(cx).agent_server_store().clone());
 
         let query = self.filter_editor.read(cx).text(cx);
+        let group_by = AgentSettings::get_global(cx).thread_group_by;
+        // The non-workspace grouping modes regroup every thread into text
+        // section headers below, so they must load threads from every project
+        // group regardless of that group's collapsed state.
+        let force_load_threads = group_by != ThreadGroupBy::Workspace;
+        // When threads are pinned we must load every group (even collapsed
+        // ones) so a pinned thread in a collapsed group can still be lifted
+        // into the top "Pinned" section.
+        let has_pinned = ThreadMetadataStore::global(cx).read(cx).has_pinned();
 
         let previous = mem::take(&mut self.contents);
 
@@ -1370,6 +1639,10 @@ impl Sidebar {
         let mut project_header_indices: Vec<usize> = Vec::new();
         let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut seen_terminal_ids: HashSet<TerminalId> = HashSet::new();
+        // Pinned threads collected across all groups, surfaced in a top
+        // "Pinned" section so they bypass truncation, section grouping, and
+        // collapse. Only populated outside of search.
+        let mut pinned_entries: Vec<ListEntry> = Vec::new();
 
         let has_open_projects = workspaces
             .iter()
@@ -1543,7 +1816,8 @@ impl Sidebar {
             let label = group_key.display_name(&path_detail_map);
 
             let is_collapsed = self.is_group_collapsed(group_key, cx);
-            let should_load_threads = !is_collapsed || !query.is_empty();
+            let should_load_threads =
+                force_load_threads || has_pinned || !is_collapsed || !query.is_empty();
 
             let is_active = active_workspace
                 .as_ref()
@@ -1796,6 +2070,37 @@ impl Sidebar {
                 }
             }
 
+            // Apply the active status/source filters (no-op when none are set).
+            // Filtered-out rows are simply hidden from the list.
+            if self.has_active_filter() {
+                threads.retain(|thread| self.thread_matches_filter(thread));
+                let terminal_matches = self.terminal_matches_filter();
+                terminals.retain(|_| terminal_matches);
+            }
+
+            // Pull pinned threads out of this group (outside of search) so they
+            // surface in the top "Pinned" section instead of being truncated,
+            // bucketed into a section, or hidden by collapse.
+            if has_pinned && query.is_empty() && !threads.is_empty() {
+                let store = ThreadMetadataStore::global(cx);
+                let store = store.read(cx);
+                let mut remaining = Vec::with_capacity(threads.len());
+                for thread in threads.drain(..) {
+                    if !thread.metadata.is_draft()
+                        && store.is_pinned(&thread.metadata.thread_id)
+                    {
+                        if let Some(session_id) = &thread.metadata.session_id {
+                            current_session_ids.insert(session_id.clone());
+                        }
+                        current_thread_ids.insert(thread.metadata.thread_id);
+                        pinned_entries.push(ListEntry::Thread(thread));
+                    } else {
+                        remaining.push(thread);
+                    }
+                }
+                threads = remaining;
+            }
+
             let has_visible_rows = !threads.is_empty() || !terminals.is_empty();
             let has_stored_thread_rows = !should_load_threads && !has_visible_rows && {
                 let store = ThreadMetadataStore::global(cx).read(cx);
@@ -1941,10 +2246,22 @@ impl Sidebar {
                     has_threads,
                 });
 
-                if is_collapsed {
+                if is_collapsed && !force_load_threads {
+                    // Register the collapsed group's threads so their
+                    // notification state is retained; pinned threads were
+                    // already pulled out above.
+                    for thread in &threads {
+                        if let Some(session_id) = &thread.metadata.session_id {
+                            current_session_ids.insert(session_id.clone());
+                        }
+                        current_thread_ids.insert(thread.metadata.thread_id);
+                    }
                     continue;
                 }
 
+                // Emit every row here; workspace-group truncation ("See more")
+                // is applied as a post-pass so the untruncated list remains
+                // available for the thread switcher and cycling.
                 Self::push_entries_by_display_time(
                     &mut entries,
                     terminals,
@@ -1954,6 +2271,39 @@ impl Sidebar {
                 );
             }
         }
+
+        // For the non-workspace grouping modes, discard the project headers and
+        // regroup every thread/terminal into text section headers.
+        let (entries, project_header_indices) = if mode_uses_sections(group_by) {
+            let flat: Vec<ListEntry> = entries
+                .into_iter()
+                .filter(|entry| matches!(entry, ListEntry::Thread(_) | ListEntry::Terminal(_)))
+                .collect();
+            self.regroup_entries_into_sections(
+                flat,
+                group_by,
+                &notified_threads,
+                &notified_terminals,
+            )
+        } else {
+            (entries, project_header_indices)
+        };
+
+        // Prepend the collected pinned threads as a "Pinned" section at the
+        // very top. A no-op when nothing is pinned, so the default layout (and
+        // existing tests) are unaffected.
+        let (all_entries, _) = self.prepend_pinned_section(
+            pinned_entries,
+            entries,
+            project_header_indices,
+            &notified_threads,
+        );
+
+        // The full (untruncated) list feeds the thread switcher and cycling;
+        // the rendered list truncates each workspace group to
+        // `GROUP_THREAD_LIMIT` with a "See more" row.
+        let (entries, project_header_indices) =
+            self.truncate_workspace_groups(&all_entries, group_by);
 
         notified_threads.retain(|id| current_thread_ids.contains(id));
 
@@ -1966,6 +2316,7 @@ impl Sidebar {
 
         self.contents = SidebarContents {
             entries,
+            all_entries,
             notified_threads,
             notified_terminals,
             project_header_indices,
@@ -2064,6 +2415,14 @@ impl Sidebar {
                     .group_state_by_key(key)
                     .map(|state| !state.expanded)
                     .unwrap_or(false),
+            },
+            ListEntry::SectionHeader { id, is_collapsed, .. } => EntryShape::SectionHeader {
+                id: id.clone(),
+                is_collapsed: *is_collapsed,
+            },
+            ListEntry::SeeMore { key, hidden_count } => EntryShape::SeeMore {
+                key: key.clone(),
+                hidden_count: *hidden_count,
             },
             ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
             ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
@@ -2174,8 +2533,11 @@ impl Sidebar {
         // is_selected means the keyboard selector is here.
         let is_selected = is_focused && self.selection == Some(ix);
 
-        let is_group_header_after_first =
-            ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
+        let is_group_header_after_first = ix > 0
+            && matches!(
+                entry,
+                ListEntry::ProjectHeader { .. } | ListEntry::SectionHeader { .. }
+            );
 
         let is_active = self
             .active_entry
@@ -2214,9 +2576,26 @@ impl Sidebar {
                     cx,
                 )
             }
+            ListEntry::SectionHeader {
+                id,
+                label,
+                is_collapsed,
+                has_notifications,
+            } => self.render_section_header(
+                ix,
+                id,
+                label,
+                *is_collapsed,
+                *has_notifications,
+                is_selected,
+                cx,
+            ),
             ListEntry::Thread(thread) => self.render_thread(ix, thread, is_active, is_selected, cx),
             ListEntry::Terminal(terminal) => {
                 self.render_terminal(ix, terminal, is_active, is_selected, cx)
+            }
+            ListEntry::SeeMore { key, hidden_count } => {
+                self.render_see_more(ix, key, *hidden_count, is_selected, cx)
             }
         };
 
@@ -3022,37 +3401,51 @@ impl Sidebar {
             return None;
         }
 
-        let ListEntry::ProjectHeader {
-            key,
-            label,
-            highlight_positions,
-            has_running_threads,
-            waiting_thread_count,
-            has_notifications,
-            is_active,
-            has_threads,
-        } = self.contents.entries.get(header_idx)?
-        else {
-            return None;
-        };
-
         let is_focused = self.focus_handle.is_focused(window);
         let is_selected = is_focused && self.selection == Some(header_idx);
 
-        let header_element = self.render_project_header(
-            header_idx,
-            true,
-            key,
-            &label,
-            &highlight_positions,
-            *has_running_threads,
-            *waiting_thread_count,
-            *has_notifications,
-            *is_active,
-            is_selected,
-            *has_threads,
-            cx,
-        );
+        let header_element = match self.contents.entries.get(header_idx)? {
+            ListEntry::ProjectHeader {
+                key,
+                label,
+                highlight_positions,
+                has_running_threads,
+                waiting_thread_count,
+                has_notifications,
+                is_active,
+                has_threads,
+            } => self.render_project_header(
+                header_idx,
+                true,
+                key,
+                label,
+                highlight_positions,
+                *has_running_threads,
+                *waiting_thread_count,
+                *has_notifications,
+                *is_active,
+                is_selected,
+                *has_threads,
+                cx,
+            ),
+            ListEntry::SectionHeader {
+                id,
+                label,
+                is_collapsed,
+                has_notifications,
+            } => self.render_section_header(
+                header_idx,
+                id,
+                label,
+                *is_collapsed,
+                *has_notifications,
+                is_selected,
+                cx,
+            ),
+            ListEntry::Thread(_) | ListEntry::Terminal(_) | ListEntry::SeeMore { .. } => {
+                return None;
+            }
+        };
 
         let top_offset = self
             .contents
@@ -3086,6 +3479,234 @@ impl Sidebar {
             .into_any_element();
 
         Some(element)
+    }
+
+    /// Renders a section header for the non-workspace grouping modes. Its size
+    /// and layout mirror [`Self::render_project_header`] so the header bar is
+    /// consistent across modes. The row toggles the section's collapsed state
+    /// when clicked.
+    ///
+    /// Unlike project headers, sections have no per-group `+`: a derived bucket
+    /// (e.g. "Yesterday" or "Completed") isn't a container you can create into,
+    /// so the sidebar's single global new-thread button is used instead.
+    fn render_section_header(
+        &self,
+        ix: usize,
+        id: &SharedString,
+        label: &SharedString,
+        is_collapsed: bool,
+        has_notifications: bool,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id_for_toggle = id.clone();
+        let group_name = SharedString::from(format!("section-header-group-{ix}"));
+        let disclosure_icon = if is_collapsed {
+            IconName::ChevronRight
+        } else {
+            IconName::ChevronDown
+        };
+
+        let color = cx.theme().colors();
+        let sidebar_base_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.25));
+        let base_bg = color.background.blend(sidebar_base_bg);
+        let hover_base = color
+            .element_active
+            .blend(color.element_background.opacity(0.2));
+        let hover_solid = base_bg.blend(hover_base);
+
+        h_flex()
+            .id(SharedString::from(format!("section-header-{ix}")))
+            .group(&group_name)
+            .cursor_pointer()
+            .relative()
+            .h(Tab::content_height(cx))
+            .w_full()
+            .pl_2()
+            .pr_1p5()
+            .justify_between()
+            .border_1()
+            .map(|this| {
+                if is_selected {
+                    this.border_color(color.border_focused)
+                } else {
+                    this.border_color(gpui::transparent_black())
+                }
+            })
+            .hover(|s| s.bg(hover_solid))
+            .child(
+                h_flex()
+                    .relative()
+                    .min_w_0()
+                    .w_full()
+                    .gap_1()
+                    .child(Label::new(label.clone()).color(Color::Muted).truncate())
+                    // Only surface a notification indicator while collapsed:
+                    // expanded sections already show per-thread status.
+                    .when(is_collapsed && has_notifications, |this| {
+                        this.child(
+                            Icon::new(IconName::Circle)
+                                .size(IconSize::Small)
+                                .color(Color::Accent),
+                        )
+                    })
+                    .child(
+                        div()
+                            .when(!is_selected, |this| this.visible_on_hover(&group_name))
+                            .child(
+                                Icon::new(disclosure_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                this.toggle_section_collapsed(&id_for_toggle, cx);
+            }))
+            .block_mouse_except_scroll()
+            .into_any_element()
+    }
+
+    /// Renders the "See more" row that reveals the rest of a truncated
+    /// workspace group.
+    fn render_see_more(
+        &self,
+        ix: usize,
+        key: &ProjectGroupKey,
+        hidden_count: usize,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = key.clone();
+        let color = cx.theme().colors();
+        h_flex()
+            .id(SharedString::from(format!("see-more-{ix}")))
+            .w_full()
+            .pl_2()
+            .pr_1p5()
+            .py_0p5()
+            .cursor_pointer()
+            .border_1()
+            .map(|this| {
+                if is_selected {
+                    this.border_color(color.border_focused)
+                } else {
+                    this.border_color(gpui::transparent_black())
+                }
+            })
+            .child(
+                Label::new(format!("See {hidden_count} more"))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                this.show_all_in_group(&key, cx);
+            }))
+            .block_mouse_except_scroll()
+            .into_any_element()
+    }
+
+    /// Reveals every thread in a workspace group (undoes the "See more"
+    /// truncation).
+    fn show_all_in_group(&mut self, key: &ProjectGroupKey, cx: &mut Context<Self>) {
+        if self.groups_showing_all.insert(key.clone()) {
+            self.update_entries(cx);
+        }
+    }
+
+    /// Whether any status or source filter is active.
+    fn has_active_filter(&self) -> bool {
+        !self.status_filter.is_empty() || !self.source_filter.is_empty()
+    }
+
+    /// Whether a thread passes the active status/source filters.
+    fn thread_matches_filter(&self, thread: &ThreadEntry) -> bool {
+        if !self.status_filter.is_empty() {
+            let category = match thread.status {
+                AgentThreadStatus::Running => ThreadStatusFilter::Running,
+                AgentThreadStatus::WaitingForConfirmation => ThreadStatusFilter::NeedsAttention,
+                AgentThreadStatus::Error => ThreadStatusFilter::Error,
+                AgentThreadStatus::Completed => ThreadStatusFilter::Completed,
+            };
+            if !self.status_filter.contains(&category) {
+                return false;
+            }
+        }
+        if !self.source_filter.is_empty() {
+            let source = if thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+                ThreadSourceFilter::Zed
+            } else {
+                ThreadSourceFilter::External
+            };
+            if !self.source_filter.contains(&source) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether a terminal passes the active filters. Terminals are treated as
+    /// running processes for the status filter and are not source-filtered.
+    fn terminal_matches_filter(&self) -> bool {
+        self.status_filter.is_empty() || self.status_filter.contains(&ThreadStatusFilter::Running)
+    }
+
+    fn toggle_status_filter(&mut self, filter: ThreadStatusFilter, cx: &mut Context<Self>) {
+        if !self.status_filter.remove(&filter) {
+            self.status_filter.insert(filter);
+        }
+        self.persist_filters(cx);
+        self.update_entries(cx);
+    }
+
+    fn toggle_source_filter(&mut self, filter: ThreadSourceFilter, cx: &mut Context<Self>) {
+        if !self.source_filter.remove(&filter) {
+            self.source_filter.insert(filter);
+        }
+        self.persist_filters(cx);
+        self.update_entries(cx);
+    }
+
+    fn clear_filters(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_filter() {
+            self.status_filter.clear();
+            self.source_filter.clear();
+            self.persist_filters(cx);
+            self.update_entries(cx);
+        }
+    }
+
+    /// Re-syncs the in-memory filter sets from settings, e.g. after a change
+    /// made in another window or directly in settings.json.
+    fn sync_filters_from_settings(&mut self, cx: &App) {
+        self.status_filter = status_filter_from_settings(cx);
+        self.source_filter = source_filter_from_settings(cx);
+    }
+
+    /// Persists the active status/source filters to the user's settings so they
+    /// survive restarts. Filters are written in their canonical menu order for
+    /// stable, readable settings output.
+    fn persist_filters(&self, cx: &mut Context<Self>) {
+        let Some(fs) = self.workspace_fs(cx) else {
+            return;
+        };
+        let status: Vec<ThreadStatusFilter> = ALL_STATUS_FILTERS
+            .iter()
+            .copied()
+            .filter(|filter| self.status_filter.contains(filter))
+            .collect();
+        let source: Vec<ThreadSourceFilter> = ALL_SOURCE_FILTERS
+            .iter()
+            .copied()
+            .filter(|filter| self.source_filter.contains(filter))
+            .collect();
+        settings::update_settings_file(fs, cx, move |settings, _cx| {
+            let agent = settings.agent.get_or_insert_default();
+            agent.set_thread_status_filter(status);
+            agent.set_thread_source_filter(source);
+        });
     }
 
     fn toggle_collapse(
@@ -3392,6 +4013,10 @@ impl Sidebar {
                 let key = key.clone();
                 self.toggle_collapse(&key, window, cx);
             }
+            ListEntry::SectionHeader { id, .. } => {
+                let id = id.clone();
+                self.toggle_section_collapsed(&id, cx);
+            }
             ListEntry::Thread(thread) => {
                 let metadata = thread.metadata.clone();
                 match &thread.workspace {
@@ -3419,6 +4044,10 @@ impl Sidebar {
                 let metadata = terminal.metadata.clone();
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, false, window, cx);
+            }
+            ListEntry::SeeMore { key, .. } => {
+                let key = key.clone();
+                self.show_all_in_group(&key, cx);
             }
         }
     }
@@ -4110,6 +4739,16 @@ impl Sidebar {
                     cx.notify();
                 }
             }
+            Some(ListEntry::SectionHeader { id, .. }) => {
+                let id = id.clone();
+                if self.is_section_collapsed(&id) {
+                    self.toggle_section_collapsed(&id, cx);
+                } else if ix + 1 < self.contents.entries.len() {
+                    self.selection = Some(ix + 1);
+                    self.list_state.scroll_to_reveal_item(ix + 1);
+                    cx.notify();
+                }
+            }
             _ => {}
         }
     }
@@ -4130,15 +4769,33 @@ impl Sidebar {
                     self.update_entries(cx);
                 }
             }
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => {
+            Some(ListEntry::SectionHeader { id, .. }) => {
+                let id = id.clone();
+                if !self.is_section_collapsed(&id) {
+                    self.toggle_section_collapsed(&id, cx);
+                }
+            }
+            Some(ListEntry::Thread(_) | ListEntry::Terminal(_) | ListEntry::SeeMore { .. }) => {
                 for i in (0..ix).rev() {
-                    if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
-                    {
-                        let key = key.clone();
-                        self.selection = Some(i);
-                        self.set_group_expanded(&key, false, cx);
-                        self.update_entries(cx);
-                        break;
+                    match self.contents.entries.get(i) {
+                        Some(ListEntry::ProjectHeader { key, .. }) => {
+                            let key = key.clone();
+                            self.selection = Some(i);
+                            self.set_group_expanded(&key, false, cx);
+                            self.update_entries(cx);
+                            break;
+                        }
+                        Some(ListEntry::SectionHeader { id, .. }) => {
+                            let id = id.clone();
+                            self.selection = Some(i);
+                            if !self.is_section_collapsed(&id) {
+                                self.toggle_section_collapsed(&id, cx);
+                            } else {
+                                cx.notify();
+                            }
+                            break;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -4156,27 +4813,38 @@ impl Sidebar {
 
         // Find the group header for the current selection.
         let header_ix = match self.contents.entries.get(ix) {
-            Some(ListEntry::ProjectHeader { .. }) => Some(ix),
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => (0..ix).rev().find(|&i| {
+            Some(ListEntry::ProjectHeader { .. } | ListEntry::SectionHeader { .. }) => Some(ix),
+            Some(
+                ListEntry::Thread(_) | ListEntry::Terminal(_) | ListEntry::SeeMore { .. },
+            ) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
-                    Some(ListEntry::ProjectHeader { .. })
+                    Some(ListEntry::ProjectHeader { .. } | ListEntry::SectionHeader { .. })
                 )
             }),
             None => None,
         };
 
         if let Some(header_ix) = header_ix {
-            if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(header_ix)
-            {
-                let key = key.clone();
-                if self.is_group_collapsed(&key, cx) {
-                    self.set_group_expanded(&key, true, cx);
-                } else {
-                    self.selection = Some(header_ix);
-                    self.set_group_expanded(&key, false, cx);
+            match self.contents.entries.get(header_ix) {
+                Some(ListEntry::ProjectHeader { key, .. }) => {
+                    let key = key.clone();
+                    if self.is_group_collapsed(&key, cx) {
+                        self.set_group_expanded(&key, true, cx);
+                    } else {
+                        self.selection = Some(header_ix);
+                        self.set_group_expanded(&key, false, cx);
+                    }
+                    self.update_entries(cx);
                 }
-                self.update_entries(cx);
+                Some(ListEntry::SectionHeader { id, .. }) => {
+                    let id = id.clone();
+                    if !self.is_section_collapsed(&id) {
+                        self.selection = Some(header_ix);
+                    }
+                    self.toggle_section_collapsed(&id, cx);
+                }
+                _ => {}
             }
         }
     }
@@ -4187,12 +4855,7 @@ impl Sidebar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(mw) = self.multi_workspace.upgrade() {
-            mw.update(cx, |mw, _cx| {
-                mw.set_all_groups_expanded(false);
-            });
-        }
-        self.update_entries(cx);
+        self.set_all_groups_expanded(false, cx);
     }
 
     fn unfold_all(
@@ -4201,9 +4864,48 @@ impl Sidebar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(mw) = self.multi_workspace.upgrade() {
+        self.set_all_groups_expanded(true, cx);
+    }
+
+    /// Collapses or expands every group in the current view.
+    ///
+    /// The two grouping families keep their collapsed state in different
+    /// places (workspace groups in [`MultiWorkspace`] keyed by
+    /// [`ProjectGroupKey`]; sections in [`Self::collapsed_sections`] keyed by a
+    /// derived id), so this dispatches to whichever store backs the active
+    /// grouping mode. All collapse entry points (this, the keyboard actions,
+    /// header clicks) funnel through the same per-store helpers.
+    fn set_all_groups_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        if mode_uses_sections(AgentSettings::get_global(cx).thread_group_by) {
+            if expanded {
+                self.collapsed_sections.clear();
+            } else {
+                let section_ids = self.contents.entries.iter().filter_map(|entry| match entry {
+                    ListEntry::SectionHeader { id, .. } => Some(id.clone()),
+                    _ => None,
+                });
+                self.collapsed_sections.extend(section_ids);
+            }
+        } else if let Some(mw) = self.multi_workspace.upgrade() {
+            if expanded {
+                // Expanding all groups should also reveal every "See more"
+                // truncation, not just un-collapse the headers.
+                let group_keys: Vec<ProjectGroupKey> = self
+                    .contents
+                    .all_entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                self.groups_showing_all.extend(group_keys);
+            } else {
+                // Collapsing all groups resets every "See more" expansion.
+                self.groups_showing_all.clear();
+            }
             mw.update(cx, |mw, _cx| {
-                mw.set_all_groups_expanded(true);
+                mw.set_all_groups_expanded(expanded);
             });
         }
         self.update_entries(cx);
@@ -5697,7 +6399,9 @@ impl Sidebar {
                 }
                 ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
                 ListEntry::Terminal(terminal) => terminal.metadata.created_at,
-                ListEntry::ProjectHeader { .. } => unreachable!(),
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::SectionHeader { .. }
+                | ListEntry::SeeMore { .. } => unreachable!(),
             }
         }
 
@@ -5716,6 +6420,80 @@ impl Sidebar {
             }
             entries.push(entry);
         }
+    }
+
+    /// Produces the rendered entry list by truncating each workspace project
+    /// group to [`GROUP_THREAD_LIMIT`] rows, appending a "See more" row for the
+    /// remainder. Groups the user has expanded (and the group containing the
+    /// active thread) are shown in full. Section-grouping modes and the Pinned
+    /// section are never truncated.
+    ///
+    /// Returns the truncated entries and their header indices (for sticky
+    /// headers).
+    fn truncate_workspace_groups(
+        &self,
+        entries: &[ListEntry],
+        group_by: ThreadGroupBy,
+    ) -> (Vec<ListEntry>, Vec<usize>) {
+        if mode_uses_sections(group_by) {
+            let out = entries.to_vec();
+            let indices = list_entry_header_indices(&out);
+            return (out, indices);
+        }
+
+        let mut out: Vec<ListEntry> = Vec::with_capacity(entries.len());
+        let mut ix = 0;
+        while ix < entries.len() {
+            match &entries[ix] {
+                ListEntry::ProjectHeader { key, .. } => {
+                    let key = key.clone();
+                    out.push(entries[ix].clone());
+                    ix += 1;
+
+                    let start = ix;
+                    while ix < entries.len()
+                        && matches!(
+                            entries[ix],
+                            ListEntry::Thread(_) | ListEntry::Terminal(_)
+                        )
+                    {
+                        ix += 1;
+                    }
+                    let rows = &entries[start..ix];
+
+                    // Keep the active thread visible by not truncating the
+                    // group that contains it past the limit.
+                    let active_beyond_limit = rows
+                        .iter()
+                        .position(|entry| {
+                            self.active_entry
+                                .as_ref()
+                                .is_some_and(|active| active.matches_entry(entry))
+                        })
+                        .is_some_and(|index| index >= GROUP_THREAD_LIMIT);
+
+                    if self.groups_showing_all.contains(&key)
+                        || rows.len() <= GROUP_THREAD_LIMIT
+                        || active_beyond_limit
+                    {
+                        out.extend_from_slice(rows);
+                    } else {
+                        out.extend(rows[..GROUP_THREAD_LIMIT].iter().cloned());
+                        out.push(ListEntry::SeeMore {
+                            key,
+                            hidden_count: rows.len() - GROUP_THREAD_LIMIT,
+                        });
+                    }
+                }
+                other => {
+                    out.push(other.clone());
+                    ix += 1;
+                }
+            }
+        }
+
+        let indices = list_entry_header_indices(&out);
+        (out, indices)
     }
 
     /// The sort order used by the ctrl-tab switcher
@@ -5747,7 +6525,7 @@ impl Sidebar {
         let mut current_header_key: Option<ProjectGroupKey> = None;
         let mut entries: Vec<ThreadSwitcherEntry> = self
             .contents
-            .entries
+            .all_entries
             .iter()
             .filter_map(|entry| match entry {
                 ListEntry::ProjectHeader { label, key, .. } => {
@@ -5755,6 +6533,12 @@ impl Sidebar {
                     current_header_key = Some(key.clone());
                     None
                 }
+                ListEntry::SectionHeader { label, .. } => {
+                    current_header_label = Some(label.clone());
+                    current_header_key = None;
+                    None
+                }
+                ListEntry::SeeMore { .. } => None,
                 ListEntry::Thread(thread) => {
                     if thread.draft == Some(DraftKind::Empty) {
                         return None;
@@ -6089,6 +6873,10 @@ impl Sidebar {
     ) -> AnyElement {
         let has_notification = self.contents.is_thread_notified(&thread.metadata.thread_id);
 
+        let display = AgentSettings::get_global(cx).thread_list_display;
+        let is_pinned = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .is_pinned(&thread.metadata.thread_id);
         let title: SharedString = thread.metadata.display_title();
         let metadata = thread.metadata.clone();
         let thread_workspace = thread.workspace.clone();
@@ -6115,7 +6903,7 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        let timestamp: SharedString = if is_empty_draft {
+        let timestamp: SharedString = if is_empty_draft || !display.show_timestamp {
             SharedString::default()
         } else {
             format_history_entry_timestamp(Self::thread_display_time(&thread.metadata)).into()
@@ -6123,10 +6911,14 @@ impl Sidebar {
 
         let is_remote = thread.workspace.is_remote(cx);
 
-        let worktrees = apply_worktree_label_mode(
-            thread.worktrees.clone(),
-            cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
-        );
+        let worktrees = if display.show_branch {
+            apply_worktree_label_mode(
+                thread.worktrees.clone(),
+                cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
+            )
+        } else {
+            Vec::new()
+        };
 
         let (icon, icon_svg) = if is_draft {
             (IconName::Circle, None)
@@ -6155,10 +6947,10 @@ impl Sidebar {
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(title_generating)
             .notified(has_notification)
-            .when(thread.diff_stats.lines_added > 0, |this| {
+            .when(display.show_diff_stats && thread.diff_stats.lines_added > 0, |this| {
                 this.added(thread.diff_stats.lines_added as usize)
             })
-            .when(thread.diff_stats.lines_removed > 0, |this| {
+            .when(display.show_diff_stats && thread.diff_stats.lines_removed > 0, |this| {
                 this.removed(thread.diff_stats.lines_removed as usize)
             })
             .selected(is_selected)
@@ -6280,9 +7072,27 @@ impl Sidebar {
                     }
                 };
 
+                let pin_button = (!is_draft).then(|| {
+                    IconButton::new("pin-thread", IconName::Pin)
+                        .icon_size(IconSize::Small)
+                        .when(is_pinned, |this| this.icon_color(Color::Accent))
+                        .tooltip(Tooltip::text(if is_pinned {
+                            "Unpin Thread"
+                        } else {
+                            "Pin Thread"
+                        }))
+                        .on_click(cx.listener(move |_this, _, _window, cx| {
+                            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                                store.toggle_pinned(thread_id_for_actions, cx);
+                            });
+                        }))
+                        .into_any_element()
+                });
+
                 this.action_slot(
                     h_flex()
                         .gap_0p5()
+                        .when_some(pin_button, |this, button| this.child(button))
                         .child(rename_button)
                         .when_some(contextual_action, |this, action| this.child(action)),
                 )
@@ -6450,7 +7260,12 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = ElementId::from(format!("terminal-{}", terminal.metadata.terminal_id));
-        let timestamp = format_history_entry_timestamp(terminal.metadata.created_at);
+        let display = AgentSettings::get_global(cx).thread_list_display;
+        let timestamp: SharedString = if display.show_timestamp {
+            format_history_entry_timestamp(terminal.metadata.created_at).into()
+        } else {
+            SharedString::default()
+        };
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
         let sidebar_bg = color
@@ -6459,10 +7274,14 @@ impl Sidebar {
         let metadata = terminal.metadata.clone();
         let workspace = terminal.workspace.clone();
         let focus_handle = self.focus_handle.clone();
-        let worktrees = apply_worktree_label_mode(
-            terminal.worktrees.clone(),
-            cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
-        );
+        let worktrees = if display.show_branch {
+            apply_worktree_label_mode(
+                terminal.worktrees.clone(),
+                cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
+            )
+        } else {
+            Vec::new()
+        };
         let is_remote = terminal.workspace.is_remote(cx);
 
         let display_title = terminal.metadata.display_title();
@@ -7161,7 +7980,7 @@ impl Sidebar {
     fn cycle_thread_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let thread_indices: Vec<usize> = self
             .contents
-            .entries
+            .all_entries
             .iter()
             .enumerate()
             .filter_map(|(ix, entry)| match entry {
@@ -7177,7 +7996,7 @@ impl Sidebar {
         let current_thread_pos = self.active_entry.as_ref().and_then(|active| {
             thread_indices
                 .iter()
-                .position(|&ix| active.matches_entry(&self.contents.entries[ix]))
+                .position(|&ix| active.matches_entry(&self.contents.all_entries[ix]))
         });
 
         let next_pos = match current_thread_pos {
@@ -7193,7 +8012,7 @@ impl Sidebar {
         };
 
         let entry_ix = thread_indices[next_pos];
-        match &self.contents.entries[entry_ix] {
+        match &self.contents.all_entries[entry_ix] {
             ListEntry::Thread(thread) => {
                 let metadata = thread.metadata.clone();
                 match &thread.workspace {
@@ -7222,7 +8041,9 @@ impl Sidebar {
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, true, window, cx);
             }
-            ListEntry::ProjectHeader { .. } => {}
+            ListEntry::ProjectHeader { .. }
+            | ListEntry::SectionHeader { .. }
+            | ListEntry::SeeMore { .. } => {}
         }
     }
 
@@ -7353,6 +8174,7 @@ impl Sidebar {
                                 )
                             }),
                     )
+                    .child(self.render_global_new_thread_button(cx))
             })
             .when(right_window_controls, |this| {
                 this.children(Self::render_right_window_controls(window, cx))
@@ -7430,7 +8252,6 @@ impl Sidebar {
     }
 
     fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_archive = matches!(self.view, SidebarView::Archive(..));
         let on_right = self.side(cx) == SidebarSide::Right;
 
         h_flex()
@@ -7440,24 +8261,255 @@ impl Sidebar {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .child(self.render_sidebar_toggle_button(cx))
-            .child(
-                IconButton::new("history", IconName::Clock)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(is_archive)
-                    .tooltip(move |_, cx| {
-                        let label = if is_archive {
-                            "Hide Thread History"
-                        } else {
-                            "Show Thread History"
-                        };
-                        Tooltip::for_action(label, &ToggleThreadHistory, cx)
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_archive(&ToggleThreadHistory, window, cx);
-                    })),
-            )
+            .child(self.render_group_by_menu(cx))
             .child(div().flex_1())
             .child(self.render_recent_projects_button(cx))
+    }
+
+    /// The sidebar's single new-thread action, shown to the right of the
+    /// thread search box. The section-based grouping modes
+    /// (updated/status) don't have a meaningful per-group target,
+    /// so this creates a thread in the active workspace. The per-group `+` on
+    /// project headers remains for the workspace grouping, where a group is a
+    /// real container.
+    fn render_global_new_thread_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+        IconButton::new("sidebar-new-thread", IconName::Plus)
+            .icon_size(IconSize::Small)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .tooltip(move |_, cx| {
+                Tooltip::for_action_in("Start New Agent Thread", &NewThread, &focus_handle, cx)
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                if let Some(workspace) = this.active_workspace(cx) {
+                    this.selection = None;
+                    this.create_new_entry(&workspace, window, cx);
+                }
+            }))
+    }
+
+    fn render_group_by_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = AgentSettings::get_global(cx).thread_group_by;
+        let this = cx.weak_entity();
+        let is_archive = matches!(self.view, SidebarView::Archive(..));
+
+        PopoverMenu::new("sidebar-group-by-menu")
+            .menu(move |window, cx| {
+                let this = this.clone();
+                Some(ContextMenu::build(
+                    window,
+                    cx,
+                    move |mut menu, _window, _cx| {
+                        menu = menu.header("Group by");
+                        for &mode in ALL_THREAD_GROUP_BY {
+                            let is_selected = mode == current;
+                            let icon = thread_group_by_icon(mode);
+                            let label = thread_group_by_label(mode);
+                            let this = this.clone();
+
+                            // Rendered as a custom entry so the mode's icon is
+                            // always shown on the left and the checkmark for the
+                            // active mode on the right (the built-in toggleable
+                            // entry would otherwise reuse the icon slot for the
+                            // checkmark and hide unselected icons).
+                            let render = move |_window: &mut Window, _cx: &mut App| {
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(
+                                                Icon::new(icon)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Default),
+                                            )
+                                            .child(Label::new(label).color(Color::Default)),
+                                    )
+                                    .when(is_selected, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::Small)
+                                                .color(Color::Accent),
+                                        )
+                                    })
+                                    .into_any_element()
+                            };
+
+                            menu = menu.custom_entry(render, move |window, cx| {
+                                this.update(cx, |sidebar, cx| {
+                                    sidebar.set_thread_group_by(mode, window, cx);
+                                })
+                                .ok();
+                            });
+                        }
+
+                        // "Display" submenu: toggles for which per-thread
+                        // metadata is shown in the list.
+                        menu = menu.separator();
+                        {
+                            let this = this.clone();
+                            menu = menu.submenu_with_icon(
+                                "Display",
+                                IconName::Sliders,
+                                move |mut submenu, _window, submenu_cx| {
+                                    let display =
+                                        AgentSettings::get_global(submenu_cx).thread_list_display;
+                                    let fields = [
+                                        (
+                                            "Timestamp",
+                                            display.show_timestamp,
+                                            ThreadListDisplayField::Timestamp,
+                                        ),
+                                        (
+                                            "Branch",
+                                            display.show_branch,
+                                            ThreadListDisplayField::Branch,
+                                        ),
+                                        (
+                                            "Diff Stats",
+                                            display.show_diff_stats,
+                                            ThreadListDisplayField::DiffStats,
+                                        ),
+                                    ];
+                                    for (label, enabled, field) in fields {
+                                        let this = this.clone();
+                                        submenu = submenu.toggleable_entry(
+                                            label,
+                                            enabled,
+                                            IconPosition::End,
+                                            None,
+                                            move |_window, cx| {
+                                                this.update(cx, |sidebar, cx| {
+                                                    sidebar.set_thread_list_display_field(
+                                                        field, !enabled, cx,
+                                                    );
+                                                })
+                                                .ok();
+                                            },
+                                        );
+                                    }
+                                    submenu
+                                },
+                            );
+                        }
+
+                        // "Filter by" section: narrow the list to threads
+                        // matching the selected status and/or source.
+                        menu = menu.separator().header("Filter by");
+                        {
+                            let this = this.clone();
+                            menu = menu.submenu_with_icon(
+                                "Status",
+                                IconName::Circle,
+                                move |mut submenu, _window, submenu_cx| {
+                                    let active = this
+                                        .read_with(submenu_cx, |sidebar, _| {
+                                            sidebar.status_filter.clone()
+                                        })
+                                        .unwrap_or_default();
+                                    for &filter in ALL_STATUS_FILTERS {
+                                        let this = this.clone();
+                                        let enabled = active.contains(&filter);
+                                        submenu = submenu.toggleable_entry(
+                                            thread_status_filter_label(filter),
+                                            enabled,
+                                            IconPosition::End,
+                                            None,
+                                            move |_window, cx| {
+                                                this.update(cx, |sidebar, cx| {
+                                                    sidebar.toggle_status_filter(filter, cx);
+                                                })
+                                                .ok();
+                                            },
+                                        );
+                                    }
+                                    submenu
+                                },
+                            );
+                        }
+                        {
+                            let this = this.clone();
+                            menu = menu.submenu_with_icon(
+                                "Source",
+                                IconName::Sparkle,
+                                move |mut submenu, _window, submenu_cx| {
+                                    let active = this
+                                        .read_with(submenu_cx, |sidebar, _| {
+                                            sidebar.source_filter.clone()
+                                        })
+                                        .unwrap_or_default();
+                                    for &filter in ALL_SOURCE_FILTERS {
+                                        let this = this.clone();
+                                        let enabled = active.contains(&filter);
+                                        submenu = submenu.toggleable_entry(
+                                            thread_source_filter_label(filter),
+                                            enabled,
+                                            IconPosition::End,
+                                            None,
+                                            move |_window, cx| {
+                                                this.update(cx, |sidebar, cx| {
+                                                    sidebar.toggle_source_filter(filter, cx);
+                                                })
+                                                .ok();
+                                            },
+                                        );
+                                    }
+                                    submenu
+                                },
+                            );
+                        }
+                        if this
+                            .read_with(_cx, |sidebar, _| sidebar.has_active_filter())
+                            .unwrap_or(false)
+                        {
+                            let this = this.clone();
+                            menu = menu.entry("Clear Filters", None, move |_window, cx| {
+                                this.update(cx, |sidebar, cx| {
+                                    sidebar.clear_filters(cx);
+                                })
+                                .ok();
+                            });
+                        }
+
+                        // Collapse/expand only affect the workspace-grouped list.
+                        if !is_archive {
+                            menu = menu.separator();
+                            let collapse_handle = this.clone();
+                            menu = menu.entry("Collapse All", None, move |_window, cx| {
+                                collapse_handle
+                                    .update(cx, |sidebar, cx| {
+                                        sidebar.set_all_groups_expanded(false, cx);
+                                    })
+                                    .ok();
+                            });
+                            let expand_handle = this;
+                            menu = menu.entry("Expand All", None, move |_window, cx| {
+                                expand_handle
+                                    .update(cx, |sidebar, cx| {
+                                        sidebar.set_all_groups_expanded(true, cx);
+                                    })
+                                    .ok();
+                            });
+                        }
+
+                        menu
+                    },
+                ))
+            })
+            .trigger_with_tooltip(
+                IconButton::new("group-by", IconName::ListFilter)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(self.has_active_filter())
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
+                Tooltip::text("Group & Filter Threads"),
+            )
+            .anchor(gpui::Anchor::BottomLeft)
+            .offset(gpui::Point {
+                x: px(-2.0),
+                y: px(-2.0),
+            })
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
@@ -7611,15 +8663,20 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match &self.view {
-            SidebarView::ThreadList => {
-                self.show_archive(window, cx);
-            }
-            SidebarView::Archive(_) => self.show_thread_list(window, cx),
-        }
+        // The history view is the `Updated` grouping mode; toggle between it and
+        // the default workspace grouping, keeping the persisted setting in sync.
+        let next = if AgentSettings::get_global(cx).thread_group_by == ThreadGroupBy::Updated {
+            ThreadGroupBy::Workspace
+        } else {
+            ThreadGroupBy::Updated
+        };
+        self.set_thread_group_by(next, window, cx);
     }
 
     fn show_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.view, SidebarView::Archive(_)) {
+            return;
+        }
         let side = match self.side(cx) {
             SidebarSide::Left => "left",
             SidebarSide::Right => "right",
@@ -7695,6 +8752,271 @@ impl Sidebar {
         handle.focus(window, cx);
         self.serialize(cx);
         cx.notify();
+    }
+
+    /// Ensures the sidebar is showing the (grouped) native thread list and
+    /// rebuilds it for the requested grouping mode.
+    ///
+    /// All grouping modes now render in the native thread list: `Workspace`
+    /// uses project headers, while the other modes regroup threads into text
+    /// section headers in [`Self::rebuild_contents`].
+    fn apply_thread_group_by(
+        &mut self,
+        _group_by: ThreadGroupBy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.view, SidebarView::Archive(_)) {
+            self.show_thread_list(window, cx);
+        }
+        self.schedule_update_entries(false, cx);
+    }
+
+    /// Persists the chosen grouping mode to the user's settings and switches
+    /// the view to match.
+    fn set_thread_group_by(
+        &mut self,
+        group_by: ThreadGroupBy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.multi_workspace.upgrade().map(|mw| {
+            mw.read(cx)
+                .workspace()
+                .read(cx)
+                .project()
+                .read(cx)
+                .fs()
+                .clone()
+        });
+        if let Some(fs) = fs {
+            settings::update_settings_file(fs, cx, move |settings, _cx| {
+                settings
+                    .agent
+                    .get_or_insert_default()
+                    .set_thread_group_by(group_by);
+            });
+        }
+
+        telemetry::event!(
+            "Agent Thread Group By Changed",
+            group_by = thread_group_by_telemetry_name(group_by)
+        );
+
+        self.apply_thread_group_by(group_by, window, cx);
+    }
+
+    /// The filesystem handle for writing user settings, derived from the active
+    /// workspace's project.
+    fn workspace_fs(&self, cx: &App) -> Option<Arc<dyn fs::Fs>> {
+        self.multi_workspace.upgrade().map(|mw| {
+            mw.read(cx)
+                .workspace()
+                .read(cx)
+                .project()
+                .read(cx)
+                .fs()
+                .clone()
+        })
+    }
+
+    /// Persists a single thread-list display toggle (e.g. show timestamp) to
+    /// the user's settings. The list rebuilds via the settings observer.
+    fn set_thread_list_display_field(
+        &self,
+        field: ThreadListDisplayField,
+        value: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(fs) = self.workspace_fs(cx) else {
+            return;
+        };
+        settings::update_settings_file(fs, cx, move |settings, _cx| {
+            let display = settings
+                .agent
+                .get_or_insert_default()
+                .thread_list_display
+                .get_or_insert_default();
+            match field {
+                ThreadListDisplayField::Timestamp => display.show_timestamp = Some(value),
+                ThreadListDisplayField::Branch => display.show_branch = Some(value),
+                ThreadListDisplayField::DiffStats => display.show_diff_stats = Some(value),
+            }
+        });
+    }
+}
+
+/// User-facing label for a thread grouping mode, shown in the group-by menu.
+fn thread_group_by_label(group_by: ThreadGroupBy) -> &'static str {
+    match group_by {
+        ThreadGroupBy::Workspace => "Workspace",
+        ThreadGroupBy::Updated => "Updated",
+        ThreadGroupBy::Status => "Status",
+    }
+}
+
+/// The icon shown next to each grouping mode in the group-by menu.
+fn thread_group_by_icon(group_by: ThreadGroupBy) -> IconName {
+    match group_by {
+        ThreadGroupBy::Workspace => IconName::Folder,
+        ThreadGroupBy::Updated => IconName::Clock,
+        ThreadGroupBy::Status => IconName::Circle,
+    }
+}
+
+/// Stable identifier for telemetry events.
+fn thread_group_by_telemetry_name(group_by: ThreadGroupBy) -> &'static str {
+    match group_by {
+        ThreadGroupBy::Workspace => "workspace",
+        ThreadGroupBy::Updated => "updated",
+        ThreadGroupBy::Status => "status",
+    }
+}
+
+/// All grouping modes, in the order they appear in the group-by menu.
+const ALL_THREAD_GROUP_BY: &[ThreadGroupBy] = &[
+    ThreadGroupBy::Workspace,
+    ThreadGroupBy::Updated,
+    ThreadGroupBy::Status,
+];
+
+/// Whether a grouping mode renders the thread list as text section headers
+/// (history style) rather than the workspace project headers.
+fn mode_uses_sections(group_by: ThreadGroupBy) -> bool {
+    matches!(
+        group_by,
+        ThreadGroupBy::Updated | ThreadGroupBy::Status
+    )
+}
+
+/// Recency buckets used by the `Updated` grouping mode. Mirrors the buckets
+/// used by the dedicated thread history view.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecencyBucket {
+    Today,
+    Yesterday,
+    ThisWeek,
+    PastWeek,
+    Older,
+}
+
+impl RecencyBucket {
+    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
+        if date >= reference {
+            return RecencyBucket::Today;
+        }
+        if date == reference - TimeDelta::days(1) {
+            return RecencyBucket::Yesterday;
+        }
+        let week = date.iso_week();
+        if reference.iso_week() == week {
+            return RecencyBucket::ThisWeek;
+        }
+        if (reference - TimeDelta::weeks(1)).iso_week() == week {
+            return RecencyBucket::PastWeek;
+        }
+        RecencyBucket::Older
+    }
+
+    fn order(self) -> u32 {
+        match self {
+            RecencyBucket::Today => 0,
+            RecencyBucket::Yesterday => 1,
+            RecencyBucket::ThisWeek => 2,
+            RecencyBucket::PastWeek => 3,
+            RecencyBucket::Older => 4,
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            RecencyBucket::Today => "updated:today",
+            RecencyBucket::Yesterday => "updated:yesterday",
+            RecencyBucket::ThisWeek => "updated:this-week",
+            RecencyBucket::PastWeek => "updated:past-week",
+            RecencyBucket::Older => "updated:older",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RecencyBucket::Today => "Today",
+            RecencyBucket::Yesterday => "Yesterday",
+            RecencyBucket::ThisWeek => "This Week",
+            RecencyBucket::PastWeek => "Past Week",
+            RecencyBucket::Older => "Older",
+        }
+    }
+}
+
+/// The time used to sort and bucket an entry in the thread list.
+fn list_entry_display_time(entry: &ListEntry) -> DateTime<Utc> {
+    match entry {
+        ListEntry::Thread(thread) if thread.draft == Some(DraftKind::Empty) => {
+            DateTime::<Utc>::MAX_UTC
+        }
+        ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
+        ListEntry::Terminal(terminal) => terminal.metadata.created_at,
+        ListEntry::ProjectHeader { .. }
+        | ListEntry::SectionHeader { .. }
+        | ListEntry::SeeMore { .. } => DateTime::<Utc>::MIN_UTC,
+    }
+}
+
+/// The indices of all header entries (project or section headers) in a list,
+/// used for sticky-header positioning.
+fn list_entry_header_indices(entries: &[ListEntry]) -> Vec<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, entry)| {
+            matches!(
+                entry,
+                ListEntry::ProjectHeader { .. } | ListEntry::SectionHeader { .. }
+            )
+            .then_some(ix)
+        })
+        .collect()
+}
+
+/// Computes the section an entry belongs to under the given grouping mode,
+/// returning `(sort_order, stable_id, label)`. Only called for the
+/// section-based modes (see [`mode_uses_sections`]).
+fn section_descriptor_for_entry(
+    entry: &ListEntry,
+    group_by: ThreadGroupBy,
+    today: NaiveDate,
+) -> (u32, SharedString, SharedString) {
+    match group_by {
+        ThreadGroupBy::Updated => {
+            let date = list_entry_display_time(entry)
+                .with_timezone(&Local)
+                .naive_local()
+                .date();
+            let bucket = RecencyBucket::from_dates(today, date);
+            (bucket.order(), bucket.id().into(), bucket.label().into())
+        }
+        ThreadGroupBy::Status => match entry {
+            ListEntry::Thread(thread) if thread.draft.is_some() => {
+                (3, "status:drafts".into(), "Drafts".into())
+            }
+            ListEntry::Thread(thread) => {
+                let (order, id, label) = match thread.status {
+                    AgentThreadStatus::Running => (0, "status:running", "Running"),
+                    AgentThreadStatus::WaitingForConfirmation => {
+                        (1, "status:waiting", "Needs Attention")
+                    }
+                    AgentThreadStatus::Error => (2, "status:error", "Error"),
+                    AgentThreadStatus::Completed => (4, "status:completed", "Completed"),
+                };
+                (order, id.into(), label.into())
+            }
+            ListEntry::Terminal(_) => (5, "status:terminals".into(), "Terminals".into()),
+            ListEntry::ProjectHeader { .. }
+            | ListEntry::SectionHeader { .. }
+            | ListEntry::SeeMore { .. } => (6, "status:other".into(), "Other".into()),
+        },
+        ThreadGroupBy::Workspace => (0, "".into(), SharedString::default()),
     }
 }
 
@@ -7816,18 +9138,16 @@ impl WorkspaceSidebar for Sidebar {
     fn restore_serialized_state(
         &mut self,
         state: &str,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(serialized) = serde_json::from_str::<SerializedSidebar>(state).log_err() {
             if let Some(width) = serialized.width {
                 self.width = px(width).clamp(MIN_WIDTH, MAX_WIDTH);
             }
-            if serialized.active_view == SerializedSidebarView::History {
-                cx.defer_in(window, |this, window, cx| {
-                    this.show_archive(window, cx);
-                });
-            }
+            // The active view is now derived from the global `thread_group_by`
+            // setting (applied during `Sidebar::new`), so we no longer restore
+            // it from the per-window serialized state.
         }
         cx.notify();
     }

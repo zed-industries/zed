@@ -1021,6 +1021,28 @@
     "flexible": true,
     // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
+    // How threads in the agent sidebar's thread list are grouped. Can be
+    // 'workspace', 'updated', or 'status'.
+    "thread_group_by": "workspace",
+    // Controls which metadata is shown for each thread in the sidebar's thread list.
+    "thread_list_display": {
+      // Whether to show each thread's last-updated timestamp.
+      "show_timestamp": true,
+      // Whether to show the git branch / linked-worktree chips for each thread.
+      "show_branch": true,
+      // Whether to show the diff stats (added/removed line counts) for each thread.
+      "show_diff_stats": true,
+    },
+    // Which threads are shown in the sidebar's thread list (the "Filter by" menu).
+    // Empty lists mean no filtering is applied.
+    "thread_filter": {
+      // Restrict the list to threads matching any of these statuses. Each entry
+      // can be 'running', 'needs_attention', 'completed', or 'error'.
+      "status": [],
+      // Restrict the list to threads from any of these sources. Each entry can
+      // be 'zed' or 'external'.
+      "source": [],
+    },
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
