@@ -629,19 +629,14 @@ impl ScrollManager {
         pos
     }
 
-    fn set_scroll_position(
-        &mut self,
-        scroll_position: gpui::Point<ScrollOffset>,
-        map: &DisplaySnapshot,
+    fn clamp_scroll_top(
+        &self,
+        scroll_top: ScrollOffset,
         scroll_beyond_last_line: ScrollBeyondLastLine,
-        local: bool,
-        autoscroll: bool,
-        workspace_id: Option<WorkspaceId>,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> WasScrolled {
-        let scroll_top = scroll_position.y.max(0.);
-        let scroll_top = match scroll_beyond_last_line {
+        map: &DisplaySnapshot,
+    ) -> ScrollOffset {
+        let scroll_top = scroll_top.max(0.);
+        match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scroll_top,
             ScrollBeyondLastLine::Off => {
                 if let Some(height_in_lines) = self.visible_line_count {
@@ -661,7 +656,63 @@ impl ScrollManager {
                     scroll_top
                 }
             }
+        }
+    }
+
+    /// Returns the scroll position the editor is settling towards.
+    ///
+    /// When a scroll animation is in flight the visible scroll anchor lags
+    /// behind its destination, so callers that need to reason about the final
+    /// (logical) scroll position - such as relative scrolls or cursor follow -
+    /// must use this instead of [`scroll_position`](Self::scroll_position).
+    pub fn settled_scroll_position(
+        &self,
+        snapshot: &DisplaySnapshot,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
+        cx: &App,
+    ) -> gpui::Point<ScrollOffset> {
+        let Some(animation) = self.scroll_animation else {
+            return self.scroll_position(snapshot, cx);
         };
+        let target = animation.target_position();
+        let y = self.clamp_scroll_top(target.y, scroll_beyond_last_line, snapshot);
+        let mut x = target.x.max(0.);
+        if let Some(max_x) = self.scroll_max_x {
+            x = x.min(max_x);
+        }
+        point(x, y)
+    }
+
+    /// Like [`scroll_top_display_point`](Self::scroll_top_display_point), but
+    /// returns the position the editor is settling towards when a scroll
+    /// animation is in flight.
+    pub fn settled_scroll_top_display_point(
+        &self,
+        snapshot: &DisplaySnapshot,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
+        cx: &App,
+    ) -> DisplayPoint {
+        let Some(animation) = self.scroll_animation else {
+            return self.scroll_top_display_point(snapshot, cx);
+        };
+        let target = animation.target_position();
+        let y = self.clamp_scroll_top(target.y, scroll_beyond_last_line, snapshot);
+        let point = DisplayPoint::new(DisplayRow(y as u32), target.x.max(0.) as u32);
+        snapshot.clip_point(point, Bias::Left)
+    }
+
+    fn set_scroll_position(
+        &mut self,
+        scroll_position: gpui::Point<ScrollOffset>,
+        map: &DisplaySnapshot,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
+        local: bool,
+        autoscroll: bool,
+        workspace_id: Option<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> WasScrolled {
+        let scroll_top = self.clamp_scroll_top(scroll_position.y, scroll_beyond_last_line, map);
         let scroll_top_row = DisplayRow(scroll_top as u32);
         let scroll_top_buffer_point = map
             .clip_point(
@@ -970,6 +1021,19 @@ impl Editor {
         self.scroll_manager.scroll_top_display_point(snapshot, cx)
     }
 
+    /// Like [`scroll_top_display_point`](Self::scroll_top_display_point), but
+    /// returns the position the editor is settling towards when a scroll
+    /// animation is in flight.
+    pub fn settled_scroll_top_display_point(
+        &self,
+        snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> DisplayPoint {
+        let scroll_beyond_last_line = self.scroll_beyond_last_line(cx);
+        self.scroll_manager
+            .settled_scroll_top_display_point(snapshot, scroll_beyond_last_line, cx)
+    }
+
     pub fn vertical_scroll_margin(&self) -> usize {
         self.scroll_manager.vertical_scroll_margin as usize
     }
@@ -1208,7 +1272,12 @@ impl Editor {
             return;
         }
 
-        let mut current_position = self.scroll_position(cx);
+        let mut current_position = {
+            let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let scroll_beyond_last_line = self.scroll_beyond_last_line(cx);
+            self.scroll_manager
+                .settled_scroll_position(&map, scroll_beyond_last_line, cx)
+        };
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
