@@ -7,6 +7,7 @@ pub(crate) enum SerialKind {
     MouseEnter,
     MousePress,
     KeyPress,
+    Touch,
 }
 
 #[derive(Debug)]
