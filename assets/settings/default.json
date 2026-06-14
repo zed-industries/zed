@@ -1039,6 +1039,10 @@
     //
     // Default: 0
     "commit_title_max_length": 0,
+    /// Whether the commit should be signed-off by default
+    ///
+    /// Default: false
+    "signoff_by_default": false,
     // Default action when clicking a changed file in the Git panel.
     //
     // Choices: project_diff, file_diff, view_file
