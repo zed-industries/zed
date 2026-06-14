@@ -685,6 +685,23 @@ impl ListState {
         None
     }
 
+    /// Get the measured height of the given item, if it has been measured,
+    /// regardless of its position relative to the current scroll offset.
+    ///
+    /// Unlike [`Self::bounds_for_item`], this also returns a height for items
+    /// above the logical scroll top (as long as they were measured), which is
+    /// useful for UI that needs an item's size even after it has scrolled out
+    /// of view.
+    pub fn measured_height_for_item(&self, ix: usize) -> Option<Pixels> {
+        let state = &*self.0.borrow();
+        let mut cursor = state.items.cursor::<Count>(());
+        cursor.seek(&Count(ix), Bias::Right);
+        match cursor.item() {
+            Some(ListItem::Measured { size, .. }) if cursor.start().0 == ix => Some(size.height),
+            _ => None,
+        }
+    }
+
     /// Call this method when the user starts dragging the scrollbar.
     ///
     /// This will prevent the height reported to the scrollbar from changing during the drag
