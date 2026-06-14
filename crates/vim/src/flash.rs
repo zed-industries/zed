@@ -14,7 +14,7 @@ use ui::px;
 
 use crate::{
     ClearOperators, Vim, VimSettings,
-    motion::{self, Motion},
+    motion::Motion,
     state::{FlashJumpLabel, Operator},
 };
 
@@ -460,6 +460,7 @@ impl Vim {
         if pattern_chars.is_empty() {
             return Vec::new();
         }
+        let case_sensitive = !smartcase || pattern_chars.iter().any(|ch| ch.is_uppercase());
 
         let cursor_distance =
             |flash_match: &FlashMatch| flash_match.range.start.0.abs_diff(cursor_offset.0);
@@ -489,7 +490,11 @@ impl Vim {
                         .iter()
                         .zip(&pattern_chars)
                         .all(|((_, buffer_char), pattern_char)| {
-                            motion::is_character_match(*pattern_char, *buffer_char, smartcase)
+                            Self::flash_pattern_char_matches(
+                                *pattern_char,
+                                *buffer_char,
+                                case_sensitive,
+                            )
                         })
                 {
                     let new_match = FlashMatch {
@@ -517,6 +522,18 @@ impl Vim {
             chunk_start = chunk_start + chunk.len();
         }
         matches.into()
+    }
+
+    fn flash_pattern_char_matches(
+        pattern_char: char,
+        buffer_char: char,
+        case_sensitive: bool,
+    ) -> bool {
+        if case_sensitive {
+            pattern_char == buffer_char
+        } else {
+            pattern_char.eq_ignore_ascii_case(&buffer_char)
+        }
     }
 
     /// Excludes labels that could be the next typed pattern character: a label
@@ -943,6 +960,23 @@ mod test {
         let labels = active_flash_labels(&mut cx);
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].2, 4);
+        cx.simulate_keystrokes("escape");
+
+        // Any uppercase character makes the whole pattern case-sensitive.
+        cx.set_state("ˇAB aB ab", Mode::Normal);
+        cx.simulate_keystrokes("s a shift-b");
+        let labels = active_flash_labels(&mut cx);
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].2, 3);
+
+        // Removing the last uppercase character switches back to case-insensitive matching.
+        cx.simulate_keystrokes("backspace");
+        let mut offsets = active_flash_labels(&mut cx)
+            .into_iter()
+            .map(|(_, _, offset)| offset)
+            .collect::<Vec<_>>();
+        offsets.sort_unstable();
+        assert_eq!(offsets, vec![0, 3, 6]);
         cx.simulate_keystrokes("escape");
     }
 
