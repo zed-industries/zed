@@ -45,7 +45,7 @@ use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
     CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    LanguageModelRequestMessage, Role, Event as LanguageModelEvent,
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
@@ -807,6 +807,20 @@ impl GitPanel {
                     cx.notify();
                 }
             });
+
+            let registry = LanguageModelRegistry::global(cx);
+            cx.subscribe(&registry, |_, _, event, cx| match event {
+                LanguageModelEvent::CommitMessageModelChanged
+                | LanguageModelEvent::DefaultModelChanged
+                | LanguageModelEvent::ProviderStateChanged(_)
+                | LanguageModelEvent::AddedProvider(_)
+                | LanguageModelEvent::RemovedProvider(_)
+                | LanguageModelEvent::ProvidersChanged => {
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
 
             cx.subscribe_in(
                 &git_store,
