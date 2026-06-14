@@ -11,7 +11,7 @@ use git::{
     commit::ParsedCommitMessage,
     parse_git_remote_url,
     repository::{
-        CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
+        Branch, CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
         SearchCommitArgs,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
@@ -60,6 +60,7 @@ use ui::{
 use workspace::{
     ModalView, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
+    notifications::DetachAndPromptErr,
 };
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
@@ -547,6 +548,14 @@ struct SearchState {
 struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
+}
+
+/// Context menu data for a clicked ref chip. `switch_branch_name` is only set
+/// for resolved non-current branches that can be passed to `change_branch`.
+#[derive(Clone)]
+struct GitGraphRefMenuTarget {
+    ref_name: SharedString,
+    switch_branch_name: Option<String>,
 }
 
 impl SplitState {
@@ -1681,14 +1690,6 @@ impl GitGraph {
         self.context_menu.is_some()
     }
 
-    /// Checks whether a ref name from git's `%D` decoration
-    ///  format refers to the currently checked-out branch.
-    fn is_head_ref(ref_name: &str, head_branch_name: &Option<SharedString>) -> bool {
-        head_branch_name.as_ref().is_some_and(|head| {
-            ref_name == head.as_ref() || ref_name.strip_prefix("HEAD -> ") == Some(head.as_ref())
-        })
-    }
-
     /// Extracts a ref name (branch, remote ref, or tag) from a decoration in
     /// git's `%D` format, returning `None` for a detached `HEAD`.
     fn ref_name_from_decoration(decoration: &str) -> Option<SharedString> {
@@ -1702,13 +1703,31 @@ impl GitGraph {
         Some(SharedString::from(name.to_string()))
     }
 
+    /// Finds the branch for a decoration, preferring local branches for short names.
+    fn branch_for_ref_name<'a>(branches: &'a [Branch], ref_name: &str) -> Option<&'a Branch> {
+        let ref_name = match ref_name {
+            "HEAD" => return None,
+            ref_name => ref_name.strip_prefix("HEAD -> ").unwrap_or(ref_name),
+        };
+
+        branches
+            .iter()
+            .find(|branch| branch.ref_name.as_ref() == ref_name)
+            .or_else(|| {
+                branches
+                    .iter()
+                    .find(|branch| !branch.is_remote() && branch.name() == ref_name)
+            })
+            .or_else(|| branches.iter().find(|branch| branch.name() == ref_name))
+    }
+
     fn render_chip(
         &self,
         name: &SharedString,
         accent_color: gpui::Hsla,
         is_head: bool,
     ) -> impl IntoElement {
-        Chip::new(name.clone())
+        let chip = Chip::new(name.clone())
             .label_size(LabelSize::Small)
             .truncate()
             .map(|chip| {
@@ -1720,7 +1739,12 @@ impl GitGraph {
                     chip.bg_color(accent_color.opacity(0.08))
                         .border_color(accent_color.opacity(0.25))
                 }
-            })
+            });
+
+        h_flex()
+            .id(format!("git-graph-ref-chip-{name}"))
+            .min_w_0()
+            .child(chip)
     }
 
     /// Renders a ref chip for the commit at `commit_idx`. Chips that name a ref
@@ -1730,15 +1754,26 @@ impl GitGraph {
     fn render_ref_chip(
         &self,
         name: &SharedString,
+        branches: &[Branch],
         accent_color: gpui::Hsla,
-        is_head: bool,
         commit_idx: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let branch = Self::branch_for_ref_name(branches, name);
+        let is_head = branch.is_some_and(|branch| branch.is_head);
+        let switch_branch_name = branch
+            .filter(|branch| !branch.is_head)
+            .map(|branch| branch.name().to_string());
+
         let chip = self.render_chip(name, accent_color, is_head);
         let Some(ref_name) = Self::ref_name_from_decoration(name) else {
             return chip.into_any_element();
         };
+        let menu_target = GitGraphRefMenuTarget {
+            ref_name,
+            switch_branch_name,
+        };
+
         div()
             .child(chip)
             .on_mouse_down(
@@ -1747,7 +1782,7 @@ impl GitGraph {
                     this.deploy_entry_context_menu(
                         event.position,
                         commit_idx,
-                        Some(ref_name.clone()),
+                        Some(menu_target.clone()),
                         window,
                         cx,
                     );
@@ -1765,13 +1800,13 @@ impl GitGraph {
     ) -> Vec<Vec<AnyElement>> {
         let repository = self.get_repository(cx);
 
-        let head_branch_name: Option<SharedString> = repository.as_ref().and_then(|repo| {
-            repo.read(cx)
-                .snapshot()
-                .branch
-                .as_ref()
-                .map(|branch| SharedString::from(branch.name().to_string()))
-        });
+        let branches = repository
+            .as_ref()
+            .map(|repo| {
+                let snapshot = repo.read(cx).snapshot();
+                snapshot.branch_list
+            })
+            .unwrap_or_else(|| Arc::from([]));
 
         let row_height = Self::row_height(window, cx);
         let has_context_menu = self.has_context_menu();
@@ -1931,12 +1966,10 @@ impl GitGraph {
                                 .children((!commit.data.ref_names.is_empty()).then(|| {
                                     h_flex().gap_1().children(commit.data.ref_names.iter().map(
                                         |name| {
-                                            let is_head =
-                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
                                             self.render_ref_chip(
                                                 name,
+                                                branches.as_ref(),
                                                 accent_color,
-                                                is_head,
                                                 idx,
                                                 cx,
                                             )
@@ -2371,6 +2404,21 @@ impl GitGraph {
         self.copy_commit_tag(selected_entry_index, window, cx);
     }
 
+    fn switch_branch(&mut self, branch_name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+
+        cx.spawn(async move |_, cx| {
+            repository
+                .update(cx, |repository, _| repository.change_branch(branch_name))
+                .await??;
+
+            anyhow::Ok(())
+        })
+        .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
+    }
+
     fn git_task_context(
         &self,
         commit_sha: Oid,
@@ -2460,7 +2508,7 @@ impl GitGraph {
         &mut self,
         position: Point<Pixels>,
         index: usize,
-        ref_name: Option<SharedString>,
+        ref_target: Option<GitGraphRefMenuTarget>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2469,6 +2517,10 @@ impl GitGraph {
         };
         let sha = commit.data.sha;
         let sha_short = sha.display_short();
+        let ref_name = ref_target.as_ref().map(|target| target.ref_name.clone());
+        let switch_branch_name = ref_target
+            .as_ref()
+            .and_then(|target| target.switch_branch_name.clone());
         let git_tasks = self
             .git_task_context(sha, ref_name.as_deref(), cx)
             .map(|task_context| self.git_context_menu_tasks(&task_context, cx))
@@ -2485,6 +2537,15 @@ impl GitGraph {
             context_menu
                 .context(focus_handle)
                 .header(header)
+                .when_some(switch_branch_name, |menu, branch_name| {
+                    menu.entry(
+                        "Switch Branch",
+                        None,
+                        window.handler_for(&git_graph, move |this, window, cx| {
+                            this.switch_branch(branch_name.clone(), window, cx);
+                        }),
+                    )
+                })
                 .entry(
                     "View Commit",
                     Some(OpenCommitView.boxed_clone()),
@@ -2796,12 +2857,8 @@ impl GitGraph {
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
         let ref_names = commit_entry.data.ref_names.clone();
 
-        let head_branch_name: Option<SharedString> = repository
-            .read(cx)
-            .snapshot()
-            .branch
-            .as_ref()
-            .map(|branch| SharedString::from(branch.name().to_string()));
+        let snapshot = repository.read(cx).snapshot();
+        let branches = snapshot.branch_list;
 
         let accent_colors = cx.theme().accents();
         let accent_color = accent_colors
@@ -2939,8 +2996,13 @@ impl GitGraph {
                     .children((!ref_names.is_empty()).then(|| {
                         h_flex().gap_1().flex_wrap().justify_center().children(
                             ref_names.iter().map(|name| {
-                                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                self.render_ref_chip(name, accent_color, is_head, selected_idx, cx)
+                                self.render_ref_chip(
+                                    name,
+                                    branches.as_ref(),
+                                    accent_color,
+                                    selected_idx,
+                                    cx,
+                                )
                             }),
                         )
                     }))
@@ -4639,6 +4701,72 @@ mod tests {
             language_model::init(cx);
             crate::init(cx);
         });
+    }
+
+    fn test_branch(ref_name: &str, is_head: bool) -> Branch {
+        Branch {
+            is_head,
+            ref_name: SharedString::from(ref_name),
+            upstream: None,
+            most_recent_commit: None,
+        }
+    }
+
+    fn resolved_branch_ref_name(branches: &[Branch], ref_name: &str) -> Option<SharedString> {
+        GitGraph::branch_for_ref_name(branches, ref_name).map(|branch| branch.ref_name.clone())
+    }
+
+    #[test]
+    fn test_ref_decorations_resolve_git_graph_branches() {
+        let branches = [
+            test_branch("refs/heads/main", true),
+            test_branch("refs/heads/feature", false),
+            test_branch("refs/remotes/origin/feature", false),
+            test_branch("refs/remotes/origin/main", false),
+        ];
+
+        assert_eq!(
+            resolved_branch_ref_name(&branches, "HEAD -> main").as_deref(),
+            Some("refs/heads/main")
+        );
+        assert_eq!(
+            resolved_branch_ref_name(&branches, "refs/heads/feature").as_deref(),
+            Some("refs/heads/feature")
+        );
+        assert_eq!(
+            resolved_branch_ref_name(&branches, "feature").as_deref(),
+            Some("refs/heads/feature")
+        );
+        assert_eq!(
+            resolved_branch_ref_name(&branches, "origin/feature").as_deref(),
+            Some("refs/remotes/origin/feature")
+        );
+    }
+
+    #[test]
+    fn test_ref_decorations_keep_non_branch_decorations_structured_as_other() {
+        let branches = [
+            test_branch("refs/heads/HEAD", false),
+            test_branch("refs/heads/main", true),
+        ];
+
+        assert!(resolved_branch_ref_name(&branches, "HEAD").is_none());
+        assert!(resolved_branch_ref_name(&branches, "refs/stash").is_none());
+        assert!(resolved_branch_ref_name(&branches, "tag: v1.0.0").is_none());
+        assert!(resolved_branch_ref_name(&branches, "refs/tags/v1.0.0").is_none());
+    }
+
+    #[test]
+    fn test_ref_decorations_prefer_local_branch_name() {
+        let branches = [
+            test_branch("refs/remotes/origin/feature", false),
+            test_branch("refs/heads/origin/feature", false),
+        ];
+
+        assert_eq!(
+            resolved_branch_ref_name(&branches, "origin/feature").as_deref(),
+            Some("refs/heads/origin/feature")
+        );
     }
 
     fn build_oid_to_row_map(graph: &GraphData) -> HashMap<Oid, usize> {
@@ -6845,7 +6973,10 @@ mod tests {
             git_graph.deploy_entry_context_menu(
                 point(px(20.), px(20.)),
                 0,
-                Some("feature-x".into()),
+                Some(GitGraphRefMenuTarget {
+                    ref_name: "feature-x".into(),
+                    switch_branch_name: None,
+                }),
                 window,
                 cx,
             );
@@ -6879,6 +7010,105 @@ mod tests {
             resolved_task.resolved.args,
             vec!["checkout".to_string(), "feature-x".to_string()]
         );
+    }
+
+    #[gpui::test]
+    async fn test_ref_context_menu_switches_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.with_git_state(Path::new("/project/.git"), false, |state| {
+            state.branches.insert("feature-x".to_string());
+        })
+        .expect("git state should exist");
+
+        let commit_sha = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
+            .expect("commit SHA should be valid");
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: commit_sha,
+                parents: SmallVec::new(),
+                ref_names: vec!["feature-x".into()],
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should have an active repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        let workspace_weak = workspace.downgrade();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |git_graph, window, cx| {
+            assert_eq!(git_graph.graph_data.commits.len(), 1);
+            git_graph.deploy_entry_context_menu(
+                point(px(20.), px(20.)),
+                0,
+                Some(GitGraphRefMenuTarget {
+                    ref_name: "feature-x".into(),
+                    switch_branch_name: Some("feature-x".to_string()),
+                }),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let context_menu = git_graph.read_with(&*cx, |git_graph, _| {
+            git_graph
+                .context_menu
+                .as_ref()
+                .expect("context menu should be open")
+                .menu
+                .clone()
+        });
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.select_first(&menu::SelectFirst, window, cx);
+            context_menu.confirm(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let current_branch = fs
+            .with_git_state(Path::new("/project/.git"), false, |state| {
+                state.current_branch_name.clone()
+            })
+            .expect("git state should exist");
+        assert_eq!(current_branch.as_deref(), Some("feature-x"));
     }
 
     #[test]
