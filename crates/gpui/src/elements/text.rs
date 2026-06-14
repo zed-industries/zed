@@ -1206,6 +1206,7 @@ impl Element for InteractiveText {
                                 .is_ok()
                                 && source_bounds.contains(&window.mouse_position())
                                 && pending_mouse_down.get().is_none()
+                                && !window.any_mouse_button_pressed()
                         }
                     });
 
@@ -1219,6 +1220,7 @@ impl Element for InteractiveText {
                                 .is_ok()
                                 && hitbox.is_hovered(window)
                                 && pending_mouse_down.get().is_none()
+                                && !window.any_mouse_button_pressed()
                         }
                     });
 
