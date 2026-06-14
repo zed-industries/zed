@@ -45,7 +45,19 @@ impl WindowsWindowInner {
                 unsafe { SetActiveWindow(handle).ok() };
                 None
             }
-            WM_ACTIVATE => self.handle_activate_msg(wparam),
+            WM_ACTIVATE => {
+                let result = self.handle_activate_msg(wparam);
+                // Activation flips the effective background appearance for
+                // glass windows (inactive windows render opaque, see
+                // `WindowsWindow::draw`), so force a redraw to apply it now
+                // instead of waiting for the next app-driven frame.
+                if self.state.background_appearance.get()
+                    != WindowBackgroundAppearance::Opaque
+                {
+                    self.draw_window(handle, true);
+                }
+                result
+            }
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
