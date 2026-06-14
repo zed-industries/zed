@@ -9,7 +9,7 @@ use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
 use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
-use agent_settings::UserAgentsMd;
+use agent_settings::{AgentSettings, UserAgentsMd};
 use agent_skills::global_skills_dir;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
@@ -26,7 +26,7 @@ use language_model::{
     FastModeConfirmation, LanguageModelEffortLevel, LanguageModelId, LanguageModelProviderId,
     LanguageModelRegistry, Speed,
 };
-use settings::update_settings_file;
+use settings::{LanguageModelSelection, SettingsContent, update_settings_file};
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -175,6 +175,35 @@ impl ThreadFeedbackState {
 
         editor.read(cx).focus_handle(cx).focus(window, cx);
         editor
+    }
+}
+
+fn update_current_native_model_setting(
+    settings: &mut SettingsContent,
+    cx: &App,
+    model_key: Option<(String, String)>,
+    mut update_selection: impl FnMut(&mut LanguageModelSelection),
+) {
+    let Some((provider_id, model_id)) = model_key else {
+        return;
+    };
+
+    let default_model = AgentSettings::get_global(cx).default_model.clone();
+    let agent = if let Some(default_model) = default_model.filter(|default_model| {
+        default_model.provider.0.as_str() == provider_id.as_str()
+            && default_model.model.as_str() == model_id.as_str()
+    }) {
+        let agent = settings.agent.get_or_insert_default();
+        update_selection(agent.default_model.get_or_insert(default_model));
+        Some(agent)
+    } else {
+        settings.agent.as_mut()
+    };
+
+    if let Some(agent) = agent {
+        agent.update_favorite_model(&provider_id, &model_id, |favorite| {
+            update_selection(favorite);
+        });
     }
 }
 
@@ -4617,19 +4646,13 @@ impl ThreadView {
                             (model.provider_id().0.to_string(), model.id().0.to_string())
                         });
                         let fs = thread.project().read(cx).fs().clone();
-                        update_settings_file(fs, cx, move |settings, _| {
-                            if let Some(agent) = settings.agent.as_mut() {
-                                if let Some(default_model) = agent.default_model.as_mut() {
-                                    default_model.enable_thinking = enable_thinking;
-                                }
-                                if let Some((provider_id, model_id)) = &favorite_key {
-                                    agent.update_favorite_model(
-                                        provider_id,
-                                        model_id,
-                                        |favorite| favorite.enable_thinking = enable_thinking,
-                                    );
-                                }
-                            }
+                        update_settings_file(fs, cx, move |settings, cx| {
+                            update_current_native_model_setting(
+                                settings,
+                                cx,
+                                favorite_key,
+                                |selection| selection.enable_thinking = enable_thinking,
+                            );
                         });
                     });
                 }
@@ -4766,28 +4789,22 @@ impl ThreadView {
                                                     )
                                                 });
                                                 let fs = thread.project().read(cx).fs().clone();
-                                                update_settings_file(fs, cx, move |settings, _| {
-                                                    if let Some(agent) = settings.agent.as_mut() {
-                                                        if let Some(default_model) =
-                                                            agent.default_model.as_mut()
-                                                        {
-                                                            default_model.effort =
-                                                                Some(effort.to_string());
-                                                        }
-                                                        if let Some((provider_id, model_id)) =
-                                                            &favorite_key
-                                                        {
-                                                            agent.update_favorite_model(
-                                                                provider_id,
-                                                                model_id,
-                                                                |favorite| {
-                                                                    favorite.effort =
-                                                                        Some(effort.to_string())
-                                                                },
-                                                            );
-                                                        }
-                                                    }
-                                                });
+                                                let effort_str = effort.to_string();
+                                                update_settings_file(
+                                                    fs,
+                                                    cx,
+                                                    move |settings, cx| {
+                                                        update_current_native_model_setting(
+                                                            settings,
+                                                            cx,
+                                                            favorite_key,
+                                                            |selection| {
+                                                                selection.effort =
+                                                                    Some(effort_str.clone())
+                                                            },
+                                                        );
+                                                    },
+                                                );
                                             });
                                         }
                                     })
@@ -10266,17 +10283,10 @@ impl ThreadView {
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
             let fs = thread.project().read(cx).fs().clone();
-            update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut() {
-                    if let Some(default_model) = agent.default_model.as_mut() {
-                        default_model.effort = Some(next_effort.clone());
-                    }
-                    if let Some((provider_id, model_id)) = &favorite_key {
-                        agent.update_favorite_model(provider_id, model_id, |favorite| {
-                            favorite.effort = Some(next_effort)
-                        });
-                    }
-                }
+            update_settings_file(fs, cx, move |settings, cx| {
+                update_current_native_model_setting(settings, cx, favorite_key, |selection| {
+                    selection.effort = Some(next_effort.clone())
+                });
             });
         });
     }
