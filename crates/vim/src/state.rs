@@ -1016,6 +1016,29 @@ impl VimGlobals {
         }
     }
 
+    // Like `observe_insertion`, but skips the macro-register branch so that
+    // replaying a macro doesn't recursively capture its own text.
+    pub fn observe_replayed_insertion(
+        &mut self,
+        text: Arc<str>,
+        range_to_replace: Option<Range<isize>>,
+    ) {
+        if !self.dot_recording {
+            return;
+        }
+        self.recording_actions.push(ReplayableAction::Insertion {
+            text,
+            utf16_range_to_replace: range_to_replace,
+        });
+        if self.stop_recording_after_next_action {
+            self.dot_recording = false;
+            self.recorded_actions = std::mem::take(&mut self.recording_actions);
+            self.recorded_count = self.recording_count.take();
+            self.recorded_register_for_dot = self.recording_register_for_dot.take();
+            self.stop_recording_after_next_action = false;
+        }
+    }
+
     pub fn focused_vim(&self) -> Option<Entity<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
