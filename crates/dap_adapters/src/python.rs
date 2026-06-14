@@ -86,13 +86,12 @@ impl PythonDebugAdapter {
         Ok(args)
     }
 
-    async fn request_args(
+    async fn finalize_configuration(
         &self,
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
-    ) -> Result<StartDebuggingRequestArguments> {
-        let request = self.request_kind(&task_definition.config).await?;
-
+        envs: &mut HashMap<String, String>,
+    ) -> Result<Value> {
         let mut configuration = task_definition.config.clone();
         if let Ok(console) = configuration.dot_get_mut("console") {
             // Use built-in Zed terminal if user did not explicitly provide a setting for console.
@@ -101,10 +100,32 @@ impl PythonDebugAdapter {
             }
         }
 
-        if let Some(obj) = configuration.as_object_mut() {
-            obj.entry("cwd")
-                .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+        if let Some(config) = configuration.as_object_mut() {
+            let cwd_path = match config.get("cwd") {
+                Some(Value::String(cwd)) => PathBuf::from(cwd),
+                Some(_) => bail!("expected `cwd` to be a string"),
+                None => {
+                    let worktree_root = delegate.worktree_root_path().to_path_buf();
+                    config.insert("cwd".into(), worktree_root.to_string_lossy().into());
+                    worktree_root
+                }
+            };
+
+            crate::env_file::apply_env_file(
+                config,
+                envs,
+                Some(&cwd_path),
+                delegate.fs().clone(),
+                Self::LANGUAGE_NAME,
+            )
+            .await?;
         }
+
+        Ok(configuration)
+    }
+
+    async fn request_args(&self, configuration: Value) -> Result<StartDebuggingRequestArguments> {
+        let request = self.request_kind(&configuration).await?;
 
         Ok(StartDebuggingRequestArguments {
             configuration,
@@ -414,6 +435,12 @@ impl PythonDebugAdapter {
             arguments.join(" ")
         );
 
+        let mut envs = user_env.unwrap_or_default();
+        let configuration = self
+            .finalize_configuration(delegate, config, &mut envs)
+            .await?;
+        let request_args = self.request_args(configuration).await?;
+
         Ok(DebugAdapterBinary {
             command: Some(python_command),
             arguments,
@@ -423,8 +450,8 @@ impl PythonDebugAdapter {
                 timeout,
             }),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: user_env.unwrap_or_default(),
-            request_args: self.request_args(delegate, config).await?,
+            envs,
+            request_args,
         })
     }
 }
