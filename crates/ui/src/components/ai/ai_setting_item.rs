@@ -244,7 +244,12 @@ impl Component for AiSettingItem {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A reusable row used in AI-related configuration lists to display a \
+        server or provider's name, source, current status, and associated actions."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             v_flex()
                 .w_80()
@@ -403,6 +408,6 @@ impl Component for AiSettingItem {
             ),
         ];
 
-        Some(example_group(examples).vertical().into_any_element())
+        example_group(examples).vertical().into_any_element()
     }
 }

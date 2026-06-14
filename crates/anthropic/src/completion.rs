@@ -2,9 +2,9 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelProviderName,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -14,6 +14,7 @@ use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
     CacheTtl, ContentDelta, Event, ImageSource, Message, RequestContent, ResponseContent,
     StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
+    completion_error_from_anthropic, completion_error_from_anthropic_api,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -300,6 +301,7 @@ pub fn into_anthropic(
                     "low" => Some(crate::Effort::Low),
                     "medium" => Some(crate::Effort::Medium),
                     "high" => Some(crate::Effort::High),
+                    "xhigh" => Some(crate::Effort::XHigh),
                     "max" => Some(crate::Effort::Max),
                     _ => None,
                 };
@@ -322,14 +324,16 @@ pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
+    provider_name: LanguageModelProviderName,
 }
 
 impl AnthropicEventMapper {
-    pub fn new() -> Self {
+    pub fn new(provider_name: LanguageModelProviderName) -> Self {
         Self {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
+            provider_name,
         }
     }
 
@@ -341,7 +345,10 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
+                Err(error) => vec![Err(completion_error_from_anthropic(
+                    error,
+                    self.provider_name.clone(),
+                ))],
             })
         })
     }
@@ -483,7 +490,10 @@ impl AnthropicEventMapper {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
-                vec![Err(error.into())]
+                vec![Err(completion_error_from_anthropic_api(
+                    error,
+                    self.provider_name.clone(),
+                ))]
             }
             _ => Vec::new(),
         }
@@ -703,6 +713,44 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_xhigh_effort_is_serialized_for_adaptive_thinking() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".into()),
+            speed: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-opus-4-8".to_string(),
+            1.0,
+            128_000,
+            AnthropicModelMode::AdaptiveThinking,
+            AnthropicPromptCacheMode::Automatic,
+        );
+
+        assert_eq!(
+            anthropic_request
+                .output_config
+                .and_then(|config| config.effort),
+            Some(crate::Effort::XHigh)
+        );
     }
 
     #[test]

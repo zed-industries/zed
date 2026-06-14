@@ -1,16 +1,17 @@
 use crate::{
-    CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
-    ZedUpdateRequiredError, buffer_path_with_id_fallback,
+    CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore, ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
+    data_collection::UncommittedDiffResult,
     prediction::EditPredictionResult,
 };
-use anyhow::Result;
-use buffer_diff::BufferDiff;
+use anyhow::{Context as _, Result};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
 use edit_prediction_types::PredictedCursorPosition;
+use futures::future::Shared;
 use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
@@ -19,12 +20,15 @@ use language::{
 use release_channel::AppVersion;
 use text::{Anchor, Bias, Point};
 use ui::SharedString;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
+use workspace::notifications::simple_message_notification::MessageNotification;
+use workspace::notifications::{NotificationId, show_app_notification};
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
+    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, get_prefill,
+    parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -40,6 +44,7 @@ pub fn request_prediction_with_zeta(
         position,
         related_files,
         events,
+        stored_events,
         debug_tx,
         mode,
         trigger,
@@ -49,10 +54,8 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_data: Option<(
-        Vec<crate::StoredEvent>,
-        Task<Result<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>,
-    )>,
+    capture_data: Option<Shared<Task<UncommittedDiffResult>>>,
+    repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let settings = &all_language_settings(None, cx).edit_predictions;
@@ -73,17 +76,7 @@ pub fn request_prediction_with_zeta(
 
     let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
-    let repo_url = if can_collect_data {
-        let buffer_id = buffer.read(cx).remote_id();
-        project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repository_and_path_for_buffer_id(buffer_id, cx)
-            .and_then(|(repo, _)| repo.read(cx).default_remote_url())
-    } else {
-        None
-    };
+    let repo_url = repo_url.filter(|_| can_collect_data);
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -317,7 +310,27 @@ pub fn request_prediction_with_zeta(
                 cursor_offset_in_new_editable_region: cursor_offset_in_output,
             }) = output
             else {
-                return Ok((Some((request_id, None, model_version)), None));
+                let editable_range_in_excerpt =
+                    excerpt_range_for_format(zeta_format, &prompt_input.excerpt_ranges).0;
+                let editable_range_in_buffer = editable_range_in_excerpt.start
+                    + full_context_offset_range.start
+                    ..editable_range_in_excerpt.end + full_context_offset_range.start;
+
+                return Ok((
+                    Some((
+                        request_id,
+                        Some(Prediction {
+                            prompt_input,
+                            buffer,
+                            snapshot: snapshot.clone(),
+                            edits: Vec::new(),
+                            cursor_position: None,
+                            editable_range_in_buffer,
+                        }),
+                        model_version,
+                    )),
+                    usage,
+                ));
             };
 
             let editable_range_in_buffer = editable_range_in_excerpt.start
@@ -389,6 +402,7 @@ pub fn request_prediction_with_zeta(
             return Ok(Some(EditPredictionResult {
                 id,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                display_prediction: None,
                 model_version,
                 e2e_latency: request_duration,
             }));
@@ -403,6 +417,7 @@ pub fn request_prediction_with_zeta(
             Some(edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer.clone())),
             inputs,
             model_version,
+            trigger,
             request_duration,
             cx,
         )
@@ -416,21 +431,29 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_data.and_then(|(events, uncommitted_diffs)| {
+            let example_task = capture_data.and_then(|uncommitted_diffs| {
                 let (recently_opened_files, recently_viewed_files) = this
-                    .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
+                    .read_with(cx, |this, _| {
+                        (
+                            this.recently_opened_files_for_project(&project),
+                            this.recently_viewed_files_for_project(&project),
+                        )
+                    })
                     .ok()?;
                 Some(cx.spawn({
                     let project = project.clone();
                     let edited_buffer = edited_buffer.clone();
                     async move |cx| {
-                        let uncommitted_diffs = uncommitted_diffs.await?;
+                        let uncommitted_diffs = uncommitted_diffs
+                            .await
+                            .map_err(|error| anyhow::anyhow!("{error:?}"))
+                            .context("failed to capture uncommitted diff")?;
                         let Some(task) = cx.update(|cx| {
                             crate::capture_example::capture_example(
                                 project.clone(),
                                 edited_buffer.clone(),
                                 position,
-                                events,
+                                stored_events,
                                 recently_opened_files,
                                 recently_viewed_files,
                                 uncommitted_diffs,
@@ -493,6 +516,11 @@ fn handle_api_response<T>(
             Ok(data)
         }
         Err(err) => {
+            if err.is::<CloudRequestTimeoutError>() {
+                this.update(cx, |this, cx| this.back_off_requests_after_timeout(cx))
+                    .ok();
+            }
+
             if err.is::<ZedUpdateRequiredError>() {
                 cx.update(|cx| {
                     this.update(cx, |this, _cx| {
@@ -500,14 +528,33 @@ fn handle_api_response<T>(
                     })
                     .ok();
 
-                    let error_message: SharedString = err.to_string().into();
+                    let message: SharedString = err.to_string().into();
+
+                    struct UpdateRequiredError {
+                        message: SharedString,
+                    }
+                    impl WorkspaceError for UpdateRequiredError {
+                        fn primary_message(&self) -> SharedString {
+                            self.message.clone()
+                        }
+                        fn severity(&self) -> ErrorSeverity {
+                            ErrorSeverity::Critical
+                        }
+                        fn primary_action(&self) -> ErrorAction {
+                            ErrorAction::link("Update Zed", "https://zed.dev/releases")
+                        }
+                    }
+
                     show_app_notification(
                         NotificationId::unique::<ZedUpdateRequiredError>(),
                         cx,
                         move |cx| {
-                            cx.new(|cx| {
-                                ErrorMessagePrompt::new(error_message.clone(), cx)
-                                    .with_link_button("Update Zed", "https://zed.dev/releases")
+                            cx.new({
+                                let message = message.clone();
+                                move |cx| {
+                                    let error = UpdateRequiredError { message };
+                                    MessageNotification::from_workspace_error(error, cx)
+                                }
                             })
                         },
                     );
