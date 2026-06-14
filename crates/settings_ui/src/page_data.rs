@@ -4430,7 +4430,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn preview_tabs_section() -> [SettingsPageItem; 8] {
+    fn preview_tabs_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Preview Tabs"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4585,6 +4585,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .preview_tabs
                             .get_or_insert_default()
                             .enable_keep_preview_on_code_navigation = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Preview",
+                description: "Whether to automatically open a rendered preview when opening a previewable file (Markdown, SVG, or CSV).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("preview_tabs.auto_preview"),
+                    pick: |settings_content| {
+                        settings_content
+                            .preview_tabs
+                            .as_ref()?
+                            .auto_preview
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .preview_tabs
+                            .get_or_insert_default()
+                            .auto_preview = value;
                     },
                 }),
                 metadata: None,

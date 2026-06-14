@@ -9,8 +9,8 @@ use gpui::{
 use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
 use ui::prelude::*;
-use workspace::item::Item;
-use workspace::{Pane, Workspace};
+use workspace::item::{Item, ItemHandle};
+use workspace::{AutoPreviewMatch, AutoPreviewProvider, Pane, Workspace};
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
@@ -29,6 +29,8 @@ pub enum SvgPreviewMode {
     Default,
     /// The preview will "follow" the last active editor of an SVG file.
     Follow,
+    /// A single reusable auto-preview; re-pointed in place when another SVG opens.
+    Auto,
 }
 
 impl SvgPreviewView {
@@ -133,6 +135,24 @@ impl SvgPreviewView {
         if let Some(Ok(image)) = mem::replace(&mut self.current_svg, image) {
             window.drop_image(image).ok();
         }
+        cx.notify();
+    }
+
+    pub fn set_buffer(
+        &mut self,
+        buffer: Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = buffer.read(cx).as_singleton() else {
+            return;
+        };
+        if self.buffer.as_ref() == Some(&buffer) {
+            return;
+        }
+        self._buffer_subscription = Some(Self::create_buffer_subscription(&buffer, window, cx));
+        self.buffer = Some(buffer);
+        self.render_image(window, cx);
         cx.notify();
     }
 
@@ -338,4 +358,149 @@ impl Item for SvgPreviewView {
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
+}
+
+pub struct SvgAutoPreviewProvider;
+
+impl AutoPreviewProvider for SvgAutoPreviewProvider {
+    fn id(&self) -> &'static str {
+        "svg"
+    }
+
+    fn match_item(&self, item: &dyn ItemHandle, cx: &App) -> AutoPreviewMatch {
+        if item.downcast::<SvgPreviewView>().is_some() {
+            return AutoPreviewMatch::No;
+        }
+        match item.act_as::<MultiBuffer>(cx) {
+            Some(buffer) if SvgPreviewView::is_svg_file(&buffer, cx) => AutoPreviewMatch::Yes,
+            _ => AutoPreviewMatch::No,
+        }
+    }
+
+    fn create(
+        &self,
+        item: &dyn ItemHandle,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let buffer = item.act_as::<MultiBuffer>(cx)?;
+        let workspace_handle = workspace.weak_handle();
+        let view = SvgPreviewView::new(SvgPreviewMode::Auto, buffer, workspace_handle, window, cx);
+        Some(Box::new(view))
+    }
+
+    fn swap(
+        &self,
+        preview: &dyn ItemHandle,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(preview) = preview.downcast::<SvgPreviewView>() else {
+            return false;
+        };
+        let Some(buffer) = item.act_as::<MultiBuffer>(cx) else {
+            return false;
+        };
+        if buffer.read(cx).as_singleton().is_none() {
+            return false;
+        }
+        preview.update(cx, |preview, cx| preview.set_buffer(buffer, window, cx));
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use std::path::PathBuf;
+    use util::path;
+    use workspace::{AppState, MultiWorkspace, open_paths};
+
+    #[gpui::test]
+    async fn test_svg_provider_matches_extension(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let provider = SvgAutoPreviewProvider;
+            let item = cx.new(|cx| workspace::item::test::TestItem::new(cx));
+            let item: Box<dyn workspace::ItemHandle> = Box::new(item);
+            assert_eq!(
+                provider.match_item(item.as_ref(), cx),
+                workspace::AutoPreviewMatch::No
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_svg_provider_matches_real_svg_item(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "image.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+                    "notes.txt": "hello",
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[
+                    PathBuf::from(path!("/dir/image.svg")),
+                    PathBuf::from(path!("/dir/notes.txt")),
+                ],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        multi_workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                let provider = SvgAutoPreviewProvider;
+                let workspace = multi_workspace.workspace().read(cx);
+                let pane = workspace.active_pane().read(cx);
+                let svg_item = pane
+                    .items()
+                    .find(|item| {
+                        item.act_as::<MultiBuffer>(cx)
+                            .is_some_and(|buffer| SvgPreviewView::is_svg_file(&buffer, cx))
+                    })
+                    .expect("svg item should be open");
+                assert_eq!(
+                    provider.match_item(svg_item.as_ref(), cx),
+                    AutoPreviewMatch::Yes
+                );
+
+                let txt_item = pane
+                    .items()
+                    .find(|item| {
+                        item.act_as::<MultiBuffer>(cx)
+                            .is_some_and(|buffer| !SvgPreviewView::is_svg_file(&buffer, cx))
+                    })
+                    .expect("non-svg item should be open");
+                assert_eq!(
+                    provider.match_item(txt_item.as_ref(), cx),
+                    AutoPreviewMatch::No
+                );
+            })
+            .unwrap();
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            editor::init(cx);
+            crate::init(cx);
+            state
+        })
+    }
 }

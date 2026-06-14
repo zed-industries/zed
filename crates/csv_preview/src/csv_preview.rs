@@ -13,7 +13,10 @@ use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
     TableResizeBehavior, prelude::*,
 };
-use workspace::{Item, SplitDirection, Workspace};
+use workspace::{
+    AutoPreviewMatch, AutoPreviewProvider, Item, SplitDirection, Workspace, item::ItemHandle,
+    register_auto_preview_provider,
+};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
@@ -53,7 +56,9 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         CsvPreviewView::register(workspace);
     })
-    .detach()
+    .detach();
+
+    register_auto_preview_provider(CsvAutoPreviewProvider, cx);
 }
 
 impl CsvPreviewView {
@@ -157,24 +162,9 @@ impl CsvPreviewView {
         });
 
         cx.new(|cx| {
-            let subscription = cx.subscribe(
-                editor,
-                |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
-                    match event {
-                        EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
-                            this.parse_csv_from_active_editor(true, cx);
-                        }
-                        _ => {}
-                    };
-                },
-            );
-
             let mut view = CsvPreviewView {
                 focus_handle: cx.focus_handle(),
-                active_editor_state: EditorState {
-                    editor: editor.clone(),
-                    _subscription: subscription,
-                },
+                active_editor_state: Self::subscribe_to_editor(editor.clone(), cx),
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
@@ -189,6 +179,40 @@ impl CsvPreviewView {
             view.parse_csv_from_active_editor(false, cx);
             view
         })
+    }
+
+    fn subscribe_to_editor(editor: Entity<Editor>, cx: &mut Context<Self>) -> EditorState {
+        let subscription = cx.subscribe(
+            &editor,
+            |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
+                match event {
+                    EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
+                        this.parse_csv_from_active_editor(true, cx);
+                    }
+                    _ => {}
+                };
+            },
+        );
+
+        EditorState {
+            editor,
+            _subscription: subscription,
+        }
+    }
+
+    pub(crate) fn set_editor(
+        &mut self,
+        editor: Entity<Editor>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_editor_state.editor == editor {
+            return;
+        }
+
+        self.active_editor_state = Self::subscribe_to_editor(editor, cx);
+        self.parse_csv_from_active_editor(false, cx);
+        cx.notify();
     }
 
     pub(crate) fn editor_state(&self) -> &EditorState {
@@ -229,11 +253,11 @@ impl CsvPreviewView {
             .read(cx)
             .as_singleton()
             .and_then(|buffer| {
-                buffer
-                    .read(cx)
-                    .file()
-                    .and_then(|file| file.path().extension())
-                    .map(|ext| ext.eq_ignore_ascii_case("csv"))
+                buffer.read(cx).file().map(|file| {
+                    std::path::Path::new(file.file_name(cx))
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
+                })
             })
             .unwrap_or(false)
     }
@@ -270,6 +294,60 @@ impl Item for CsvPreviewView {
                     .map(|name| format!("Preview {}", name.to_string_lossy()).into())
             })
             .unwrap_or_else(|| SharedString::from("CSV Preview"))
+    }
+}
+
+pub struct CsvAutoPreviewProvider;
+
+impl AutoPreviewProvider for CsvAutoPreviewProvider {
+    fn id(&self) -> &'static str {
+        "csv"
+    }
+
+    fn match_item(&self, item: &dyn ItemHandle, cx: &App) -> AutoPreviewMatch {
+        if item.downcast::<CsvPreviewView>().is_some() {
+            return AutoPreviewMatch::No;
+        }
+        if !cx.has_flag::<TabularDataPreviewFeatureFlag>() {
+            return AutoPreviewMatch::No;
+        }
+        let Some(editor) = item.act_as::<Editor>(cx) else {
+            return AutoPreviewMatch::No;
+        };
+        if CsvPreviewView::is_csv_file(&editor, cx) {
+            AutoPreviewMatch::Yes
+        } else {
+            AutoPreviewMatch::No
+        }
+    }
+
+    fn create(
+        &self,
+        item: &dyn ItemHandle,
+        _workspace: &mut Workspace,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let editor = item.act_as::<Editor>(cx)?;
+        let view = CsvPreviewView::new(&editor, cx);
+        Some(Box::new(view))
+    }
+
+    fn swap(
+        &self,
+        preview: &dyn ItemHandle,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(preview) = preview.downcast::<CsvPreviewView>() else {
+            return false;
+        };
+        let Some(editor) = item.act_as::<Editor>(cx) else {
+            return false;
+        };
+        preview.update(cx, |preview, cx| preview.set_editor(editor, window, cx));
+        true
     }
 }
 
@@ -329,5 +407,142 @@ impl ColumnWidths {
                 )
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use util::path;
+    use workspace::{AppState, MultiWorkspace, open_paths};
+
+    #[gpui::test]
+    async fn test_csv_provider_no_match_when_flag_off(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let provider = CsvAutoPreviewProvider;
+            let item = cx.new(|cx| workspace::item::test::TestItem::new(cx));
+            let item: Box<dyn workspace::ItemHandle> = Box::new(item);
+            assert_eq!(
+                provider.match_item(item.as_ref(), cx),
+                workspace::AutoPreviewMatch::No
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_csv_provider_matches_real_items(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec![TabularDataPreviewFeatureFlag::NAME.to_string()])
+        });
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "data.csv": "a,b\n1,2\n",
+                    "data.tsv": "a\tb\n1\t2\n",
+                    "notes.txt": "hello",
+                }),
+            )
+            .await;
+        cx.update(|cx| {
+            open_paths(
+                &[
+                    PathBuf::from(path!("/dir/data.csv")),
+                    PathBuf::from(path!("/dir/data.tsv")),
+                    PathBuf::from(path!("/dir/notes.txt")),
+                ],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        multi_workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                let provider = CsvAutoPreviewProvider;
+                let workspace = multi_workspace.workspace().read(cx);
+                let pane = workspace.active_pane().read(cx);
+                let has_ext = |item: &dyn ItemHandle, ext: &str, cx: &App| {
+                    item.act_as::<Editor>(cx).is_some_and(|editor| {
+                        editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .and_then(|buffer| buffer.read(cx).file())
+                            .is_some_and(|file| {
+                                std::path::Path::new(file.file_name(cx))
+                                    .extension()
+                                    .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                            })
+                    })
+                };
+
+                let csv_item = pane
+                    .items()
+                    .find(|item| has_ext(item.as_ref(), "csv", cx))
+                    .expect("csv item should be open");
+
+                let csv_path_is_empty = csv_item
+                    .act_as::<Editor>(cx)
+                    .and_then(|editor| {
+                        editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .and_then(|buffer| buffer.read(cx).file())
+                            .map(|file| file.path().is_empty())
+                    })
+                    .unwrap_or(false);
+                assert!(
+                    csv_path_is_empty,
+                    "standalone single-file open should have an empty project-relative path"
+                );
+
+                assert_eq!(
+                    provider.match_item(csv_item.as_ref(), cx),
+                    AutoPreviewMatch::Yes
+                );
+
+                let tsv_item = pane
+                    .items()
+                    .find(|item| has_ext(item.as_ref(), "tsv", cx))
+                    .expect("tsv item should be open");
+                assert_eq!(
+                    provider.match_item(tsv_item.as_ref(), cx),
+                    AutoPreviewMatch::No
+                );
+
+                let txt_item = pane
+                    .items()
+                    .find(|item| has_ext(item.as_ref(), "txt", cx))
+                    .expect("txt item should be open");
+                assert_eq!(
+                    provider.match_item(txt_item.as_ref(), cx),
+                    AutoPreviewMatch::No
+                );
+            })
+            .unwrap();
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            editor::init(cx);
+            crate::init(cx);
+            state
+        })
     }
 }

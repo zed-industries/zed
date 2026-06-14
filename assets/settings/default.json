@@ -1354,6 +1354,15 @@
     // Whether to keep tabs in preview mode when code navigation is used to navigate away from them.
     // If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
     "enable_keep_preview_on_code_navigation": false,
+    // Whether to automatically open a rendered preview when opening a previewable file (Markdown, SVG, CSV).
+    //
+    // 1. Do not automatically open a preview (default)
+    //     "off"
+    // 2. Open the preview in the same pane, alongside the editor
+    //     "same_pane"
+    // 3. Open the preview in a pane to the side
+    //     "to_side"
+    "auto_preview": "off",
   },
   // Settings related to the file finder.
   "file_finder": {
