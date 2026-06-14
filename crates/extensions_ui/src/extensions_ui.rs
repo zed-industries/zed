@@ -2,6 +2,7 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
+use fs::Fs;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
@@ -10,7 +11,7 @@ use anyhow::Context as _;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionSettings, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
@@ -24,9 +25,9 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
-    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
-    prelude::*,
+    Banner, Chip, ContextMenu, Divider, IconPosition, PopoverMenu, ScrollableHandle, Switch,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -940,18 +941,25 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |context_menu, window, _| {
+        let this = this.downgrade();
+        ContextMenu::build_persistent(window, cx, move |context_menu, window, cx| {
+            let extension_settings = ExtensionSettings::get_global(cx);
+            let auto_install = extension_settings.should_auto_install(&extension_id);
+            let auto_update = extension_settings.should_auto_update(&extension_id);
+
             context_menu
-                .entry(
-                    "Install Another Version...",
-                    None,
-                    window.handler_for(this, {
-                        let extension_id = extension_id.clone();
-                        move |this, window, cx| {
-                            this.show_extension_version_list(extension_id.clone(), window, cx)
-                        }
-                    }),
-                )
+                .when_some(this.upgrade(), |menu, this| {
+                    menu.entry(
+                        "Install Another Version...",
+                        None,
+                        window.handler_for(&this, {
+                            let extension_id = extension_id.clone();
+                            move |this, window, cx| {
+                                this.show_extension_version_list(extension_id.clone(), window, cx)
+                            }
+                        }),
+                    )
+                })
                 .entry("Copy Extension ID", None, {
                     let extension_id = extension_id.clone();
                     move |_, cx| {
@@ -964,6 +972,27 @@ impl ExtensionsPage {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
+                .separator()
+                .toggleable_entry(
+                    "Automatically Install",
+                    auto_install,
+                    IconPosition::Start,
+                    None,
+                    {
+                        let extension_id = extension_id.clone();
+                        move |_window, cx| toggle_auto_install(extension_id.clone(), cx)
+                    },
+                )
+                .toggleable_entry(
+                    "Automatically Update",
+                    auto_update,
+                    IconPosition::Start,
+                    None,
+                    {
+                        let extension_id = extension_id.clone();
+                        move |_window, cx| toggle_auto_update(extension_id.clone(), cx)
+                    },
+                )
         })
     }
 
@@ -1380,28 +1409,6 @@ impl ExtensionsPage {
             .child(Label::new(message))
     }
 
-    fn update_settings(
-        &mut self,
-        selection: &ToggleState,
-
-        cx: &mut Context<Self>,
-        callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
-    ) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
-            let selection = *selection;
-            settings::update_settings_file(fs, cx, move |settings, _| {
-                let value = match selection {
-                    ToggleState::Unselected => false,
-                    ToggleState::Selected => true,
-                    _ => return,
-                };
-
-                callback(settings, value)
-            });
-        }
-    }
-
     fn refresh_feature_upsells(&mut self, cx: &mut Context<Self>) {
         let Some(search) = self.search_query(cx) else {
             self.upsells.clear();
@@ -1491,21 +1498,19 @@ impl ExtensionsPage {
                                                         ui::ToggleState::Unselected
                                                     },
                                                 )
-                                                .on_click(cx.listener(
-                                                    move |this, selection, _, cx| {
-                                                        telemetry::event!(
-                                                            "Vim Mode Toggled",
-                                                            source = "Feature Upsell"
-                                                        );
-                                                        this.update_settings(
-                                                            selection,
-                                                            cx,
-                                                            |setting, value| {
-                                                                setting.vim_mode = Some(value)
-                                                            },
-                                                        );
-                                                    },
-                                                )),
+                                                .on_click(move |selection, _, cx| {
+                                                    telemetry::event!(
+                                                        "Vim Mode Toggled",
+                                                        source = "Feature Upsell"
+                                                    );
+                                                    update_setting(
+                                                        selection,
+                                                        cx,
+                                                        |setting, value| {
+                                                            setting.vim_mode = Some(value)
+                                                        },
+                                                    );
+                                                }),
                                             ),
                                     ),
                             )
@@ -1637,6 +1642,52 @@ impl ExtensionsPage {
 
         container
     }
+}
+
+fn update_setting(
+    selection: &ToggleState,
+    cx: &App,
+    callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
+) {
+    let fs = <dyn Fs>::global(cx);
+    let selection = *selection;
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        let value = match selection {
+            ToggleState::Unselected => false,
+            ToggleState::Selected => true,
+            _ => return,
+        };
+
+        callback(settings, value)
+    });
+}
+
+fn toggle_auto_install(extension_id: Arc<str>, cx: &App) {
+    let extension_settings = ExtensionSettings::get_global(cx);
+    let current_value = extension_settings.should_auto_install(&extension_id);
+    let new_value = !current_value;
+
+    let fs = <dyn Fs>::global(cx);
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .extension
+            .auto_install_extensions
+            .insert(extension_id.clone(), new_value);
+    });
+}
+
+fn toggle_auto_update(extension_id: Arc<str>, cx: &App) {
+    let extension_settings = ExtensionSettings::get_global(cx);
+    let current_value = extension_settings.should_auto_update(&extension_id);
+    let new_value = !current_value;
+
+    let fs = <dyn Fs>::global(cx);
+    settings::update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .extension
+            .auto_update_extensions
+            .insert(extension_id.clone(), new_value);
+    });
 }
 
 impl Render for ExtensionsPage {
@@ -1813,5 +1864,107 @@ impl Item for ExtensionsPage {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use collections::HashMap;
+    use extension_host::ExtensionSettings;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_extension_settings_default_auto_install() {
+        let settings = ExtensionSettings {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: HashMap::default(),
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_install("unknown-extension"));
+        assert!(settings.should_auto_update("unknown-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_install_false() {
+        let mut auto_install = HashMap::default();
+        auto_install.insert(Arc::from("test-extension"), false);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: auto_install,
+            auto_update_extensions: HashMap::default(),
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(!settings.should_auto_install("test-extension"));
+        assert!(settings.should_auto_install("other-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_install_true() {
+        let mut auto_install = HashMap::default();
+        auto_install.insert(Arc::from("test-extension"), true);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: auto_install,
+            auto_update_extensions: HashMap::default(),
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_install("test-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_update_false() {
+        let mut auto_update = HashMap::default();
+        auto_update.insert(Arc::from("test-extension"), false);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: auto_update,
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(!settings.should_auto_update("test-extension"));
+        assert!(settings.should_auto_update("other-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_update_true() {
+        let mut auto_update = HashMap::default();
+        auto_update.insert(Arc::from("test-extension"), true);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: auto_update,
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_update("test-extension"));
+    }
+
+    #[test]
+    fn test_multiple_extensions_settings() {
+        let mut auto_install = HashMap::default();
+        auto_install.insert(Arc::from("ext1"), true);
+        auto_install.insert(Arc::from("ext2"), false);
+
+        let mut auto_update = HashMap::default();
+        auto_update.insert(Arc::from("ext1"), false);
+        auto_update.insert(Arc::from("ext3"), true);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: auto_install,
+            auto_update_extensions: auto_update,
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_install("ext1"));
+        assert!(!settings.should_auto_install("ext2"));
+        assert!(settings.should_auto_install("ext4"));
+
+        assert!(!settings.should_auto_update("ext1"));
+        assert!(settings.should_auto_update("ext3"));
+        assert!(settings.should_auto_update("ext2"));
     }
 }
