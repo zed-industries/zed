@@ -4760,6 +4760,7 @@ fn window_and_layout_page() -> SettingsPage {
                 title: "Title Format",
                 description: "Window title template. Available variables are `${projectName}`, `${fileName}`, `${filePath}`, `${relativePath}`, `${fileStem}`, `${remoteName}`, `${remoteHost}`, `${appName}`, and `${separator}`. `${separator}` is omitted when adjacent variables are empty, but literal text is preserved. The collaboration indicator, when present, is appended after the rendered template.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("window_title_format"),
                     pick: |settings_content| {
                         settings_content.workspace.window_title_format.as_ref()
@@ -4779,6 +4780,7 @@ fn window_and_layout_page() -> SettingsPage {
                 title: "Title Separator",
                 description: "String substituted for `${separator}` in the window title format. Include any surrounding whitespace in the value.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("window_title_separator"),
                     pick: |settings_content| {
                         settings_content.workspace.window_title_separator.as_ref()
