@@ -875,6 +875,7 @@ pub fn into_bedrock(
                     .content
                     .into_iter()
                     .filter_map(|content| match content {
+                        MessageContent::Fallback { .. } => None,
                         MessageContent::Text(text) => {
                             if !text.is_empty() {
                                 Some(BedrockInnerContent::Text(text))

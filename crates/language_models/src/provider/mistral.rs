@@ -390,7 +390,7 @@ pub fn into_mistral(
                                 });
                             }
                         }
-                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
@@ -448,7 +448,7 @@ pub fn into_mistral(
                                 });
                             }
                         }
-                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
                         MessageContent::ToolUse(tool_use) => {
                             let tool_call = mistral::ToolCall {
@@ -502,7 +502,7 @@ pub fn into_mistral(
                                 });
                             }
                         }
-                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_)
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {
@@ -987,6 +987,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: Default::default(),
+            fallback_credit_token: None,
         };
 
         let (mistral_request, affinity) =
@@ -1023,6 +1024,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);

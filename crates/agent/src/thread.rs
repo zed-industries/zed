@@ -35,12 +35,12 @@ use gpui::{
 };
 use heck::ToSnakeCase as _;
 use language_model::{
-    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
-    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    CompletionIntent, FallbackCredit, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelImage, LanguageModelProviderId,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
+    Role, SelectedModel, Speed, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -540,6 +540,7 @@ impl AgentMessage {
 
         for content in &self.content {
             match content {
+                AgentMessageContent::Fallback { .. } => {}
                 AgentMessageContent::Text(text) => {
                     markdown.push_str(text);
                     markdown.push('\n');
@@ -608,28 +609,52 @@ impl AgentMessage {
             cache: false,
             reasoning_details: self.reasoning_details.clone(),
         };
-        for chunk in &self.content {
+        let final_fallback_index = self
+            .content
+            .iter()
+            .rposition(|chunk| matches!(chunk, AgentMessageContent::Fallback { .. }));
+        let mut included_tool_use_ids = HashSet::default();
+
+        for (index, chunk) in self.content.iter().enumerate() {
+            let before_final_fallback =
+                final_fallback_index.is_some_and(|fallback_index| index < fallback_index);
             match chunk {
+                AgentMessageContent::Fallback {
+                    from_model,
+                    to_model,
+                } => {
+                    assistant_message
+                        .content
+                        .push(language_model::MessageContent::Fallback {
+                            from_model: from_model.clone(),
+                            to_model: to_model.clone(),
+                        });
+                }
                 AgentMessageContent::Text(text) => {
                     assistant_message
                         .content
                         .push(language_model::MessageContent::Text(text.clone()));
                 }
                 AgentMessageContent::Thinking { text, signature } => {
-                    assistant_message
-                        .content
-                        .push(language_model::MessageContent::Thinking {
-                            text: text.clone(),
-                            signature: signature.clone(),
-                        });
+                    if !before_final_fallback {
+                        assistant_message
+                            .content
+                            .push(language_model::MessageContent::Thinking {
+                                text: text.clone(),
+                                signature: signature.clone(),
+                            });
+                    }
                 }
                 AgentMessageContent::RedactedThinking(value) => {
-                    assistant_message.content.push(
-                        language_model::MessageContent::RedactedThinking(value.clone()),
-                    );
+                    if !before_final_fallback {
+                        assistant_message.content.push(
+                            language_model::MessageContent::RedactedThinking(value.clone()),
+                        );
+                    }
                 }
                 AgentMessageContent::ToolUse(tool_use) => {
-                    if self.tool_results.contains_key(&tool_use.id) {
+                    if !before_final_fallback && self.tool_results.contains_key(&tool_use.id) {
+                        included_tool_use_ids.insert(tool_use.id.clone());
                         assistant_message
                             .content
                             .push(language_model::MessageContent::ToolUse(tool_use.clone()));
@@ -646,6 +671,12 @@ impl AgentMessage {
         };
 
         for tool_result in self.tool_results.values() {
+            if final_fallback_index.is_some()
+                && !included_tool_use_ids.contains(&tool_result.tool_use_id)
+            {
+                continue;
+            }
+
             let mut tool_result = tool_result.clone();
             // Surprisingly, the API fails if we return an empty string here.
             // It thinks we are sending a tool use without a tool result.
@@ -666,6 +697,70 @@ impl AgentMessage {
         }
         messages
     }
+
+    /// The IDs of tool uses streamed before the final server-side fallback
+    /// boundary in this message. The fallback model never saw these tool uses
+    /// (the API forwards only the partial output's text blocks), so their
+    /// results must not drive another tool-results round; `to_request` already
+    /// drops the uses and their results from future requests.
+    pub fn tool_uses_orphaned_by_fallback(&self) -> HashSet<LanguageModelToolUseId> {
+        let Some(final_fallback_index) = self
+            .content
+            .iter()
+            .rposition(|chunk| matches!(chunk, AgentMessageContent::Fallback { .. }))
+        else {
+            return HashSet::default();
+        };
+        self.content[..final_fallback_index]
+            .iter()
+            .filter_map(|chunk| match chunk {
+                AgentMessageContent::ToolUse(tool_use) => Some(tool_use.id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The assistant message echoing this message's content on a fallback
+    /// credit retry with a prefill claim, so the fallback model continues the
+    /// partial output. Tool uses are omitted: their results are not part of
+    /// the echoed response, so the API would reject them as unpaired.
+    pub fn to_refusal_echo(&self) -> Option<LanguageModelRequestMessage> {
+        let content = self
+            .content
+            .iter()
+            .filter_map(|chunk| match chunk {
+                AgentMessageContent::Fallback {
+                    from_model,
+                    to_model,
+                } => Some(language_model::MessageContent::Fallback {
+                    from_model: from_model.clone(),
+                    to_model: to_model.clone(),
+                }),
+                AgentMessageContent::Text(text) => {
+                    Some(language_model::MessageContent::Text(text.clone()))
+                }
+                AgentMessageContent::Thinking { text, signature } => {
+                    Some(language_model::MessageContent::Thinking {
+                        text: text.clone(),
+                        signature: signature.clone(),
+                    })
+                }
+                AgentMessageContent::RedactedThinking(data) => Some(
+                    language_model::MessageContent::RedactedThinking(data.clone()),
+                ),
+                AgentMessageContent::ToolUse(_) => None,
+            })
+            .collect::<Vec<_>>();
+        if content.is_empty() {
+            return None;
+        }
+        Some(LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content,
+            cache: false,
+            reasoning_details: None,
+        })
+    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -677,6 +772,10 @@ pub struct AgentMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentMessageContent {
+    Fallback {
+        from_model: String,
+        to_model: String,
+    },
     Text(String),
     Thinking {
         text: String,
@@ -1131,9 +1230,30 @@ enum CompletionError {
     #[error("max tokens")]
     MaxTokens,
     #[error("refusal")]
-    Refusal,
+    Refusal {
+        fallback_credit: Option<FallbackCredit>,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+/// A refusal's credit together with everything its redemption retry needs.
+/// The echo is only ever sent alongside the token, and the token only ever
+/// with the refused body, so the rejection ladder can drop them in that
+/// order.
+struct CreditRetry {
+    /// The refused request body. Redemption requires the retry to match the
+    /// refused request, so it is reused instead of rebuilt (a rebuilt system
+    /// prompt would at minimum name the new serving model). The match is
+    /// still best-effort: providers regenerate the wire body from this with
+    /// the fallback model's parameters, and a rejected redemption walks the
+    /// rejection ladder rather than failing the turn.
+    refused_request: LanguageModelRequest,
+    token: String,
+    /// When the credit carries a prefill claim, an assistant message echoing
+    /// the refused response so the fallback model continues the partial
+    /// output instead of starting over.
+    echo: Option<LanguageModelRequestMessage>,
 }
 
 pub struct Thread {
@@ -1162,6 +1282,10 @@ pub struct Thread {
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
     /// the start of each request.
     current_request_token_usage: TokenUsage,
+    /// Fallback credit carried by an in-flight refusal, stashed between the
+    /// credit event and the refusal stop event, then redeemed on the
+    /// client-side fallback retry.
+    pending_fallback_credit: Option<FallbackCredit>,
     pending_compaction_telemetry: Option<CompactionTelemetry>,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -1296,6 +1420,7 @@ impl Thread {
             request_token_usage: HashMap::default(),
             cumulative_token_usage: TokenUsage::default(),
             current_request_token_usage: TokenUsage::default(),
+            pending_fallback_credit: None,
             pending_compaction_telemetry: None,
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project.clone(), cx);
@@ -1408,6 +1533,7 @@ impl Thread {
                 Message::Agent(assistant_message) => {
                     for content in &assistant_message.content {
                         match content {
+                            AgentMessageContent::Fallback { .. } => {}
                             AgentMessageContent::Text(text) => stream.send_text(text),
                             AgentMessageContent::Thinking { text, .. } => {
                                 stream.send_thinking(text)
@@ -1675,6 +1801,7 @@ impl Thread {
             request_token_usage: db_thread.request_token_usage.clone(),
             cumulative_token_usage: db_thread.cumulative_token_usage,
             current_request_token_usage: TokenUsage::default(),
+            pending_fallback_credit: None,
             pending_compaction_telemetry: None,
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
@@ -2418,7 +2545,7 @@ impl Thread {
                     Err(error) => {
                         log::error!("Turn execution failed: {:?}", error);
                         match error.downcast::<CompletionError>() {
-                            Ok(CompletionError::Refusal) => {
+                            Ok(CompletionError::Refusal { .. }) => {
                                 event_stream.send_stop(acp::StopReason::Refusal);
                                 _ = this.update(cx, |this, _| this.messages.truncate(message_ix));
                             }
@@ -2449,6 +2576,9 @@ impl Thread {
         let mut intent = CompletionIntent::UserPrompt;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
+        // Set when a refusal carried a credit; the next attempt redeems it so
+        // the retry's prompt-cache writes are repriced as cache reads.
+        let mut credit_retry: Option<CreditRetry> = None;
         loop {
             match Self::perform_compaction_if_needed(
                 this,
@@ -2529,16 +2659,37 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
-            let (model, request) = this.update(cx, |this, cx| {
+            // Credit-redemption retries reuse the refused body instead of
+            // rebuilding (see `CreditRetry`).
+            let active_credit_retry = credit_retry.take();
+            let (model, mut request) = this.update(cx, |this, cx| {
                 let model = refusal_fallback_model
                     .clone()
                     .or_else(|| this.model.clone())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
-                this.refresh_turn_tools(cx);
-                let request = this.build_completion_request(intent, cx)?;
+                let request = match &active_credit_retry {
+                    Some(retry) => retry.refused_request.clone(),
+                    None => {
+                        this.refresh_turn_tools(cx);
+                        this.build_completion_request(intent, cx)?
+                    }
+                };
                 this.current_request_token_usage = TokenUsage::default();
+                this.pending_fallback_credit = None;
                 anyhow::Ok((model, request))
             })??;
+            // A snapshot is only needed when a refusal of this attempt could
+            // carry a redeemable credit; a rejected redemption instead reuses
+            // the body kept in `active_credit_retry`.
+            let mut request_body_snapshot = (model.refusal_fallback_model_id().is_some()
+                && !model.refusal_fallback_is_server_side())
+            .then(|| request.clone());
+            if let Some(retry) = &active_credit_retry {
+                request.fallback_credit_token = Some(retry.token.clone());
+                if let Some(echo) = &retry.echo {
+                    request.messages.push(echo.clone());
+                }
+            }
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -2563,6 +2714,7 @@ impl Thread {
             let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
             let mut had_refusal = false;
+            let mut refusal_credit: Option<FallbackCredit> = None;
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
@@ -2644,12 +2796,12 @@ impl Thread {
 
                 tool_results.extend(batch_result.0);
                 if let Some(err) = batch_result.1 {
-                    let is_refusal = err
-                        .downcast_ref::<CompletionError>()
-                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
-                    if is_refusal {
+                    if let Some(CompletionError::Refusal { fallback_credit }) =
+                        err.downcast_ref::<CompletionError>()
+                    {
                         log::info!("Model refused request; checking for fallback model");
                         had_refusal = true;
+                        refusal_credit = fallback_credit.clone();
                         break;
                     }
                     error = Some(err.downcast()?);
@@ -2680,6 +2832,12 @@ impl Thread {
             if had_refusal {
                 let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
                     let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
+                    if current_model.refusal_fallback_is_server_side() {
+                        log::info!(
+                            "Request refused after server-side fallback was already attempted"
+                        );
+                        return None;
+                    }
                     let fallback_id = match current_model.refusal_fallback_model_id() {
                         Some(id) => id,
                         None => {
@@ -2692,12 +2850,7 @@ impl Thread {
                         }
                     };
                     let provider_id = current_model.provider_id();
-                    let found = LanguageModelRegistry::global(cx)
-                        .read(cx)
-                        .available_models(cx)
-                        .find(|m| {
-                            m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
-                        });
+                    let found = find_available_model(provider_id.clone(), fallback_id, cx);
                     if found.is_none() {
                         log::info!(
                             "Refusal fallback: fallback model {}/{} not found in available models",
@@ -2712,32 +2865,112 @@ impl Thread {
                     log::info!("Refusal fallback: retrying with {}", fallback.id().0);
                     let fallback_name = fallback.name().0.clone();
                     this.update(cx, |this, cx| {
-                        this.pending_message = None;
+                        if let Some(credit) = refusal_credit.take()
+                            && let Some(refused_request) = request_body_snapshot.take()
+                        {
+                            let echo = if credit.has_prefill_claim != Some(false) {
+                                this.pending_message
+                                    .as_ref()
+                                    .and_then(AgentMessage::to_refusal_echo)
+                            } else {
+                                None
+                            };
+                            credit_retry = Some(CreditRetry {
+                                refused_request,
+                                token: credit.token,
+                                echo,
+                            });
+                        }
+                        let continuing_partial_output = credit_retry
+                            .as_ref()
+                            .is_some_and(|retry| retry.echo.is_some());
+                        if continuing_partial_output {
+                            // Keep only the text partial so the fallback
+                            // model's continuation appends after it, and later
+                            // turns never send the declined model's thinking
+                            // or orphaned tool uses to the fallback model. The
+                            // reused refusal body never includes
+                            // `pending_message`, so the kept text cannot
+                            // duplicate the echo.
+                            if let Some(pending_message) = this.pending_message.as_mut() {
+                                pending_message
+                                    .content
+                                    .retain(|chunk| matches!(chunk, AgentMessageContent::Text(_)));
+                                pending_message.tool_results.clear();
+                            }
+                        } else {
+                            this.pending_message = None;
+                        }
                         this.set_model(fallback.clone(), cx);
                     })?;
-                    event_stream.send_retry(acp_thread::RetryStatus {
-                        last_error: "Safety filter triggered".into(),
-                        attempt: 1,
-                        max_attempts: 1,
-                        started_at: Instant::now(),
-                        duration: Duration::MAX,
-                        meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
-                    });
+                    event_stream.send_retry(refusal_fallback_retry_status(&fallback_name));
                     refusal_fallback_model = Some(fallback);
                     continue;
                 }
                 log::info!("Request refused with no fallback model available");
-                return Err(CompletionError::Refusal.into());
+                return Err(CompletionError::Refusal {
+                    fallback_credit: None,
+                }
+                .into());
             }
 
-            let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
+            // The credit is best-effort: if the API rejects the redemption,
+            // walk down the rejection ladder rather than surfacing an error
+            // for a request that would succeed: first drop the echoed
+            // continuation (resending the unchanged body, still with the
+            // token), then drop the token itself. Each rung consumes
+            // `active_credit_retry`, so it fires at most once per refusal.
+            // This must run before the pending message is flushed below, so
+            // the retained text partial is not committed to history when the
+            // retry will answer from scratch.
+            if !cancelled
+                && let Some(redemption_error) = error
+                    .as_ref()
+                    .filter(|error| Self::is_bad_request_error(error))
+                && let Some(rejected_retry) = active_credit_retry
+            {
+                if rejected_retry.echo.is_some() {
+                    log::warn!(
+                        "Fallback credit prefill echo rejected; retrying with the unchanged body. Error: {redemption_error}"
+                    );
+                    credit_retry = Some(CreditRetry {
+                        echo: None,
+                        ..rejected_retry
+                    });
+                    this.update(cx, |this, _cx| this.pending_message = None)?;
+                    continue;
+                }
+                log::warn!(
+                    "Fallback credit token rejected; retrying without it. Error: {redemption_error}"
+                );
+                continue;
+            }
 
+            // Results of tool uses orphaned by a server-side fallback are
+            // still processed below (settling their UI state and persisting
+            // them harmlessly), but must not count toward continuing the
+            // turn: the fallback model never saw those tool uses, so another
+            // tool-results round would send a request ending in an assistant
+            // message, which the API treats as a prefill.
+            let orphaned_tool_use_ids = this.read_with(cx, |this, _| {
+                this.pending_message
+                    .as_ref()
+                    .map(AgentMessage::tool_uses_orphaned_by_fallback)
+                    .unwrap_or_default()
+            })?;
+
+            let mut received_live_tool_result = false;
             for tool_result in early_tool_results {
+                received_live_tool_result |=
+                    !orphaned_tool_use_ids.contains(&tool_result.tool_use_id);
                 Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
             while let Some(tool_result) = tool_results.next().await {
+                received_live_tool_result |=
+                    !orphaned_tool_use_ids.contains(&tool_result.tool_use_id);
                 Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
+            let end_turn = !received_live_tool_result;
 
             this.update(cx, |this, cx| {
                 this.flush_pending_message(cx);
@@ -2907,6 +3140,8 @@ impl Thread {
                     })?;
                 }
                 LanguageModelCompletionEvent::Stop(_)
+                | LanguageModelCompletionEvent::Fallback { .. }
+                | LanguageModelCompletionEvent::FallbackCredit(_)
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Thinking { .. }
@@ -3056,6 +3291,13 @@ impl Thread {
                 self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
+            Fallback {
+                from_model,
+                to_model,
+            } => self.handle_fallback_event(from_model, to_model, event_stream, cx),
+            FallbackCredit(credit) => {
+                self.pending_fallback_credit = Some(credit);
+            }
             Text(new_text) => self.handle_text_event(new_text, event_stream),
             Thinking { text, signature } => {
                 self.handle_thinking_event(text, signature, event_stream)
@@ -3113,13 +3355,44 @@ impl Thread {
                 }
                 self.update_token_usage(usage, cx);
             }
-            Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
+            Stop(StopReason::Refusal) => {
+                return Err(CompletionError::Refusal {
+                    fallback_credit: self.pending_fallback_credit.take(),
+                }
+                .into());
+            }
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
             Started | Queued { .. } => {}
         }
 
         Ok(None)
+    }
+
+    fn handle_fallback_event(
+        &mut self,
+        from_model: String,
+        to_model: String,
+        event_stream: &ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) {
+        // Surface the server-side fallback the same way as a client-side
+        // refusal retry, so the user knows another model is responding.
+        let fallback_name = self
+            .model
+            .as_ref()
+            .and_then(|current_model| {
+                find_available_model(current_model.provider_id(), &to_model, cx)
+            })
+            .map(|model| model.name().0.to_string())
+            .unwrap_or_else(|| to_model.clone());
+        event_stream.send_retry(refusal_fallback_retry_status(&fallback_name));
+
+        let last_message = self.pending_message();
+        last_message.content.push(AgentMessageContent::Fallback {
+            from_model,
+            to_model,
+        });
     }
 
     fn handle_text_event(&mut self, new_text: String, event_stream: &ThreadEventStream) {
@@ -3707,6 +3980,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
+            fallback_credit_token: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -4140,6 +4414,23 @@ impl Thread {
         self.prompt_id = PromptId::new();
     }
 
+    /// Whether the error is the provider rejecting the request itself (HTTP
+    /// 400). After a fallback credit redemption attempt, this means the token
+    /// (or the body shape it requires) was not accepted.
+    fn is_bad_request_error(error: &LanguageModelCompletionError) -> bool {
+        use http_client::StatusCode;
+        match error {
+            LanguageModelCompletionError::BadRequestFormat { .. } => true,
+            LanguageModelCompletionError::UpstreamProviderError { status, .. } => {
+                *status == StatusCode::BAD_REQUEST
+            }
+            LanguageModelCompletionError::HttpResponseError { status_code, .. } => {
+                *status_code == StatusCode::BAD_REQUEST
+            }
+            _ => false,
+        }
+    }
+
     fn retry_strategy_for(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
         use LanguageModelCompletionError::*;
         use http_client::StatusCode;
@@ -4246,6 +4537,30 @@ impl Thread {
     }
 }
 
+fn find_available_model(
+    provider_id: LanguageModelProviderId,
+    model_id: &str,
+    cx: &App,
+) -> Option<Arc<dyn LanguageModel>> {
+    LanguageModelRegistry::global(cx)
+        .read(cx)
+        .available_models(cx)
+        .find(|model| model.provider_id() == provider_id && model.id().0.as_ref() == model_id)
+}
+
+/// The retry notification shown when a refusal is retried on a fallback
+/// model, whether the retry happens client-side or server-side.
+fn refusal_fallback_retry_status(fallback_model_name: &str) -> acp_thread::RetryStatus {
+    acp_thread::RetryStatus {
+        last_error: "Safety filter triggered".into(),
+        attempt: 1,
+        max_attempts: 1,
+        started_at: Instant::now(),
+        duration: Duration::MAX,
+        meta: Some(acp_thread::meta_with_refusal_fallback(fallback_model_name)),
+    }
+}
+
 fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
     usage
         .input_tokens
@@ -4322,7 +4637,8 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             MessageContent::Text(text) => text.len(),
             MessageContent::Image(image) => image.len(),
             // These can never occur in a user message
-            MessageContent::Thinking { .. }
+            MessageContent::Fallback { .. }
+            | MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_) => 0,
@@ -4358,7 +4674,8 @@ fn truncate_user_message_to_byte_budget(
                 }
             }
             // These can never occur in a user message
-            MessageContent::Thinking { .. }
+            MessageContent::Fallback { .. }
+            | MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
             | MessageContent::ToolUse(_) => {}
@@ -5963,6 +6280,197 @@ mod tests {
         let mut settings = AgentSettings::get_global(cx).clone();
         settings.auto_compact = auto_compact;
         AgentSettings::override_global(settings, cx);
+    }
+
+    #[test]
+    fn test_agent_message_to_request_preserves_fallback_boundary_and_strips_invalid_prefix_blocks()
+    {
+        let dropped_tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("dropped".to_string()),
+            name: Arc::from("dropped_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let kept_tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("kept".to_string()),
+            name: Arc::from("kept_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(
+            dropped_tool_use.id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: dropped_tool_use.id.clone(),
+                tool_name: dropped_tool_use.name.clone(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "dropped result",
+                ))],
+                output: None,
+            },
+        );
+        tool_results.insert(
+            kept_tool_use.id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: kept_tool_use.id.clone(),
+                tool_name: kept_tool_use.name.clone(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "kept result",
+                ))],
+                output: None,
+            },
+        );
+
+        let message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Thinking {
+                    text: "drop thinking".to_string(),
+                    signature: Some("signature".to_string()),
+                },
+                AgentMessageContent::ToolUse(dropped_tool_use),
+                AgentMessageContent::Text("keep text".to_string()),
+                AgentMessageContent::Fallback {
+                    from_model: "claude-fable-5".to_string(),
+                    to_model: "claude-opus-4-8".to_string(),
+                },
+                AgentMessageContent::Thinking {
+                    text: "keep thinking".to_string(),
+                    signature: Some("fallback-signature".to_string()),
+                },
+                AgentMessageContent::ToolUse(kept_tool_use),
+            ],
+            tool_results,
+            reasoning_details: None,
+        };
+
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 2);
+        assert!(matches!(
+            &request_messages[0].content[..],
+            [
+                MessageContent::Text(text),
+                MessageContent::Fallback { from_model, to_model },
+                MessageContent::Thinking { text: thinking, .. },
+                MessageContent::ToolUse(tool_use),
+            ] if text == "keep text"
+                && from_model == "claude-fable-5"
+                && to_model == "claude-opus-4-8"
+                && thinking == "keep thinking"
+                && tool_use.id.to_string() == "kept"
+        ));
+        assert!(matches!(
+            &request_messages[1].content[..],
+            [MessageContent::ToolResult(tool_result)]
+                if tool_result.tool_use_id.to_string() == "kept"
+        ));
+    }
+
+    #[test]
+    fn test_agent_message_to_refusal_echo_omits_tool_uses_and_skips_empty_content() {
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("tool-1".to_string()),
+            name: Arc::from("some_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(
+            tool_use.id.clone(),
+            LanguageModelToolResult {
+                tool_use_id: tool_use.id.clone(),
+                tool_name: tool_use.name.clone(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from("result"))],
+                output: None,
+            },
+        );
+
+        let message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Thinking {
+                    text: "partial thinking".to_string(),
+                    signature: Some("signature".to_string()),
+                },
+                AgentMessageContent::Text("partial text".to_string()),
+                AgentMessageContent::ToolUse(tool_use),
+            ],
+            tool_results,
+            reasoning_details: None,
+        };
+
+        let echo = message.to_refusal_echo().expect("expected an echo message");
+        assert_eq!(echo.role, Role::Assistant);
+        assert!(!echo.cache);
+        assert_eq!(echo.reasoning_details, None);
+        assert!(matches!(
+            &echo.content[..],
+            [
+                MessageContent::Thinking { text: thinking, .. },
+                MessageContent::Text(text),
+            ] if thinking == "partial thinking" && text == "partial text"
+        ));
+
+        assert_eq!(AgentMessage::default().to_refusal_echo(), None);
+    }
+
+    #[test]
+    fn test_tool_uses_orphaned_by_fallback() {
+        let tool_use_before = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("before".to_string()),
+            name: Arc::from("some_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_use_after = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("after".to_string()),
+            name: Arc::from("some_tool"),
+            raw_input: "{}".to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text("partial".to_string()),
+                AgentMessageContent::ToolUse(tool_use_before.clone()),
+                AgentMessageContent::Fallback {
+                    from_model: "claude-fable-5".to_string(),
+                    to_model: "claude-opus-4-8".to_string(),
+                },
+                AgentMessageContent::ToolUse(tool_use_after.clone()),
+            ],
+            tool_results: IndexMap::default(),
+            reasoning_details: None,
+        };
+        let orphaned = message.tool_uses_orphaned_by_fallback();
+        assert!(orphaned.contains(&tool_use_before.id));
+        assert!(!orphaned.contains(&tool_use_after.id));
+        assert_eq!(orphaned.len(), 1);
+
+        let message_without_fallback = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text("text".to_string()),
+                AgentMessageContent::ToolUse(tool_use_before),
+            ],
+            tool_results: IndexMap::default(),
+            reasoning_details: None,
+        };
+        assert!(
+            message_without_fallback
+                .tool_uses_orphaned_by_fallback()
+                .is_empty()
+        );
     }
 
     #[test]

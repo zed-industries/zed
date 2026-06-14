@@ -1058,7 +1058,8 @@ fn into_copilot_chat(
                     let mut buffer = String::new();
                     for string in message.content.iter().filter_map(|content| match content {
                         MessageContent::Text(text) => Some(text.as_str()),
-                        MessageContent::Thinking { .. }
+                        MessageContent::Fallback { .. }
+                        | MessageContent::Thinking { .. }
                         | MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
@@ -1189,6 +1190,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        fallback_credit_token: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

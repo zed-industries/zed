@@ -25,11 +25,11 @@ use gpui::{
 };
 use indoc::indoc;
 use language_model::{
-    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    CompletionIntent, FallbackCredit, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelImageExt, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -3036,12 +3036,93 @@ async fn test_refusal(cx: &mut TestAppContext) {
     });
 
     // If the model refuses to continue, the thread should remove all the messages after the last user message.
+    // A credit token accompanying the refusal is forfeited when no fallback model is available.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::FallbackCredit(
+        FallbackCredit {
+            token: "credit-token".to_string(),
+            has_prefill_claim: None,
+        },
+    ));
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::Refusal));
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp::StopReason::Refusal]);
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.to_markdown(), "");
+    });
+}
+
+#[gpui::test]
+async fn test_server_side_fallback_orphans_in_flight_tool_use(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    // The fallback event handler looks the fallback model up in the registry
+    // (for its display name), which the fake-model setup doesn't initialize.
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(EchoTool);
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The model starts answering and emits a complete tool use, whose
+    // execution starts eagerly.
+    fake_model.send_last_completion_stream_text_chunk("Let me check.");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "hello"}).to_string(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    // The model then declines mid-output and the API falls back server-side.
+    // The fallback model is given only the partial output's text blocks, so
+    // it never saw the tool use and finishes the answer without tools.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Fallback {
+        from_model: "claude-fable-5".into(),
+        to_model: "claude-opus-4-8".into(),
+    });
+    fake_model.send_last_completion_stream_text_chunk("Here is the full answer.");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The orphaned tool's result must not start a tool-results round: that
+    // request would end with an assistant message (the tool use and its
+    // result are dropped from it), which the API would treat as a prefill.
+    assert_eq!(fake_model.pending_completions(), Vec::new());
+    let events = events.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+
+    // The orphaned tool use and its result are excluded from future requests,
+    // while text from both sides of the fallback boundary is kept.
+    thread.read_with(cx, |thread, _| {
+        let Some(Message::Agent(message)) = thread.last_message() else {
+            panic!("expected an agent message");
+        };
+        let request_messages = message.to_request();
+        assert_eq!(request_messages.len(), 1);
+        assert!(
+            matches!(
+                &request_messages[0].content[..],
+                [
+                    MessageContent::Text(partial),
+                    MessageContent::Fallback { .. },
+                    MessageContent::Text(continuation),
+                ] if partial == "Let me check." && continuation == "Here is the full answer."
+            ),
+            "unexpected request content: {:?}",
+            request_messages[0].content
+        );
     });
 }
 

@@ -2,9 +2,10 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
+    FallbackCredit, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, Role, StopReason,
+    TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -12,9 +13,9 @@ use std::str::FromStr;
 
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
-    CacheTtl, ContentDelta, Event, ImageSource, Message, RequestContent, ResponseContent,
-    StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
-    completion_error_from_anthropic, completion_error_from_anthropic_api,
+    CacheTtl, ContentDelta, Event, FallbackModel, ImageSource, Message, RequestContent,
+    ResponseContent, StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent,
+    ToolResultPart, Usage, completion_error_from_anthropic, completion_error_from_anthropic_api,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -27,7 +28,7 @@ pub enum AnthropicPromptCacheMode {
 
 fn set_cache_control(content: &mut RequestContent, cache_control: Option<CacheControl>) -> bool {
     match content {
-        RequestContent::RedactedThinking { .. } => false,
+        RequestContent::Fallback { .. } | RequestContent::RedactedThinking { .. } => false,
         RequestContent::Text {
             cache_control: target,
             ..
@@ -64,6 +65,13 @@ fn mark_last_cacheable_content(content: &mut [RequestContent], cache_control: Ca
 
 fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
     match content {
+        MessageContent::Fallback {
+            from_model,
+            to_model,
+        } => Some(RequestContent::Fallback {
+            from: FallbackModel { model: from_model },
+            to: FallbackModel { model: to_model },
+        }),
         MessageContent::Text(text) => {
             let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
                 text.trim_end().to_string()
@@ -262,6 +270,8 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
+        fallbacks: Vec::new(),
+        fallback_credit_token: request.fallback_credit_token,
         system,
         // Opt into Anthropic's automatic prompt caching for the conversation
         // tail. Omitting `ttl` uses the default (short) TTL, which refreshes
@@ -324,6 +334,7 @@ pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
+    fallback_credit: Option<FallbackCredit>,
     provider_name: LanguageModelProviderName,
 }
 
@@ -333,6 +344,7 @@ impl AnthropicEventMapper {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
+            fallback_credit: None,
             provider_name,
         }
     }
@@ -362,6 +374,12 @@ impl AnthropicEventMapper {
                 index,
                 content_block,
             } => match content_block {
+                ResponseContent::Fallback { from, to } => {
+                    vec![Ok(LanguageModelCompletionEvent::Fallback {
+                        from_model: from.model,
+                        to_model: to.model,
+                    })]
+                }
                 ResponseContent::Text { text } => {
                     vec![Ok(LanguageModelCompletionEvent::Text(text))]
                 }
@@ -482,12 +500,26 @@ impl AnthropicEventMapper {
                         }
                     };
                 }
+                if let Some(stop_details) = delta.stop_details {
+                    self.fallback_credit =
+                        stop_details
+                            .fallback_credit_token
+                            .map(|token| FallbackCredit {
+                                token,
+                                has_prefill_claim: stop_details.fallback_has_prefill_claim,
+                            });
+                }
                 vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
                     convert_usage(&self.usage),
                 ))]
             }
             Event::MessageStop => {
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+                let mut events = Vec::new();
+                if let Some(credit) = self.fallback_credit.take() {
+                    events.push(Ok(LanguageModelCompletionEvent::FallbackCredit(credit)));
+                }
+                events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+                events
             }
             Event::Error { error } => {
                 vec![Err(completion_error_from_anthropic_api(
@@ -534,8 +566,104 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AnthropicModelMode;
-    use language_model_core::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+    use crate::{AnthropicModelMode, MessageDelta, StopDetails};
+    use language_model_core::{
+        LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRequestMessage,
+        MessageContent,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn test_fallback_blocks_are_mapped_to_completion_events() {
+        let mut mapper = AnthropicEventMapper::new(LanguageModelProviderName("anthropic".into()));
+        let events = mapper.map_event(Event::ContentBlockStart {
+            index: 0,
+            content_block: ResponseContent::Fallback {
+                from: FallbackModel {
+                    model: "claude-fable-5".to_string(),
+                },
+                to: FallbackModel {
+                    model: "claude-opus-4-8".to_string(),
+                },
+            },
+        });
+
+        let [
+            Ok(LanguageModelCompletionEvent::Fallback {
+                from_model,
+                to_model,
+            }),
+        ] = events.as_slice()
+        else {
+            panic!("expected a fallback event, got {events:?}");
+        };
+        assert_eq!(from_model, "claude-fable-5");
+        assert_eq!(to_model, "claude-opus-4-8");
+    }
+
+    #[test]
+    fn test_fallbacks_serialize_on_request() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thinking_allowed: true,
+            ..Default::default()
+        };
+
+        let mut anthropic_request = into_anthropic(
+            request,
+            "claude-fable-5".to_string(),
+            1.0,
+            4_096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
+        );
+        anthropic_request.fallbacks = vec![FallbackModel {
+            model: "claude-opus-4-8".to_string(),
+        }];
+
+        let serialized = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(
+            serialized.get("fallbacks"),
+            Some(&json!([{ "model": "claude-opus-4-8" }]))
+        );
+    }
+
+    #[test]
+    fn test_refusal_with_credit_token_emits_credit_event_before_stop() {
+        let mut mapper = AnthropicEventMapper::new(LanguageModelProviderName("anthropic".into()));
+        let events = mapper.map_event(Event::MessageDelta {
+            delta: MessageDelta {
+                stop_reason: Some("refusal".to_string()),
+                stop_sequence: None,
+                stop_details: Some(StopDetails {
+                    fallback_credit_token: Some("credit-token".to_string()),
+                    fallback_has_prefill_claim: Some(true),
+                }),
+            },
+            usage: Usage::default(),
+        });
+        assert!(
+            events
+                .iter()
+                .all(|event| matches!(event, Ok(LanguageModelCompletionEvent::UsageUpdate(_))))
+        );
+
+        let events = mapper.map_event(Event::MessageStop);
+        let [
+            Ok(LanguageModelCompletionEvent::FallbackCredit(credit)),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)),
+        ] = events.as_slice()
+        else {
+            panic!("expected a fallback credit event followed by a refusal stop, got {events:?}");
+        };
+        assert_eq!(credit.token, "credit-token");
+        assert_eq!(credit.has_prefill_claim, Some(true));
+    }
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -573,6 +701,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -594,7 +723,7 @@ mod tests {
                 | RequestContent::Image { cache_control, .. }
                 | RequestContent::ToolUse { cache_control, .. }
                 | RequestContent::ToolResult { cache_control, .. } => *cache_control,
-                RequestContent::RedactedThinking { .. } => None,
+                RequestContent::Fallback { .. } | RequestContent::RedactedThinking { .. } => None,
             };
             assert!(
                 cache_control.is_none(),
@@ -677,6 +806,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -734,6 +864,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("xhigh".into()),
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -785,6 +916,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -822,6 +954,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             speed: None,
+            fallback_credit_token: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

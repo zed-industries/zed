@@ -352,8 +352,9 @@ impl LmStudioLanguageModel {
                         message.role,
                         &mut messages,
                     ),
-                    MessageContent::Thinking { .. } => {}
-                    MessageContent::RedactedThinking(_) => {}
+                    MessageContent::Fallback { .. }
+                    | MessageContent::Thinking { .. }
+                    | MessageContent::RedactedThinking(_) => {}
                     MessageContent::Image(image) => {
                         add_message_content_part(
                             lmstudio::MessagePart::Image {

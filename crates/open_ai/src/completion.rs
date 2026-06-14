@@ -82,7 +82,7 @@ pub fn into_open_ai(
                         }
                     }
                 }
-                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         MessagePart::Image {
@@ -211,6 +211,7 @@ pub fn into_open_ai_response(
         thinking_allowed,
         thinking_effort,
         speed,
+        fallback_credit_token: _,
     } = request;
 
     let service_tier = service_tier_for(speed);
@@ -335,7 +336,9 @@ fn append_message_to_response_items(
             MessageContent::Text(text) => {
                 push_response_text_part(&role, text, &mut content_parts);
             }
-            MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
+            MessageContent::Fallback { .. }
+            | MessageContent::Thinking { .. }
+            | MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -1411,6 +1414,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("high".into()),
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -1532,6 +1536,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -1614,6 +1619,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response =
@@ -1670,6 +1676,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: Some("high".into()),
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -1713,6 +1720,7 @@ mod tests {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed,
+                fallback_credit_token: None,
             };
 
             let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
@@ -1754,6 +1762,7 @@ mod tests {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed,
+                fallback_credit_token: None,
             };
 
             let chat = into_open_ai(request, "gpt-5.4", true, true, None, None, false);
@@ -1789,6 +1798,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: Some("high".into()),
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -1827,6 +1837,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("none".into()),
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -1877,6 +1888,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -1966,6 +1978,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response = into_open_ai_response(
@@ -2053,6 +2066,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let response =
@@ -3109,6 +3123,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            fallback_credit_token: None,
         };
 
         let result = into_open_ai(request.clone(), "model", false, false, None, None, true);

@@ -390,7 +390,7 @@ pub fn into_deepseek(
                     // Accumulate reasoning content for next assistant message
                     current_reasoning.get_or_insert_default().push_str(&text);
                 }
-                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Fallback { .. } | MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = deepseek::ToolCall {
