@@ -432,7 +432,11 @@ fn create_terminal(
             window,
             cx,
         );
-        view.set_embedded_mode(Some(1000), cx);
+        // Cap the embedded terminal to the configured number of lines (showing
+        // the most recent output). The agent thread toggles this cap via a
+        // chevron to expand/collapse. `0` disables the cap.
+        let max_lines = agent_settings::AgentSettings::get_global(cx).tool_output_max_lines;
+        view.set_embedded_mode((max_lines != 0).then_some(max_lines), cx);
         view
     })
 }

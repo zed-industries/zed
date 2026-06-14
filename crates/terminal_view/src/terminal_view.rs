@@ -161,7 +161,10 @@ pub enum TerminalMode {
     #[default]
     Standalone,
     Embedded {
-        max_lines_when_unfocused: Option<usize>,
+        /// Caps the number of lines rendered inline (the most recent lines are
+        /// shown). `None` means no cap. Applies whether or not the terminal is
+        /// focused, so the displayed height is deterministic.
+        max_lines: Option<usize>,
     },
 }
 
@@ -303,15 +306,10 @@ impl TerminalView {
         }
     }
 
-    /// Enable 'embedded' mode where the terminal displays the full content with an optional limit of lines.
-    pub fn set_embedded_mode(
-        &mut self,
-        max_lines_when_unfocused: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
-        self.mode = TerminalMode::Embedded {
-            max_lines_when_unfocused,
-        };
+    /// Enable 'embedded' mode where the terminal displays its content inline,
+    /// optionally capped to the most recent `max_lines` lines.
+    pub fn set_embedded_mode(&mut self, max_lines: Option<usize>, cx: &mut Context<Self>) {
+        self.mode = TerminalMode::Embedded { max_lines };
         cx.notify();
     }
 
@@ -320,29 +318,53 @@ impl TerminalView {
     /// Returns the current `ContentMode` depending on the set `TerminalMode` and the current number of lines
     ///
     /// Note: Even in embedded mode, the terminal will fallback to scrollable when its content exceeds `MAX_EMBEDDED_LINES`
-    pub fn content_mode(&self, window: &Window, cx: &App) -> ContentMode {
+    pub fn content_mode(&self, _window: &Window, cx: &App) -> ContentMode {
         match &self.mode {
             TerminalMode::Standalone => ContentMode::Scrollable,
-            TerminalMode::Embedded {
-                max_lines_when_unfocused,
-            } => {
-                let total_lines = self.terminal.read(cx).total_lines();
+            TerminalMode::Embedded { max_lines } => {
+                let terminal = self.terminal.read(cx);
+                let raw_total_lines = terminal.total_lines();
 
-                if total_lines > Self::MAX_EMBEDDED_LINES {
-                    ContentMode::Scrollable
-                } else {
-                    let mut displayed_lines = total_lines;
+                if raw_total_lines > Self::MAX_EMBEDDED_LINES {
+                    return ContentMode::Scrollable;
+                }
 
-                    if !self.focus_handle.is_focused(window)
-                        && let Some(max_lines) = max_lines_when_unfocused
-                    {
-                        displayed_lines = displayed_lines.min(*max_lines)
-                    }
+                let Some(max_lines) = max_lines else {
+                    // No cap configured: render every line inline, matching the
+                    // raw grid (including the trailing cursor line).
+                    return ContentMode::Inline {
+                        displayed_lines: raw_total_lines,
+                        total_lines: raw_total_lines,
+                    };
+                };
 
-                    ContentMode::Inline {
-                        displayed_lines,
-                        total_lines,
-                    }
+                // On the alternate screen a full-screen TUI owns the whole grid and
+                // positions the cursor arbitrarily, so it is not a reliable marker
+                // of where content ends. Fall back to sizing from the raw grid.
+                if terminal.last_content().mode.contains(Modes::ALT_SCREEN) {
+                    return ContentMode::Inline {
+                        displayed_lines: raw_total_lines.min(*max_lines),
+                        total_lines: raw_total_lines,
+                    };
+                }
+
+                // Count the real output lines rather than the grid height. The
+                // grid keeps a trailing blank line under the cursor after each
+                // newline, and pads unused rows; using those would make the inline
+                // box render at full height with empty padding. Deriving the
+                // content extent from the cursor lets the box hug the output and
+                // grow up to the cap as it streams in.
+                let cursor = terminal.last_content().cursor.point;
+                let viewport_lines = terminal.viewport_lines();
+                let content_rows = ((cursor.line.max(0) as usize) + usize::from(cursor.column > 0))
+                    .min(viewport_lines);
+                let history_lines = raw_total_lines.saturating_sub(viewport_lines);
+                let total_lines = history_lines + content_rows;
+                let displayed_lines = total_lines.min(*max_lines);
+
+                ContentMode::Inline {
+                    displayed_lines,
+                    total_lines,
                 }
             }
         }
