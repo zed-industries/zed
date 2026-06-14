@@ -10,12 +10,17 @@ use gpui::{
 #[cfg(not(target_family = "wasm"))]
 use reqwest_client::ReqwestClient;
 
-struct ObjectFitShowcase {
+struct Source {
+    label: &'static str,
     image: SharedString,
 }
 
+struct ObjectFitShowcase {
+    sources: Vec<Source>,
+}
+
 impl ObjectFitShowcase {
-    fn fit_demo(&self, label: &str, object_fit: ObjectFit) -> impl IntoElement {
+    fn fit_demo(image: &SharedString, label: &str, object_fit: ObjectFit) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -23,7 +28,7 @@ impl ObjectFitShowcase {
             .gap_2()
             .child(label.to_string())
             .child(
-                img(self.image.clone())
+                img(image.clone())
                     .overflow_hidden()
                     .w(px(220.))
                     .h(px(140.))
@@ -31,6 +36,32 @@ impl ObjectFitShowcase {
                     .border_color(rgb(0xC0392B))
                     .rounded(px(24.))
                     .object_fit(object_fit),
+            )
+    }
+
+    fn source_row(source: &Source) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_3()
+            .child(source.label.to_string())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap_8()
+                    .child(Self::fit_demo(&source.image, "Fill", ObjectFit::Fill))
+                    .child(Self::fit_demo(&source.image, "Contain", ObjectFit::Contain))
+                    .child(Self::fit_demo(&source.image, "Cover", ObjectFit::Cover))
+                    .child(Self::fit_demo(
+                        &source.image,
+                        "ScaleDown",
+                        ObjectFit::ScaleDown,
+                    ))
+                    .child(Self::fit_demo(&source.image, "None", ObjectFit::None)),
             )
     }
 }
@@ -48,21 +79,9 @@ impl Render for ObjectFitShowcase {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap_6()
+                    .gap_8()
                     .child("ObjectFit with rounded corners")
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_wrap()
-                            .justify_center()
-                            .gap_8()
-                            .child(self.fit_demo("Fill", ObjectFit::Fill))
-                            .child(self.fit_demo("Contain", ObjectFit::Contain))
-                            .child(self.fit_demo("Cover", ObjectFit::Cover))
-                            .child(self.fit_demo("ScaleDown", ObjectFit::ScaleDown))
-                            .child(self.fit_demo("None", ObjectFit::None)),
-                    ),
+                    .children(self.sources.iter().map(Self::source_row)),
             )
     }
 }
@@ -116,7 +135,24 @@ fn run_example() {
 
         cx.open_window(window_options, |_, cx| {
             cx.new(|_| ObjectFitShowcase {
-                image: "https://picsum.photos/id/237/400/200".into(),
+                sources: vec![
+                    Source {
+                        label: "Landscape source (400x200)",
+                        image: "https://picsum.photos/id/237/400/200".into(),
+                    },
+                    Source {
+                        label: "Portrait source (200x400)",
+                        image: "https://picsum.photos/id/1003/200/400".into(),
+                    },
+                    Source {
+                        label: "Square source (400x400)",
+                        image: "https://picsum.photos/id/1025/400/400".into(),
+                    },
+                    Source {
+                        label: "Small source (120x80)",
+                        image: "https://picsum.photos/id/1062/120/80".into(),
+                    },
+                ],
             })
         })
         .unwrap();
