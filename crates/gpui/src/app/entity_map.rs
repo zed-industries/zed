@@ -55,6 +55,8 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    type_names: SecondaryMap<EntityId, &'static str>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
@@ -71,6 +73,8 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            type_names: SecondaryMap::new(),
             accessed_entities: RefCell::new(FxHashSet::default()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
@@ -125,8 +129,16 @@ impl EntityMap {
         accessed_entities.insert(slot.entity_id);
 
         let handle = slot.0;
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.type_names
+            .insert(handle.entity_id, std::any::type_name::<T>());
         self.entities.insert(handle.entity_id, Box::new(entity));
         handle
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn type_name(&self, entity_id: EntityId) -> Option<&'static str> {
+        self.type_names.get(entity_id).copied()
     }
 
     /// Move an entity to the stack.
@@ -195,6 +207,11 @@ impl EntityMap {
                     "dropped an entity that was referenced"
                 );
                 accessed_entities.remove(&entity_id);
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                {
+                    self.type_names.remove(entity_id);
+                    crate::devtools::forget_entity(entity_id);
+                }
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))

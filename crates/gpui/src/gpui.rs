@@ -18,6 +18,9 @@ mod bounds_tree;
 mod color;
 /// The default colors used by GPUI.
 pub mod colors;
+/// Runtime GPUI invalidation and rendering diagnostics.
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub mod devtools;
 mod element;
 mod elements;
 mod executor;

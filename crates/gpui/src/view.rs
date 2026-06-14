@@ -7,6 +7,8 @@ use crate::{Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
+#[cfg(any(feature = "inspector", debug_assertions))]
+use scheduler::Instant;
 use std::mem;
 use std::rc::Rc;
 use std::{any::TypeId, fmt, ops::Range};
@@ -30,6 +32,8 @@ struct ViewCacheKey {
 pub struct AnyView {
     entity: AnyEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    type_name: &'static str,
     cached_style: Option<Rc<StyleRefinement>>,
 }
 
@@ -38,6 +42,8 @@ impl<V: Render> From<Entity<V>> for AnyView {
         AnyView {
             entity: value.into_any(),
             render: any_view::render::<V>,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            type_name: std::any::type_name::<V>(),
             cached_style: None,
         }
     }
@@ -57,6 +63,8 @@ impl AnyView {
         AnyWeakView {
             entity: self.entity.downgrade(),
             render: self.render,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            type_name: self.type_name,
         }
     }
 
@@ -68,6 +76,8 @@ impl AnyView {
             Err(entity) => Err(Self {
                 entity,
                 render: self.render,
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                type_name: self.type_name,
                 cached_style: self.cached_style,
             }),
         }
@@ -111,6 +121,8 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        window.record_view_type_name(self.entity_id(), self.type_name);
         window.with_rendered_view(self.entity_id(), |window| {
             // Disable caching when inspecting so that mouse_hit_test has all hitboxes.
             let caching_disabled = window.is_inspector_picking(cx);
@@ -122,8 +134,28 @@ impl Element for AnyView {
                     (layout_id, None)
                 }
                 _ => {
+                    #[cfg(any(feature = "inspector", debug_assertions))]
+                    let render_start = crate::devtools::enabled().then(Instant::now);
                     let mut element = (self.render)(self, window, cx);
                     let layout_id = element.request_layout(window, cx);
+                    #[cfg(any(feature = "inspector", debug_assertions))]
+                    if let Some(render_start) = render_start {
+                        crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
+                            window_id: window.handle.window_id(),
+                            entity_id: self.entity_id(),
+                            entity_type: self.type_name,
+                            phase: if self.cached_style.is_some() && caching_disabled {
+                                crate::devtools::ViewRenderPhase::UncachedRenderInspector
+                            } else {
+                                crate::devtools::ViewRenderPhase::UncachedRender
+                            },
+                            duration: Some(render_start.elapsed()),
+                            cache_miss_reasons: crate::devtools::CacheMissReasons::empty(),
+                            bounds: None,
+                            caching_disabled_by_inspector: caching_disabled,
+                            timestamp: Instant::now(),
+                        });
+                    }
                     (layout_id, Some(element))
                 }
             }
@@ -139,10 +171,28 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        crate::devtools::record_view_bounds(window.handle.window_id(), self.entity_id(), bounds);
         window.set_view_id(self.entity_id());
         window.with_rendered_view(self.entity_id(), |window| {
             if let Some(mut element) = element.take() {
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                let prepaint_start = crate::devtools::enabled().then(Instant::now);
                 element.prepaint(window, cx);
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                if let Some(prepaint_start) = prepaint_start {
+                    crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
+                        window_id: window.handle.window_id(),
+                        entity_id: self.entity_id(),
+                        entity_type: self.type_name,
+                        phase: crate::devtools::ViewRenderPhase::UncachedPrepaint,
+                        duration: Some(prepaint_start.elapsed()),
+                        cache_miss_reasons: crate::devtools::CacheMissReasons::empty(),
+                        bounds: Some(bounds),
+                        caching_disabled_by_inspector: window.is_inspector_picking(cx),
+                        timestamp: Instant::now(),
+                    });
+                }
                 return Some(element);
             }
 
@@ -151,25 +201,79 @@ impl Element for AnyView {
                 |element_state, window| {
                     let content_mask = window.content_mask();
                     let text_style = window.text_style();
+                    let reuse_prepaint =
+                        |window: &mut Window,
+                         cx: &mut App,
+                         mut element_state: AnyViewState|
+                         -> (Option<AnyElement>, AnyViewState) {
+                            let prepaint_start = window.prepaint_index();
+                            window.reuse_prepaint(element_state.prepaint_range.clone());
+                            cx.entities
+                                .extend_accessed(&element_state.accessed_entities);
+                            let prepaint_end = window.prepaint_index();
+                            element_state.prepaint_range = prepaint_start..prepaint_end;
 
-                    if let Some(mut element_state) = element_state
+                            (None, element_state)
+                        };
+
+                    #[cfg(any(feature = "inspector", debug_assertions))]
+                    let cache_miss_reasons = crate::devtools::enabled().then(|| {
+                        let mut cache_miss_reasons = crate::devtools::CacheMissReasons::empty();
+
+                        if let Some(element_state) = element_state.as_ref() {
+                            if element_state.cache_key.bounds != bounds {
+                                cache_miss_reasons.insert_bounds_changed();
+                            }
+                            if element_state.cache_key.content_mask != content_mask {
+                                cache_miss_reasons.insert_content_mask_changed();
+                            }
+                            if element_state.cache_key.text_style != text_style {
+                                cache_miss_reasons.insert_text_style_changed();
+                            }
+                        } else {
+                            cache_miss_reasons.insert_missing_cache();
+                        }
+                        if window.dirty_views.contains(&self.entity_id()) {
+                            cache_miss_reasons.insert_view_dirty();
+                        }
+                        if window.refreshing {
+                            cache_miss_reasons.insert_window_refreshing();
+                        }
+
+                        cache_miss_reasons
+                    });
+
+                    if let Some(element_state) = element_state
                         && element_state.cache_key.bounds == bounds
                         && element_state.cache_key.content_mask == content_mask
                         && element_state.cache_key.text_style == text_style
                         && !window.dirty_views.contains(&self.entity_id())
                         && !window.refreshing
                     {
-                        let prepaint_start = window.prepaint_index();
-                        window.reuse_prepaint(element_state.prepaint_range.clone());
-                        cx.entities
-                            .extend_accessed(&element_state.accessed_entities);
-                        let prepaint_end = window.prepaint_index();
-                        element_state.prepaint_range = prepaint_start..prepaint_end;
+                        #[cfg(any(feature = "inspector", debug_assertions))]
+                        let reuse_start = cache_miss_reasons.is_some().then(Instant::now);
+                        let result = reuse_prepaint(window, cx, element_state);
+                        #[cfg(any(feature = "inspector", debug_assertions))]
+                        if let Some(reuse_start) = reuse_start {
+                            crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
+                                window_id: window.handle.window_id(),
+                                entity_id: self.entity_id(),
+                                entity_type: self.type_name,
+                                phase: crate::devtools::ViewRenderPhase::PrepaintReuse,
+                                duration: Some(reuse_start.elapsed()),
+                                cache_miss_reasons: crate::devtools::CacheMissReasons::empty(),
+                                bounds: Some(bounds),
+                                caching_disabled_by_inspector: false,
+                                timestamp: Instant::now(),
+                            });
+                        }
 
-                        return (None, element_state);
+                        return result;
                     }
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
+                    #[cfg(any(feature = "inspector", debug_assertions))]
+                    let refresh_start = cache_miss_reasons.is_some().then(Instant::now);
                     let prepaint_start = window.prepaint_index();
                     let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                         let mut element = (self.render)(self, window, cx);
@@ -180,6 +284,22 @@ impl Element for AnyView {
 
                     let prepaint_end = window.prepaint_index();
                     window.refreshing = refreshing;
+                    #[cfg(any(feature = "inspector", debug_assertions))]
+                    if let Some((refresh_start, cache_miss_reasons)) =
+                        refresh_start.zip(cache_miss_reasons)
+                    {
+                        crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
+                            window_id: window.handle.window_id(),
+                            entity_id: self.entity_id(),
+                            entity_type: self.type_name,
+                            phase: crate::devtools::ViewRenderPhase::CachedCacheMissRefresh,
+                            duration: Some(refresh_start.elapsed()),
+                            cache_miss_reasons,
+                            bounds: Some(bounds),
+                            caching_disabled_by_inspector: false,
+                            timestamp: Instant::now(),
+                        });
+                    }
 
                     (
                         Some(element),
@@ -224,7 +344,26 @@ impl Element for AnyView {
                             element.paint(window, cx);
                             window.refreshing = refreshing;
                         } else {
+                            #[cfg(any(feature = "inspector", debug_assertions))]
+                            let reuse_start = crate::devtools::enabled().then(Instant::now);
                             window.reuse_paint(element_state.paint_range.clone());
+                            #[cfg(any(feature = "inspector", debug_assertions))]
+                            if let Some(reuse_start) = reuse_start {
+                                crate::devtools::record_view_render(
+                                    crate::devtools::ViewRenderEvent {
+                                        window_id: window.handle.window_id(),
+                                        entity_id: self.entity_id(),
+                                        entity_type: self.type_name,
+                                        phase: crate::devtools::ViewRenderPhase::PaintReuse,
+                                        duration: Some(reuse_start.elapsed()),
+                                        cache_miss_reasons:
+                                            crate::devtools::CacheMissReasons::empty(),
+                                        bounds: Some(_bounds),
+                                        caching_disabled_by_inspector: false,
+                                        timestamp: Instant::now(),
+                                    },
+                                );
+                            }
                         }
 
                         let paint_end = window.paint_index();
@@ -260,6 +399,8 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    type_name: &'static str,
 }
 
 impl AnyWeakView {
@@ -269,6 +410,8 @@ impl AnyWeakView {
         Some(AnyView {
             entity,
             render: self.render,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            type_name: self.type_name,
             cached_style: None,
         })
     }
@@ -279,6 +422,8 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
         AnyWeakView {
             entity: view.into(),
             render: any_view::render::<V>,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            type_name: std::any::type_name::<V>(),
         }
     }
 }

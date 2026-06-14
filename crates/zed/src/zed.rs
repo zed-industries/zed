@@ -100,6 +100,8 @@ use workspace::{
     CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
+#[cfg(any(feature = "inspector", debug_assertions))]
+use zed_actions::OpenGpuiDevtools;
 use zed_actions::{
     About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
     OpenStatusPage, OpenZedUrl, Quit,
@@ -879,6 +881,11 @@ fn register_actions(
     _: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    workspace.register_action(|_, _: &OpenGpuiDevtools, window, cx| {
+        gpui::devtools::open(window, cx);
+    });
+
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))

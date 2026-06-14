@@ -183,6 +183,11 @@ impl WindowInvalidator {
         self.inner.borrow().update_count
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn dirty_view_count(&self) -> usize {
+        self.inner.borrow().dirty_views.len()
+    }
+
     fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
         if profiler::frame_trace_enabled() {
             inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
@@ -832,6 +837,8 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) view_type_names: FxHashMap<EntityId, &'static str>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -878,6 +885,8 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            view_type_names: FxHashMap::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -900,6 +909,8 @@ impl Frame {
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.view_type_names.clear();
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
@@ -1102,6 +1113,38 @@ impl InputRateTracker {
     fn prune_old_timestamps(&mut self, now: Instant) {
         self.timestamps
             .retain(|&t| now.duration_since(t) <= self.window);
+    }
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[derive(Clone, Copy, Debug)]
+struct FrameDiagnostics {
+    reason: crate::devtools::FrameDiagnosticsReason,
+    dirty_before_frame: bool,
+    dirty_view_count: usize,
+    invalidator_update_count: usize,
+    draw_duration: Option<Duration>,
+    present_duration: Duration,
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+fn frame_diagnostics_reason(
+    force_render: bool,
+    dirty: bool,
+    require_presentation: bool,
+    queued_presentation: bool,
+) -> crate::devtools::FrameDiagnosticsReason {
+    use crate::devtools::FrameDiagnosticsReason;
+    if force_render {
+        FrameDiagnosticsReason::Forced
+    } else if dirty {
+        FrameDiagnosticsReason::Dirty
+    } else if require_presentation {
+        FrameDiagnosticsReason::RequiredPresentation
+    } else if queued_presentation {
+        FrameDiagnosticsReason::QueuedPresentation
+    } else {
+        FrameDiagnosticsReason::HighRateInput
     }
 }
 
@@ -1505,28 +1548,71 @@ impl Window {
                 // Keep presenting if input was recently arriving at a high rate (>= 60fps).
                 // Once high-rate input is detected, we sustain presentation for 1 second
                 // to prevent display underclocking during active input.
+                let queued_presentation = needs_present.get();
+                let high_rate_input = active.get() && input_rate_tracker.borrow().is_high_rate();
                 let needs_present = request_frame_options.require_presentation
-                    || needs_present.get()
-                    || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
+                    || queued_presentation
+                    || high_rate_input;
+                let dirty_before_frame = invalidator.is_dirty();
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                let frame_diagnostics = FrameDiagnostics {
+                    reason: frame_diagnostics_reason(
+                        request_frame_options.force_render,
+                        dirty_before_frame,
+                        request_frame_options.require_presentation,
+                        queued_presentation,
+                    ),
+                    dirty_before_frame,
+                    dirty_view_count: invalidator.dirty_view_count(),
+                    invalidator_update_count: invalidator.update_count(),
+                    draw_duration: None,
+                    present_duration: Duration::default(),
+                };
 
-                if invalidator.is_dirty() || request_frame_options.force_render {
+                if dirty_before_frame || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                let mut frame_diagnostics = frame_diagnostics;
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                let draw_start = Instant::now();
                                 if request_frame_options.force_render {
                                     // Bypass cached view reuse so we don't replay stale
                                     // atlas tile references after a GPU device recovery.
                                     window.refresh();
                                 }
                                 let arena_clear_needed = window.draw(cx);
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                {
+                                    frame_diagnostics.draw_duration = Some(draw_start.elapsed());
+                                }
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                let present_start = Instant::now();
                                 window.present();
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                {
+                                    frame_diagnostics.present_duration = present_start.elapsed();
+                                    window.record_frame_diagnostics(frame_diagnostics);
+                                }
                                 arena_clear_needed.clear();
                             })
                             .log_err();
                     })
                 } else if needs_present {
                     handle
-                        .update(&mut cx, |_, window, _| window.present())
+                        .update(&mut cx, |_, window, _| {
+                            #[cfg(any(feature = "inspector", debug_assertions))]
+                            let mut frame_diagnostics = frame_diagnostics;
+                            #[cfg(any(feature = "inspector", debug_assertions))]
+                            let present_start = Instant::now();
+                            window.present();
+                            #[cfg(any(feature = "inspector", debug_assertions))]
+                            {
+                                frame_diagnostics.present_duration = present_start.elapsed();
+                                window.record_frame_diagnostics(frame_diagnostics);
+                            }
+                        })
                         .log_err();
                 }
 
@@ -2166,9 +2252,58 @@ impl Window {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
+    #[cfg_attr(any(feature = "inspector", debug_assertions), track_caller)]
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            if crate::devtools::enabled() {
+                let caller = std::panic::Location::caller();
+                let entity_type = self.devtools_view_type_name(entity);
+                crate::devtools::record_animation(crate::devtools::animation_frame_request_event(
+                    self.handle.window_id(),
+                    entity,
+                    entity_type,
+                    caller,
+                ));
+            }
+        }
         self.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn record_animation_frame_request(
+        &self,
+        element_id: &ElementId,
+        animation_index: usize,
+        duration: Duration,
+        repeats: bool,
+    ) {
+        if !crate::devtools::enabled() {
+            return;
+        }
+
+        let entity = self.current_view();
+        let entity_type = self.devtools_view_type_name(entity);
+        crate::devtools::record_animation(crate::devtools::animation_element_tick_event(
+            self.handle.window_id(),
+            entity,
+            entity_type,
+            element_id,
+            animation_index,
+            duration,
+            repeats,
+        ));
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn devtools_view_type_name(&self, entity: EntityId) -> &'static str {
+        self.next_frame
+            .view_type_names
+            .get(&entity)
+            .or_else(|| self.rendered_frame.view_type_names.get(&entity))
+            .copied()
+            .unwrap_or("<unknown>")
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -2729,9 +2864,35 @@ impl Window {
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
         for entity in views.drain() {
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            {
+                if crate::devtools::enabled() {
+                    self.record_devtools_dirty_path(entity);
+                }
+            }
             self.mark_view_dirty(entity);
         }
         self.invalidator.replace_views(views);
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn record_devtools_dirty_path(&self, entity: EntityId) {
+        let path = self
+            .rendered_frame
+            .dispatch_tree
+            .view_path_reversed(entity)
+            .map(|entity_id| crate::devtools::DirtyPathSegment {
+                entity_id,
+                entity_type: self.devtools_view_type_name(entity_id),
+            })
+            .collect();
+
+        crate::devtools::record_dirty_path(crate::devtools::DirtyPathEvent::new(
+            self.handle.window_id(),
+            entity,
+            self.devtools_view_type_name(entity),
+            path,
+        ));
     }
 
     #[profiling::function]
@@ -2741,6 +2902,28 @@ impl Window {
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn record_frame_diagnostics(&self, diagnostics: FrameDiagnostics) {
+        let window_id = self.handle.window_id();
+        if !crate::devtools::enabled() || !crate::devtools::window_open(window_id) {
+            return;
+        }
+
+        let stats = self.rendered_frame.scene.stats();
+        crate::devtools::record_frame(crate::devtools::FrameEvent {
+            window_id,
+            reason: diagnostics.reason,
+            dirty_before_frame: diagnostics.dirty_before_frame,
+            dirty_view_count: diagnostics.dirty_view_count,
+            invalidator_update_count: diagnostics.invalidator_update_count,
+            rebuilt_scene: diagnostics.draw_duration.is_some(),
+            draw_duration: diagnostics.draw_duration,
+            present_duration: diagnostics.present_duration,
+            scene_stats: stats,
+            timestamp: Instant::now(),
+        });
     }
 
     /// Presents the most recently drawn frame if it hasn't been presented yet.
@@ -4276,6 +4459,16 @@ impl Window {
     pub fn current_view(&self) -> EntityId {
         self.invalidator.debug_assert_paint_or_prepaint();
         self.rendered_entity_stack.last().copied().unwrap()
+    }
+
+    #[inline]
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn record_view_type_name(&mut self, id: EntityId, type_name: &'static str) {
+        if !crate::devtools::enabled() {
+            return;
+        }
+
+        self.next_frame.view_type_names.insert(id, type_name);
     }
 
     #[inline]
