@@ -960,6 +960,8 @@ impl PlatformTextSystem for NoopTextSystem {
             descent: font_size * (metrics.descent / metrics.units_per_em as f32),
             runs,
             len: text.len(),
+            index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         }
     }
 
