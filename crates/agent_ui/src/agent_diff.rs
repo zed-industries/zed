@@ -102,6 +102,7 @@ impl AgentDiffPane {
             );
             diff_display_editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
+            diff_display_editor.set_render_diff_hunks_as_unstaged(cx);
             diff_display_editor.update_editors(cx, |editor, _cx| {
                 editor.register_addon(AgentDiffAddon);
             });
@@ -138,7 +139,7 @@ impl AgentDiffPane {
             .changed_buffers(cx);
 
         // Sort edited files alphabetically for consistency with Git diff view
-        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        let mut sorted_buffers: Vec<_> = changed_buffers.collect();
         sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
             let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
             let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
@@ -683,7 +684,10 @@ impl Render for AgentDiffPane {
             .on_action(cx.listener(Self::reject))
             .on_action(cx.listener(Self::reject_all))
             .on_action(cx.listener(Self::keep_all))
-            .bg(cx.theme().colors().editor_background)
+            // Only paint the background for the empty state. When the diff editor
+            // is shown it already paints `editor_background`; painting it again
+            // here double-composites into a darker patch on transparent windows.
+            .when(is_empty, |el| el.bg(cx.theme().colors().editor_background))
             .flex()
             .items_center()
             .justify_center()
@@ -755,6 +759,9 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+    // Drop shadows render as a dark halo on transparent windows.
+    let opaque_window =
+        cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
     h_flex()
         .h(line_height)
@@ -769,7 +776,7 @@ fn render_diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
-        .shadow_md()
+        .when(opaque_window, |this| this.shadow_md())
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
                 .disabled(is_created_file)
@@ -1535,7 +1542,7 @@ impl AgentDiff {
         };
 
         let action_log = thread.read(cx).action_log();
-        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
 
         let mut unaffected = self.reviewing_editors.clone();
 
@@ -1572,6 +1579,7 @@ impl AgentDiff {
                             diff_hunk_controls(&thread, workspace.clone()),
                             cx,
                         );
+                        editor.set_render_diff_hunks_as_unstaged(true, cx);
                         editor.set_expand_all_diff_hunks(cx);
                         editor.register_addon(EditorAgentDiffAddon);
                     });
@@ -1769,12 +1777,13 @@ impl AgentDiff {
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let mut keys = changed_buffers.keys();
-            keys.find(|k| *k == &curr_buffer);
+            let mut keys = changed_buffers.map(|(buffer, _)| buffer);
+            keys.find(|k| *k == curr_buffer);
             let next_project_path = keys
                 .next()
-                .filter(|k| *k != &curr_buffer)
+                .filter(|k| *k != curr_buffer)
                 .and_then(|after| after.read(cx).project_path(cx));
+            drop(keys);
 
             if let Some(path) = next_project_path {
                 let task = workspace.open_path(path, None, true, window, cx);

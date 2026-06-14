@@ -2,16 +2,16 @@ pub mod row_chunk;
 
 use crate::{
     ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableCapture, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
+    runnable::{self, RunnableRange},
     syntax_map::{
         MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
-    task_context::RunnableRange,
     text_diff::text_diff,
     unified_diff_with_offsets,
 };
@@ -297,6 +297,19 @@ pub enum Operation {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BufferEditSource {
+    User,
+    Agent,
+    Remote,
+}
+
+impl BufferEditSource {
+    pub fn is_local(self) -> bool {
+        !matches!(self, Self::Remote)
+    }
+}
+
 /// An event that occurs in a buffer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BufferEvent {
@@ -307,7 +320,7 @@ pub enum BufferEvent {
         is_local: bool,
     },
     /// The buffer was edited.
-    Edited { is_local: bool },
+    Edited { source: BufferEditSource },
     /// The buffer's `dirty` bit changed.
     DirtyChanged,
     /// The buffer was saved.
@@ -743,6 +756,14 @@ pub struct EditPreview {
 }
 
 impl EditPreview {
+    pub fn unchanged(snapshot: &BufferSnapshot) -> Self {
+        Self {
+            old_snapshot: snapshot.text.clone(),
+            applied_edits_snapshot: snapshot.text.clone(),
+            syntax_snapshot: snapshot.syntax.clone(),
+        }
+    }
+
     pub fn as_unified_diff(
         &self,
         file: Option<&Arc<dyn File>>,
@@ -2433,12 +2454,29 @@ impl Buffer {
         self.end_transaction_at(Instant::now(), cx)
     }
 
+    pub fn end_transaction_with_source(
+        &mut self,
+        source: BufferEditSource,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        self.end_transaction_at_internal(Instant::now(), source, cx)
+    }
+
     /// Terminates the current transaction, providing the current time. Subsequent transactions
     /// that occur within a short period of time will be grouped together. This
     /// is controlled by the buffer's undo grouping duration.
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
+        self.end_transaction_at_internal(now, BufferEditSource::User, cx)
+    }
+
+    fn end_transaction_at_internal(
+        &mut self,
+        now: Instant,
+        source: BufferEditSource,
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
         assert!(self.transaction_depth > 0);
@@ -2449,7 +2487,7 @@ impl Buffer {
             false
         };
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
-            self.did_edit(&start_version, was_dirty, true, cx);
+            self.did_edit(&start_version, was_dirty, source, cx);
             Some(transaction_id)
         } else {
             None
@@ -2630,6 +2668,7 @@ impl Buffer {
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
     /// delete, and a string of text to insert at that location. Adjacent edits are coalesced.
+    /// Inserted text is normalized to LF line endings before being applied.
     ///
     /// If an [`AutoindentMode`] is provided, then the buffer will enqueue an auto-indent
     /// request for the edited ranges, which will be processed when the buffer finishes
@@ -2844,7 +2883,7 @@ impl Buffer {
         &mut self,
         old_version: &clock::Global,
         was_dirty: bool,
-        is_local: bool,
+        source: BufferEditSource,
         cx: &mut Context<Self>,
     ) {
         self.was_changed();
@@ -2854,7 +2893,7 @@ impl Buffer {
         }
 
         self.reparse(cx, true);
-        cx.emit(BufferEvent::Edited { is_local });
+        cx.emit(BufferEvent::Edited { source });
         let is_dirty = self.is_dirty();
         if was_dirty != is_dirty {
             cx.emit(BufferEvent::DirtyChanged);
@@ -2976,7 +3015,7 @@ impl Buffer {
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
-        self.did_edit(&old_version, was_dirty, false, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::Remote, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
@@ -3131,7 +3170,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3149,7 +3188,7 @@ impl Buffer {
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             true
         } else {
             false
@@ -3171,7 +3210,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if undone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx)
         }
         undone
     }
@@ -3181,7 +3220,7 @@ impl Buffer {
         let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
         self.send_operation(Operation::Buffer(operation), true, cx);
-        self.did_edit(&old_version, was_dirty, true, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
@@ -3191,7 +3230,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, true, cx);
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3232,7 +3271,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if redone {
-            self.did_edit(&old_version, was_dirty, true, cx)
+            self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx)
         }
         redone
     }
@@ -3291,6 +3330,76 @@ impl Buffer {
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.text.set_group_interval(group_interval);
     }
+
+    // TODO: see if ep can use this instead of Buffer::branch
+    pub fn snapshot_with_edits<I, S, T>(
+        &mut self,
+        edits: I,
+        cx: &mut Context<Self>,
+    ) -> Task<EditedBufferSnapshot>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        let mut snapshot = self.snapshot();
+        let text = snapshot.text.clone();
+        let mut syntax = snapshot.syntax.clone();
+        let language = self.language().cloned();
+        let registry = self.language_registry();
+        let new_text = self.text.snapshot_with_edits(edits);
+        cx.background_spawn(async move {
+            if let Some(language) = language.clone() {
+                syntax.reparse(&text, registry.clone(), language);
+            }
+
+            syntax.interpolate(&new_text.snapshot);
+
+            if let Some(language) = language {
+                syntax.reparse(&new_text.snapshot, registry, language);
+            }
+
+            snapshot.text = new_text.snapshot.clone();
+            snapshot.syntax = syntax;
+
+            EditedBufferSnapshot {
+                text: new_text,
+                snapshot,
+            }
+        })
+    }
+
+    pub fn fast_forward(&mut self, edited: EditedBufferSnapshot, cx: &mut Context<Self>) {
+        let base_version = edited.text.base_version.clone();
+        let did_edit = edited.text.did_edit;
+        self.text.fast_forward(edited.text);
+        if edited.snapshot.language == self.language {
+            self.reparse = None;
+            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            if did_edit {
+                cx.emit(BufferEvent::Edited {
+                    source: BufferEditSource::User,
+                });
+            }
+        } else {
+            self.did_edit(&base_version, false, BufferEditSource::User, cx);
+        }
+    }
+}
+
+pub struct EditedBufferSnapshot {
+    text: text::EditedBufferSnapshot,
+    snapshot: BufferSnapshot,
+}
+
+impl EditedBufferSnapshot {
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn base_version(&self) -> &clock::Global {
+        &self.text.base_version
+    }
 }
 
 #[doc(hidden)]
@@ -3342,7 +3451,7 @@ impl Buffer {
         if !ops.is_empty() {
             for op in ops {
                 self.send_operation(Operation::Buffer(op), true, cx);
-                self.did_edit(&old_version, was_dirty, true, cx);
+                self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
             }
         }
     }
@@ -4561,7 +4670,7 @@ impl BufferSnapshot {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
             source_range_for_text: source_range_for_text.to_point(self),
-            text,
+            text: text.into(),
             highlight_ranges,
             name_ranges,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
@@ -4739,7 +4848,7 @@ impl BufferSnapshot {
                     })
                     .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
-                unique_closes.sort();
+                unique_closes.sort_unstable();
                 unique_closes.dedup();
 
                 // Build valid pairs by walking through closes in order
@@ -5156,105 +5265,7 @@ impl BufferSnapshot {
         &self,
         offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar.runnable_config.as_ref().map(|config| &config.query)
-        });
-
-        let test_configs = syntax_matches
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.runnable_config.as_ref())
-            .collect::<Vec<_>>();
-
-        iter::from_fn(move || {
-            loop {
-                let mat = syntax_matches.peek()?;
-
-                let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
-                    let mut run_range = None;
-                    let full_range = mat.captures.iter().fold(
-                        Range {
-                            start: usize::MAX,
-                            end: 0,
-                        },
-                        |mut acc, next| {
-                            let byte_range = next.node.byte_range();
-                            if acc.start > byte_range.start {
-                                acc.start = byte_range.start;
-                            }
-                            if acc.end < byte_range.end {
-                                acc.end = byte_range.end;
-                            }
-                            acc
-                        },
-                    );
-                    if full_range.start > full_range.end {
-                        // We did not find a full spanning range of this match.
-                        return None;
-                    }
-                    let extra_captures: SmallVec<[_; 1]> =
-                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                            test_configs
-                                .extra_captures
-                                .get(capture.index as usize)
-                                .cloned()
-                                .and_then(|tag_name| match tag_name {
-                                    RunnableCapture::Named(name) => {
-                                        Some((capture.node.byte_range(), name))
-                                    }
-                                    RunnableCapture::Run => {
-                                        let _ = run_range.insert(capture.node.byte_range());
-                                        None
-                                    }
-                                })
-                        }));
-                    let run_range = run_range?;
-                    let tags = test_configs
-                        .query
-                        .property_settings(mat.pattern_index)
-                        .iter()
-                        .filter_map(|property| {
-                            if *property.key == *"tag" {
-                                property
-                                    .value
-                                    .as_ref()
-                                    .map(|value| RunnableTag(value.to_string().into()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    let extra_captures = extra_captures
-                        .into_iter()
-                        .map(|(range, name)| {
-                            (
-                                name.to_string(),
-                                self.text_for_range(range).collect::<String>(),
-                            )
-                        })
-                        .collect();
-                    // All tags should have the same range.
-                    Some(RunnableRange {
-                        run_range,
-                        full_range,
-                        runnable: Runnable {
-                            tags,
-                            language: mat.language,
-                            buffer: self.remote_id(),
-                        },
-                        extra_captures,
-                        buffer_id: self.remote_id(),
-                    })
-                });
-
-                syntax_matches.advance();
-                if test_range.is_some() {
-                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                    return test_range;
-                }
-            }
-        })
+        runnable::runnable_ranges(self, offset_range)
     }
 
     /// Returns selections for remote peers intersecting the given range.
@@ -5885,6 +5896,27 @@ impl IndentSize {
             }
         }
         self
+    }
+
+    /// Returns the number of indentation characters to remove when outdenting to the
+    /// previous editor tab stop.
+    pub fn outdent_len(self, tab_size: NonZeroU32) -> u32 {
+        if self.len == 0 {
+            return 0;
+        }
+
+        match self.kind {
+            IndentKind::Space => {
+                let tab_size = tab_size.get();
+                let columns_to_prev_tab_stop = self.len % tab_size;
+                if columns_to_prev_tab_stop == 0 {
+                    tab_size
+                } else {
+                    columns_to_prev_tab_stop
+                }
+            }
+            IndentKind::Tab => 1,
+        }
     }
 
     pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {

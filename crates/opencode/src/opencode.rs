@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
@@ -56,6 +58,8 @@ impl OpenCodeSubscription {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // -- Anthropic protocol models --
+    #[serde(rename = "claude-opus-4-8")]
+    ClaudeOpus4_8,
     #[serde(rename = "claude-opus-4-7")]
     ClaudeOpus4_7,
     #[serde(rename = "claude-opus-4-6")]
@@ -137,18 +141,26 @@ pub enum Model {
     KimiK2_6,
     #[serde(rename = "minimax-m2.7")]
     MiniMaxM2_7,
+    #[serde(rename = "minimax-m3")]
+    MiniMaxM3,
+    #[serde(rename = "minimax-m3-free")]
+    MiniMaxM3Free,
     #[serde(rename = "mimo-v2.5-pro")]
     MimoV2_5Pro,
     #[serde(rename = "mimo-v2.5")]
     MimoV2_5,
     #[serde(rename = "big-pickle")]
     BigPickle,
-    #[serde(rename = "nemotron-3-super-free")]
-    Nemotron3SuperFree,
+    #[serde(rename = "nemotron-3-ultra-free")]
+    Nemotron3UltraFree,
     #[serde(rename = "qwen3.5-plus")]
     Qwen3_5Plus,
     #[serde(rename = "qwen3.6-plus")]
     Qwen3_6Plus,
+    #[serde(rename = "qwen3.7-plus")]
+    Qwen3_7Plus,
+    #[serde(rename = "qwen3.7-max")]
+    Qwen3_7Max,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -182,7 +194,7 @@ impl Model {
     }
 
     pub fn default_free_fast() -> Self {
-        Self::Nemotron3SuperFree
+        Self::Nemotron3UltraFree
     }
 
     pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
@@ -193,18 +205,22 @@ impl Model {
             | Self::KimiK2_6
             | Self::KimiK2_5
             | Self::MiniMaxM2_5
-            | Self::Qwen3_5Plus
+            | Self::MiniMaxM2_7
+            | Self::DeepSeekV4Flash
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::MiniMaxM2_7
-            | Self::MimoV2_5Pro
+            Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::DeepSeekV4Pro
-            | Self::DeepSeekV4Flash => &[OpenCodeSubscription::Go],
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_7Max
+            | Self::MiniMaxM3 => &[OpenCodeSubscription::Go],
 
             // Free models
-            Self::Nemotron3SuperFree | Self::BigPickle => &[OpenCodeSubscription::Free],
+            Self::Nemotron3UltraFree | Self::BigPickle | Self::MiniMaxM3Free => {
+                &[OpenCodeSubscription::Free]
+            }
 
             // Custom models get their subscription from settings, not from here
             Self::Custom { .. } => &[],
@@ -216,6 +232,7 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Self::ClaudeOpus4_8 => "claude-opus-4-8",
             Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
             Self::ClaudeOpus4_5 => "claude-opus-4-5",
@@ -256,12 +273,16 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::MiniMaxM2_7 => "minimax-m2.7",
+            Self::MiniMaxM3 => "minimax-m3",
             Self::MimoV2_5Pro => "mimo-v2.5-pro",
             Self::MimoV2_5 => "mimo-v2.5",
             Self::Qwen3_5Plus => "qwen3.5-plus",
             Self::Qwen3_6Plus => "qwen3.6-plus",
+            Self::Qwen3_7Plus => "qwen3.7-plus",
+            Self::Qwen3_7Max => "qwen3.7-max",
             Self::BigPickle => "big-pickle",
-            Self::Nemotron3SuperFree => "nemotron-3-super-free",
+            Self::Nemotron3UltraFree => "nemotron-3-ultra-free",
+            Self::MiniMaxM3Free => "minimax-m3-free",
 
             Self::Custom { name, .. } => name,
         }
@@ -269,6 +290,7 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::ClaudeOpus4_8 => "Claude Opus 4.8",
             Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
@@ -309,12 +331,16 @@ impl Model {
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
+            Self::MiniMaxM3 => "MiniMax M3",
             Self::MimoV2_5Pro => "MiMo V2.5 Pro",
             Self::MimoV2_5 => "MiMo V2.5",
             Self::Qwen3_5Plus => "Qwen3.5 Plus",
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
+            Self::Qwen3_7Plus => "Qwen3.7 Plus",
+            Self::Qwen3_7Max => "Qwen3.7 Max",
             Self::BigPickle => "Big Pickle",
-            Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
+            Self::Nemotron3UltraFree => "Nemotron 3 Ultra Free",
+            Self::MiniMaxM3Free => "MiniMax M3 Free",
 
             Self::Custom {
                 name, display_name, ..
@@ -334,7 +360,8 @@ impl Model {
                 }
             }
 
-            Self::ClaudeOpus4_7
+            Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_1
@@ -363,6 +390,10 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => ApiProtocol::Google,
 
+            Self::Qwen3_7Max | Self::Qwen3_7Plus => ApiProtocol::Anthropic,
+
+            Self::MiniMaxM3 | Self::MiniMaxM3Free => ApiProtocol::Anthropic,
+
             Self::Glm5
             | Self::Glm5_1
             | Self::GrokBuild0_1
@@ -375,7 +406,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::BigPickle
-            | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
+            | Self::Nemotron3UltraFree => ApiProtocol::OpenAiChat,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -391,7 +422,9 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::Glm5
             | Self::Glm5_1
-            | Self::Nemotron3SuperFree
+            | Self::MiniMaxM2_5
+            | Self::MiniMaxM2_7
+            | Self::Nemotron3UltraFree
             | Self::BigPickle => true,
 
             Self::Custom {
@@ -406,7 +439,7 @@ impl Model {
     pub fn max_token_count(&self, subscription: OpenCodeSubscription) -> u64 {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_7 => 1_000_000,
+            Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7 => 1_000_000,
             Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::ClaudeSonnet4_5 => 1_000_000,
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
@@ -432,6 +465,8 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
+            Self::MiniMaxM3 => 512_000,
+            Self::MiniMaxM3Free => 200_000,
             Self::MiniMaxM2_5 => 204_800,
             Self::Glm5 | Self::Glm5_1 => {
                 if subscription == OpenCodeSubscription::Go {
@@ -444,9 +479,17 @@ impl Model {
             Self::GrokBuild0_1 => 256_000,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
-            Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
+            Self::Qwen3_5Plus => 262_144,
+            Self::Qwen3_6Plus => {
+                if subscription == OpenCodeSubscription::Go {
+                    1_000_000
+                } else {
+                    262_144
+                }
+            }
+            Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
             Self::BigPickle => 200_000,
-            Self::Nemotron3SuperFree => 204_800,
+            Self::Nemotron3UltraFree => 1_000_000,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -456,7 +499,7 @@ impl Model {
     pub fn max_output_tokens(&self, subscription: OpenCodeSubscription) -> Option<u64> {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
+            Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
@@ -488,6 +531,8 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
+            Self::MiniMaxM3 => Some(131_072),
+            Self::MiniMaxM3Free => Some(32_000),
             Self::MiniMaxM2_5 => {
                 if subscription == OpenCodeSubscription::Go {
                     Some(65_536)
@@ -502,12 +547,14 @@ impl Model {
                     Some(131_072)
                 }
             }
-            Self::BigPickle => Some(128_000),
+            Self::BigPickle => Some(32_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::GrokBuild0_1 => Some(256_000),
-            Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
+            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
+                Some(65_536)
+            }
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
-            Self::Nemotron3SuperFree => Some(128_000),
+            Self::Nemotron3UltraFree => Some(128_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
 
             Self::Custom {
@@ -523,7 +570,8 @@ impl Model {
     pub fn supports_images(&self) -> bool {
         match self {
             // Anthropic models support images
-            Self::ClaudeOpus4_7
+            Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_1
@@ -562,7 +610,10 @@ impl Model {
             | Self::GrokBuild0_1
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
-            | Self::Qwen3_6Plus => true,
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_7Plus
+            | Self::MiniMaxM3
+            | Self::MiniMaxM3Free => true,
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
@@ -572,8 +623,9 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::Qwen3_7Max
             | Self::BigPickle
-            | Self::Nemotron3SuperFree => false,
+            | Self::Nemotron3UltraFree => false,
 
             Self::Custom { protocol, .. } => matches!(
                 protocol,
@@ -587,7 +639,14 @@ impl Model {
 
     pub fn supported_reasoning_effort_levels(&self) -> Option<Vec<ReasoningEffort>> {
         match self {
-            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
+            Self::ClaudeOpus4_8 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Nemotron3UltraFree | Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -620,6 +679,7 @@ pub async fn stream_generate_content(
     api_url: &str,
     api_key: &str,
     request: google_ai::GenerateContentRequest,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<google_ai::GenerateContentResponse>>> {
     let api_key = api_key.trim();
 
@@ -627,13 +687,13 @@ pub async fn stream_generate_content(
 
     let uri = format!("{api_url}/v1/models/{model_id}:streamGenerateContent?alt=sse");
 
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {api_key}"));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Authorization", format!("Bearer {api_key}"))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());

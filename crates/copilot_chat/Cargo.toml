@@ -34,7 +34,9 @@ paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+sqlez.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
+tempfile.workspace = true

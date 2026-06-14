@@ -6,7 +6,10 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
+};
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
 use thiserror::Error;
@@ -16,6 +19,9 @@ pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+
+pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
+pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -122,9 +128,6 @@ impl Model {
 
         let mut supported_effort_levels = Vec::new();
         if let Some(effort) = entry.capabilities.as_ref().and_then(|e| e.effort.as_ref()) {
-            // The `xhigh` effort level reported by the API has no
-            // corresponding `Effort` variant in the request enum, so it is
-            // intentionally dropped here.
             for (level, supported) in [
                 (Effort::Low, effort.low.as_ref()),
                 (Effort::Medium, effort.medium.as_ref()),
@@ -148,7 +151,10 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = matches!(entry.id.as_str(), "claude-opus-4-6" | "claude-opus-4-7");
+        let supports_speed = matches!(
+            entry.id.as_str(),
+            "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+        );
 
         let mut extra_beta_headers = Vec::new();
         if supports_speed {
@@ -202,10 +208,18 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
-        .await
-        .map(|output| output.0)
+    stream_completion_with_rate_limit_info(
+        client,
+        api_url,
+        api_key,
+        request,
+        beta_headers,
+        extra_headers,
+    )
+    .await
+    .map(|output| output.0)
 }
 
 /// A raw model entry returned by the Anthropic models listing endpoint.
@@ -233,6 +247,7 @@ pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<Model>> {
     let uri = format!("{api_url}/v1/models?limit=1000");
 
@@ -242,6 +257,7 @@ pub async fn list_models(
         .header("Anthropic-Version", "2023-06-01")
         .header("X-Api-Key", api_key.trim())
         .header("Accept", "application/json")
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .context("failed to build Anthropic models list request")?;
 
@@ -282,9 +298,17 @@ pub async fn non_streaming_completion(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<Response, AnthropicError> {
-    let (mut response, rate_limits) =
-        send_request(client, api_url, api_key, &request, beta_headers).await?;
+    let (mut response, rate_limits) = send_request(
+        client,
+        api_url,
+        api_key,
+        &request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
 
     if response.status().is_success() {
         let mut body = String::new();
@@ -306,6 +330,7 @@ async fn send_request(
     api_key: &str,
     request: impl Serialize,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
 
@@ -323,6 +348,7 @@ async fn send_request(
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
     let request = request_builder
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
@@ -462,6 +488,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_key: &str,
     request: Request,
     beta_headers: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -474,8 +501,15 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
 
-    let (response, rate_limits) =
-        send_request(client, api_url, api_key, &request, beta_headers).await?;
+    let (response, rate_limits) = send_request(
+        client,
+        api_url,
+        api_key,
+        &request,
+        beta_headers,
+        extra_headers,
+    )
+    .await?;
 
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -676,6 +710,8 @@ pub enum Effort {
     Low,
     Medium,
     High,
+    #[serde(rename = "xhigh")]
+    #[strum(serialize = "xhigh")]
     XHigh,
     Max,
 }
@@ -921,73 +957,89 @@ impl From<language_model_core::Speed> for Speed {
 
 impl From<AnthropicError> for language_model_core::LanguageModelCompletionError {
     fn from(error: AnthropicError) -> Self {
-        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
-        match error {
-            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
-            AnthropicError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            AnthropicError::HttpResponseError {
-                status_code,
-                message,
-            } => Self::HttpResponseError {
-                provider,
-                status_code,
-                message,
-            },
-            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
-                retry_after: Some(retry_after),
-            },
-            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            AnthropicError::ApiError(api_error) => api_error.into(),
-        }
+        completion_error_from_anthropic(error, language_model_core::ANTHROPIC_PROVIDER_NAME)
     }
 }
 
 impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        use ApiErrorCode::*;
-        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
-        match error.code() {
-            Some(code) => match code {
-                InvalidRequestError => Self::BadRequestFormat {
-                    provider,
-                    message: error.message,
-                },
-                AuthenticationError => Self::AuthenticationError {
-                    provider,
-                    message: error.message,
-                },
-                PermissionError => Self::PermissionError {
-                    provider,
-                    message: error.message,
-                },
-                NotFoundError => Self::ApiEndpointNotFound { provider },
-                RequestTooLarge => Self::PromptTooLarge {
-                    tokens: language_model_core::parse_prompt_too_long(&error.message),
-                },
-                RateLimitError => Self::RateLimitExceeded {
-                    provider,
-                    retry_after: None,
-                },
-                ApiError => Self::ApiInternalServerError {
-                    provider,
-                    message: error.message,
-                },
-                OverloadedError => Self::ServerOverloaded {
-                    provider,
-                    retry_after: None,
-                },
-            },
-            None => Self::Other(error.into()),
+        completion_error_from_anthropic_api(error, language_model_core::ANTHROPIC_PROVIDER_NAME)
+    }
+}
+
+pub fn completion_error_from_anthropic(
+    error: AnthropicError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> language_model_core::LanguageModelCompletionError {
+    use language_model_core::LanguageModelCompletionError as Error;
+    match error {
+        AnthropicError::SerializeRequest(error) => Error::SerializeRequest { provider, error },
+        AnthropicError::BuildRequestBody(error) => Error::BuildRequestBody { provider, error },
+        AnthropicError::HttpSend(error) => Error::HttpSend { provider, error },
+        AnthropicError::DeserializeResponse(error) => {
+            Error::DeserializeResponse { provider, error }
         }
+        AnthropicError::ReadResponse(error) => Error::ApiReadResponseError { provider, error },
+        AnthropicError::HttpResponseError {
+            status_code,
+            message,
+        } => Error::HttpResponseError {
+            provider,
+            status_code,
+            message,
+        },
+        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
+            provider,
+            retry_after: Some(retry_after),
+        },
+        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
+            provider,
+            retry_after,
+        },
+        AnthropicError::ApiError(api_error) => {
+            completion_error_from_anthropic_api(api_error, provider)
+        }
+    }
+}
+
+pub fn completion_error_from_anthropic_api(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> language_model_core::LanguageModelCompletionError {
+    use ApiErrorCode::*;
+    use language_model_core::LanguageModelCompletionError as Error;
+    match error.code() {
+        Some(code) => match code {
+            InvalidRequestError => Error::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Error::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PermissionError => Error::PermissionError {
+                provider,
+                message: error.message,
+            },
+            NotFoundError => Error::ApiEndpointNotFound { provider },
+            RequestTooLarge => Error::PromptTooLarge {
+                tokens: language_model_core::parse_prompt_too_long(&error.message),
+            },
+            RateLimitError => Error::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Error::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Error::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
+        },
+        None => Error::Other(error.into()),
     }
 }
 
@@ -1054,6 +1106,17 @@ mod tests {
         assert!(!model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
         assert_eq!(model.mode, AnthropicModelMode::Default);
+    }
+
+    #[test]
+    fn from_listed_enables_fast_mode_for_opus_4_8() {
+        let model = Model::from_listed(listed_entry(
+            "claude-opus-4-8",
+            ModelCapabilities::default(),
+        ));
+
+        assert!(model.supports_speed);
+        assert_eq!(model.beta_headers().as_deref(), Some(FAST_MODE_BETA_HEADER));
     }
 
     #[test]
