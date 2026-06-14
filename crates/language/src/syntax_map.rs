@@ -4,7 +4,7 @@ mod syntax_map_tests;
 use crate::{
     Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::FutureExt;
 use gpui::SharedString;
 use std::{
@@ -1565,7 +1565,8 @@ fn get_injections(
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
-    let mut prev_match = None;
+    query_cursor.set_match_limit(u32::MAX);
+    let mut seen_matches = HashSet::default();
 
     // Ensure that a `ParseStep` is created for every combined injection language, even
     // if there currently no matches for that injection.
@@ -1589,22 +1590,14 @@ fn get_injections(
                 .nodes_for_capture_index(config.content_capture_ix)
                 .map(|node| node.range())
                 .collect::<Vec<_>>();
-            if content_ranges.is_empty() {
+            let (Some(first), Some(last)) = (content_ranges.first(), content_ranges.last()) else {
+                continue;
+            };
+            let content_range = first.start_byte..last.end_byte;
+
+            if !seen_matches.insert((mat.pattern_index, content_range.clone())) {
                 continue;
             }
-
-            let content_range =
-                content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
-
-            // Avoid duplicate matches if two changed ranges intersect the same injection.
-            if let Some((prev_pattern_ix, prev_range)) = &prev_match
-                && mat.pattern_index == *prev_pattern_ix
-                && content_range == *prev_range
-            {
-                continue;
-            }
-
-            prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;
 
             let mut step_range = content_range.clone();
@@ -2146,6 +2139,7 @@ impl Drop for QueryCursorHandle {
         cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
         cursor.set_containing_byte_range(0..usize::MAX);
         cursor.set_containing_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
+        cursor.set_max_start_depth(None);
         QUERY_CURSORS.lock().push(cursor)
     }
 }
