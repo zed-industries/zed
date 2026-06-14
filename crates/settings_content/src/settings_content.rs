@@ -263,6 +263,28 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// Settings for Markdown-related features.
+    pub markdown: Option<MarkdownSettingsContent>,
+}
+
+/// Configuration for Markdown-related features.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct MarkdownSettingsContent {
+    /// Settings for Markdown preview rendering.
+    pub preview: Option<MarkdownPreviewSettingsContent>,
+}
+
+/// Configuration for Markdown preview rendering.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct MarkdownPreviewSettingsContent {
+    /// Whether to render YAML frontmatter as a table in Markdown previews.
+    /// When disabled, frontmatter is hidden from the preview.
+    ///
+    /// Default: true
+    pub render_frontmatter: Option<bool>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect
