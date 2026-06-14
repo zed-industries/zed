@@ -77,6 +77,107 @@ fn select_emoji_font(
     None
 }
 
+static FOREIGN_OBJECT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<foreignObject([^>]*)>([\s\S]*?)</foreignObject>").unwrap());
+
+static TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
+
+static ATTR_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r#"(\w[-\w]*)\s*=\s*["']?([^"'<>\s]*)["'"]?"#).unwrap());
+
+/// Preprocess SVG content to convert foreignObject elements to native SVG text elements.
+/// This is needed because usvg/resvg don't support foreignObject (SVG 2 feature).
+pub fn preprocess_foreign_objects(svg_content: &str) -> String {
+    if !svg_content.contains("foreignObject") {
+        return svg_content.to_string();
+    }
+
+    FOREIGN_OBJECT_RE.replace_all(svg_content, |caps: &regex::Captures| {
+        let attrs = &caps[1];
+        let inner_content = &caps[2];
+
+            let mut width: Option<f32> = None;
+        let mut height: Option<f32> = None;
+        let mut x: f32 = 0.0;
+        let mut y: f32 = 0.0;
+
+        for cap in ATTR_RE.captures_iter(attrs) {
+            let name = &cap[1];
+            let value = &cap[2];
+            match name {
+                "width" => width = parse_length(value),
+                "height" => height = parse_length(value),
+                "x" => x = parse_length(value).unwrap_or(0.0),
+                "y" => y = parse_length(value).unwrap_or(0.0),
+                _ => {}
+            }
+        }
+
+            let text = strip_html_tags(inner_content);
+
+        if text.trim().is_empty() {
+            String::new()
+        } else {
+                    let center_x = width.map(|w| x + w / 2.0).unwrap_or(x);
+            let center_y = height.map(|h| y + h / 2.0).unwrap_or(y);
+
+            // Estimate font size (use height if available, otherwise default)
+            let font_size = height.unwrap_or(16.0) * 0.7;
+
+                    let escaped_text = escape_xml(&text);
+
+            format!(
+                r#"<text x="{}" y="{}" font-size="{}" text-anchor="middle" dominant-baseline="middle" fill="black">{}</text>"#,
+                center_x, center_y, font_size, escaped_text
+            )
+        }
+    }).to_string()
+}
+
+fn parse_length(value: &str) -> Option<f32> {
+    let mut chars = Vec::new();
+    let mut has_dot = false;
+    for c in value.chars() {
+        if c.is_numeric() {
+            chars.push(c);
+        } else if c == '.' && !has_dot {
+            chars.push(c);
+            has_dot = true;
+        }
+    }
+    let numeric_str: String = chars.into_iter().collect();
+    if numeric_str.is_empty() || numeric_str == "." {
+        return None;
+    }
+    numeric_str.parse().ok()
+}
+
+fn strip_html_tags(html: &str) -> String {
+    let text = TAG_RE.replace_all(html, "");
+    let mut result = String::new();
+    let mut last_was_space = true;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            if !last_was_space {
+                result.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            result.push(c);
+            last_was_space = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
 
@@ -228,7 +329,11 @@ impl SvgRenderer {
     }
 
     fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
-        let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
+        let svg_content = String::from_utf8_lossy(bytes);
+        let processed_svg = preprocess_foreign_objects(&svg_content);
+        let processed_bytes = processed_svg.as_bytes();
+
+        let tree = usvg::Tree::from_data(processed_bytes, &self.usvg_options)?;
         let svg_size = tree.size();
         let scale = match size {
             SvgSize::Size(size) => size.width.0 as f32 / svg_size.width(),
@@ -345,6 +450,43 @@ mod tests {
     }
 
     #[test]
+    fn test_preprocess_foreign_objects_simple() {
+        let svg = r#"<svg><foreignObject x="10" y="20" width="100" height="30"><div>Hello World</div></foreignObject></svg>"#;
+        let result = preprocess_foreign_objects(svg);
+        assert!(result.contains("<text"));
+        assert!(result.contains("Hello World"));
+        assert!(!result.contains("foreignObject"));
+    }
+
+    #[test]
+    fn test_preprocess_foreign_objects_with_span() {
+        let svg = r#"<svg><foreignObject width="135.921875" height="24"><div xmlns="http://www.w3.org/1999/xhtml"><span class="nodeLabel"><p>Start</p></span></div></foreignObject></svg>"#;
+        let result = preprocess_foreign_objects(svg);
+        assert!(result.contains("Start"));
+        assert!(!result.contains("foreignObject"));
+    }
+
+    #[test]
+    fn test_preprocess_foreign_objects_no_change() {
+        let svg = r#"<svg><rect width="100" height="100"/></svg>"#;
+        let result = preprocess_foreign_objects(svg);
+        assert_eq!(result, svg);
+    }
+
+    #[test]
+    fn test_preprocess_foreign_objects_empty() {
+        let svg = r#"<svg><foreignObject width="100" height="30"><div></div></foreignObject></svg>"#;
+        let result = preprocess_foreign_objects(svg);
+        assert!(!result.contains("text"));
+        assert!(!result.contains("foreignObject"));
+    }
+
+    #[test]
+    fn test_escape_xml() {
+        assert_eq!(escape_xml("a < b & c > d"), "a &lt; b &amp; c &gt; d");
+    }
+
+    #[test]
     fn fix_generic_font_families_sets_all_families() {
         let mut db = db_with_bundled_fonts();
         fix_generic_font_families(&mut db);
@@ -396,6 +538,38 @@ mod tests {
         assert!(font_has_char(&db, selected, '│'));
     }
 
+
+    #[test]
+    fn test_parse_length_preserves_decimals() {
+        assert_eq!(parse_length("12.5"), Some(12.5));
+        assert_eq!(parse_length("100.123"), Some(100.123));
+        assert_eq!(parse_length(".5"), Some(0.5));
+        assert_eq!(parse_length("100"), Some(100.0));
+    }
+
+    #[test]
+    fn test_parse_length_handles_trailing_dot() {
+        assert_eq!(parse_length("100."), Some(100.0));
+        assert_eq!(parse_length("."), None);
+    }
+
+    #[test]
+    fn test_preprocess_foreign_objects_with_decimals() {
+        let svg = r#"<svg><foreignObject x="10.5" y="20.75" width="100.5" height="30.25"><div>Test</div></foreignObject></svg>"#;
+        let result = preprocess_foreign_objects(svg);
+        assert!(result.contains("Test"), "text content should be preserved");
+        assert!(result.contains("<text"), "should convert to text element");
+        assert!(result.contains("font-size"), "font-size should be derived from height");
+        assert!(!result.contains("foreignObject"), "foreignObject should be removed");
+    }
+
+    #[test]
+    fn test_preprocess_foreign_objects_with_quoted_attrs() {
+        let svg = r#"<svg><foreignObject x="10" y="20" width="100" height="30"><div>Hello</div></foreignObject></svg>"#;
+        let result = preprocess_foreign_objects(svg);
+        assert!(result.contains("Hello"));
+        assert!(!result.contains("foreignObject"));
+    }
     #[test]
     fn fix_generic_font_families_monospace_resolves_to_lilex() {
         let mut db = db_with_bundled_fonts();
