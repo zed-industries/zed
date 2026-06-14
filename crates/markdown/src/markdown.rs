@@ -33,10 +33,11 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, actions, img, point, quad,
+    ImageFormat, ImageSource, InputHandler, KeyContext, Length, MouseButton, MouseDownEvent,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Stateful,
+    StrikethroughStyle, StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign,
+    TextLayout, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, actions, img, point, quad,
+    size,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -1174,6 +1175,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
+    input_focus_handle: Option<FocusHandle>,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
@@ -1193,6 +1195,7 @@ impl MarkdownElement {
                 wrap_button_visibility: WrapButtonVisibility::Hidden,
                 border: false,
             },
+            input_focus_handle: None,
             on_url_click: None,
             code_span_link: None,
             on_source_click: None,
@@ -1226,6 +1229,11 @@ impl MarkdownElement {
 
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
         self.code_block_renderer = variant;
+        self
+    }
+
+    pub fn input_focus_handle(mut self, focus_handle: FocusHandle) -> Self {
+        self.input_focus_handle = Some(focus_handle);
         self
     }
 
@@ -2688,6 +2696,23 @@ impl Element for MarkdownElement {
         let mut context = KeyContext::default();
         context.add("Markdown");
         window.set_key_context(context);
+
+        let markdown_focus_handle = self.markdown.read(cx).focus_handle.clone();
+        let input_focus_handle = if markdown_focus_handle.is_focused(window) {
+            Some(markdown_focus_handle)
+        } else {
+            self.input_focus_handle
+                .clone()
+                .filter(|focus_handle| focus_handle.is_focused(window))
+        };
+        if let Some(input_focus_handle) = input_focus_handle {
+            window.handle_input(
+                &input_focus_handle,
+                MarkdownInputHandler::new(self.markdown.clone(), rendered_markdown.text.clone()),
+                cx,
+            );
+        }
+
         window.on_action(std::any::TypeId::of::<crate::Copy>(), {
             let entity = self.markdown.clone();
             let text = rendered_markdown.text.clone();
@@ -3543,6 +3568,24 @@ fn source_index_for_rendered(mappings: &[SourceMapping], rendered_index: usize) 
     last.map(|m| m.source_index + (rendered_index - m.rendered_index))
 }
 
+fn byte_index_for_utf16(text: &str, utf16_index: usize) -> (usize, usize) {
+    let mut current_utf16 = 0;
+    for (byte_index, character) in text.char_indices() {
+        if current_utf16 >= utf16_index {
+            return (byte_index, current_utf16);
+        }
+
+        let next_utf16 = current_utf16 + character.len_utf16();
+        if next_utf16 > utf16_index {
+            return (byte_index, current_utf16);
+        }
+
+        current_utf16 = next_utf16;
+    }
+
+    (text.len(), current_utf16)
+}
+
 pub struct RenderedMarkdown {
     element: AnyElement,
     text: RenderedText,
@@ -3644,6 +3687,47 @@ impl RenderedText {
         }
 
         all_bounds
+    }
+
+    fn utf16_index_for_source_index(&self, source_index: usize) -> usize {
+        self.text_for_range(0..source_index).encode_utf16().count()
+    }
+
+    fn utf16_range_for_source_range(&self, range: Range<usize>) -> Range<usize> {
+        self.utf16_index_for_source_index(range.start)..self.utf16_index_for_source_index(range.end)
+    }
+
+    fn source_index_for_utf16_index(&self, utf16_index: usize) -> usize {
+        let mut line_start_utf16 = 0;
+        let mut last_source_end = 0;
+
+        for (line_ix, line) in self.lines.iter().enumerate() {
+            let line_text = line.layout.text();
+            let line_utf16_len = line_text.encode_utf16().count();
+            let line_end_utf16 = line_start_utf16 + line_utf16_len;
+            last_source_end = line.source_end;
+
+            if utf16_index <= line_end_utf16 {
+                let local_utf16_index = utf16_index.saturating_sub(line_start_utf16);
+                let (rendered_index, _) = byte_index_for_utf16(&line_text, local_utf16_index);
+                return line.source_index_for_rendered_index(rendered_index);
+            }
+
+            line_start_utf16 = line_end_utf16;
+            if line_ix + 1 < self.lines.len() {
+                if utf16_index <= line_start_utf16 {
+                    return line.source_end;
+                }
+                line_start_utf16 += 1;
+            }
+        }
+
+        last_source_end
+    }
+
+    fn source_range_for_utf16_range(&self, range_utf16: Range<usize>) -> Range<usize> {
+        self.source_index_for_utf16_index(range_utf16.start)
+            ..self.source_index_for_utf16_index(range_utf16.end)
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
@@ -3804,6 +3888,119 @@ impl RenderedText {
     }
 }
 
+struct MarkdownInputHandler {
+    markdown: Entity<Markdown>,
+    rendered_text: RenderedText,
+}
+
+impl MarkdownInputHandler {
+    fn new(markdown: Entity<Markdown>, rendered_text: RenderedText) -> Self {
+        Self {
+            markdown,
+            rendered_text,
+        }
+    }
+}
+
+impl InputHandler for MarkdownInputHandler {
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> Option<UTF16Selection> {
+        self.markdown.update(cx, |markdown, _cx| {
+            let range = markdown.selection.start..markdown.selection.end;
+            Some(UTF16Selection {
+                range: self.rendered_text.utf16_range_for_source_range(range),
+                reversed: markdown.selection.reversed,
+            })
+        })
+    }
+
+    fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+        None
+    }
+
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<String> {
+        if range_utf16.start > range_utf16.end {
+            return None;
+        }
+
+        Some(
+            self.rendered_text
+                .text_for_range(self.rendered_text.source_range_for_utf16_range(range_utf16)),
+        )
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<Bounds<Pixels>> {
+        let source_range = self.rendered_text.source_range_for_utf16_range(range_utf16);
+        self.rendered_text
+            .bounds_for_source_range(source_range.clone())
+            .into_iter()
+            .next()
+            .or_else(|| {
+                self.rendered_text
+                    .position_for_source_index(source_range.start)
+                    .map(|(position, line_height)| Bounds {
+                        origin: position,
+                        size: size(px(0.), line_height),
+                    })
+            })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<usize> {
+        let source_index = match self.rendered_text.source_index_for_position(point) {
+            Ok(index) | Err(index) => index,
+        };
+        Some(
+            self.rendered_text
+                .utf16_index_for_source_index(source_index),
+        )
+    }
+
+    fn accepts_text_input(&mut self, _: &mut Window, _: &mut App) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3922,6 +4119,38 @@ mod tests {
             cx,
         );
         assert_eq!(rendered.text_for_range(0..26), "tags:\n  - zed\nBody");
+    }
+
+    #[gpui::test]
+    fn test_source_range_to_utf16_range_uses_rendered_text(cx: &mut TestAppContext) {
+        let source = "**世界** 😄";
+        let rendered = render_markdown(source, cx);
+
+        let Some(world_start) = source.find("世界") else {
+            panic!("test source should contain Chinese text");
+        };
+        let world_end = world_start + "世界".len();
+        assert_eq!(
+            rendered.utf16_range_for_source_range(world_start..world_end),
+            0..2
+        );
+        assert_eq!(
+            rendered.text_for_range(rendered.source_range_for_utf16_range(0..2)),
+            "世界"
+        );
+
+        let Some(emoji_start) = source.find("😄") else {
+            panic!("test source should contain emoji");
+        };
+        let emoji_end = emoji_start + "😄".len();
+        assert_eq!(
+            rendered.utf16_range_for_source_range(emoji_start..emoji_end),
+            3..5
+        );
+        assert_eq!(
+            rendered.text_for_range(rendered.source_range_for_utf16_range(3..5)),
+            "😄"
+        );
     }
 
     fn render_markdown_with_code_span_link(
