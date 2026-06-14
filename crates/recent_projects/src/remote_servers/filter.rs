@@ -215,6 +215,7 @@ pub(super) fn run_sync(data: &FilterData, query: &str) -> Vec<FilteredServer> {
     results
 }
 
+#[allow(dead_code)]
 pub(super) async fn run_async(
     data: &FilterData,
     query: &str,
