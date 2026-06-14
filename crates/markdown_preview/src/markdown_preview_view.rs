@@ -24,6 +24,7 @@ use project::search::SearchQuery;
 use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions};
@@ -975,6 +976,7 @@ impl Render for MarkdownPreviewView {
             .as_ref()
             .map(|theme| theme.colors().editor_background)
             .unwrap_or_else(|| cx.theme().colors().editor_background);
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -993,34 +995,36 @@ impl Render for MarkdownPreviewView {
             .min_h_0()
             .bg(bg_color)
             .child(
-                div()
-                    .id("markdown-preview-scroll-container")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .p_4()
-                    .child({
-                        let markdown_element =
-                            self.render_markdown_element(&preview_theme, window, cx);
-                        let markdown = self.markdown.clone();
-                        right_click_menu("markdown-preview-context-menu")
-                            .trigger(move |_, _, _| markdown_element)
-                            .menu(move |window, cx| {
-                                let focus = window.focused(cx);
-                                let context_menu_link =
-                                    markdown.read(cx).context_menu_link().cloned();
-                                ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                    menu.when_some(focus, |menu, focus| menu.context(focus))
-                                        .when_some(context_menu_link, |menu, url| {
-                                            menu.entry("Copy Link", None, move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    url.to_string(),
-                                                ));
+                WithRemSize::new(buffer_font_size).size_full().child(
+                    div()
+                        .id("markdown-preview-scroll-container")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .p_4()
+                        .child({
+                            let markdown_element =
+                                self.render_markdown_element(&preview_theme, window, cx);
+                            let markdown = self.markdown.clone();
+                            right_click_menu("markdown-preview-context-menu")
+                                .trigger(move |_, _, _| markdown_element)
+                                .menu(move |window, cx| {
+                                    let focus = window.focused(cx);
+                                    let context_menu_link =
+                                        markdown.read(cx).context_menu_link().cloned();
+                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                            .when_some(context_menu_link, |menu, url| {
+                                                menu.entry("Copy Link", None, move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(url.to_string()),
+                                                    );
+                                                })
                                             })
-                                        })
+                                    })
                                 })
-                            })
-                    }),
+                        }),
+                ),
             )
             .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
