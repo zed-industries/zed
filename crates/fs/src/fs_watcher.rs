@@ -841,7 +841,6 @@ impl BackendState {
 
         let mut to_watch = Vec::new();
         let mut to_unwatch = Vec::new();
-        let mut recovered_by_coverage = Vec::new();
         {
             let watcher_state = watcher_state.lock();
             let registrations = watcher_state.path_registrations(self.mode);
@@ -854,14 +853,7 @@ impl BackendState {
                     });
                 let should_watch = is_desired && !is_covered;
                 if !should_watch {
-                    let was_deferred = self.deferred_paths.remove(&path);
-                    if was_deferred
-                        && is_desired
-                        && is_covered
-                        && !self.stream_restart_rescan_pending
-                    {
-                        recovered_by_coverage.push(path.clone());
-                    }
+                    self.deferred_paths.remove(&path);
                 }
                 if cfg!(any(test, debug_assertions)) {
                     assert!(
@@ -888,9 +880,6 @@ impl BackendState {
             self.apply_unwatches(to_unwatch),
             self.apply_watches(to_watch, watcher_state),
         );
-        for path in recovered_by_coverage {
-            self.emit_rescan(&path, watcher_state);
-        }
         if self.deferred_paths.is_empty() {
             self.stream_restart_rescan_pending = false;
         }
@@ -1061,15 +1050,12 @@ impl BackendState {
                 .collect();
             match backend.update_paths(ops) {
                 Ok(()) => {
-                    let mut recovered_paths = Vec::new();
                     let mut applied_count = 0;
                     for path in queue {
                         applied_count += 1;
-                        if self.mark_watched(path.clone()) {
-                            recovered_paths.push(path);
-                        }
+                        self.mark_watched(path);
                     }
-                    self.emit_recovery_rescans(applied_count, recovered_paths, watcher_state);
+                    self.emit_stream_restart_rescan_if_recovered(applied_count, watcher_state);
                     return wake_at;
                 }
                 Err(error) => {
@@ -1080,13 +1066,10 @@ impl BackendState {
 
                     let applied_count = queue.len() - error.remaining.len() - 1;
                     let mut rest = queue.split_off(applied_count);
-                    let mut recovered_paths = Vec::new();
                     for path in queue {
-                        if self.mark_watched(path.clone()) {
-                            recovered_paths.push(path);
-                        }
+                        self.mark_watched(path);
                     }
-                    self.emit_recovery_rescans(applied_count, recovered_paths, watcher_state);
+                    self.emit_stream_restart_rescan_if_recovered(applied_count, watcher_state);
 
                     let failed = rest.remove(0);
                     self.deferred_paths.remove(&failed);
@@ -1106,11 +1089,10 @@ impl BackendState {
         wake_at
     }
 
-    fn mark_watched(&mut self, path: Arc<Path>) -> bool {
-        let recovered = self.deferred_paths.remove(&path);
+    fn mark_watched(&mut self, path: Arc<Path>) {
+        self.deferred_paths.remove(&path);
         self.suspect_paths.remove(&path);
         self.applied_paths.insert(path);
-        recovered
     }
 
     // An error with no origin means the backend applied our path operations but
@@ -1159,39 +1141,14 @@ impl BackendState {
         }
     }
 
-    fn emit_recovery_rescans(
+    fn emit_stream_restart_rescan_if_recovered(
         &mut self,
         applied_count: usize,
-        recovered_paths: Vec<Arc<Path>>,
         watcher_state: &Mutex<WatcherState>,
     ) {
-        if self.stream_restart_rescan_pending {
-            if applied_count > 0 {
-                self.emit_backend_rescan(watcher_state);
-                self.stream_restart_rescan_pending = false;
-            }
-        } else {
-            for path in recovered_paths {
-                self.emit_rescan(&path, watcher_state);
-            }
-        }
-    }
-
-    fn emit_rescan(&self, path: &Arc<Path>, watcher_state: &Mutex<WatcherState>) {
-        let callbacks = {
-            let watcher_state = watcher_state.lock();
-            watcher_state
-                .watchers
-                .values()
-                .filter(|registration| registration.mode == self.mode && registration.path == *path)
-                .map(|registration| registration.callback.clone())
-                .collect::<Vec<_>>()
-        };
-        let event = Event::new(EventKind::Other)
-            .add_path(path.to_path_buf())
-            .set_flag(notify::event::Flag::Rescan);
-        for callback in callbacks {
-            callback(&event);
+        if self.stream_restart_rescan_pending && applied_count > 0 {
+            self.emit_backend_rescan(watcher_state);
+            self.stream_restart_rescan_pending = false;
         }
     }
 
@@ -2072,22 +2029,18 @@ mod tests {
             events_a.lock().is_empty(),
             "the path watched on the first attempt does not get a rescan"
         );
-        assert_eq!(
-            events_b.lock().len(),
-            1,
-            "the deferred path gets a rescan once it is established"
+        assert!(
+            events_b.lock().is_empty(),
+            "the deferred path is retried without a synthetic rescan"
         );
-        assert!(events_b.lock()[0].need_rescan());
-        assert_eq!(
-            events_c.lock().len(),
-            1,
-            "the path deferred behind the failure also gets a rescan"
+        assert!(
+            events_c.lock().is_empty(),
+            "the path deferred behind the failure is retried without a synthetic rescan"
         );
-        assert!(events_c.lock()[0].need_rescan());
     }
 
     #[gpui::test]
-    async fn watch_limit_deferred_child_gets_rescan_when_recovered_by_parent_coverage(
+    async fn watch_limit_deferred_child_stops_retrying_when_covered_by_parent(
         executor: BackgroundExecutor,
     ) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
@@ -2123,9 +2076,7 @@ mod tests {
 
         assert!(backend.lock().watched_paths.contains(parent.as_ref()));
         assert!(!backend.lock().watched_paths.contains(child.as_ref()));
-        assert_eq!(child_events.lock().len(), 1);
-        assert!(child_events.lock()[0].need_rescan());
-        assert_eq!(child_events.lock()[0].paths, vec![child.to_path_buf()]);
+        assert!(child_events.lock().is_empty());
     }
 
     #[gpui::test]
@@ -2237,12 +2188,14 @@ mod tests {
             assert!(backend.watched_paths.contains(path_a.as_ref()));
             assert!(backend.watched_paths.contains(path_b.as_ref()));
         }
-        let events_a = events_a.lock();
-        let events_b = events_b.lock();
-        assert_eq!(events_a.len(), 1, "recovered path got a rescan event");
-        assert!(events_a[0].need_rescan());
-        assert_eq!(events_b.len(), 1, "recovered path got a rescan event");
-        assert!(events_b[0].need_rescan());
+        assert!(
+            events_a.lock().is_empty(),
+            "recovered path does not get a synthetic rescan"
+        );
+        assert!(
+            events_b.lock().is_empty(),
+            "recovered path does not get a synthetic rescan"
+        );
     }
 
     #[gpui::test]
@@ -2468,10 +2421,8 @@ mod tests {
         executor.run_until_parked();
 
         assert_eq!(events_a.lock().len(), 1);
-        assert_eq!(events_b.lock().len(), 2);
-        assert_eq!(events_c.lock().len(), 2);
-        assert_eq!(events_b.lock()[1].paths, vec![path_b.to_path_buf()]);
-        assert_eq!(events_c.lock()[1].paths, vec![path_c.to_path_buf()]);
+        assert_eq!(events_b.lock().len(), 1);
+        assert_eq!(events_c.lock().len(), 1);
     }
 
     #[gpui::test]
@@ -2786,7 +2737,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn sink_recovers_deferred_watch_and_emits_rescan(executor: BackgroundExecutor) {
+    async fn sink_recovers_deferred_watch_without_rescan(executor: BackgroundExecutor) {
         let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
         let (sink, _rx, pending_path_events) = test_sink(
             &executor,
@@ -2827,12 +2778,6 @@ mod tests {
                 .watched_paths
                 .contains(&dir.path().to_path_buf())
         );
-        assert_eq!(
-            std::mem::take(&mut *pending_path_events.lock()),
-            vec![PathEvent {
-                path: dir.path().to_path_buf(),
-                kind: Some(PathEventKind::Rescan),
-            }]
-        );
+        assert!(pending_path_events.lock().is_empty());
     }
 }
