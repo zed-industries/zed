@@ -169,7 +169,7 @@ impl ActiveToolchain {
                     .ok()?;
                 let Toolchains {
                     toolchains,
-                    root_path: relative_path,
+                    root_path,
                     user_toolchains,
                 } = cx
                     .update(|_, cx| {
@@ -192,12 +192,23 @@ impl ActiveToolchain {
                             // Ignore global toolchains when making a default choice. They're unlikely to be the right choice.
                             None
                         } else {
-                            toolchains.first()
+                            toolchains
+                                .first()
+                                .map(|toolchain| (toolchain.clone(), Some(scope.clone())))
                         }
                     })
-                    .or_else(|| toolchains.toolchains.first())
-                    .cloned();
-                if let Some(toolchain) = &default_choice {
+                    .or_else(|| {
+                        toolchains
+                            .toolchains
+                            .first()
+                            .cloned()
+                            .map(|toolchain| (toolchain, None))
+                    });
+                if let Some((toolchain, scope)) = &default_choice {
+                    let active_path = match scope {
+                        Some(ToolchainScope::Subproject(_, relative_path)) => relative_path.clone(),
+                        _ => root_path.clone(),
+                    };
                     let worktree_root_path = project.read_with(cx, |this, cx| {
                         this.worktree_for_id(worktree_id, cx)
                             .map(|worktree| worktree.read(cx).abs_path())
@@ -206,7 +217,7 @@ impl ActiveToolchain {
                     db.set_toolchain(
                         workspace_id,
                         worktree_root_path,
-                        relative_path.clone(),
+                        active_path.clone(),
                         toolchain.clone(),
                     )
                     .await
@@ -216,7 +227,7 @@ impl ActiveToolchain {
                             this.activate_toolchain(
                                 ProjectPath {
                                     worktree_id,
-                                    path: relative_path,
+                                    path: active_path,
                                 },
                                 toolchain.clone(),
                                 cx,
@@ -225,7 +236,7 @@ impl ActiveToolchain {
                         .await;
                 }
 
-                default_choice
+                default_choice.map(|(toolchain, _)| toolchain)
             }
         })
     }
