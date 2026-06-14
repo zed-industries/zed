@@ -9708,7 +9708,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn theme_changed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn theme_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.mode.is_full() {
             return;
         }
@@ -9722,6 +9722,10 @@ impl Editor {
         self.invalidate_semantic_tokens(None);
         self.refresh_semantic_tokens(None, None, cx);
         self.refresh_outline_symbols_at_cursor(cx);
+
+        // The active debug line highlight stores a concrete color snapshot, so re-apply it
+        // to pick up the new theme's `editor_debugger_active_line_background` (issue #58736).
+        self.go_to_active_debug_line(window, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {

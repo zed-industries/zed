@@ -1760,6 +1760,173 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     });
 }
 
+/// Regression test for https://github.com/zed-industries/zed/issues/58736
+///
+/// The active debug line is highlighted with a concrete `Hsla` that is captured
+/// from the theme at the moment `Editor::go_to_active_debug_line` runs. Switching
+/// themes (or theme overrides) fires `Editor::theme_changed`. That used to refresh
+/// brackets / semantic tokens / outline symbols but never re-apply the
+/// `ActiveDebugLine` highlight, so the debug-line background kept its stale color
+/// until the debugger stepped again or Zed restarted. `theme_changed` now re-runs
+/// `go_to_active_debug_line`, so the highlight tracks the current theme.
+#[gpui::test]
+async fn test_active_debug_line_color_follows_theme_change(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project_path = Path::new(path!("/project"));
+    let worktree = project
+        .update(cx, |project, cx| project.find_worktree(project_path, cx))
+        .expect("This worktree should exist in project")
+        .0;
+    let worktree_id = workspace
+        .update(cx, |_, _, cx| worktree.read(cx).id())
+        .unwrap();
+
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(main_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
+        })
+    });
+    client.on_request::<dap::requests::Scopes, _>(move |_, _| {
+        Ok(dap::ScopesResponse {
+            scopes: Vec::default(),
+        })
+    });
+    client.on_request::<StackTrace, _>(move |_, args| {
+        assert_eq!(args.thread_id, 1);
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![dap::StackFrame {
+                id: 1,
+                name: "frame 1".into(),
+                source: Some(dap::Source {
+                    name: Some("main.rs".into()),
+                    path: Some(path!("/project/main.rs").into()),
+                    source_reference: None,
+                    presentation_hint: None,
+                    origin: None,
+                    sources: None,
+                    adapter_data: None,
+                    checksums: None,
+                }),
+                line: 2,
+                column: 0,
+                end_line: None,
+                end_column: None,
+                can_restart: None,
+                instruction_pointer_reference: None,
+                module_id: None,
+                presentation_hint: None,
+            }],
+            total_frames: None,
+        })
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    // The debug line starts out highlighted with the current theme's color.
+    let theme_default = cx.update(|_, cx| {
+        theme::GlobalTheme::theme(cx)
+            .colors()
+            .editor_debugger_active_line_background
+    });
+    let captured_color = editor
+        .update(cx, |editor, _| {
+            editor
+                .highlighted_rows::<ActiveDebugLine>()
+                .next()
+                .map(|(_, color)| color)
+        })
+        .expect("there should be an active debug line");
+    assert_eq!(
+        captured_color, theme_default,
+        "active debug line should start with the theme's debug-line color"
+    );
+
+    // Simulate switching the theme: change the active theme's debug-line color and
+    // fire the `GlobalTheme` observer, which is what `Editor::theme_changed` reacts
+    // to. This mirrors picking a different theme from the theme selector.
+    let new_color = gpui::hsla(0.0, 1.0, 0.5, 1.0);
+    assert_ne!(
+        new_color, theme_default,
+        "the test's replacement color must differ from the default"
+    );
+    cx.update(|_, cx| {
+        let mut new_theme = (**theme::GlobalTheme::theme(cx)).clone();
+        new_theme
+            .styles
+            .colors
+            .editor_debugger_active_line_background = new_color;
+        theme::GlobalTheme::update_theme(cx, Arc::new(new_theme));
+    });
+    cx.run_until_parked();
+
+    let color_after_theme_change = editor
+        .update(cx, |editor, _| {
+            editor
+                .highlighted_rows::<ActiveDebugLine>()
+                .next()
+                .map(|(_, color)| color)
+        })
+        .expect("there should still be an active debug line");
+
+    // After the fix, `theme_changed` re-applies the `ActiveDebugLine` highlight, so
+    // it picks up the new theme's color instead of keeping the stale `theme_default`.
+    assert_eq!(
+        color_after_theme_change, new_color,
+        "active debug line background should follow the theme change (issue #58736)"
+    );
+}
+
 #[gpui::test]
 async fn test_debug_adapters_shutdown_on_app_quit(
     executor: BackgroundExecutor,
