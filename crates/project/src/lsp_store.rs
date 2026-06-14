@@ -14140,6 +14140,14 @@ async fn populate_labels_for_completions(
                     CodeLabel::fallback_for_completion(&lsp_completion, language.as_deref())
                 });
                 ensure_uniform_list_compatible_label(&mut label);
+                let completion_match_start = match &completion.source {
+                    CompletionSource::Lsp { insert_range, .. } => Some(
+                        insert_range
+                            .as_ref()
+                            .map_or(completion.replace_range.start, |range| range.start),
+                    ),
+                    _ => None,
+                };
                 completions.push(Completion {
                     label,
                     documentation,
@@ -14150,7 +14158,7 @@ async fn populate_labels_for_completions(
                     icon_path: None,
                     icon_color: None,
                     confirm: None,
-                    match_start: None,
+                    match_start: completion_match_start,
                     snippet_deduplication_key: None,
                     group: None,
                 });
