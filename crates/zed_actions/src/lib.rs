@@ -400,7 +400,19 @@ pub mod feedback {
 pub mod theme {
     use gpui::actions;
 
-    actions!(theme, [ToggleMode]);
+    actions!(
+        theme,
+        [
+            ToggleMode,
+            /// Toggles the theme selector, applying the chosen theme to the
+            /// current project's window only (stored user-side, keyed by
+            /// workspace) instead of changing the app-wide `theme` setting.
+            Project,
+            /// Clears the current project window's theme override, falling back
+            /// to the app-wide configured theme.
+            ClearProject
+        ]
+    );
 }
 
 pub mod theme_selector {

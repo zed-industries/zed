@@ -261,6 +261,7 @@ pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
 type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
+type WindowDrawObserver = Box<dyn FnMut(&mut Window, &mut App) + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
@@ -644,6 +645,7 @@ pub struct App {
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) restart_observers: SubscriberSet<(), Handler>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
+    pub(crate) window_draw_observers: SubscriberSet<(), WindowDrawObserver>,
 
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
@@ -767,6 +769,7 @@ impl App {
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
                 window_closed_observers: SubscriberSet::new(),
+                window_draw_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
@@ -2154,6 +2157,47 @@ impl App {
         let (subscription, activate) = self.window_closed_observers.insert((), Box::new(on_closed));
         activate();
         subscription
+    }
+
+    /// Register a callback to be invoked at the start of every window's draw,
+    /// before its element tree is rendered. The callback receives the window
+    /// being drawn and the app context, so it can prepare per-window state that
+    /// the render pass will read (for example, swapping the active theme).
+    ///
+    /// The callback runs on every frame of every window, so it must be cheap and
+    /// must not schedule work that would invalidate the window it just prepared
+    /// (which would cause an unbounded redraw loop). See
+    /// [`App::update_global_quietly`] for mutating globals without notifying
+    /// observers from within such a callback.
+    pub fn observe_window_draw(
+        &self,
+        on_draw: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.window_draw_observers.insert((), Box::new(on_draw));
+        activate();
+        subscription
+    }
+
+    /// Updates the global of the given type in place without notifying its
+    /// observers.
+    ///
+    /// This is intended for high-frequency, transient updates — such as
+    /// per-frame state set from an [`App::observe_window_draw`] callback — where
+    /// the observer notification scheduled by [`update_global`] would cause a
+    /// redundant re-render every frame (and, for state read during draw, an
+    /// unbounded redraw loop). Observers will NOT be informed of the change.
+    ///
+    /// [`update_global`]: crate::BorrowAppContext::update_global
+    #[track_caller]
+    pub fn update_global_quietly<G: Global, R>(
+        &mut self,
+        f: impl FnOnce(&mut G, &mut Self) -> R,
+    ) -> R {
+        let mut lease = self.lease_global::<G>();
+        let result = f(&mut lease, self);
+        self.globals_by_type
+            .insert(TypeId::of::<G>(), lease.global);
+        result
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
