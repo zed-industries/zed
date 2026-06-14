@@ -22,10 +22,15 @@ pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
 pub const OBJECTS_DIR: &str = "objects";
 pub const HOOKS_DIR: &str = "hooks";
-pub const LOGS_HEAD: &str = "logs/HEAD";
-pub const LOGS_REFS_HEADS_DIR: &str = "logs/refs/heads";
-pub const LOGS_REFS_REMOTES_DIR: &str = "logs/refs/remotes";
+pub const LOGS_DIR: &str = "logs";
+pub const LOGS_REF_STASH: &str = "logs/refs/stash";
+pub const REBASE_MERGE_DIR: &str = "rebase-merge";
+pub const REBASE_APPLY_DIR: &str = "rebase-apply";
+pub const SEQUENCER_DIR: &str = "sequencer";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
+pub const FETCH_HEAD: &str = "FETCH_HEAD";
+pub const ORIG_HEAD: &str = "ORIG_HEAD";
+pub const BISECT_LOG: &str = "BISECT_LOG";
 pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(
