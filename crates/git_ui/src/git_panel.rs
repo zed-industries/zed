@@ -5904,8 +5904,9 @@ impl GitPanel {
         Label::new(label.into()).color(color)
     }
 
-    fn list_item_height(&self) -> Rems {
-        rems(1.75)
+    fn list_item_height(&self, cx: &App) -> Pixels {
+        let theme_settings = ThemeSettings::get_global(cx);
+        theme_settings.ui_font_size(cx) * theme_settings.ui_line_height()
     }
 
     fn render_list_header(
@@ -5927,7 +5928,7 @@ impl GitPanel {
             .id(id)
             .cursor_pointer()
             .group(group_name)
-            .h(self.list_item_height())
+            .h(self.list_item_height(cx))
             .w_full()
             .pl_3()
             .pr_1()
@@ -6219,7 +6220,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height())
+            .h(self.list_item_height(cx))
             .w_full()
             .pl_3()
             .pr_1()
@@ -6418,7 +6419,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height())
+            .h(self.list_item_height(cx))
             .min_w_0()
             .w_full()
             .pl_3()
