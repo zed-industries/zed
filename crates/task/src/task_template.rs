@@ -624,6 +624,46 @@ mod tests {
     }
 
     #[test]
+    fn test_worktree_root_with_spaces_stays_atomic_in_args_and_cwd() {
+        let worktree_root = r"C:\worktrees\Godot Projects\sample-game";
+        let task = TaskTemplate {
+            label: "Run Godot Game".to_string(),
+            command: "godot".to_string(),
+            args: vec![
+                "--path".to_string(),
+                VariableName::WorktreeRoot.template_value(),
+                "scenes/main_menu.tscn".to_string(),
+            ],
+            cwd: Some(VariableName::WorktreeRoot.template_value()),
+            ..TaskTemplate::default()
+        };
+
+        let resolved = task
+            .resolve_task(
+                TEST_ID_BASE,
+                &TaskContext {
+                    cwd: None,
+                    task_variables: TaskVariables::from_iter([(
+                        VariableName::WorktreeRoot,
+                        worktree_root.to_string(),
+                    )]),
+                    project_env: HashMap::default(),
+                },
+            )
+            .expect("task should resolve with worktree root variable");
+
+        assert_eq!(
+            resolved.resolved.args,
+            vec![
+                "--path".to_string(),
+                worktree_root.to_string(),
+                "scenes/main_menu.tscn".to_string()
+            ]
+        );
+        assert_eq!(resolved.resolved.cwd, Some(PathBuf::from(worktree_root)));
+    }
+
+    #[test]
     fn test_template_variables_resolution() {
         let custom_variable_1 = VariableName::Custom(Cow::Borrowed("custom_variable_1"));
         let custom_variable_2 = VariableName::Custom(Cow::Borrowed("custom_variable_2"));
