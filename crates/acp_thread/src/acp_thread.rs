@@ -163,6 +163,8 @@ impl SandboxPermission {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
     #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
     pub network: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
