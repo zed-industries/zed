@@ -237,9 +237,10 @@ struct EnvironmentProbe {
 }
 
 /// Shell script run by [`probe_environment`]. Resolves `bwrap` to an absolute
-/// path (exit [`BWRAP_MISSING_EXIT_CODE`] if absent), then smoke-tests a real
-/// minimal sandbox (exit [`BWRAP_UNUSABLE_EXIT_CODE`] on failure) using the
-/// same mount and namespace flags as [`build_bwrap_args`] — presence isn't
+/// path (exit [`BWRAP_MISSING_EXIT_CODE`] if absent), rejects setuid-root
+/// binaries, then smoke-tests a real minimal sandbox (exit
+/// [`BWRAP_UNUSABLE_EXIT_CODE`] on failure) using the same mount and namespace
+/// flags as [`build_bwrap_args`] — presence isn't
 /// enough, because unprivileged user namespaces can be disabled by the
 /// distro's kernel, sysctl, or AppArmor policy (notably Ubuntu 24.04, the
 /// current default WSL distro), in which case `bwrap` exists but every
@@ -250,6 +251,9 @@ struct EnvironmentProbe {
 fn probe_script() -> String {
     format!(
         "bwrap_path=$(command -v bwrap) || exit {BWRAP_MISSING_EXIT_CODE}; \
+         if [ -u \"$bwrap_path\" ] && [ \"$(stat -c %u \"$bwrap_path\" 2>/dev/null)\" = 0 ]; then \
+         echo 'setuid-root bwrap is not supported' >&2; \
+         exit {BWRAP_UNUSABLE_EXIT_CODE}; fi; \
          if [ -d /run/WSL ]; then interop=interop; mask='--tmpfs /run/WSL'; \
          else interop=no-interop; mask=''; fi; \
          \"$bwrap_path\" --ro-bind / / --tmpfs /tmp $mask --dev /dev --proc /proc \
@@ -682,6 +686,7 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
     // variable alone is bypassable, and masking alone leaves the inherited
     // variable usable.
     args.extend(["--unsetenv".to_string(), "WSL_INTEROP".to_string()]);
+    args.extend(["--unsetenv".to_string(), "WSLENV".to_string()]);
     if mask_interop_dir {
         args.extend(["--tmpfs".to_string(), "/run/WSL".to_string()]);
     }
@@ -732,15 +737,16 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
 ///
 /// Beyond that, a few variables hold Windows-specific values that would be
 /// meaningless or actively break the command inside WSL: `PATH` would shadow
-/// WSL's own `PATH` and stop the shell from finding Linux executables, and the
+/// WSL's own `PATH` and stop the shell from finding Linux executables, the
 /// temp-dir variables point at Windows paths that don't exist in WSL (bwrap
-/// provides a fresh tmpfs `/tmp` instead). Matched case-insensitively because
-/// Windows environment variable names are.
+/// provides a fresh tmpfs `/tmp` instead), and WSL interop variables would
+/// undermine the explicit interop block above. Matched case-insensitively
+/// because Windows environment variable names are.
 fn is_forwardable_env_var(name: &str) -> bool {
     if name.is_empty() || name.contains('=') {
         return false;
     }
-    const BLOCKED: [&str; 4] = ["PATH", "TMPDIR", "TMP", "TEMP"];
+    const BLOCKED: [&str; 6] = ["PATH", "TMPDIR", "TMP", "TEMP", "WSL_INTEROP", "WSLENV"];
     !BLOCKED
         .iter()
         .any(|blocked| name.eq_ignore_ascii_case(blocked))
@@ -990,6 +996,24 @@ mod tests {
     }
 
     #[test]
+    fn probe_script_rejects_setuid_root_bwrap_before_smoke_test() {
+        let script = probe_script();
+        let guard =
+            "[ -u \"$bwrap_path\" ] && [ \"$(stat -c %u \"$bwrap_path\" 2>/dev/null)\" = 0 ]";
+        let smoke_test = "\"$bwrap_path\" --ro-bind / /";
+        let Some(guard_index) = script.find(guard) else {
+            panic!("probe script must contain setuid-root guard: {script}");
+        };
+        let Some(smoke_test_index) = script.find(smoke_test) else {
+            panic!("probe script must contain bwrap smoke test: {script}");
+        };
+
+        assert!(script.contains("setuid-root bwrap is not supported"));
+        assert!(script.contains(&format!("exit {BWRAP_UNUSABLE_EXIT_CODE}; fi")));
+        assert!(guard_index < smoke_test_index);
+    }
+
+    #[test]
     fn bwrap_denies_network_by_default() {
         let args = build_bwrap_args(
             &["/home/me/project".to_string()],
@@ -1116,6 +1140,42 @@ mod tests {
             args.windows(3)
                 .any(|window| window == ["--setenv", "CARGO_TERM_COLOR", "always"])
         );
+    }
+
+    #[test]
+    fn bwrap_does_not_forward_wsl_interop_env() {
+        let env = HashMap::from([
+            (
+                "WSL_INTEROP".to_string(),
+                "/run/WSL/123_interop".to_string(),
+            ),
+            ("WsLeNv".to_string(), "WSL_INTEROP/u".to_string()),
+            ("PAGER".to_string(), String::new()),
+        ]);
+        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--unsetenv", "WSL_INTEROP"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--unsetenv", "WSLENV"])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "PAGER", ""])
+        );
+        assert!(!args.windows(3).any(|window| {
+            matches!(window, [flag, name, _]
+                if flag.as_str() == "--setenv"
+                    && name.eq_ignore_ascii_case("WSL_INTEROP"))
+        }));
+        assert!(!args.windows(3).any(|window| {
+            matches!(window, [flag, name, _]
+                if flag.as_str() == "--setenv"
+                    && name.eq_ignore_ascii_case("WSLENV"))
+        }));
     }
 
     #[test]
