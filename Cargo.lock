@@ -6379,6 +6379,7 @@ dependencies = [
  "anyhow",
  "cloud_api_types",
  "collections",
+ "command_palette_hooks",
  "db",
  "editor",
  "extension",
@@ -6392,6 +6393,7 @@ dependencies = [
  "picker",
  "project",
  "release_channel",
+ "schemars 1.0.4",
  "semver",
  "serde",
  "settings",
@@ -9652,6 +9654,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tree-sitter",
+ "tree-sitter-c",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
@@ -19795,6 +19798,7 @@ dependencies = [
  "util_macros",
  "walkdir",
  "which 6.0.3",
+ "windows 0.61.3",
 ]
 
 [[package]]
