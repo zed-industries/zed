@@ -44,7 +44,7 @@ use std::{
 
 use ui::{
     CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, ListSeparator,
-    Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, prelude::*,
+    ModalHeader, Navigable, NavigableEntry, Tooltip, prelude::*,
 };
 use util::{
     ResultExt,
@@ -1093,7 +1093,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Filter remote projects…".into()
+        "Search remote projects…".into()
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
@@ -1337,6 +1337,50 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                 )
             }
         }
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let is_project_selected = matches!(
+            self.matches.get(self.selected_index),
+            Some(RemoteMatch::Project { .. })
+        );
+
+        let confirm_button = |label: SharedString| {
+            Button::new("select", label)
+                .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                .on_click(|_, window, cx| window.dispatch_action(menu::Confirm.boxed_clone(), cx))
+        };
+
+        let buttons = if is_project_selected {
+            h_flex()
+                .gap_1()
+                .child(
+                    Button::new("open_new_window", "New Window")
+                        .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                        }),
+                )
+                .child(confirm_button("Open".into()))
+                .into_any_element()
+        } else {
+            confirm_button("Select".into()).into_any_element()
+        };
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(buttons)
+                .into_any(),
+        )
     }
 }
 
@@ -2320,7 +2364,11 @@ impl RemoteServerProjects {
                                         )
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
-                                        .start_slot(Icon::new(IconName::File).color(Color::Muted))
+                                        .start_slot(
+                                            Icon::new(IconName::File)
+                                                .color(Color::Muted)
+                                                .size(IconSize::Small),
+                                        )
                                         .child(Label::new("Open Zed Log"))
                                         .on_click(cx.listener(|_, _, window, cx| {
                                             window.dispatch_action(Box::new(OpenLog), cx);
@@ -2347,7 +2395,11 @@ impl RemoteServerProjects {
                                         )
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
-                                        .start_slot(Icon::new(IconName::Exit).color(Color::Muted))
+                                        .start_slot(
+                                            Icon::new(IconName::Exit)
+                                                .color(Color::Muted)
+                                                .size(IconSize::Small),
+                                        )
                                         .child(Label::new("Exit"))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.cancel(&menu::Cancel, window, cx);
@@ -2892,51 +2944,15 @@ impl RemoteServerProjects {
             )
     }
 
-    fn render_default(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_project_selected = {
-            let picker = self.default_picker.read(cx);
-            let delegate = &picker.delegate;
-            matches!(
-                delegate.matches.get(delegate.selected_index),
-                Some(RemoteMatch::Project { .. })
-            )
-        };
-
-        Modal::new("remote-projects", None)
-            .header(ModalHeader::new().headline("Remote Projects"))
-            .section(
-                Section::new().padded(false).child(
-                    v_flex()
-                        .min_h(rems(20.))
-                        .size_full()
-                        .child(self.default_picker.clone()),
-                ),
-            )
-            .footer(ModalFooter::new().end_slot({
-                let confirm_button = |label: SharedString| {
-                    Button::new("select", label)
-                        .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                        })
-                };
-
-                if is_project_selected {
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Button::new("open_new_window", "New Window")
-                                .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                                }),
-                        )
-                        .child(confirm_button("Open".into()))
-                        .into_any_element()
-                } else {
-                    confirm_button("Select".into()).into_any_element()
-                }
-            }))
+    fn render_default(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .min_h(rems(20.))
+            .size_full()
+            .child(self.default_picker.clone())
             .into_any_element()
     }
 
