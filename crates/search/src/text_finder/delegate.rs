@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-use editor::{EditorSettings, MultiBufferSnapshot};
+use editor::MultiBufferSnapshot;
 use file_icons::FileIcons;
 use futures::StreamExt;
-use gpui::{AsyncApp, DismissEvent, HighlightStyle, StyledText, Task, TextStyle};
-use gpui::{Entity, FocusHandle, WeakEntity};
+use gpui::{AppContext, AsyncApp, DismissEvent, HighlightStyle, StyledText, Task, TextStyle};
+use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
@@ -28,7 +28,7 @@ use workspace::Workspace;
 use workspace::item::ItemSettings;
 
 use super::SearchMatch;
-use super::TextFinder;
+use crate::project_search::{ActiveSettings, ProjectSearch};
 use crate::{ProjectSearchView, SearchOptions};
 
 /// The text_finder is a minimal modal interface to the project_search. It is
@@ -88,12 +88,14 @@ pub struct Delegate {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) matches: Vec<SearchMatch>,
     pub(crate) selected_index: usize,
-    pub(crate) cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) cancel_flag: Arc<AtomicBool>,
+    pub(crate) text_finder_turning_into_project_search: Arc<AtomicBool>,
+
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
-    pub(crate) search_in_progress: bool,
-    pub(crate) file_count: usize,
+    /// When `is_ready` there is not a search in progress
+    pub(crate) in_progress_search: InProgressSearch,
     pub(crate) unique_files: HashSet<ProjectPath>,
     /// Whether the preview is currently shown to the side. Kept in sync by the
     /// picker via [`PickerDelegate::set_horizontal_preview`], because the
@@ -120,7 +122,7 @@ pub struct Delegate {
 // }
 
 async fn get_ongoing_search(
-    project_search_view: Entity<ProjectSearchView>,
+    project_search_view: &Entity<ProjectSearchView>,
     cx: &mut AsyncApp,
 ) -> Option<SearchResults<SearchResult>> {
     let ongoing_search = project_search_view.update(cx, |view, cx| {
@@ -182,7 +184,7 @@ fn multibuffer_ranges_to_search_matches<'a>(
 }
 
 async fn plunder_multibuffer(
-    project_search_view: Entity<ProjectSearchView>,
+    project_search_view: &Entity<ProjectSearchView>,
     cx: &AsyncApp,
 ) -> Vec<SearchMatch> {
     let chunk_size = 1000;
@@ -222,39 +224,122 @@ async fn plunder_multibuffer(
     matches
 }
 
+enum InProgressSearch {
+    Connected(Task<Option<SearchResults<SearchResult>>>),
+    Disconnected(SearchResults<SearchResult>),
+    None,
+}
+
+impl InProgressSearch {
+    /// If this is in disconnected state set it to None and return the search results
+    fn take_disconnected(&mut self) -> Option<SearchResults<SearchResult>> {
+        if matches!(self, InProgressSearch::Disconnected(_)) {
+            let mut placeholder = InProgressSearch::None;
+            std::mem::swap(self, &mut placeholder);
+            match placeholder {
+                InProgressSearch::Disconnected(results_stream) => return Some(results_stream),
+                _ => unreachable!("guarded with matches! above"),
+            }
+        } else {
+            None
+        }
+    }
+}
+
 impl Delegate {
+    pub fn hook_up_any_ongoing_search(
+        &mut self,
+        picker: gpui::WeakEntity<Picker<Delegate>>,
+        cx: &App,
+    ) {
+        // let (signal_done, match_updating_done) = futures::channel::oneshot::channel();
+        // let search_task =
+        if let Some(results_stream) = self.in_progress_search.take_disconnected() {
+            let cancel_flag = Arc::clone(&self.cancel_flag);
+            let text_finder_turning_into_project_search =
+                Arc::clone(&self.text_finder_turning_into_project_search);
+            self.in_progress_search = InProgressSearch::Connected(cx.spawn(async move |cx| {
+                stream_results_to_picker(
+                    cancel_flag,
+                    text_finder_turning_into_project_search,
+                    picker,
+                    results_stream,
+                    cx,
+                )
+                .await
+                // signal_done.send(); // TODO!(yara) do we need to signal completion here?
+            }));
+        }
+    }
+
     pub fn new_from_project_search(
         project_search: Entity<ProjectSearchView>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Delegate> {
-        cx.spawn(|cx| async move {
-            if let Some(ongoing) = get_ongoing_search(project_search, cx).await {
-                plunder_multibuffer(project_search, &cx);
-            }
+        cx.spawn(async move |cx| {
+            let ongoing = get_ongoing_search(&project_search, cx).await;
 
-            Self {
+            let results_already_yielded = if ongoing.is_some() {
+                plunder_multibuffer(&project_search, cx).await
+            } else {
+                Vec::new()
+            };
+
+            let in_progress_search = if let Some(results_stream) = ongoing {
+                InProgressSearch::Disconnected(results_stream)
+            } else {
+                InProgressSearch::None
+            };
+
+            let search_options = cx.read_entity(&project_search, |ps, _| ps.search_options);
+            // Note, potentially slow for huge inputs yielding to too long yield times
+            // if you see that chunk this and insert yield_nows
+            let unique_files = results_already_yielded
+                .iter()
+                .map(|m| m.path.clone())
+                .collect();
+
+            let this = cx.update(move |cx| Self {
                 project_search_view: project_search,
-            }
+                focus_handle: cx.focus_handle(),
+                matches: results_already_yielded,
+                selected_index: 0,
+                cancel_flag: Arc::new(AtomicBool::new(false)),
+                text_finder_turning_into_project_search: Arc::new(AtomicBool::new(false)),
+                last_selection_change_time: None,
+                last_click: None,
+                search_options,
+                in_progress_search,
+                unique_files,
+                preview_layout_is_horizontal: false,
+            });
+
+            this
         })
     }
 
-    // pub fn new(project: Entity<Project>, cx: &mut ui::Context<TextFinder>) -> Self {
-    //      // TODO!(yara): make work again using new_from_project_search
-    //     Self {
-    //         project,
-    //         matches: Vec::new(),
-    //         selected_index: 0,
-    //         cancel_flag: Arc::new(AtomicBool::new(false)),
-    //         last_selection_change_time: None,
-    //         last_click: None,
-    //         search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
-    //         search_in_progress: false,
-    //         file_count: 0,
-    //         unique_files: HashSet::default(),
-    //         preview_layout_is_horizontal: false,
-    //         focus_handle: cx.focus_handle(),
-    //     }
-    // }
+    pub fn new(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Self> {
+        let project = workspace.project().clone();
+        let weak_workspace = workspace.weak_handle();
+        let settings = cx
+            .global::<ActiveSettings>()
+            .0
+            .get(&project.downgrade())
+            .cloned();
+
+        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let project_search =
+            cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
+        cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
+    }
+
+    pub(crate) fn project<'a>(&self, cx: &'a App) -> &'a Entity<Project> {
+        &self.project_search_view.read(cx).entity.read(cx).project
+    }
 }
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
@@ -299,106 +384,61 @@ impl PickerDelegate for Delegate {
     ) -> Task<()> {
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        self.cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
 
-        let cancel_flag = self.cancel_flag.clone();
+        let cancel_flag = Arc::clone(&self.cancel_flag);
+        let text_finder_turning_into_project_search =
+            Arc::clone(&self.text_finder_turning_into_project_search);
 
         let open_buffers = None; // TODO!(yara) this is not true right?
 
         let Some(search_query) = self.build_search_query(&query, open_buffers, cx) else {
             self.matches.clear();
+            self.unique_files.clear();
             self.selected_index = 0;
-            self.file_count = 0;
-            self.search_in_progress = false;
             cx.notify();
             return Task::ready(());
         };
 
-        let search_results = self
-            .project
-            .update(cx, |project, cx| project.search(search_query, cx));
+        let search_results = self.project_search_view.update(cx, |ps, cx| {
+            ps.entity.update(cx, |pr, cx| {
+                pr.project.update(cx, |p, cx| p.search(search_query, cx))
+            })
+        });
 
-        self.search_in_progress = true;
-        cx.notify();
+        let (signal_done, match_updating_done) = futures::channel::oneshot::channel();
+        self.in_progress_search =
+            InProgressSearch::Connected(cx.spawn_in(window, async move |picker, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
+                    .await;
 
-        cx.spawn_in(window, async move |picker, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
+                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return None;
+                }
+
+                let res = stream_results_to_picker(
+                    cancel_flag,
+                    text_finder_turning_into_project_search,
+                    picker,
+                    search_results,
+                    cx,
+                )
                 .await;
 
-            if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                return;
-            }
+                // We must own the search task so we can take out the search
+                // result stream in case we are transforming into project
+                // search. The picker relies on the task returned
+                // `PickerDelegate::update_matches` to detect when we are done
+                // updating. So we have a placeholder task that completes when
+                // this signal is send.
+                let _ = signal_done.send(());
+                res
+            }));
 
-            let mut first_batch = true;
-            let SearchResults {
-                rx,
-                task_handle: _task_handle,
-            } = search_results;
-            let mut results_stream = std::pin::pin!(rx.ready_chunks(SEARCH_RESULTS_BATCH_SIZE));
-
-            while let Some(results) = results_stream.next().await {
-                if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
-                }
-
-                let mut batch_matches = Vec::new();
-                let mut limit_reached = false;
-
-                for result in results {
-                    match result {
-                        SearchResult::Buffer { buffer, ranges } => {
-                            let matches = Delegate::process_search_result(&buffer, &ranges, cx);
-                            batch_matches.extend(matches);
-                        }
-                        SearchResult::LimitReached => {
-                            limit_reached = true;
-                        }
-                    }
-                }
-
-                picker
-                    .update_in(cx, |picker, _, cx| {
-                        let delegate = &mut picker.delegate;
-
-                        if first_batch {
-                            delegate.matches.clear();
-                            delegate.file_count = 0;
-                            delegate.unique_files.clear();
-                            delegate.selected_index = 0;
-                            first_batch = false;
-                        }
-
-                        for m in &batch_matches {
-                            if delegate.unique_files.insert(m.path.clone()) {
-                                delegate.file_count += 1;
-                            }
-                        }
-                        delegate.matches.extend(batch_matches);
-
-                        if delegate.selected_index >= delegate.matches.len()
-                            && !delegate.matches.is_empty()
-                        {
-                            delegate.selected_index = 0;
-                        }
-
-                        cx.notify();
-                    })
-                    .log_err();
-
-                if limit_reached {
-                    break;
-                }
-
-                smol::future::yield_now().await;
-            }
-
-            picker
-                .update_in(cx, |picker, _window, cx| {
-                    picker.delegate.search_in_progress = false;
-                    cx.notify();
-                })
-                .log_err();
+        cx.notify();
+        cx.spawn(async move |_, _| {
+            let _ = match_updating_done.await;
         })
     }
 
@@ -431,7 +471,7 @@ impl PickerDelegate for Delegate {
             return;
         };
 
-        let Some(workspace) = self.workspace.upgrade() else {
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
             return;
         };
 
@@ -488,7 +528,7 @@ impl PickerDelegate for Delegate {
     ) -> Option<Self::ListItem> {
         let search_match = self.matches.get(ix)?;
         let path = &search_match.path.path;
-        let path_style = self.project.read(cx).path_style(cx);
+        let path_style = self.project(cx).read(cx).path_style(cx);
         let file_name = path
             .file_name()
             .map(|name| name.to_string())
@@ -569,6 +609,82 @@ impl PickerDelegate for Delegate {
                 .child(rendered_line),
         )
     }
+}
+
+async fn stream_results_to_picker(
+    cancel_flag: Arc<AtomicBool>,
+    text_finder_turning_into_project_search: Arc<AtomicBool>,
+    picker: gpui::WeakEntity<Picker<Delegate>>,
+    search_results: SearchResults<SearchResult>,
+    cx: &mut AsyncApp,
+) -> Option<SearchResults<SearchResult>> {
+    let mut results_stream = std::pin::pin!(
+        search_results
+            .rx
+            .clone()
+            .ready_chunks(SEARCH_RESULTS_BATCH_SIZE)
+    );
+
+    let mut is_first_batch = true;
+    while let Some(results) = results_stream.next().await {
+        if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+
+        let mut batch_matches = Vec::new();
+        let mut limit_reached = false;
+
+        for result in results {
+            match result {
+                SearchResult::Buffer { buffer, ranges } => {
+                    let matches = Delegate::process_search_result(&buffer, &ranges, cx);
+                    batch_matches.extend(matches);
+                }
+                SearchResult::LimitReached => {
+                    limit_reached = true;
+                }
+            }
+        }
+
+        picker
+            .update(cx, |picker, cx| {
+                let delegate = &mut picker.delegate;
+
+                if is_first_batch {
+                    delegate.matches.clear();
+                    delegate.unique_files.clear();
+                    delegate.selected_index = 0;
+                    is_first_batch = false;
+                }
+
+                delegate
+                    .unique_files
+                    .extend(batch_matches.iter().map(|m| &m.path).cloned());
+                delegate.matches.extend(batch_matches);
+
+                if delegate.selected_index >= delegate.matches.len() && !delegate.matches.is_empty()
+                {
+                    delegate.selected_index = 0;
+                }
+
+                cx.notify();
+            })
+            .log_err();
+
+        if limit_reached {
+            break;
+        }
+
+        // Note the difference with the cancel flag. We need the results to be
+        // processed before taking out the search result stream. The cancel flag
+        // just needs to stop the search.
+        if text_finder_turning_into_project_search.load(Ordering::Relaxed) {
+            return Some(search_results);
+        }
+
+        smol::future::yield_now().await;
+    }
+    None
 }
 
 /// Renders the matched source line with syntax highlighting, overlaying the
@@ -660,7 +776,7 @@ impl Delegate {
         // include/exclude patterns against full paths to allow them to be
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
-        let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
+        let match_full_paths = self.project(cx).read(cx).visible_worktrees(cx).count() > 1;
 
         let result = if self.search_options.contains(SearchOptions::REGEX) {
             SearchQuery::regex(

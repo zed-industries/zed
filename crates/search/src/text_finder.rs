@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Task, actions,
+    Modifiers, Task, WeakEntity, actions,
 };
 use language::Buffer;
 use picker::Picker;
@@ -16,7 +16,7 @@ mod delegate;
 mod render;
 use delegate::Delegate;
 
-use crate::ProjectSearchView;
+use crate::{ProjectSearchView, project_search::ProjectSearchBar};
 
 actions!(
     // TODO! reuse most of the ones from project search
@@ -58,44 +58,46 @@ impl TextFinder {
     pub fn open_from_project_search(
         project_search_view: Entity<ProjectSearchView>,
         window: &mut Window,
-    ) {
-        // TODO!(yara) merge with new and open flow
-        let delegate = Delegate::new(weak_workspace, project, cx);
-        let project = delegate.project.clone();
-        let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
-        let picker_focus_handle = picker.focus_handle(cx);
-        picker.update(cx, |picker, _| {
-            picker.delegate.focus_handle = picker_focus_handle.clone();
-        });
-
-        Self {
-            picker,
-            init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
-        }
-    }
-
-    pub fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
-        cx.spawn_in(window, async move |workspace, cx| {
+        cx: &mut Context<ProjectSearchBar>,
+    ) -> Task<()> {
+        let workspace = WeakEntity::clone(&project_search_view.read(cx).workspace);
+        cx.spawn_in(window, async move |_, cx| {
+            let delegate = Delegate::new_from_project_search(project_search_view, cx).await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project = workspace.project().clone();
-                    let weak_workspace = cx.entity().downgrade();
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        let delegate = Delegate::new(weak_workspace, project, cx);
-
-                        Self::new(delegate, window, cx)
-                    });
+                    workspace
+                        .toggle_modal(window, cx, |window, cx| Self::new(delegate, window, cx));
                 })
                 .ok();
         })
     }
 
-    fn new(delegate: Delegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let project = delegate.project.clone();
+    pub fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
+        cx.spawn_in(window, async move |workspace, cx| {
+            let Ok(delegate_task) = workspace.update_in(cx, |workspace, window, cx| {
+                Delegate::new(workspace, window, cx)
+            }) else {
+                return;
+            };
+
+            let delegate = delegate_task.await;
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace
+                        .toggle_modal(window, cx, |window, cx| Self::new(delegate, window, cx));
+                })
+                .ok();
+        })
+    }
+
+    fn new(delegate: Delegate, window: &mut Window, cx: &mut App) -> Self {
+        let project = delegate.project(cx).clone();
         let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
+        let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
-        picker.update(cx, |picker, _| {
+        picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
         });
 
         Self {

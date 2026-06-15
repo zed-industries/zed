@@ -8,7 +8,7 @@ use crate::{
         ActionButtonState, HistoryNavigationDirection, alignment_element, input_base_styles,
         render_action_button, render_text_input, should_navigate_history,
     },
-    text_finder::{SearchMatch, TextFinder},
+    text_finder::TextFinder,
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -103,7 +103,7 @@ fn split_glob_patterns(text: &str) -> Vec<&str> {
 }
 
 #[derive(Default)]
-struct ActiveSettings(HashMap<WeakEntity<Project>, ProjectSearchSettings>);
+pub(crate) struct ActiveSettings(pub(crate) HashMap<WeakEntity<Project>, ProjectSearchSettings>);
 
 impl Global for ActiveSettings {}
 
@@ -235,7 +235,7 @@ fn contains_uppercase(str: &str) -> bool {
 }
 
 pub struct ProjectSearch {
-    project: Entity<Project>,
+    pub(crate) project: Entity<Project>,
     pub excerpts: Entity<MultiBuffer>,
     pub pending_search: Option<Task<Option<SearchResults<SearchResult>>>>,
     pub match_ranges: Vec<Range<Anchor>>,
@@ -260,13 +260,13 @@ enum InputPanel {
 }
 
 pub struct ProjectSearchView {
-    workspace: WeakEntity<Workspace>,
+    pub(crate) workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    pub entity: Entity<ProjectSearch>,
+    pub(crate) entity: Entity<ProjectSearch>,
     query_editor: Entity<Editor>,
     replacement_editor: Entity<Editor>,
     results_editor: Entity<Editor>,
-    search_options: SearchOptions,
+    pub(crate) search_options: SearchOptions,
     panels_with_errors: HashMap<InputPanel, String>,
     active_match_index: Option<usize>,
     search_id: usize,
@@ -2172,13 +2172,18 @@ impl ProjectSearchBar {
         }
     }
 
-    fn open_text_finder(&mut self, _: &OpenTextFinder, window: &mut Window, _: &mut Context<Self>) {
+    fn open_text_finder(
+        &mut self,
+        _: &OpenTextFinder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(search) = &self.active_project_search else {
             tracing::warn!("active_project_search was none");
             return;
         };
 
-        TextFinder::open_from_project_search(Entity::clone(search), window);
+        TextFinder::open_from_project_search(Entity::clone(search), window, cx).detach();
     }
 }
 
