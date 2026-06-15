@@ -38455,6 +38455,16 @@ async fn test_select_inside_delimiters(cx: &mut TestAppContext) {
         "const s = \"«hello worldˇ»\";",
         &mut cx,
     );
+    assert(
+        "const s = \"ˇhello world\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+    assert(
+        "const s = \"hello worldˇ\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
 
     // Cursor inside string nested in a function call: prefers the string
     assert(
@@ -38468,6 +38478,72 @@ async fn test_select_inside_delimiters(cx: &mut TestAppContext) {
 
     // Already a selection inside brackets expands to full content
     assert("foo(a, «bˇ», c);", "foo(«a, b, cˇ»);", &mut cx);
+}
+
+#[gpui::test]
+async fn test_select_inside_delimiters_in_markdown_quotes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.run_until_parked();
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            editor.select_inside_delimiters(&SelectInsideDelimiters, window, cx)
+        });
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    assert(
+        r#"This is "ˇhello, world!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is "hello, ˇworld!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is "hello, world!ˇ"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is ˇ"hello, world!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is "hello, world!"ˇ."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is 'hello, ˇworld!'."#,
+        r#"This is '«hello, world!ˇ»'."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is `hello, ˇworld!`."#,
+        r#"This is `«hello, world!ˇ»`."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is ("hello, ˇworld!")."#,
+        r#"This is ("«hello, world!ˇ»")."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is hello, ˇworld!."#,
+        r#"This is hello, ˇworld!."#,
+        &mut cx,
+    );
 }
 
 #[gpui::test]
@@ -38496,6 +38572,49 @@ async fn test_select_around_delimiters(cx: &mut TestAppContext) {
     // Braces
     assert("let x = {ˇ a: 1 };", "let x = «{ a: 1 }ˇ»;", &mut cx);
 
+    // Strings
+    assert(
+        "console.log(\"deˇbug\");",
+        "console.log(«\"debug\"ˇ»);",
+        &mut cx,
+    );
+
     // No-op when not inside any brackets
     assert("let xˇ = 42;", "let xˇ = 42;", &mut cx);
+}
+
+#[gpui::test]
+async fn test_select_around_delimiters_in_markdown_quotes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+    cx.run_until_parked();
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            editor.select_around_delimiters(&SelectAroundDelimiters, window, cx)
+        });
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    assert(
+        r#"This is "hello, ˇworld!"."#,
+        r#"This is «"hello, world!"ˇ»."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is 'hello, ˇworld!'."#,
+        r#"This is «'hello, world!'ˇ»."#,
+        &mut cx,
+    );
+    assert(
+        r#"This is `hello, ˇworld!`."#,
+        r#"This is «`hello, world!`ˇ»."#,
+        &mut cx,
+    );
 }

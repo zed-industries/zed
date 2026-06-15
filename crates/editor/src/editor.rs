@@ -7558,25 +7558,6 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_offsets_with(&mut |snapshot, selection| {
-                // For languages that don't register quotes as bracket pairs in their
-                // brackets.scm (notably Markdown inline content), fall back to detecting
-                // string-like nodes via the syntax tree.
-                // The same node kinds are used by select_larger_syntax_node.
-                if !include_brackets {
-                    if let Some((node, node_range)) =
-                        snapshot.syntax_ancestor(selection.start..selection.end)
-                    {
-                        if ["string_content", "inline"].contains(&node.kind()) {
-                            selection.start = node_range.start;
-                            selection.end = node_range.end;
-                            selection.reversed = false;
-                            selection.goal = SelectionGoal::None;
-                            return;
-                        }
-                    }
-                }
-
-                // Fall back to the nearest bracket pair via tree-sitter.
                 let Some((open, close)) = snapshot
                     .innermost_enclosing_bracket_ranges(selection.start..selection.end, None)
                 else {
