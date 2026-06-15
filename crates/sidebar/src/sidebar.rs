@@ -732,6 +732,13 @@ fn connect_remote(
     remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
+// Per-project-group cache of the remote default branch, used to populate the
+// "Create New Worktree" submenu without doing git I/O while the menu is open.
+enum DefaultBranchCache {
+    Pending,
+    Resolved(Option<RemoteBranchName>),
+}
+
 // Mirrors the behavior of the worktree picker's "Create new worktree" entries.
 fn create_worktree_in_workspace(
     workspace: &Entity<Workspace>,
@@ -803,7 +810,7 @@ pub struct Sidebar {
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
-    worktree_default_branches: HashMap<ProjectGroupKey, Option<RemoteBranchName>>,
+    worktree_default_branches: HashMap<ProjectGroupKey, DefaultBranchCache>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     update_task: Option<Task<()>>,
@@ -2036,6 +2043,8 @@ impl Sidebar {
         // Preserve measurements for unchanged entries so sticky headers do not flicker.
         self.apply_list_state_diff(&previous_shapes, multi_workspace.read(cx));
 
+        self.prefetch_worktree_default_branches(cx);
+
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
                 cx.notify();
@@ -2569,23 +2578,8 @@ impl Sidebar {
         .anchor(gpui::Anchor::TopLeft)
         .on_open(Rc::new({
             let this = this.clone();
-            let key = key.clone();
-            let open_workspaces = open_workspaces.clone();
             move |_window, cx| {
-                this.update(cx, |sidebar, cx| {
-                    let active = sidebar
-                        .multi_workspace
-                        .upgrade()
-                        .map(|mw| mw.read(cx).workspace().clone());
-                    let base = active
-                        .filter(|workspace| open_workspaces.contains(workspace))
-                        .or_else(|| open_workspaces.first().cloned());
-                    if let Some(base) = base {
-                        sidebar.prefetch_worktree_default_branch(&key, &base, cx);
-                    }
-                    cx.notify();
-                })
-                .ok();
+                this.update(cx, |_sidebar, cx| cx.notify()).ok();
             }
         }))
         .menu(move |window, cx| {
@@ -2691,10 +2685,14 @@ impl Sidebar {
                                     });
                                 let default_branch = this
                                     .read_with(submenu_cx, |sidebar, _| {
-                                        sidebar.worktree_default_branches.get(&key).cloned()
+                                        match sidebar.worktree_default_branches.get(&key) {
+                                            Some(DefaultBranchCache::Resolved(branch)) => {
+                                                branch.clone()
+                                            }
+                                            _ => None,
+                                        }
                                     })
                                     .ok()
-                                    .flatten()
                                     .flatten();
 
                                 let targets = worktree_create_targets(
@@ -2739,16 +2737,50 @@ impl Sidebar {
         .into_any_element()
     }
 
+    // Warms `worktree_default_branches` for every multi-workspace project group.
+    // The git query runs off the menu path so the submenu can read the result
+    // synchronously when it opens. Worktrees of a repository share the same
+    // default branch, so any workspace in the group yields the same answer.
+    fn prefetch_worktree_default_branches(&mut self, cx: &mut Context<Self>) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let keys: Vec<ProjectGroupKey> = self
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        for key in keys {
+            if self.worktree_default_branches.contains_key(&key) {
+                continue;
+            }
+            // The worktree submenu is only reachable when a group has more than
+            // one open workspace, so there's no point querying single ones.
+            let Some(base) = multi_workspace
+                .read(cx)
+                .workspaces_for_project_group(&key, cx)
+                .filter(|workspaces| workspaces.len() > 1)
+                .and_then(|workspaces| workspaces.first().cloned())
+            else {
+                continue;
+            };
+            self.prefetch_worktree_default_branch(&key, &base, cx);
+        }
+    }
+
     fn prefetch_worktree_default_branch(
         &mut self,
         key: &ProjectGroupKey,
         workspace: &Entity<Workspace>,
         cx: &mut Context<Self>,
     ) {
-        // The default branch can't change mid-session, so a resolved entry is
-        // kept; presence of the key means we've already fetched it. The
-        // no-repository case is deliberately not cached so it retries on a later
-        // open once the repository has finished loading.
+        // Presence of the key means the group is already pending or resolved. The
+        // no-repository case is deliberately not inserted so it retries on a
+        // later rebuild once the repository has finished loading.
         if self.worktree_default_branches.contains_key(key) {
             return;
         }
@@ -2756,12 +2788,16 @@ impl Sidebar {
             return;
         };
         let request = repository.update(cx, |repository, _| repository.default_branch(true));
+        self.worktree_default_branches
+            .insert(key.clone(), DefaultBranchCache::Pending);
         let key = key.clone();
         cx.spawn(async move |this, cx| {
             let default_branch = request.await.ok().and_then(Result::ok).flatten();
             let parsed = default_branch.as_deref().and_then(RemoteBranchName::parse);
             this.update(cx, |sidebar, cx| {
-                sidebar.worktree_default_branches.insert(key, parsed);
+                sidebar
+                    .worktree_default_branches
+                    .insert(key, DefaultBranchCache::Resolved(parsed));
                 cx.notify();
             })
             .ok();
