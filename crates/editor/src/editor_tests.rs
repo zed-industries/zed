@@ -4665,6 +4665,43 @@ async fn test_newline_comments_with_multiple_delimiters(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_newline_comments_with_brackets(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "(".to_string(),
+                    end: ")".to_string(),
+                    close: false,
+                    surround: false,
+                    newline: true,
+                }],
+                ..BracketPairConfig::default()
+            },
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        // (ˇ)
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        // (
+        // ˇ)
+    "})
+    }
+}
+
+#[gpui::test]
 async fn test_newline_comments_repl_separators(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
@@ -21267,6 +21304,88 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_inside_enclosing_bracket(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    #[track_caller]
+    fn assert_after_runs(before: &str, after: &str, runs: usize, cx: &mut EditorLspTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        for _ in 0..runs {
+            cx.update_editor(|editor, window, cx| {
+                editor.select_inside_enclosing_bracket(&SelectInsideEnclosingBracket, window, cx)
+            });
+        }
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
+        assert_after_runs(before, after, 1, cx);
+    }
+
+    assert("console.log(ˇvar);", "console.log(«varˇ»);", &mut cx);
+    assert("console.logˇ(var);", "console.log(«varˇ»);", &mut cx);
+    assert("console.log(var)ˇ;", "console.log(«varˇ»);", &mut cx);
+    assert(
+        "let numbers = [1, ˇ2, 3];",
+        "let numbers = [«1, 2, 3ˇ»];",
+        &mut cx,
+    );
+    assert(
+        "const object = { foo: ˇbar };",
+        "const object = {« foo: bar ˇ»};",
+        &mut cx,
+    );
+    assert(
+        r#"const doubleQuoted = "foo ˇbar";"#,
+        r#"const doubleQuoted = "«foo barˇ»";"#,
+        &mut cx,
+    );
+    assert(
+        "const singleQuoted = 'foo ˇbar';",
+        "const singleQuoted = '«foo barˇ»';",
+        &mut cx,
+    );
+    assert(
+        "const template = `foo ˇbar`;",
+        "const template = `«foo barˇ»`;",
+        &mut cx,
+    );
+    assert(
+        "let result = foo(bar(ˇbaz));",
+        "let result = foo(bar(«bazˇ»));",
+        &mut cx,
+    );
+    assert(
+        "let result = foo(«barˇ»(baz));",
+        "let result = foo(«bar(baz)ˇ»);",
+        &mut cx,
+    );
+    assert_after_runs(
+        "let result = foo(bar(ˇbaz));",
+        "let result = foo(«bar(baz)ˇ»);",
+        2,
+        &mut cx,
+    );
+    assert_after_runs(
+        r#"let result = (xx[xxx{xxˇx}] xx"xxx"xx);"#,
+        r#"let result = («xx[xxx{xxx}] xx"xxx"xxˇ»);"#,
+        3,
+        &mut cx,
+    );
+    assert("let plain = ˇvalue;", "let plain = ˇvalue;", &mut cx);
+    assert(
+        "foo(ˇone); bar(ˇtwo);",
+        "foo(«oneˇ»); bar(«twoˇ»);",
+        &mut cx,
+    );
+}
+
+#[gpui::test]
 async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
@@ -33269,6 +33388,36 @@ async fn test_paste_plain_text_from_other_app_replaces_selection_without_creatin
 }
 
 #[gpui::test]
+async fn test_paste_text_with_scheme_like_prefix_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    // `url::Url::parse` accepts this as a URL with the scheme `editor`, but it
+    // should not be treated as one when pasting.
+    let text = "editor: Fix double-click bracket selection for large spans";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("«(feat on git-ui-add-info-exclude-to-context-menus) Fmtˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("{text}ˇ"));
+}
+
+#[gpui::test]
 async fn test_paste_url_from_other_app_without_creating_markdown_link_in_non_markdown_language(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -37955,6 +38104,164 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
             "diagnostics should be re-enabled after second toggle"
         );
     });
+}
+
+#[gpui::test]
+async fn test_columnar_selection_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The middle row contains a 2-byte char (ã) before the dragged column. A
+    // column selection that uses byte columns directly puts the ã row's
+    // selection at a different visual position than the ASCII rows; anchoring
+    // in x pixels keeps all rows at the same character offset.
+    cx.set_state(indoc! {"
+        ˇabcde
+        abcde
+        aãcde
+        abcde
+        abcde
+    "});
+
+    // Drag column-wise from (row 0, col 0) past the ã column on every row.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «abcdˇ»e
+        «abcdˇ»e
+        «aãcdˇ»e
+        «abcdˇ»e
+        «abcdˇ»e
+    "});
+
+    // Control: drag stops before the ã column, where byte columns and x
+    // positions agree.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aˇ»bcde
+        «aˇ»bcde
+        «aˇ»ãcde
+        «aˇ»bcde
+        «aˇ»bcde
+    "});
+}
+
+#[gpui::test]
+async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇaaaaaaaaaa
+        bb
+        cccccccccc
+    "});
+
+    // Drag from the start of the long first row to a point past the EOL of
+    // the short second row: the mouse handlers encode that as the nearest
+    // valid position (1, 2) plus an unclipped goal column of 8. The rectangle
+    // must keep tracking the mouse x on the long row instead of collapsing to
+    // the short row's width.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(1), 2),
+                goal_column: 8,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aaaaaaaaˇ»aa
+        «bbˇ»
+        cccccccccc
+    "});
+
+    // Starting the drag past the EOL of the short row must anchor that edge
+    // of the rectangle at the click position, not at the short row's EOL.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(1), 2),
+                goal_column: 8,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(2), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        aaaaaaaaaa
+        bb
+        cccc«ˇcccc»cc
+    "});
 }
 
 #[gpui::test]

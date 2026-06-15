@@ -1245,7 +1245,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             let path_prefix = if include_root_name {
                                 worktree.read(cx).root_name().into()
                             } else {
-                                RelPath::empty().into()
+                                RelPath::empty_arc()
                             };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
@@ -2143,9 +2143,9 @@ pub(crate) fn search_files(
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
                         .map(|wt| wt.read(cx).root_name().into())
-                        .unwrap_or_else(|| RelPath::empty().into())
+                        .unwrap_or_else(|| RelPath::empty_arc())
                 } else {
-                    RelPath::empty().into()
+                    RelPath::empty_arc()
                 };
 
                 FileMatch {
@@ -2167,7 +2167,7 @@ pub(crate) fn search_files(
             let path_prefix: Arc<RelPath> = if include_root_name {
                 worktree.root_name().into()
             } else {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             };
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {

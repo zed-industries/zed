@@ -630,7 +630,7 @@ impl TitleBar {
                     Some(recent_projects::RemoteServerProjects::popover(
                         fs,
                         workspace.clone(),
-                        false,
+                        None,
                         window,
                         cx,
                     ))
@@ -657,10 +657,7 @@ impl TitleBar {
                     move |_window, cx| {
                         Tooltip::with_meta(
                             tooltip_title,
-                            Some(&OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            }),
+                            Some(&OpenRemote::default()),
                             meta.clone(),
                             cx,
                         )
@@ -816,7 +813,7 @@ impl TitleBar {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
                     window_project_groups.clone(),
-                    false,
+                    None,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -835,13 +832,7 @@ impl TitleBar {
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &zed_actions::OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
+                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
                 },
             )
             .anchor(gpui::Anchor::TopLeft)
@@ -873,7 +864,7 @@ impl TitleBar {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
                     window_project_groups.clone(),
-                    false,
+                    None,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -892,13 +883,7 @@ impl TitleBar {
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &zed_actions::OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
+                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
                 },
             )
             .anchor(gpui::Anchor::TopLeft)
