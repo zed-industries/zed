@@ -286,6 +286,31 @@ enum GitPanelTab {
     History,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum CommitHistory {
+    Loading,
+    /// A non-empty list can still grow on later fetches.
+    /// An empty list means the repository has no commits.
+    Loaded(Vec<Oid>),
+    Error(SharedString),
+}
+
+fn commit_history_from_response(
+    shas: Vec<Oid>,
+    is_loading: bool,
+    error: Option<SharedString>,
+) -> CommitHistory {
+    if !shas.is_empty() {
+        CommitHistory::Loaded(shas)
+    } else if let Some(error) = error {
+        CommitHistory::Error(error)
+    } else if is_loading {
+        CommitHistory::Loading
+    } else {
+        CommitHistory::Loaded(Vec::new())
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 enum Section {
     Conflict,
@@ -682,7 +707,7 @@ pub struct GitPanel {
     stash_entries: GitStash,
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
-    commit_history_shas: Option<Vec<Oid>>,
+    commit_history: CommitHistory,
     focused_history_entry: Option<usize>,
     history_keyboard_nav: bool,
     _repo_subscriptions: Vec<Subscription>,
@@ -880,7 +905,7 @@ impl GitPanel {
                 stash_entries: Default::default(),
                 active_tab: GitPanelTab::Changes,
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
-                commit_history_shas: None,
+                commit_history: CommitHistory::Loading,
                 focused_history_entry: None,
                 history_keyboard_nav: false,
                 _repo_subscriptions: Vec::new(),
@@ -5132,41 +5157,41 @@ impl GitPanel {
     fn render_history_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().flex_1().size_full().overflow_hidden().map(|this| {
             let has_repo = self.active_repository.is_some();
-            let has_commits = self
-                .commit_history_shas
-                .as_ref()
-                .map_or(false, |shas| !shas.is_empty());
-            let is_loading = self.commit_history_shas.is_none() && has_repo;
-            if is_loading {
-                this.child(
-                    h_flex()
-                        .flex_1()
-                        .justify_center()
-                        .child(Label::new("Loading Commit History…").color(Color::Muted)),
-                )
-            } else if !has_repo || !has_commits {
-                this.child(
-                    h_flex()
-                        .flex_1()
-                        .justify_center()
-                        .child(Label::new("No commits yet").color(Color::Muted)),
-                )
-            } else {
-                match self.render_commit_history(window, cx) {
-                    Some(history) => this.child(history),
-                    None => this.child(
-                        h_flex()
-                            .flex_1()
-                            .justify_center()
-                            .child(Label::new("Failed to load commits").color(Color::Muted)),
-                    ),
+            match &self.commit_history {
+                _ if !has_repo => this.child(Self::render_history_placeholder("No commits yet")),
+                CommitHistory::Error(_) => this.child(Self::render_history_placeholder(
+                    "Failed to load commit history",
+                )),
+                CommitHistory::Loading => {
+                    this.child(Self::render_history_placeholder("Loading Commit History…"))
                 }
+                CommitHistory::Loaded(shas) if shas.is_empty() => {
+                    this.child(Self::render_history_placeholder("No commits yet"))
+                }
+                CommitHistory::Loaded(_) => match self.render_commit_history(window, cx) {
+                    Some(history) => this.child(history),
+                    None => this.child(Self::render_history_placeholder("Failed to load commits")),
+                },
             }
         })
     }
 
+    fn render_history_placeholder(message: &'static str) -> impl IntoElement {
+        h_flex()
+            .flex_1()
+            .justify_center()
+            .child(Label::new(message).color(Color::Muted))
+    }
+
+    fn commit_history_shas(&self) -> &[Oid] {
+        match &self.commit_history {
+            CommitHistory::Loaded(shas) => shas,
+            CommitHistory::Loading | CommitHistory::Error(_) => &[],
+        }
+    }
+
     fn select_next_history_entry(&mut self, cx: &mut Context<Self>) {
-        let count = self.commit_history_shas.as_ref().map_or(0, Vec::len);
+        let count = self.commit_history_shas().len();
         if count == 0 {
             return;
         }
@@ -5182,7 +5207,7 @@ impl GitPanel {
     }
 
     fn select_previous_history_entry(&mut self, cx: &mut Context<Self>) {
-        let count = self.commit_history_shas.as_ref().map_or(0, Vec::len);
+        let count = self.commit_history_shas().len();
         if count == 0 {
             return;
         }
@@ -5201,7 +5226,7 @@ impl GitPanel {
         let Some(index) = self.focused_history_entry else {
             return;
         };
-        let Some(sha) = self.commit_history_shas.as_ref().and_then(|s| s.get(index)) else {
+        let Some(sha) = self.commit_history_shas().get(index) else {
             return;
         };
         let Some(active_repository) = self.active_repository.as_ref() else {
@@ -5245,12 +5270,10 @@ impl GitPanel {
             GitPanelTab::History => {
                 self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
-                self.focused_history_entry = Some(0);
             }
             GitPanelTab::Changes => {
                 self.focus_handle.focus(window, cx);
-                self.commit_history_shas.take();
-                self.focused_history_entry = None;
+                self.set_commit_history(CommitHistory::Loading);
                 self._repo_subscriptions.clear();
             }
         }
@@ -5305,16 +5328,27 @@ impl GitPanel {
         };
 
         let Some(log_source) = Self::commit_history_log_source(&active_repository, cx) else {
-            self.commit_history_shas = Some(Vec::new());
-            self.focused_history_entry = None;
+            // No HEAD commit at all (unborn/empty repository).
+            self.set_commit_history(CommitHistory::Loaded(Vec::new()));
             return;
         };
         let log_order = LogOrder::DateOrder;
 
-        self.commit_history_shas = Some(active_repository.update(cx, |repository, cx| {
+        let (shas, is_loading, error) = active_repository.update(cx, |repository, cx| {
             let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
-            response.commits.iter().map(|commit| commit.sha).collect()
-        }));
+            let shas: Vec<Oid> = response.commits.iter().map(|commit| commit.sha).collect();
+            (shas, response.is_loading, response.error)
+        });
+
+        self.set_commit_history(commit_history_from_response(shas, is_loading, error));
+    }
+
+    fn set_commit_history(&mut self, commit_history: CommitHistory) {
+        self.commit_history = commit_history;
+        // Keep the focused entry within range as the history grows or clears.
+        let count = self.commit_history_shas().len();
+        let focused = self.focused_history_entry.unwrap_or(0);
+        self.focused_history_entry = (count > 0).then(|| focused.min(count - 1));
     }
 
     fn commit_history_log_source(
@@ -5347,7 +5381,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let shas = self.commit_history_shas.clone()?;
+        let CommitHistory::Loaded(shas) = &self.commit_history else {
+            return None;
+        };
+        let shas = shas.clone();
         let active_repository = self.active_repository.as_ref()?;
         let workspace = self.workspace.clone();
         let repo_weak = active_repository.downgrade();
@@ -7655,7 +7692,7 @@ mod tests {
         let panel = history_panel_for_project(fs.clone(), cx).await;
 
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.commit_history_shas, Some(Vec::new()));
+            assert_eq!(panel.commit_history, CommitHistory::Loaded(Vec::new()));
         });
     }
 
@@ -7683,7 +7720,36 @@ mod tests {
         let panel = history_panel_for_project(fs.clone(), cx).await;
 
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.commit_history_shas, Some(vec![sha]));
+            assert_eq!(panel.commit_history, CommitHistory::Loaded(vec![sha]));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_surfaces_load_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
+            .await;
+
+        let dot_git = Path::new(path!("/root/project/.git"));
+        let sha: Oid = "0123456789012345678901234567890123456789".parse().unwrap();
+        fs.with_git_state(dot_git, false, |state| {
+            state.current_branch_name = None;
+            state.refs.insert("HEAD".into(), sha.to_string());
+            state.graph_commits = vec![Arc::new(git::repository::InitialGraphCommitData {
+                sha,
+                parents: SmallVec::new(),
+                ref_names: Vec::new(),
+            })];
+        })
+        .unwrap();
+        fs.set_graph_error(dot_git, Some("simulated git log failure".into()));
+
+        let panel = history_panel_for_project(fs.clone(), cx).await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(matches!(panel.commit_history, CommitHistory::Error(_)));
         });
     }
 
@@ -7697,8 +7763,49 @@ mod tests {
         let panel = history_panel_for_project(fs.clone(), cx).await;
 
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.commit_history_shas, None);
+            assert_eq!(panel.commit_history, CommitHistory::Loading);
         });
+    }
+
+    #[test]
+    fn test_commit_history_from_response() {
+        let sha: Oid = "0123456789012345678901234567890123456789".parse().unwrap();
+        let error = SharedString::from("git log failed");
+
+        // Commits win even while the fetch task still reports `is_loading`.
+        assert_eq!(
+            commit_history_from_response(vec![sha], true, None),
+            CommitHistory::Loaded(vec![sha])
+        );
+        assert_eq!(
+            commit_history_from_response(vec![sha], false, None),
+            CommitHistory::Loaded(vec![sha])
+        );
+        // Commits also take precedence over a concurrently reported error.
+        assert_eq!(
+            commit_history_from_response(vec![sha], true, Some(error.clone())),
+            CommitHistory::Loaded(vec![sha])
+        );
+
+        // With no commits a terminal error beats the loading state.
+        assert_eq!(
+            commit_history_from_response(vec![], true, Some(error.clone())),
+            CommitHistory::Error(error.clone())
+        );
+        assert_eq!(
+            commit_history_from_response(vec![], false, Some(error.clone())),
+            CommitHistory::Error(error)
+        );
+
+        // When no commits and no error, loading vs. finished-empty hinges on `is_loading`.
+        assert_eq!(
+            commit_history_from_response(vec![], true, None),
+            CommitHistory::Loading
+        );
+        assert_eq!(
+            commit_history_from_response(vec![], false, None),
+            CommitHistory::Loaded(Vec::new())
+        );
     }
 
     #[gpui::test]

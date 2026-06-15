@@ -3845,7 +3845,7 @@ mod tests {
 
     #[allow(clippy::disallowed_methods)]
     #[track_caller]
-    fn git_command<I, S>(working_directory: &Path, arguments: I)
+    fn git_command_output<I, S>(working_directory: &Path, arguments: I) -> String
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -3866,6 +3866,19 @@ mod tests {
             "git command failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        String::from_utf8(output.stdout)
+            .expect("git command output was not valid UTF-8")
+            .trim()
+            .to_string()
+    }
+
+    #[track_caller]
+    fn git_command<I, S>(working_directory: &Path, arguments: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        git_command_output(working_directory, arguments);
     }
 
     fn git_init_repo(path: &Path) {
@@ -4195,7 +4208,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[allow(clippy::disallowed_methods)]
     async fn test_initial_graph_data_accepts_sha_log_source(cx: &mut TestAppContext) {
         disable_git_global_config();
 
@@ -4208,21 +4220,7 @@ mod tests {
         git_command(repo_dir.path(), ["add", "file"]);
         git_command(repo_dir.path(), ["commit", "-m", "Initial commit"]);
 
-        let rev_parse = std::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(repo_dir.path())
-            .env("GIT_CONFIG_GLOBAL", "")
-            .env("GIT_CONFIG_SYSTEM", "")
-            .output()
-            .expect("failed to run git rev-parse");
-        assert!(
-            rev_parse.status.success(),
-            "git rev-parse failed: {}",
-            String::from_utf8_lossy(&rev_parse.stderr)
-        );
-        let commit_sha: Oid = String::from_utf8(rev_parse.stdout)
-            .unwrap()
-            .trim()
+        let commit_sha: Oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"])
             .parse()
             .unwrap();
 
