@@ -380,7 +380,9 @@ async fn test_rejoining_channel_does_not_remove_livekit_participant(
     // Mirror LiveKit Cloud: removing a participant revokes their tokens. This
     // is what turns the redundant `remove_participant` during stale cleanup
     // into a user-visible failure.
-    server.test_livekit_server.set_revoke_tokens_on_removal(true);
+    server
+        .test_livekit_server
+        .set_revoke_tokens_on_removal(true);
 
     let client_a1 = server.create_client(cx_a1, "user_a").await;
     let client_a2 = server.create_client(cx_a2, "user_a").await;
@@ -427,7 +429,9 @@ async fn test_rejoining_channel_does_not_remove_livekit_participant(
     // LiveKit room, since they are immediately rejoining it.
     let identity = client_a2.user_id().unwrap().to_string();
     assert!(
-        !server.test_livekit_server.participant_was_removed(&identity),
+        !server
+            .test_livekit_server
+            .participant_was_removed(&identity),
         "rejoining the same channel should not remove the LiveKit participant"
     );
 }
