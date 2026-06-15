@@ -877,6 +877,10 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
                 new_std_command("open")
                     .arg("--")
                     .arg(path)
