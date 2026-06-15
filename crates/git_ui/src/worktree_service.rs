@@ -1727,7 +1727,7 @@ mod tests {
         // Current branch matches the default: only the default branch entry.
         assert_eq!(
             worktree_create_targets(false, Some(origin_main.clone()), Some("main")),
-            vec![WorktreeCreateTarget::DefaultBranch(origin_main.clone())]
+            vec![WorktreeCreateTarget::DefaultBranch(origin_main)]
         );
 
         // No default branch resolved: fall back to the current branch.
