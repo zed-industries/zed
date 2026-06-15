@@ -192,6 +192,28 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Update extensions
+
+- Description: Disable auto-updates for specific extensions.
+- Setting: `auto_update_extensions`
+- Default: `{}`
+
+**Options**
+
+By default, every installed extension is auto-updated when Zed starts.
+Add an extension here with `false` to pin it to its currently installed version.
+
+```json [settings]
+{
+  "auto_update_extensions": {
+    "html": false
+  }
+}
+```
+
+Selecting **Install Another Version…** from an extension's `⋯` menu on the Extensions
+page ({#action zed::Extensions}) does this automatically.
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
@@ -5307,7 +5329,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
 
 ## Collaboration Panel
 

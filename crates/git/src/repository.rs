@@ -798,7 +798,14 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
-    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>>;
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let name = name.to_string();
+        let fut = self.remote_urls();
+        async move { fut.await.remove(&name) }.boxed()
+    }
+
+    /// Returns the URL of all remotes.
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>>;
 
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
@@ -1687,26 +1694,21 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>> {
         let git = self.git_binary();
-        let name = name.to_owned();
         self.executor
             .spawn(async move {
-                let output = git
-                    .build_command(&["remote", "get-url", &name])
-                    .output()
-                    .await
-                    .log_err()?;
-                if !output.status.success() {
-                    return None;
+                let mut urls = HashMap::default();
+                if let Ok(stdout) = git.run(&["remote", "-v"]).await {
+                    for line in stdout.lines() {
+                        if let Some(line) = line.strip_suffix(" (fetch)")
+                            && let Some((name, url)) = line.split_once(char::is_whitespace)
+                        {
+                            urls.insert(name.to_string(), url.trim_start().to_string());
+                        }
+                    }
                 }
-                let url = String::from_utf8(output.stdout).ok()?;
-                let url = url.trim();
-                if url.is_empty() {
-                    None
-                } else {
-                    Some(url.to_string())
-                }
+                urls
             })
             .boxed()
     }
@@ -2029,11 +2031,48 @@ impl GitRepository for RealGitRepository {
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
+        let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                git_binary.run(&["checkout", &name]).await?;
-                anyhow::Ok(())
+                let git_binary = git_binary?;
+                let local_ref = format!("refs/heads/{name}");
+                if git_binary
+                    .run(&["show-ref", "--verify", "--quiet", &local_ref])
+                    .await
+                    .is_ok()
+                {
+                    git_binary.run(&["checkout", &name]).await?;
+                    return anyhow::Ok(());
+                }
+
+                let remote_ref = format!("refs/remotes/{name}");
+                if git_binary
+                    .run(&["show-ref", "--verify", "--quiet", &remote_ref])
+                    .await
+                    .is_ok()
+                {
+                    let (_, branch_name) =
+                        name.split_once('/').context("Unexpected branch format")?;
+                    let local_branch_ref = format!("refs/heads/{branch_name}");
+                    if git_binary
+                        .run(&["show-ref", "--verify", "--quiet", &local_branch_ref])
+                        .await
+                        .is_ok()
+                    {
+                        git_binary
+                            .run(&["branch", "--set-upstream-to", &name, branch_name])
+                            .await?;
+                    } else {
+                        git_binary
+                            .run(&["branch", "--track", branch_name, &name])
+                            .await?;
+                    }
+
+                    git_binary.run(&["checkout", branch_name]).await?;
+                    return anyhow::Ok(());
+                }
+
+                anyhow::bail!("Branch '{}' not found", name);
             })
             .boxed()
     }
@@ -2607,52 +2646,29 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git?;
-                let git_cmd = async |args: &[&str]| -> Result<String> {
-                    let output = git.build_command(args).output().await?;
-                    anyhow::ensure!(
-                        output.status.success(),
-                        String::from_utf8_lossy(&output.stderr).to_string()
-                    );
-                    Ok(String::from_utf8(output.stdout)?)
+                // This command outputs a list of remote tracking refs, e.g.:
+                // refs/remotes/origin/HEAD
+                // refs/remotes/origin/main
+                let Ok(output) = git?
+                    .run(&[
+                        "for-each-ref",
+                        "--format=%(refname)",
+                        "--contains",
+                        "HEAD",
+                        "refs/remotes/",
+                    ])
+                    .await
+                else {
+                    return Ok(Vec::new());
                 };
 
-                let head = git_cmd(&["rev-parse", "HEAD"])
-                    .await
-                    .context("Failed to get HEAD")?
-                    .trim()
-                    .to_owned();
-
-                let mut remote_branches = vec![];
-                let mut add_if_matching = async |remote_head: &str| {
-                    if let Ok(merge_base) = git_cmd(&["merge-base", &head, remote_head]).await
-                        && merge_base.trim() == head
-                        && let Some(s) = remote_head.strip_prefix("refs/remotes/")
-                    {
-                        remote_branches.push(s.to_owned().into());
-                    }
-                };
-
-                // check the main branch of each remote
-                let remotes = git_cmd(&["remote"])
-                    .await
-                    .context("Failed to get remotes")?;
-                for remote in remotes.lines() {
-                    if let Ok(remote_head) =
-                        git_cmd(&["symbolic-ref", &format!("refs/remotes/{remote}/HEAD")]).await
-                    {
-                        add_if_matching(remote_head.trim()).await;
-                    }
-                }
-
-                // ... and the remote branch that the checked-out one is tracking
-                if let Ok(remote_head) =
-                    git_cmd(&["rev-parse", "--symbolic-full-name", "@{u}"]).await
-                {
-                    add_if_matching(remote_head.trim()).await;
-                }
-
-                Ok(remote_branches)
+                Ok(output
+                    .lines()
+                    .map(|line| line.trim())
+                    .filter(|line| !line.ends_with("/HEAD"))
+                    .filter_map(|line| line.strip_prefix("refs/remotes/"))
+                    .map(SharedString::from)
+                    .collect())
             })
             .boxed()
     }
@@ -2860,45 +2876,57 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let strip_prefix = if include_remote_name {
-                    "refs/remotes/"
-                } else {
-                    "refs/remotes/upstream/"
-                };
-
-                if let Ok(output) = git
-                    .run(&["symbolic-ref", "refs/remotes/upstream/HEAD"])
+                let output = git
+                    .run(&[
+                        "for-each-ref",
+                        "--format=%(refname)\t%(symref)",
+                        "refs/remotes/upstream/HEAD",
+                        "refs/remotes/origin/HEAD",
+                        "refs/heads/",
+                    ])
                     .await
-                {
-                    let output = output
-                        .strip_prefix(strip_prefix)
-                        .map(|s| SharedString::from(s.to_owned()));
-                    return Ok(output);
+                    .unwrap_or_default();
+                let refs: HashMap<&str, &str> = output
+                    .lines()
+                    .filter_map(|line| line.split_once('\t'))
+                    .collect();
+
+                if let Some(target) = refs.get("refs/remotes/upstream/HEAD") {
+                    let strip_prefix = if include_remote_name {
+                        "refs/remotes/"
+                    } else {
+                        "refs/remotes/upstream/"
+                    };
+                    if let Some(branch) = target.strip_prefix(strip_prefix) {
+                        return Ok(Some(branch.into()));
+                    }
                 }
 
-                let strip_prefix = if include_remote_name {
-                    "refs/remotes/"
-                } else {
-                    "refs/remotes/origin/"
-                };
-
-                if let Ok(output) = git.run(&["symbolic-ref", "refs/remotes/origin/HEAD"]).await {
-                    return Ok(output
-                        .strip_prefix(strip_prefix)
-                        .map(|s| SharedString::from(s.to_owned())));
+                if let Some(target) = refs.get("refs/remotes/origin/HEAD") {
+                    let strip_prefix = if include_remote_name {
+                        "refs/remotes/"
+                    } else {
+                        "refs/remotes/origin/"
+                    };
+                    if let Some(branch) = target.strip_prefix(strip_prefix) {
+                        return Ok(Some(branch.into()));
+                    }
                 }
+
+                let local_branch_exists =
+                    |branch: &str| refs.contains_key(format!("refs/heads/{branch}").as_str());
 
                 if let Ok(default_branch) = git.run(&["config", "init.defaultBranch"]).await {
-                    if git.run(&["rev-parse", &default_branch]).await.is_ok() {
+                    if local_branch_exists(&default_branch) {
                         return Ok(Some(default_branch.into()));
                     }
                 }
 
-                if git.run(&["rev-parse", "main"]).await.is_ok() {
+                if local_branch_exists("main") {
                     return Ok(Some("main".into()));
                 }
 
-                if git.run(&["rev-parse", "master"]).await.is_ok() {
+                if local_branch_exists("master") {
                     return Ok(Some("master".into()));
                 }
 
@@ -3553,6 +3581,8 @@ async fn run_git_command(
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force");
+        #[cfg(target_os = "windows")]
+        command.env("ZED_ASKPASS_SOCKET", ask_pass.socket_path());
         let git_process = command.spawn()?;
 
         run_askpass_command(ask_pass, git_process).await
@@ -3931,6 +3961,118 @@ mod tests {
                 .await
                 .unwrap(),
             "true"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_change_branch_creates_local_tracking_branch_from_remote(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let remote_dir = temp_dir.path().join("remote.git");
+        let seed_dir = temp_dir.path().join("seed");
+        let clone_dir = temp_dir.path().join("clone");
+
+        git_command(
+            temp_dir.path(),
+            [
+                OsString::from("init"),
+                OsString::from("--bare"),
+                OsString::from("-b"),
+                OsString::from("main"),
+                remote_dir.as_os_str().into(),
+            ],
+        );
+        git_init_repo(&seed_dir);
+        fs::write(seed_dir.join("file.txt"), "main").unwrap();
+        git_command(&seed_dir, ["add", "file.txt"]);
+        git_command(&seed_dir, ["commit", "-m", "initial"]);
+        git_command(&seed_dir, ["switch", "-c", "feature"]);
+        fs::write(seed_dir.join("feature.txt"), "feature").unwrap();
+        git_command(&seed_dir, ["add", "feature.txt"]);
+        git_command(&seed_dir, ["commit", "-m", "feature"]);
+        git_command(
+            &seed_dir,
+            [
+                OsString::from("remote"),
+                OsString::from("add"),
+                OsString::from("origin"),
+                remote_dir.as_os_str().into(),
+            ],
+        );
+        git_command(&seed_dir, ["push", "-u", "origin", "main"]);
+        git_command(&seed_dir, ["push", "-u", "origin", "feature"]);
+        git_command(
+            temp_dir.path(),
+            [
+                OsString::from("clone"),
+                remote_dir.as_os_str().into(),
+                clone_dir.as_os_str().into(),
+            ],
+        );
+
+        let repository = RealGitRepository::new(
+            &clone_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repository.git_binary_in_worktree().unwrap();
+        assert!(
+            git.run(&[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/remotes/origin/feature"
+            ])
+            .await
+            .is_ok()
+        );
+        assert!(
+            git.run(&["show-ref", "--verify", "--quiet", "refs/heads/feature"])
+                .await
+                .is_err()
+        );
+
+        repository
+            .change_branch("origin/feature".to_string())
+            .await
+            .unwrap();
+
+        let git = repository.git_binary_in_worktree().unwrap();
+        assert_eq!(
+            git.run(&["branch", "--show-current"]).await.unwrap(),
+            "feature"
+        );
+        assert_eq!(
+            git.run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",])
+                .await
+                .unwrap(),
+            "origin/feature"
+        );
+
+        git.run(&["checkout", "main"]).await.unwrap();
+        git.run(&["branch", "--unset-upstream", "feature"])
+            .await
+            .unwrap();
+
+        repository
+            .change_branch("origin/feature".to_string())
+            .await
+            .unwrap();
+
+        let git = repository.git_binary_in_worktree().unwrap();
+        assert_eq!(
+            git.run(&["branch", "--show-current"]).await.unwrap(),
+            "feature"
+        );
+        assert_eq!(
+            git.run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",])
+                .await
+                .unwrap(),
+            "origin/feature"
         );
     }
 
@@ -4998,6 +5140,59 @@ mod tests {
         assert!(graph.contains(&hidden_sha));
     }
 
+    #[gpui::test]
+    async fn test_check_for_pushed_commit(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        git_init_repo(&repo_dir);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // New repo doesn't have any commits yet
+        assert!(repo.check_for_pushed_commit().await.unwrap().is_empty());
+
+        git_command(
+            &repo_dir,
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+
+        // No remote branches exist yet
+        assert!(repo.check_for_pushed_commit().await.unwrap().is_empty());
+
+        // Create simulated remote branches
+        git_command(
+            &repo_dir,
+            ["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+        git_command(
+            &repo_dir,
+            ["update-ref", "refs/remotes/origin/other-branch", "HEAD"],
+        );
+        assert_eq!(
+            repo.check_for_pushed_commit().await.unwrap(),
+            vec![
+                SharedString::from("origin/main"),
+                SharedString::from("origin/other-branch")
+            ]
+        );
+
+        // Switch to a new branch, commit but do not push
+        git_command(&repo_dir, ["switch", "-c", "local-feature"]);
+        git_command(&repo_dir, ["commit", "--allow-empty", "-m", "Local commit"]);
+
+        // New commit has not been pushed
+        assert!(repo.check_for_pushed_commit().await.unwrap().is_empty());
+    }
+
     #[test]
     fn test_original_repo_path_from_common_dir() {
         // Normal repo: common_dir is <work_dir>/.git
@@ -5026,6 +5221,57 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_default_branch(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert_eq!(repo.default_branch(false).await.unwrap(), None);
+
+        git_command(
+            repo_dir.path(),
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+
+        assert_eq!(
+            repo.default_branch(false).await.unwrap(),
+            Some("main".into())
+        );
+
+        git_command(
+            repo_dir.path(),
+            ["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+        git_command(
+            repo_dir.path(),
+            [
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+
+        assert_eq!(
+            repo.default_branch(false).await.unwrap(),
+            Some("main".into())
+        );
+        assert_eq!(
+            repo.default_branch(true).await.unwrap(),
+            Some("origin/main".into())
+        );
+    }
+
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
@@ -5048,5 +5294,54 @@ mod tests {
                 })
                 .boxed()
         }
+    }
+
+    #[gpui::test]
+    async fn test_remote_urls(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        git_init_repo(&repo_dir);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let git = repo.git_binary();
+        git.run(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/zed-industries/zed.git",
+        ])
+        .await
+        .unwrap();
+        git.run(&[
+            "remote",
+            "add",
+            "upstream",
+            "/Users/user/My Projects/upstream.git",
+        ])
+        .await
+        .unwrap();
+
+        let remote_urls = repo.remote_urls().await;
+        assert_eq!(remote_urls.len(), 2);
+        assert_eq!(
+            remote_urls.get("origin").unwrap(),
+            "https://github.com/zed-industries/zed.git"
+        );
+        assert_eq!(
+            remote_urls.get("upstream").unwrap(),
+            "/Users/user/My Projects/upstream.git"
+        );
     }
 }

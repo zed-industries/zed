@@ -72,6 +72,9 @@ impl TabMap {
             old_snapshot.tab_size = tab_size;
             return (old_snapshot.clone(), vec![]);
         }
+
+        let old_fold_max_point = old_snapshot.fold_snapshot.max_point();
+
         // Expand each edit to include the next tab on the same line as the edit,
         // and any subsequent tabs on that line that moved across the tab expansion
         // boundary.
@@ -89,11 +92,9 @@ impl TabMap {
         // expansion boundary (transitioning between expanded and non-expanded).
         for fold_edit in &mut fold_edits {
             let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-            let old_end_row_successor_offset = cmp::min(
-                FoldPoint::new(old_end.row() + 1, 0),
-                old_snapshot.fold_snapshot.max_point(),
-            )
-            .to_offset(&old_snapshot.fold_snapshot);
+            let old_end_row_successor_offset =
+                cmp::min(FoldPoint::new(old_end.row() + 1, 0), old_fold_max_point)
+                    .to_offset(&old_snapshot.fold_snapshot);
             let new_end = fold_edit.new.end.to_point(&fold_snapshot);
 
             let mut offset_from_edit = 0;
@@ -211,7 +212,7 @@ impl std::ops::Deref for TabSnapshot {
 }
 
 impl TabSnapshot {
-    #[ztracing::instrument(skip_all)]
+    #[inline]
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }

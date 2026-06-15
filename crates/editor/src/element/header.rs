@@ -8,8 +8,8 @@ use gpui::{
     Action, AnyElement, App, AvailableSpace, Bounds, ClickEvent, ClipboardItem, ContentMask,
     CursorStyle, DefiniteLength, Entity, Focusable as _, Hitbox, HitboxBehavior, Hsla, IntoElement,
     Length, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-    ShapedLine, SharedString, Styled, TextAlign, Window, div, fill, linear_color_stop,
-    linear_gradient, point, px, size,
+    ShapedLine, SharedString, Styled, TextAlign, Window, WindowBackgroundAppearance, div, fill,
+    linear_color_stop, linear_gradient, point, px, size,
 };
 use language::language_settings::ShowWhitespaceSetting;
 use multi_buffer::{Anchor, ExcerptBoundaryInfo};
@@ -69,10 +69,20 @@ impl EditorElement {
         let mut rows = Vec::<StickyHeader>::new();
 
         for item in editor.sticky_headers.iter().flatten() {
-            let start_point = item
+            let selection_start = item
+                .selection_range
+                .start
+                .to_point(snapshot.buffer_snapshot());
+            let source_text_start = item
                 .source_range_for_text
                 .start
                 .to_point(snapshot.buffer_snapshot());
+            let start_column = if source_text_start.row == selection_start.row {
+                source_text_start.column
+            } else {
+                0
+            };
+            let start_point = Point::new(selection_start.row, start_column);
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
@@ -663,6 +673,11 @@ pub(crate) fn render_buffer_header(
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();
+    // On transparent windows `editor_subheader_background` stacks over the
+    // editor background into a darker bar (and the sticky shadow becomes a halo),
+    // so skip both unless the window is opaque.
+    let opaque_window =
+        cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))
@@ -678,7 +693,7 @@ pub(crate) fn render_buffer_header(
                 .pr_2()
                 .rounded_sm()
                 .gap_1p5()
-                .when(is_sticky, |el| el.shadow_md())
+                .when(is_sticky && opaque_window, |el| el.shadow_md())
                 .border_1()
                 .map(|border| {
                     let border_color =
@@ -689,7 +704,9 @@ pub(crate) fn render_buffer_header(
                         };
                     border.border_color(border_color)
                 })
-                .bg(colors.editor_subheader_background)
+                .when(opaque_window, |el| {
+                    el.bg(colors.editor_subheader_background)
+                })
                 .hover(|style| style.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();

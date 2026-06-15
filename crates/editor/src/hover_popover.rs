@@ -253,7 +253,6 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
 
     editor.hover_state.info_task = None;
-    editor.hover_state.triggered_from = None;
     editor.hover_state.hiding_delay_task = None;
     editor.hover_state.closest_mouse_distance = None;
 
@@ -307,15 +306,6 @@ fn show_hover(
         } else {
             hide_hover(editor, cx);
         }
-    }
-
-    // Don't request again if the location is the same as the previous request
-    if let Some(triggered_from) = &editor.hover_state.triggered_from
-        && triggered_from
-            .cmp(&anchor, &snapshot.buffer_snapshot())
-            .is_eq()
-    {
-        return None;
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -807,10 +797,15 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
-pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+pub fn open_markdown_url(
+    workspace: Option<Entity<Workspace>>,
+    link: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = Workspace::for_window(window, cx)
+        && let Some(workspace) = workspace
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
@@ -857,14 +852,20 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
         });
         return;
     }
-    cx.open_url(&link);
+
+    if let Some(workspace) = workspace {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_url_or_file(&link, None, window, cx);
+        });
+    } else {
+        cx.open_url(&link);
+    }
 }
 
 #[derive(Default)]
 pub struct HoverState {
     pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
-    pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
     pub closest_mouse_distance: Option<Pixels>,
     pub hiding_delay_task: Option<Task<()>>,
@@ -1044,6 +1045,7 @@ impl InfoPopover {
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let this = cx.entity().downgrade();
+        let this2 = this.clone();
         let bounds_cell = self.last_bounds.clone();
         div()
             .id("info_popover")
@@ -1094,7 +1096,17 @@ impl InfoPopover {
                                     wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                     border: false,
                                 })
-                                .on_url_click(open_markdown_url)
+                                .on_url_click(move |link, window, cx| {
+                                    open_markdown_url(
+                                        this2
+                                            .read_with(cx, |editor, _| editor.workspace())
+                                            .ok()
+                                            .flatten(),
+                                        link,
+                                        window,
+                                        cx,
+                                    )
+                                })
                                 .p_2(),
                         ),
                 )
@@ -2691,10 +2703,6 @@ mod tests {
             assert!(
                 editor.hover_state.info_task.is_none(),
                 "No hover info task should be scheduled when hover is disabled"
-            );
-            assert!(
-                editor.hover_state.triggered_from.is_none(),
-                "No hover trigger should be recorded when hover is disabled"
             );
         });
     }
