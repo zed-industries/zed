@@ -227,8 +227,8 @@ impl Allowlist {
         Self::default()
     }
 
-    /// An allowlist that allows any host. Useful for `allow_all_hosts: true`
-    /// approval flow — we still proxy and observe, but skip the policy check.
+    /// An allowlist that allows any host. When used with the proxy, traffic is
+    /// still observed, but no host policy check is applied.
     pub fn any() -> Self {
         Self {
             patterns: Vec::new(),

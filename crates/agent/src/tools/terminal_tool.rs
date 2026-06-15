@@ -105,17 +105,17 @@ pub struct SandboxedTerminalToolInput {
     /// commands that fetch or upload (installing dependencies, cloning,
     /// pushing, downloading, etc.). Each entry must be a hostname or a
     /// leading-`*.` subdomain wildcard; IP literals and other wildcards are
-    /// rejected. Only HTTP and HTTPS are proxied — use `https://` URLs rather
-    /// than `git@`/`ssh://`. Requesting hosts triggers a user approval prompt,
-    /// so only list hosts you expect the command to need.
+    /// rejected. Host-specific access is enforced by an HTTP/HTTPS proxy — use
+    /// `https://` URLs rather than `git@`/`ssh://`. Requesting hosts triggers a
+    /// user approval prompt, so only list hosts you expect the command to need.
     #[serde(default)]
     pub allow_hosts: Vec<String>,
     /// Set to `true` only if the command needs outbound network access to
     /// hosts you can't enumerate up front.
     ///
-    /// This is a broad escape hatch — prefer `allow_hosts` with specific
-    /// hostnames whenever possible, so the user knows what's being approved.
-    /// Requesting it triggers a user approval prompt.
+    /// This grants unrestricted outbound network access. Prefer `allow_hosts`
+    /// with specific hostnames whenever possible, so the user knows what's
+    /// being approved. Requesting it triggers a user approval prompt.
     #[serde(default)]
     pub allow_all_hosts: Option<bool>,
     /// Paths the command needs to write to outside the default-writable
@@ -411,7 +411,7 @@ async fn run_terminal_tool(
         Some(acp_thread::SandboxWrap {
             writable_paths,
             extra_write_paths: effective.write_paths,
-            network: network_request_to_allowlist(&effective.network),
+            network: network_request_to_sandbox_network_access(&effective.network),
             allow_fs_write: effective.allow_fs_write_all,
             is_local: is_local_project,
         })
@@ -541,13 +541,17 @@ fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Convert a (validated) network request into the allowlist enforced by the
-/// in-process proxy.
-fn network_request_to_allowlist(network: &NetworkRequest) -> http_proxy::Allowlist {
+/// Convert a (validated) network request into the access mode enforced by the
+/// terminal sandbox.
+fn network_request_to_sandbox_network_access(
+    network: &NetworkRequest,
+) -> acp_thread::SandboxNetworkAccess {
     match network {
-        NetworkRequest::None => http_proxy::Allowlist::empty(),
-        NetworkRequest::AnyHost => http_proxy::Allowlist::any(),
-        NetworkRequest::Hosts(hosts) => http_proxy::Allowlist::from_patterns(hosts.iter().cloned()),
+        NetworkRequest::None => acp_thread::SandboxNetworkAccess::None,
+        NetworkRequest::AnyHost => acp_thread::SandboxNetworkAccess::All,
+        NetworkRequest::Hosts(hosts) => acp_thread::SandboxNetworkAccess::Restricted(
+            http_proxy::Allowlist::from_patterns(hosts.iter().cloned()),
+        ),
     }
 }
 
@@ -2566,6 +2570,27 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.contains("127.0.0.1"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_network_request_to_sandbox_network_access_uses_explicit_unrestricted_variant() {
+        match network_request_to_sandbox_network_access(&NetworkRequest::None) {
+            acp_thread::SandboxNetworkAccess::None => {}
+            other => panic!("expected no network access, got {other:?}"),
+        }
+
+        match network_request_to_sandbox_network_access(&NetworkRequest::AnyHost) {
+            acp_thread::SandboxNetworkAccess::All => {}
+            other => panic!("expected unrestricted network access, got {other:?}"),
+        }
+
+        match network_request_to_sandbox_network_access(&host_request(&["github.com"])) {
+            acp_thread::SandboxNetworkAccess::Restricted(allowlist) => {
+                assert!(allowlist.allows("github.com"));
+                assert!(!allowlist.allows("example.com"));
+            }
+            other => panic!("expected restricted network access, got {other:?}"),
+        }
     }
 
     #[test]
