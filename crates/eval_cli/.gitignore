@@ -1,3 +1,4 @@
 **/jobs
 **/*.egg-info
 **/__pycache__
+uv.lock

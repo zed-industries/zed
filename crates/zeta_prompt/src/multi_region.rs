@@ -11,6 +11,7 @@ const MAX_NUDGE_LINES: usize = 5;
 pub const V0316_END_MARKER: &str = "<[end▁of▁sentence]>";
 pub const V0317_END_MARKER: &str = "<[end▁of▁sentence]>";
 pub const V0318_END_MARKER: &str = "<[end▁of▁sentence]>";
+pub const V0327_END_MARKER: &str = "<[end▁of▁sentence]>";
 
 pub fn marker_tag(number: usize) -> String {
     format!("{MARKER_TAG_PREFIX}{number}{MARKER_TAG_SUFFIX}")
@@ -141,6 +142,112 @@ pub fn compute_marker_offsets(editable_text: &str) -> Vec<usize> {
 
 pub fn compute_marker_offsets_v0318(editable_text: &str) -> Vec<usize> {
     compute_marker_offsets_with_limits(editable_text, V0318_MIN_BLOCK_LINES, V0318_MAX_BLOCK_LINES)
+}
+
+fn line_start_at_or_before(text: &str, offset: usize) -> usize {
+    let bounded_offset = text.floor_char_boundary(offset.min(text.len()));
+    text[..bounded_offset]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0)
+}
+
+fn line_end_at_or_after(text: &str, offset: usize) -> usize {
+    let bounded_offset = text.floor_char_boundary(offset.min(text.len()));
+    if bounded_offset >= text.len() {
+        return text.len();
+    }
+
+    text[bounded_offset..]
+        .find('\n')
+        .map(|index| bounded_offset + index + 1)
+        .unwrap_or(text.len())
+}
+
+fn grow_v0327_candidate_range(
+    text: &str,
+    cursor_offset: usize,
+    editable_token_limit: usize,
+) -> std::ops::Range<usize> {
+    if text.is_empty() {
+        return 0..0;
+    }
+
+    let byte_budget = editable_token_limit.saturating_mul(3).max(1);
+    let half_budget = byte_budget / 2;
+
+    let mut start = cursor_offset.saturating_sub(half_budget);
+    let mut end = start.saturating_add(byte_budget).min(text.len());
+
+    if end.saturating_sub(start) < byte_budget {
+        start = end.saturating_sub(byte_budget);
+    }
+
+    start = line_start_at_or_before(text, start);
+    end = line_end_at_or_after(text, end);
+
+    if start < end {
+        start..end
+    } else {
+        let line_start = line_start_at_or_before(text, cursor_offset);
+        let line_end = line_end_at_or_after(text, cursor_offset);
+        line_start..line_end.max(line_start)
+    }
+}
+
+fn trim_v0327_candidate_range_to_markers(
+    text: &str,
+    candidate_range: std::ops::Range<usize>,
+    cursor_offset: usize,
+) -> std::ops::Range<usize> {
+    let candidate_text = &text[candidate_range.clone()];
+    let marker_offsets = compute_marker_offsets_v0318(candidate_text);
+
+    if marker_offsets.len() <= 2 {
+        return candidate_range;
+    }
+
+    let candidate_cursor_offset = cursor_offset
+        .saturating_sub(candidate_range.start)
+        .min(candidate_text.len());
+    let first_internal_marker_index = if candidate_cursor_offset >= marker_offsets[1] {
+        1
+    } else {
+        0
+    };
+    let last_internal_marker_index = marker_offsets.len() - 2;
+    let last_marker_index = marker_offsets.len() - 1;
+    let end_marker_index = if candidate_cursor_offset <= marker_offsets[last_internal_marker_index]
+    {
+        last_internal_marker_index
+    } else {
+        last_marker_index
+    };
+
+    let trimmed_start = candidate_range.start + marker_offsets[first_internal_marker_index];
+    let trimmed_end = candidate_range.start + marker_offsets[end_marker_index];
+
+    if trimmed_start < trimmed_end {
+        trimmed_start..trimmed_end
+    } else {
+        let block_index = cursor_block_index(Some(candidate_cursor_offset), &marker_offsets);
+        let start = candidate_range.start + marker_offsets[block_index];
+        let end = candidate_range.start + marker_offsets[block_index + 1];
+        if start < end {
+            start..end
+        } else {
+            candidate_range
+        }
+    }
+}
+
+pub fn compute_v0327_editable_range(
+    text: &str,
+    cursor_offset: usize,
+    editable_token_limit: usize,
+) -> std::ops::Range<usize> {
+    let candidate_range = grow_v0327_candidate_range(text, cursor_offset, editable_token_limit);
+    trim_v0327_candidate_range_to_markers(text, candidate_range, cursor_offset)
 }
 
 /// Write the editable region content with marker tags, inserting the cursor
@@ -504,11 +611,10 @@ fn map_boundary_offset(
             .saturating_sub(span_common_prefix)
             .saturating_sub(span_common_suffix);
 
-        if old_changed_len == 0 {
-            new_changed_start
-        } else {
-            new_changed_start + ((old_rel - old_changed_start) * new_changed_len / old_changed_len)
-        }
+        new_changed_start
+            + ((old_rel - old_changed_start) * new_changed_len)
+                .checked_div(old_changed_len)
+                .unwrap_or(new_changed_len)
     }
 }
 
@@ -1111,6 +1217,32 @@ hhhhhhhhhh = 8;
     fn test_compute_marker_offsets_empty() {
         let offsets = compute_marker_offsets("");
         assert_eq!(offsets, vec![0, 0]);
+    }
+
+    #[test]
+    fn test_compute_v0327_editable_range_trims_to_marker_boundaries() {
+        let text = (0..80).map(|_| "x\n").collect::<String>();
+        let cursor_offset = text.find("x\nx\nx\nx\nx\n").expect("cursor anchor exists") + 40;
+
+        let candidate_range = grow_v0327_candidate_range(&text, cursor_offset, 20);
+        let editable_range = compute_v0327_editable_range(&text, cursor_offset, 20);
+        let marker_offsets = compute_marker_offsets_v0318(&text[candidate_range.clone()]);
+        let relative_start = editable_range.start - candidate_range.start;
+        let relative_end = editable_range.end - candidate_range.start;
+
+        assert!(
+            marker_offsets.len() > 2,
+            "expected interior markers: {marker_offsets:?}"
+        );
+        assert!(marker_offsets.contains(&relative_start));
+        assert!(marker_offsets.contains(&relative_end));
+        assert!(editable_range.start <= cursor_offset);
+        assert!(editable_range.end >= cursor_offset);
+        assert!(
+            editable_range.start > candidate_range.start
+                || editable_range.end < candidate_range.end,
+            "expected at least one side to trim from {candidate_range:?} down to {editable_range:?}"
+        );
     }
 
     #[test]

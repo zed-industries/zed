@@ -49,7 +49,7 @@ impl Render for Breadcrumbs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let element = h_flex()
             .id("breadcrumb-container")
-            .flex_grow()
+            .flex_grow_1()
             .h_8()
             .overflow_x_scroll()
             .text_ui(cx);

@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{App, Context, Entity, Window};
+use gpui::{App, Context, Entity, TaskExt, Window};
 use language::Language;
 use project::lsp_store::lsp_ext_command::SwitchSourceHeaderResult;
 use rpc::proto;

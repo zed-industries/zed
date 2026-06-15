@@ -15,7 +15,7 @@ use project::{
     project_settings::ProjectSettings,
 };
 use settings::{
-    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
+    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRule,
     SemanticTokenRules, Settings as _,
 };
 use text::BufferId;
@@ -142,7 +142,10 @@ impl Editor {
             );
         }
 
-        let Some((sema, project)) = self.semantics_provider.clone().zip(self.project.clone())
+        let Some((sema, project)) = self
+            .semantics_provider
+            .clone()
+            .zip(self.project.as_ref().map(|p| p.downgrade()))
         else {
             return;
         };
@@ -283,6 +286,9 @@ impl Editor {
                             .buffer(buffer_id)
                             .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
 
+                        let Some(project) = project.upgrade() else {
+                            return;
+                        };
                         editor.display_map.update(cx, |display_map, cx| {
                             project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
                                 let mut token_highlights = Vec::new();
@@ -295,13 +301,14 @@ impl Editor {
                                     ) else {
                                         continue;
                                     };
+                                    let theme = cx.theme().syntax();
                                     token_highlights.reserve(2 * server_tokens.len());
                                     token_highlights.extend(buffer_into_editor_highlights(
                                         &server_tokens,
                                         stylizer,
                                         &multi_buffer_snapshot,
                                         &mut interner,
-                                        cx,
+                                        theme,
                                     ));
                                 }
 
@@ -328,7 +335,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
     stylizer: &'a SemanticTokenStylizer,
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
-    cx: &'a App,
+    theme: &'a SyntaxTheme,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
     multi_buffer_snapshot
         .text_anchors_to_visible_anchors(
@@ -341,12 +348,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
         .zip(buffer_tokens)
         .filter_map(|((multi_buffer_start, multi_buffer_end), token)| {
             let range = multi_buffer_start?..multi_buffer_end?;
-            let style = convert_token(
-                stylizer,
-                cx.theme().syntax(),
-                token.token_type,
-                token.token_modifiers,
-            )?;
+            let style = convert_token(stylizer, theme, token.token_type, token.token_modifiers)?;
             let style = interner.intern(style);
             Some(SemanticTokenHighlight {
                 range,
@@ -365,27 +367,19 @@ fn convert_token(
     modifiers: u32,
 ) -> Option<HighlightStyle> {
     let rules = stylizer.rules_for_token(token_type)?;
-    let matching: Vec<_> = rules
-        .iter()
-        .filter(|rule| {
-            rule.token_modifiers
-                .iter()
-                .all(|m| stylizer.has_modifier(modifiers, m))
-        })
-        .collect();
-
-    if let Some(rule) = matching.last() {
-        if rule.no_style_defined() {
-            return None;
-        }
+    let filter = |rule: &&SemanticTokenRule| {
+        rule.token_modifiers
+            .iter()
+            .all(|m| stylizer.has_modifier(modifiers, m))
+    };
+    let last = rules.last()?;
+    if last.no_style_defined() && filter(&last) {
+        return None;
     }
 
     let mut highlight = HighlightStyle::default();
-    let mut empty = true;
 
-    for rule in matching {
-        empty = false;
-
+    for rule in rules.into_iter().filter(filter) {
         let style = rule
             .style
             .iter()
@@ -400,7 +394,7 @@ fn convert_token(
                 highlight.$highlight_field = rule
                     .$rule_field
                     .map($transform)
-                    .or_else(|| style.and_then(|s| s.$highlight_field))
+                    .or_else(|| style.as_ref().and_then(|s| s.$highlight_field))
                     .or(highlight.$highlight_field)
             };
         }
@@ -460,8 +454,7 @@ fn convert_token(
             },
         );
     }
-
-    if empty { None } else { Some(highlight) }
+    Some(highlight)
 }
 
 #[cfg(test)]

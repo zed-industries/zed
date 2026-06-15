@@ -1,55 +1,42 @@
 use crash_handler::{CrashEventResult, CrashHandler};
-use futures::future::BoxFuture;
 use log::info;
-use minidumper::{Client, LoopAction, MinidumpBinary, Server, SocketName};
+use minidumper::{LoopAction, MinidumpBinary, Server, SocketName};
 use parking_lot::Mutex;
-use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
-use std::mem;
+use std::{panic::Location, pin::Pin};
 
-#[cfg(not(target_os = "windows"))]
-use smol::process::Command;
 use system_specs::GpuSpecs;
 
-#[cfg(target_os = "macos")]
-use std::sync::atomic::AtomicU32;
 use std::{
     env,
     fs::{self, File},
-    io,
-    panic::{self, PanicHookInfo},
+    io, panic,
     path::{Path, PathBuf},
     process::{self},
     sync::{
-        Arc, OnceLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
 
-// set once the crash handler has initialized and the client has connected to it
-static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
-// set when the first minidump request is made to avoid generating duplicate crash reports
-pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
+pub use minidumper::Client;
+
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-static PENDING_CRASH_SERVER_MESSAGES: Mutex<Vec<CrashServerMessage>> = Mutex::new(Vec::new());
-
-#[cfg(target_os = "macos")]
-static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
-
-fn should_install_crash_handler() -> bool {
-    if let Ok(value) = env::var("ZED_GENERATE_MINIDUMPS") {
-        return value == "true" || value == "1";
-    }
-
-    if *RELEASE_CHANNEL == ReleaseChannel::Dev {
-        return false;
-    }
-
-    true
+/// Force a backtrace to be printed on panic.
+pub fn force_backtrace() {
+    let old_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        unsafe { env::set_var("RUST_BACKTRACE", "1") };
+        old_hook(info);
+        // prevent the macOS crash dialog from popping up
+        if cfg!(target_os = "macos") {
+            std::process::exit(1);
+        }
+    }));
 }
 
 /// Install crash signal handlers and spawn the crash-handler subprocess.
@@ -57,127 +44,125 @@ fn should_install_crash_handler() -> bool {
 /// The synchronous portion (signal handlers, panic hook) runs inline.
 /// The async keepalive task is passed to `spawn` so the caller decides
 /// which executor to schedule it on.
-pub fn init(crash_init: InitCrashHandler, spawn: impl FnOnce(BoxFuture<'static, ()>)) {
-    if !should_install_crash_handler() {
-        let old_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |info| {
-            unsafe { env::set_var("RUST_BACKTRACE", "1") };
-            old_hook(info);
-            // prevent the macOS crash dialog from popping up
-            if cfg!(target_os = "macos") {
-                std::process::exit(1);
-            }
-        }));
-        return;
-    }
-
-    panic::set_hook(Box::new(panic_hook));
-
-    let handler = CrashHandler::attach(unsafe {
-        crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
-            let Some(client) = CRASH_HANDLER.get() else {
-                return CrashEventResult::Handled(false);
-            };
-
-            // only request a minidump once
-            let res = if REQUESTED_MINIDUMP
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                #[cfg(target_os = "macos")]
-                suspend_all_other_threads();
-
-                // on macos this "ping" is needed to ensure that all our
-                // `client.send_message` calls have been processed before we trigger the
-                // minidump request.
-                client.ping().ok();
-                client.request_dump(crash_context).is_ok()
-            } else {
-                true
-            };
-            CrashEventResult::Handled(res)
-        })
-    })
-    .expect("failed to attach signal handler");
-
-    info!("crash signal handlers installed");
-
-    spawn(Box::pin(connect_and_keepalive(crash_init, handler)));
+pub fn init<F, S, C, P>(
+    crash_init: InitCrashHandler,
+    spawn: S,
+    socket_path: P,
+    wait_timer: C,
+) -> impl Future<Output = Arc<Client>> + use<F, C, S, P>
+where
+    F: Future<Output = ()> + Send + Sync + 'static,
+    C: (Fn(Duration) -> F) + Send + Sync + 'static,
+    S: FnOnce(Pin<Box<dyn Future<Output = ()> + Send + 'static>>),
+    P: FnOnce(u32) -> PathBuf,
+{
+    connect_and_keepalive(crash_init, socket_path, wait_timer, spawn)
 }
 
 /// Spawn the crash-handler subprocess, connect the IPC client, and run the
 /// keepalive ping loop. Called on a background executor by [`init`].
-async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandler) {
+fn connect_and_keepalive<F, C, S, P>(
+    crash_init: InitCrashHandler,
+    socket_path: P,
+    wait_timer: C,
+    spawn: S,
+) -> impl Future<Output = Arc<Client>> + use<F, C, S, P>
+where
+    F: Future<Output = ()> + Send + Sync + 'static,
+    C: (Fn(Duration) -> F) + Send + Sync + 'static,
+    S: FnOnce(Pin<Box<dyn Future<Output = ()> + Send + 'static>>),
+    P: FnOnce(u32) -> PathBuf,
+{
     let exe = env::current_exe().expect("unable to find ourselves");
-    let zed_pid = process::id();
-    let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
-    #[cfg(not(target_os = "windows"))]
-    let _crash_handler = Command::new(exe)
-        .arg("--crash-handler")
-        .arg(&socket_name)
-        .spawn()
-        .expect("unable to spawn server process");
-
-    #[cfg(target_os = "windows")]
-    spawn_crash_handler_windows(&exe, &socket_name);
-
+    let socket_path = socket_path(process::id());
+    let mut _crash_handler = spawn_crash_handler(&exe, &socket_path);
     info!("spawning crash handler process");
-    send_crash_server_message(CrashServerMessage::Init(crash_init));
+    async move {
+        let mut elapsed = Duration::ZERO;
+        let retry_frequency = Duration::from_millis(100);
+        let client = loop {
+            if let Ok(client) = Client::with_name(SocketName::Path(&socket_path)) {
+                info!("connected to crash handler process after {elapsed:?}");
+                break client;
+            }
+            elapsed += retry_frequency;
+            wait_timer(retry_frequency).await;
+        };
+        let client = Arc::new(client);
 
-    let mut elapsed = Duration::ZERO;
-    let retry_frequency = Duration::from_millis(100);
-    let mut maybe_client = None;
-    while maybe_client.is_none() {
-        if let Ok(client) = Client::with_name(SocketName::Path(&socket_name)) {
-            maybe_client = Some(client);
-            info!("connected to crash handler process after {elapsed:?}");
-            break;
-        }
-        elapsed += retry_frequency;
-        // Crash reporting is called outside of gpui in the remote server right now
-        #[allow(clippy::disallowed_methods)]
-        smol::Timer::after(retry_frequency).await;
-    }
-    let client = maybe_client.unwrap();
-    let client = Arc::new(client);
+        panic::set_hook({
+            let client = client.clone();
+            Box::new(move |payload| {
+                panic_hook(
+                    client.clone(),
+                    payload.payload_as_str().unwrap_or("Box<Any>"),
+                    payload.location(),
+                )
+            })
+        });
+        info!("panic handler registered");
+        let handler = CrashHandler::attach(unsafe {
+            let client = client.clone();
+            let handler = move |crash_context: &crash_handler::CrashContext| {
+                // set when the first minidump request is made to avoid generating duplicate crash reports
+                static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 
-    #[cfg(target_os = "linux")]
-    handler.set_ptracer(Some(_crash_handler.id()));
+                // only request a minidump once
+                let res = if REQUESTED_MINIDUMP
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    #[cfg(target_os = "macos")]
+                    macos::suspend_all_other_threads();
 
-    // Publishing the client to the OnceLock makes it visible to the signal
-    // handler callback installed earlier.
-    CRASH_HANDLER.set(client.clone()).ok();
-    let messages: Vec<_> = mem::take(PENDING_CRASH_SERVER_MESSAGES.lock().as_mut());
-    for message in messages.into_iter() {
-        send_crash_server_message(message);
-    }
-    // mem::forget so that the drop is not called
-    mem::forget(handler);
-    info!("crash handler registered");
+                    // on macos this "ping" is needed to ensure that all our
+                    // `client.send_message` calls have been processed before we trigger the
+                    // minidump request.
+                    client.ping().ok();
+                    let r = client.request_dump(crash_context);
+                    if let Err(e) = &r {
+                        eprintln!("failed to request dump: {:?}", e);
+                    }
+                    #[cfg(target_os = "macos")]
+                    macos::resume_all_other_threads();
+                    r.is_ok()
+                } else {
+                    true
+                };
+                CrashEventResult::Handled(res)
+            };
+            crash_handler::make_crash_event(handler)
+        })
+        .expect("failed to attach signal handler");
 
-    loop {
-        client.ping().ok();
-        // Crash reporting is called outside of gpui in the remote server right now
-        #[allow(clippy::disallowed_methods)]
-        smol::Timer::after(Duration::from_secs(10)).await;
-    }
-}
+        info!("crash signal handlers installed");
+        send_crash_server_message(&client, CrashServerMessage::Init(crash_init));
 
-#[cfg(target_os = "macos")]
-unsafe fn suspend_all_other_threads() {
-    let task = unsafe { mach2::traps::current_task() };
-    let mut threads: mach2::mach_types::thread_act_array_t = std::ptr::null_mut();
-    let mut count = 0;
-    unsafe {
-        mach2::task::task_threads(task, &raw mut threads, &raw mut count);
-    }
-    let current = unsafe { mach2::mach_init::mach_thread_self() };
-    let panic_thread = PANIC_THREAD_ID.load(Ordering::SeqCst);
-    for i in 0..count {
-        let t = unsafe { *threads.add(i as usize) };
-        if t != current && t != panic_thread {
-            unsafe { mach2::thread_act::thread_suspend(t) };
-        }
+        #[cfg(target_os = "linux")]
+        handler.set_ptracer(Some(_crash_handler.id()));
+
+        info!("crash handler registered");
+        spawn(Box::pin({
+            let client = client.clone();
+            async move {
+                let _handler = { handler };
+                loop {
+                    if let Err(e) = client.ping() {
+                        #[cfg(not(target_os = "windows"))]
+                        log::error!(
+                            "ping failed: {:?}, process exit status: {:?}",
+                            e,
+                            _crash_handler.try_status()
+                        );
+                        #[cfg(target_os = "windows")]
+                        log::error!("ping failed: {:?}", e,);
+                        break;
+                    };
+                    wait_timer(Duration::from_secs(10)).await;
+                }
+            }
+        }));
+        client
     }
 }
 
@@ -187,6 +172,7 @@ pub struct CrashServer {
     active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
     user_info: Mutex<Option<UserInfo>>,
     has_connection: Arc<AtomicBool>,
+    logs_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -220,11 +206,7 @@ pub struct UserInfo {
     pub is_staff: Option<bool>,
 }
 
-fn send_crash_server_message(message: CrashServerMessage) {
-    let Some(crash_server) = CRASH_HANDLER.get() else {
-        PENDING_CRASH_SERVER_MESSAGES.lock().push(message);
-        return;
-    };
+fn send_crash_server_message(crash_client: &Arc<Client>, message: CrashServerMessage) {
     let data = match serde_json::to_vec(&message) {
         Ok(data) => data,
         Err(err) => {
@@ -233,17 +215,17 @@ fn send_crash_server_message(message: CrashServerMessage) {
         }
     };
 
-    if let Err(err) = crash_server.send_message(0, data) {
+    if let Err(err) = crash_client.send_message(0, data) {
         log::warn!("Failed to send data to crash server {:?}", err);
     }
 }
 
-pub fn set_gpu_info(specs: GpuSpecs) {
-    send_crash_server_message(CrashServerMessage::GPUInfo(specs));
+pub fn set_gpu_info(crash_client: &Arc<Client>, specs: GpuSpecs) {
+    send_crash_server_message(crash_client, CrashServerMessage::GPUInfo(specs));
 }
 
-pub fn set_user_info(info: UserInfo) {
-    send_crash_server_message(CrashServerMessage::UserInfo(info));
+pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
+    send_crash_server_message(crash_client, CrashServerMessage::UserInfo(info));
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -256,7 +238,8 @@ enum CrashServerMessage {
 
 impl minidumper::ServerHandler for CrashServer {
     fn create_minidump_file(&self) -> Result<(File, PathBuf), io::Error> {
-        let dump_path = paths::logs_dir()
+        let dump_path = self
+            .logs_dir
             .join(
                 &self
                     .initialization_params
@@ -312,7 +295,8 @@ impl minidumper::ServerHandler for CrashServer {
             user_info: self.user_info.lock().clone(),
         };
 
-        let crash_data_path = paths::logs_dir()
+        let crash_data_path = self
+            .logs_dir
             .join(&crash_info.init.session_id)
             .with_extension("json");
 
@@ -376,52 +360,92 @@ fn strip_user_string_from_panic(message: &str) -> String {
     message.to_owned()
 }
 
-pub fn panic_hook(info: &PanicHookInfo) {
-    let message = strip_user_string_from_panic(info.payload_as_str().unwrap_or("Box<Any>"));
+pub fn panic_hook(crash_client: Arc<Client>, message: &str, location: Option<&Location>) {
+    let message = strip_user_string_from_panic(message);
 
-    let span = info
-        .location()
+    let span = location
         .map(|loc| format!("{}:{}", loc.file(), loc.line()))
         .unwrap_or_default();
 
     let current_thread = std::thread::current();
     let thread_name = current_thread.name().unwrap_or("<unnamed>");
 
-    // wait 500ms for the crash handler process to start up
-    // if it's still not there just write panic info and no minidump
-    let retry_frequency = Duration::from_millis(100);
-    for _ in 0..5 {
-        if CRASH_HANDLER.get().is_some() {
-            break;
-        }
-        thread::sleep(retry_frequency);
-    }
-    let location = info
-        .location()
-        .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+    let location = location.map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
     log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
 
-    send_crash_server_message(CrashServerMessage::Panic(CrashPanic { message, span }));
+    send_crash_server_message(
+        &crash_client,
+        CrashServerMessage::Panic(CrashPanic { message, span }),
+    );
     log::error!("triggering a crash to generate a minidump...");
 
     #[cfg(target_os = "macos")]
-    PANIC_THREAD_ID.store(
-        unsafe { mach2::mach_init::mach_thread_self() },
-        Ordering::SeqCst,
-    );
-
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "windows")] {
-            // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
-            CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
-        } else {
-            std::process::abort();
-        }
+    macos::set_panic_thread_id();
+    #[cfg(target_os = "windows")]
+    {
+        // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+        CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::abort();
     }
 }
 
+#[cfg(target_os = "macos")]
+mod macos {
+    static PANIC_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    pub(super) fn set_panic_thread_id() {
+        PANIC_THREAD_ID.store(
+            unsafe { mach2::mach_init::mach_thread_self() },
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+
+    pub(super) unsafe fn suspend_all_other_threads() {
+        let task = unsafe { mach2::traps::current_task() };
+        let mut threads: mach2::mach_types::thread_act_array_t = std::ptr::null_mut();
+        let mut count = 0;
+        unsafe {
+            mach2::task::task_threads(task, &raw mut threads, &raw mut count);
+        }
+        let current = unsafe { mach2::mach_init::mach_thread_self() };
+        for i in 0..count {
+            let t = unsafe { *threads.add(i as usize) };
+            if t != current {
+                unsafe { mach2::thread_act::thread_suspend(t) };
+            }
+        }
+    }
+
+    pub(super) unsafe fn resume_all_other_threads() {
+        let task = unsafe { mach2::traps::current_task() };
+        let mut threads: mach2::mach_types::thread_act_array_t = std::ptr::null_mut();
+        let mut count = 0;
+        unsafe {
+            mach2::task::task_threads(task, &raw mut threads, &raw mut count);
+        }
+        let current = unsafe { mach2::mach_init::mach_thread_self() };
+        for i in 0..count {
+            let t = unsafe { *threads.add(i as usize) };
+            if t != current {
+                unsafe { mach2::thread_act::thread_resume(t) };
+            }
+        }
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn spawn_crash_handler(exe: &Path, socket_name: &Path) -> async_process::Child {
+    async_process::Command::new(exe)
+        .arg("--crash-handler")
+        .arg(&socket_name)
+        .spawn()
+        .expect("unable to spawn server process")
+}
+
 #[cfg(target_os = "windows")]
-fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
+fn spawn_crash_handler(exe: &Path, socket_name: &Path) {
     use std::ffi::OsStr;
     use std::iter::once;
     use std::os::windows::ffi::OsStrExt;
@@ -471,7 +495,7 @@ fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
     }
 }
 
-pub fn crash_server(socket: &Path) {
+pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
     let Ok(mut server) = Server::with_name(SocketName::Path(socket)) else {
         log::info!("Couldn't create socket, there may already be a running crash server");
         return;
@@ -502,6 +526,7 @@ pub fn crash_server(socket: &Path) {
                 user_info: Mutex::default(),
                 has_connection,
                 active_gpu: Mutex::default(),
+                logs_dir,
             }),
             &shutdown,
             Some(CRASH_HANDLER_PING_TIMEOUT),

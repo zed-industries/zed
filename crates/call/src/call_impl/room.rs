@@ -14,7 +14,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
-    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
+    ScreenCaptureSource, ScreenCaptureStream, Task, TaskExt, Timeout, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -66,6 +66,8 @@ pub enum Event {
     RoomLeft {
         channel_id: Option<ChannelId>,
     },
+    LocalScreenShareStarted,
+    LocalScreenShareStopped,
 }
 
 pub struct Room {
@@ -91,6 +93,7 @@ pub struct Room {
     room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
+    livekit_connection_task: Option<Task<()>>,
     created: Instant,
 }
 
@@ -121,7 +124,7 @@ impl Room {
         user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        spawn_room_connection(livekit_connection_info, cx);
+        let livekit_connection_task = spawn_room_connection(livekit_connection_info, cx);
 
         let maintain_connection = cx.spawn({
             let client = client.clone();
@@ -162,6 +165,7 @@ impl Room {
             user_store,
             follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
+            livekit_connection_task,
             room_update_completed_tx,
             room_update_completed_rx,
             created: cx.background_executor().now(),
@@ -358,6 +362,7 @@ impl Room {
         self.diagnostics.take();
         self.pending_room_update.take();
         self.maintain_connection.take();
+        self.livekit_connection_task.take();
     }
 
     fn emit_video_track_unsubscribed_events(&self, cx: &mut Context<Self>) {
@@ -398,7 +403,10 @@ impl Room {
 
                             let Some(this) = this.upgrade() else { break };
                             let task = this.update(cx, |this, cx| this.rejoin(cx));
-                            if task.await.log_err().is_some() {
+                            if let Some(live_kit_connection_info) = task.await.log_err() {
+                                this.update(cx, |this, cx| {
+                                    this.ensure_livekit_connection(live_kit_connection_info, cx);
+                                });
                                 return true;
                             } else {
                                 remaining_attempts -= 1;
@@ -445,7 +453,10 @@ impl Room {
         anyhow::bail!("can't reconnect to room: client failed to re-establish connection");
     }
 
-    fn rejoin(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn rejoin(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<proto::LiveKitConnectionInfo>>> {
         let mut projects = HashMap::default();
         let mut reshared_projects = Vec::new();
         let mut rejoined_projects = Vec::new();
@@ -505,7 +516,8 @@ impl Room {
         cx.spawn(async move |this, cx| {
             let response = response.await?;
             let message_id = response.message_id;
-            let response = response.payload;
+            let mut response = response.payload;
+            let live_kit_connection_info = response.live_kit_connection_info.take();
             let room_proto = response.room.context("invalid room")?;
             this.update(cx, |this, cx| {
                 this.status = RoomStatus::Online;
@@ -528,8 +540,20 @@ impl Room {
                 }
 
                 anyhow::Ok(())
-            })?
+            })??;
+            Ok(live_kit_connection_info)
         })
+    }
+
+    fn ensure_livekit_connection(
+        &mut self,
+        connection_info: Option<proto::LiveKitConnectionInfo>,
+        cx: &mut Context<Self>,
+    ) {
+        if connection_info.is_none() || self.is_connected(cx) {
+            return;
+        }
+        self.livekit_connection_task = spawn_room_connection(connection_info, cx);
     }
 
     pub fn id(&self) -> u64 {
@@ -678,7 +702,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(participant.user.id);
+                    .0 = Some(participant.user.legacy_id);
             }
         }
 
@@ -687,7 +711,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(user.id);
+                    .0 = Some(user.legacy_id);
             }
         }
 
@@ -893,14 +917,15 @@ impl Room {
                             if this.created.elapsed() > Duration::from_millis(100) {
                                 if let proto::ChannelRole::Guest = role {
                                     Audio::play_sound(Sound::GuestJoined, cx);
-                                } else {
+                                // Do not play join sound in large meetings
+                                } else if this.remote_participants().len() < 10 {
                                     Audio::play_sound(Sound::Joined, cx);
                                 }
                             }
 
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
-                                    .get(&ParticipantIdentity(user.id.to_string()))
+                                    .get(&ParticipantIdentity(user.legacy_id.to_string()))
                             {
                                 for publication in
                                     livekit_participant.track_publications().into_values()
@@ -933,6 +958,11 @@ impl Room {
                             for sid in participant.video_tracks.keys() {
                                 cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
                             }
+                            if !participant.video_tracks.is_empty() {
+                                cx.emit(Event::RemoteVideoTracksChanged {
+                                    participant_id: participant.peer_id,
+                                });
+                            }
                             false
                         }
                     });
@@ -941,7 +971,7 @@ impl Room {
                 if let Some(pending_participants) = pending_participants.log_err() {
                     this.pending_participants = pending_participants;
                     for participant in &this.pending_participants {
-                        this.participant_user_ids.insert(participant.id);
+                        this.participant_user_ids.insert(participant.legacy_id);
                     }
                 }
 
@@ -1146,13 +1176,16 @@ impl Room {
         #[cfg(any(test, feature = "test-support"))]
         {
             for participant in self.remote_participants.values() {
-                assert!(self.participant_user_ids.contains(&participant.user.id));
-                assert_ne!(participant.user.id, self.client.user_id().unwrap());
+                assert!(
+                    self.participant_user_ids
+                        .contains(&participant.user.legacy_id)
+                );
+                assert_ne!(participant.user.legacy_id, self.client.user_id().unwrap());
             }
 
             for participant in &self.pending_participants {
-                assert!(self.participant_user_ids.contains(&participant.id));
-                assert_ne!(participant.id, self.client.user_id().unwrap());
+                assert!(self.participant_user_ids.contains(&participant.legacy_id));
+                assert_ne!(participant.legacy_id, self.client.user_id().unwrap());
             }
 
             assert_eq!(
@@ -1513,6 +1546,7 @@ impl Room {
                                 track_publication: publication,
                                 _stream: stream,
                             };
+                            cx.emit(Event::LocalScreenShareStarted);
                             cx.notify();
                         }
 
@@ -1674,6 +1708,7 @@ impl Room {
                     let sid = track_publication.sid();
                     cx.spawn(async move |_, cx| local_participant.unpublish_track(sid, cx).await)
                         .detach_and_log_err(cx);
+                    cx.emit(Event::LocalScreenShareStopped);
                     cx.notify();
                 }
 
@@ -1741,60 +1776,104 @@ impl Room {
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
     cx: &mut Context<Room>,
-) {
-    if let Some(connection_info) = livekit_connection_info {
-        cx.spawn(async move |this, cx| {
-            let (room, mut events) =
-                livekit::Room::connect(connection_info.server_url, connection_info.token, cx)
-                    .await?;
-
-            let weak_room = this.clone();
-            this.update(cx, |this, cx| {
-                let _handle_updates = cx.spawn(async move |this, cx| {
-                    while let Some(event) = events.next().await {
-                        if this
-                            .update(cx, |this, cx| {
-                                this.livekit_room_updated(event, cx).warn_on_err();
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                });
-
-                let muted_by_user = Room::mute_on_join(cx);
-                this.live_kit = Some(LiveKitRoom {
-                    room: Rc::new(room),
-                    screen_track: LocalTrack::None,
-                    microphone_track: LocalTrack::None,
-                    input_lag_us: None,
-                    next_publish_id: 0,
-                    muted_by_user,
-                    deafened: false,
-                    speaking: false,
-                    _handle_updates,
-                });
-                this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
-
-                // Always open the microphone track on join, even when
-                // `muted_by_user` is set. Note that the microphone will still
-                // be muted, as it is still gated in `share_microphone` by
-                // `muted_by_user`. For users that have `mute_on_join` enabled,
-                // this moves the Bluetooth profile switch (A2DP -> HFP) (which
-                // can cause 1-2 seconds of audio silence on some Bluetooth
-                // headphones) from first unmute to channel join, where
-                // instability is expected.
-                if this.can_use_microphone() {
-                    this.share_microphone(cx)
-                } else {
-                    Task::ready(Ok(()))
-                }
-            })?
+) -> Option<Task<()>> {
+    let mut connection_info = livekit_connection_info?;
+    Some(cx.spawn(async move |this, cx| {
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            match livekit::Room::connect(
+                connection_info.server_url.clone(),
+                connection_info.token.clone(),
+                cx,
+            )
             .await
-        })
-        .detach_and_log_err(cx);
-    }
+            {
+                Ok((room, mut events)) => {
+                    let weak_room = this.clone();
+                    let Ok(share_microphone) = this.update(cx, |this, cx| {
+                        let _handle_updates = cx.spawn(async move |this, cx| {
+                            while let Some(event) = events.next().await {
+                                if this
+                                    .update(cx, |this, cx| {
+                                        this.livekit_room_updated(event, cx).warn_on_err();
+                                    })
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        });
+
+                        let muted_by_user = Room::mute_on_join(cx);
+                        this.live_kit = Some(LiveKitRoom {
+                            room: Rc::new(room),
+                            screen_track: LocalTrack::None,
+                            microphone_track: LocalTrack::None,
+                            input_lag_us: None,
+                            next_publish_id: 0,
+                            muted_by_user,
+                            deafened: false,
+                            speaking: false,
+                            _handle_updates,
+                        });
+                        this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
+                        cx.notify();
+
+                        // Always open the microphone track on join, even when
+                        // `muted_by_user` is set. Note that the microphone will still
+                        // be muted, as it is still gated in `share_microphone` by
+                        // `muted_by_user`. For users that have `mute_on_join` enabled,
+                        // this moves the Bluetooth profile switch (A2DP -> HFP) (which
+                        // can cause 1-2 seconds of audio silence on some Bluetooth
+                        // headphones) from first unmute to channel join, where
+                        // instability is expected.
+                        if this.can_use_microphone() {
+                            this.share_microphone(cx)
+                        } else {
+                            Task::ready(Ok(()))
+                        }
+                    }) else {
+                        return;
+                    };
+                    share_microphone.await.log_err();
+                    return;
+                }
+                Err(error) => {
+                    log::error!("failed to connect to LiveKit room: {error:#}");
+                }
+            }
+
+            cx.background_executor().timer(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(30));
+
+            // The token we were given may no longer be valid: LiveKit revokes
+            // it when this user's stale connection is cleaned up around the
+            // time the token is issued (e.g. when rejoining a channel right
+            // after a crash). Rejoin the room to obtain fresh connection info
+            // before trying again.
+            let Ok(rejoin) = this.update(cx, |this, cx| this.rejoin(cx)) else {
+                return;
+            };
+            match rejoin.await {
+                Ok(Some(new_connection_info)) => {
+                    log::info!(
+                        "refreshed LiveKit connection info (token changed: {})",
+                        new_connection_info.token != connection_info.token
+                    );
+                    connection_info = new_connection_info;
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "server returned no fresh LiveKit connection info; \
+                         retrying with the existing token"
+                    );
+                }
+                Err(error) => {
+                    log::error!("failed to refresh LiveKit connection info: {error:#}");
+                }
+            }
+        }
+    }))
 }
 
 struct LiveKitRoom {

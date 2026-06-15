@@ -1094,6 +1094,15 @@ impl InlaySnapshot {
         }
     }
 
+    pub fn inlay_bias_at_point(&self, point: InlayPoint) -> Option<Bias> {
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
+        cursor.seek(&point, Bias::Left);
+        match cursor.item() {
+            Some(Transform::Inlay(inlay)) => Some(inlay.position.bias()),
+            _ => None,
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn text_summary(&self) -> MBTextSummary {
         self.transforms.summary().output

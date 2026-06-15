@@ -12,9 +12,11 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
-use crate::ProjectGroupKey;
 use language::{Toolchain, ToolchainScope};
-use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
+use project::{
+    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
+    debugger::breakpoint_store::SourceBreakpoint,
+};
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -66,8 +68,6 @@ pub struct SerializedProjectGroup {
     pub(crate) location: SerializedWorkspaceLocation,
     #[serde(default = "default_expanded")]
     pub expanded: bool,
-    #[serde(default)]
-    pub visible_thread_count: Option<usize>,
 }
 
 fn default_expanded() -> bool {
@@ -75,11 +75,7 @@ fn default_expanded() -> bool {
 }
 
 impl SerializedProjectGroup {
-    pub fn from_group(
-        key: &ProjectGroupKey,
-        expanded: bool,
-        visible_thread_count: Option<usize>,
-    ) -> Self {
+    pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
         Self {
             path_list: key.path_list().serialize(),
             location: match key.host() {
@@ -87,7 +83,6 @@ impl SerializedProjectGroup {
                 None => SerializedWorkspaceLocation::Local,
             },
             expanded,
-            visible_thread_count,
         }
     }
 
@@ -100,7 +95,6 @@ impl SerializedProjectGroup {
         SerializedProjectGroupState {
             key: ProjectGroupKey::new(host, path_list),
             expanded: self.expanded,
-            visible_thread_count: self.visible_thread_count,
         }
     }
 }
@@ -136,12 +130,20 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) paths: PathList,
+    /// The workspace's main worktree paths at the time this workspace was saved.
+    ///
+    /// These paths are used for grouping, deduping, and display in recent-workspace
+    /// UIs. They are not authoritative for reopening the workspace, because they may
+    /// become stale if the repository layout changes after the save. Use `paths` when
+    /// reopening the workspace.
+    pub(crate) identity_paths: Option<PathList>,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,

@@ -15,7 +15,7 @@ use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
-use collections::{HashMap, HashSet, IndexMap};
+use collections::{HashMap, HashSet, IndexMap, TypeIdHashMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -38,7 +38,7 @@ use futures::{AsyncBufReadExt as _, SinkExt, StreamExt, TryStreamExt};
 use futures::{FutureExt, future::Shared};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Task, WeakEntity,
+    Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use node_runtime::NodeRuntime;
@@ -48,7 +48,7 @@ use serde_json::Value;
 use smol::net::{TcpListener, TcpStream};
 use std::any::TypeId;
 use std::collections::{BTreeMap, VecDeque};
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -704,7 +704,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     watchers: HashMap<SharedString, Watcher>,
     is_session_terminated: bool,
-    requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
+    requests: TypeIdHashMap<HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
@@ -876,7 +876,7 @@ impl Session {
                 watchers: HashMap::default(),
                 output_token: OutputToken(0),
                 output: circular_buffer::CircularBuffer::boxed(),
-                requests: HashMap::default(),
+                requests: Default::default(),
                 background_tasks: Vec::default(),
                 restart_task: None,
                 is_session_terminated: false,
@@ -2901,7 +2901,7 @@ impl Session {
                 );
                 None
             } else {
-                let port = TcpTransport::unused_port(Ipv4Addr::LOCALHOST)
+                let port = TcpTransport::unused_port(IpAddr::V4(Ipv4Addr::LOCALHOST))
                     .await
                     .context("getting port for DAP")?;
                 request
@@ -3145,7 +3145,7 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
-        node.npm_install_packages(temp_dir.path(), &[(PACKAGE_NAME, "latest")])
+        node.npm_install_latest_packages(temp_dir.path(), &[PACKAGE_NAME])
             .await
             .context("installing latest companion package")?;
         let version = node

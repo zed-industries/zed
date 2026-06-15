@@ -594,7 +594,7 @@ pub fn dismiss_connection_modal(workspace: &Entity<Workspace>, cx: &mut gpui::As
 /// Creates a [`RemoteClient`] by reusing an existing connection from the
 /// global pool. No interactive UI is shown. This should only be called
 /// when [`remote::has_active_connection`] returns `true`.
-fn connect_reusing_pool(
+pub fn connect_reusing_pool(
     connection_options: RemoteConnectionOptions,
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {

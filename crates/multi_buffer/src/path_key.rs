@@ -2,7 +2,7 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferEditSource, BufferSnapshot};
 use rope::Point;
 use sum_tree::{Dimensions, SumTree};
 use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
@@ -26,14 +26,14 @@ impl PathKey {
     pub fn min() -> Self {
         Self {
             sort_prefix: None,
-            path: RelPath::empty().into_arc(),
+            path: RelPath::empty_arc(),
         }
     }
 
     pub fn sorted(sort_prefix: u64) -> Self {
         Self {
             sort_prefix: Some(sort_prefix),
-            path: RelPath::empty().into_arc(),
+            path: RelPath::empty_arc(),
         }
     }
     pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
@@ -58,12 +58,6 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
-        let snapshot = self.snapshot(cx);
-        let excerpt = snapshot.excerpts_for_path(path).next()?;
-        self.buffer(excerpt.context.start.buffer_id)
-    }
-
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let snapshot = self.snapshot(cx);
         let excerpt = snapshot.excerpts_for_path(path).next()?;
@@ -253,8 +247,8 @@ impl MultiBuffer {
 
         for (path_index, excerpt_anchors) in &buffers {
             let path = snapshot
-                .path_keys_by_index
-                .get(&path_index)
+                .path_keys
+                .get_index(path_index.0 as usize)
                 .expect("anchor from wrong multibuffer");
 
             let mut excerpt_anchors = excerpt_anchors.peekable();
@@ -317,7 +311,7 @@ impl MultiBuffer {
                 cursor.next();
             }
 
-            ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+            ranges.sort_by_key(|r| r.context.start);
 
             self.set_excerpt_ranges_for_path(path.clone(), buffer, buffer_snapshot, ranges, cx);
         }
@@ -353,18 +347,15 @@ impl MultiBuffer {
     pub(crate) fn get_or_create_path_key_index(&mut self, path_key: &PathKey) -> PathKeyIndex {
         let mut snapshot = self.snapshot.borrow_mut();
 
-        if let Some(&existing) = snapshot.indices_by_path_key.get(path_key) {
-            return existing;
+        if let Some(existing) = snapshot.path_keys.get_index_of(path_key) {
+            return PathKeyIndex(existing as u64);
         }
 
-        let index = snapshot
-            .path_keys_by_index
-            .last()
-            .map(|(index, _)| PathKeyIndex(index.0 + 1))
-            .unwrap_or(PathKeyIndex(0));
-        snapshot.path_keys_by_index.insert(index, path_key.clone());
-        snapshot.indices_by_path_key.insert(path_key.clone(), index);
-        index
+        PathKeyIndex(
+            Arc::make_mut(&mut snapshot.path_keys)
+                .insert_full(path_key.clone())
+                .0 as u64,
+        )
     }
 
     pub fn update_path_excerpts(
@@ -608,18 +599,17 @@ impl MultiBuffer {
         );
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
+            cx.emit(Event::Edited {
+                edited_buffer: None,
+                source: BufferEditSource::User,
+            });
+            cx.emit(Event::BufferRangesUpdated {
+                buffer,
+                path_key: path_key.clone(),
+                ranges: new_ranges,
+            });
+            cx.notify();
         }
-
-        cx.emit(Event::Edited {
-            edited_buffer: None,
-            is_local: true,
-        });
-        cx.emit(Event::BufferRangesUpdated {
-            buffer,
-            path_key: path_key.clone(),
-            ranges: new_ranges,
-        });
-        cx.notify();
 
         added_new_excerpt
     }
@@ -696,7 +686,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
-            is_local: true,
+            source: BufferEditSource::User,
         });
         cx.notify();
     }

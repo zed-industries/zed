@@ -1,5 +1,8 @@
 -- This file is auto-generated. Do not modify it by hand.
 -- To regenerate, run `cargo xtask db dump-schema app --collab` from the Cloud repository.
+--
+-- WARNING: If you are modifying this file you MUST open a PR to the Cloud repository prior to merging any changes.
+-- If you are not Zed staff you MUST coordinate with a staff member to apply the schema migrations before this PR is merged.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
@@ -224,7 +227,8 @@ CREATE TABLE public.language_servers (
     id bigint NOT NULL,
     name character varying NOT NULL,
     capabilities text NOT NULL,
-    worktree_id bigint
+    worktree_id bigint,
+    language_name character varying
 );
 
 CREATE TABLE public.notification_kinds (
@@ -308,7 +312,9 @@ CREATE TABLE public.project_repositories (
     merge_message character varying,
     remote_upstream_url character varying,
     remote_origin_url character varying,
-    linked_worktrees text
+    linked_worktrees text,
+    repository_dir_abs_path character varying,
+    common_dir_abs_path character varying
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -333,7 +339,7 @@ CREATE TABLE public.projects (
     host_connection_id integer,
     host_connection_server_id integer,
     windows_paths boolean DEFAULT false,
-    features text NOT NULL DEFAULT ''
+    features text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.projects_id_seq
@@ -415,15 +421,12 @@ CREATE TABLE public.shared_threads (
 
 CREATE TABLE public.users (
     id integer NOT NULL,
-    github_login character varying,
     admin boolean NOT NULL,
     email_address character varying(255) DEFAULT NULL::character varying,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
-    github_user_id integer NOT NULL,
     metrics_id uuid DEFAULT gen_random_uuid() NOT NULL,
     accepted_tos_at timestamp without time zone,
-    github_user_created_at timestamp without time zone,
     custom_llm_monthly_allowance_in_cents integer,
     name text
 );
@@ -444,7 +447,8 @@ CREATE TABLE public.worktree_diagnostic_summaries (
     path character varying NOT NULL,
     language_server_id bigint NOT NULL,
     error_count integer NOT NULL,
-    warning_count integer NOT NULL
+    warning_count integer NOT NULL,
+    info_count integer DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE public.worktree_entries (
@@ -694,8 +698,6 @@ CREATE INDEX index_settings_files_on_project_id ON public.worktree_settings_file
 
 CREATE INDEX index_settings_files_on_project_id_and_wt_id ON public.worktree_settings_files USING btree (project_id, worktree_id);
 
-CREATE UNIQUE INDEX index_users_github_login ON public.users USING btree (github_login);
-
 CREATE INDEX index_users_on_email_address ON public.users USING btree (email_address);
 
 CREATE INDEX index_worktree_diagnostic_summaries_on_project_id ON public.worktree_diagnostic_summaries USING btree (project_id);
@@ -710,13 +712,9 @@ CREATE INDEX index_worktrees_on_project_id ON public.worktrees USING btree (proj
 
 CREATE INDEX trigram_index_extensions_name ON public.extensions USING gin (name public.gin_trgm_ops);
 
-CREATE INDEX trigram_index_users_on_github_login ON public.users USING gin (github_login public.gin_trgm_ops);
-
 CREATE INDEX trigram_index_users_on_name ON public.users USING gin (name public.gin_trgm_ops);
 
 CREATE UNIQUE INDEX uix_channels_parent_path_name ON public.channels USING btree (parent_path, name) WHERE ((parent_path IS NOT NULL) AND (parent_path <> ''::text));
-
-CREATE UNIQUE INDEX uix_users_on_github_user_id ON public.users USING btree (github_user_id);
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;

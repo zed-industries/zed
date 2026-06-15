@@ -930,23 +930,11 @@ async fn install_prettier_packages(
     plugins_to_install: HashSet<Arc<str>>,
     node: NodeRuntime,
 ) -> anyhow::Result<()> {
-    let packages_to_versions = future::try_join_all(
-        plugins_to_install
-            .iter()
-            .chain(Some(&"prettier".into()))
-            .map(|package_name| async {
-                let returned_package_name = package_name.to_string();
-                let latest_version = node
-                    .npm_package_latest_version(package_name)
-                    .await
-                    .with_context(|| {
-                        format!("fetching latest npm version for package {returned_package_name}")
-                    })?;
-                anyhow::Ok((returned_package_name, latest_version.to_string()))
-            }),
-    )
-    .await
-    .context("fetching latest npm versions")?;
+    let packages_to_install = plugins_to_install
+        .iter()
+        .map(|package_name| package_name.to_string())
+        .chain(Some("prettier".to_string()))
+        .collect::<Vec<_>>();
 
     let default_prettier_dir = default_prettier_dir().as_path();
     match fs.metadata(default_prettier_dir).await.with_context(|| {
@@ -962,12 +950,12 @@ async fn install_prettier_packages(
             .with_context(|| format!("creating default prettier dir {default_prettier_dir:?}"))?,
     }
 
-    log::info!("Installing default prettier and plugins: {packages_to_versions:?}");
-    let borrowed_packages = packages_to_versions
+    log::info!("Installing default prettier and plugins: {packages_to_install:?}");
+    let borrowed_packages = packages_to_install
         .iter()
-        .map(|(package, version)| (package.as_str(), version.as_str()))
+        .map(|package_name| package_name.as_str())
         .collect::<Vec<_>>();
-    node.npm_install_packages(default_prettier_dir, &borrowed_packages)
+    node.npm_install_latest_packages(default_prettier_dir, &borrowed_packages)
         .await
         .context("fetching formatter packages")?;
     anyhow::Ok(())

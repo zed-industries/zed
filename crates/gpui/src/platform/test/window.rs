@@ -6,6 +6,7 @@ use crate::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
 use collections::HashMap;
+use gpui_util::ResultExt as _;
 use image::RgbaImage;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -20,6 +21,7 @@ pub(crate) struct TestWindowState {
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
+    pub(crate) document_path: Option<std::path::PathBuf>,
     platform: Weak<TestPlatform>,
     // TODO: Replace with `Rc`
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -75,6 +77,7 @@ impl TestWindow {
             renderer,
             title: Default::default(),
             edited: false,
+            document_path: None,
             should_close_handler: None,
             hit_test_window_control_callback: None,
             input_callback: None,
@@ -230,6 +233,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().edited = edited;
     }
 
+    fn set_document_path(&self, path: Option<&std::path::Path>) {
+        self.0.lock().document_path = path.map(|p| p.to_path_buf());
+    }
+
     fn show_character_palette(&self) {
         unimplemented!()
     }
@@ -285,7 +292,14 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(&self, _scene: &Scene) {}
+    fn draw(&self, scene: &Scene) {
+        let scale_factor = self.scale_factor();
+        let mut state = self.0.lock();
+        let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
+        if let Some(renderer) = &mut state.renderer {
+            renderer.render_scene(scene, device_size).warn_on_err();
+        }
+    }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
@@ -293,10 +307,10 @@ impl PlatformWindow for TestWindow {
 
     #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
+        let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
         let size = state.bounds.size;
         if let Some(renderer) = &mut state.renderer {
-            let scale_factor = 2.0;
             let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
             renderer.render_scene_to_image(scene, device_size)
         } else {
@@ -353,8 +367,8 @@ impl PlatformAtlas for TestAtlas {
         >,
     ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
-        if let Some(tile) = state.tiles.get(key) {
-            return Ok(Some(tile.clone()));
+        if let Some(&tile) = state.tiles.get(key) {
+            return Ok(Some(tile));
         }
         drop(state);
 
@@ -384,7 +398,7 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(Some(state.tiles[key].clone()))
+        Ok(Some(state.tiles[key]))
     }
 
     fn remove(&self, key: &AtlasKey) {

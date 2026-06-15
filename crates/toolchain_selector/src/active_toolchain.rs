@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use editor::Editor;
 use gpui::{
-    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
-    Task, WeakEntity, Window, div,
+    App, AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
+    Subscription, Task, WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain, ToolchainScope};
 use project::{Project, ProjectPath, Toolchains, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, LabelSize, SharedString, Tooltip};
 use util::{maybe, rel_path::RelPath};
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
 
 use crate::ToolchainSelector;
 
@@ -263,5 +263,11 @@ impl StatusItemView for ActiveToolchain {
             self.update_lister(editor, window, cx);
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // The toolchain selector only appears when the active buffer has a
+        // language with toolchain support.
+        None
     }
 }
