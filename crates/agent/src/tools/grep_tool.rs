@@ -555,6 +555,158 @@ mod tests {
         );
     }
 
+    // The grep tool streams a clickable `file://` ResourceLink and a tool-call
+    // location for every match so each result opens the file at the matched line
+    // in the agent panel. The model-facing text output stays link-free.
+    #[gpui::test]
+    async fn test_grep_results_are_clickable_file_links(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "alpha.txt": "the needle is in alpha",
+                },
+                "beta.txt": "the needle is in beta",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+        let output = task.await.expect("grep tool should succeed");
+        let update = events.expect_update_fields().await;
+
+        // Model-facing output is unchanged: matches are rendered as markdown, but
+        // the clickable `file://` URIs only live in the tool-call UI content.
+        assert!(output.contains("## Matches in"));
+        assert!(
+            !output.contains("file://"),
+            "model-facing output should not embed file:// links, got:\n{output}"
+        );
+
+        // Pull the ResourceLink blocks (the clickable links) out of the content.
+        let content = update.content.expect("expected content blocks");
+        let links = content
+            .iter()
+            .filter_map(|block| match block {
+                acp::ToolCallContent::Content(inner) => match &inner.content {
+                    acp::ContentBlock::ResourceLink(link) => Some(link),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(links.len(), 2, "expected one resource link per match");
+
+        let alpha_uri = format!("file://{}#L1", path!("/root/src/alpha.txt"));
+        assert!(
+            links.iter().any(|link| {
+                link.name.replace('\\', "/") == "root/src/alpha.txt#L1"
+                    && link.uri.replace('\\', "/") == alpha_uri.replace('\\', "/")
+            }),
+            "missing clickable link for alpha.txt, got: {links:?}"
+        );
+
+        let beta_uri = format!("file://{}#L1", path!("/root/beta.txt"));
+        assert!(
+            links.iter().any(|link| {
+                link.name.replace('\\', "/") == "root/beta.txt#L1"
+                    && link.uri.replace('\\', "/") == beta_uri.replace('\\', "/")
+            }),
+            "missing clickable link for beta.txt, got: {links:?}"
+        );
+
+        // Each match also reports a location so the panel can reveal the file at
+        // the matched (0-based) row.
+        let locations = update.locations.expect("expected locations");
+        assert_eq!(locations.len(), 2);
+        assert!(
+            locations.iter().any(|location| {
+                location.path.to_string_lossy().replace('\\', "/")
+                    == path!("/root/src/alpha.txt").replace('\\', "/")
+                    && location.line == Some(0)
+            }),
+            "missing location for alpha.txt, got: {locations:?}"
+        );
+        assert!(
+            locations.iter().any(|location| {
+                location.path.to_string_lossy().replace('\\', "/")
+                    == path!("/root/beta.txt").replace('\\', "/")
+                    && location.line == Some(0)
+            }),
+            "missing location for beta.txt, got: {locations:?}"
+        );
+    }
+
+    // Snippets that themselves contain a ``` code fence (e.g. matches inside
+    // markdown) must be wrapped in a longer fence so they don't break out of the
+    // surrounding code block when rendered in the agent panel.
+    #[gpui::test]
+    async fn test_grep_snippet_fence_outlives_inner_backticks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "doc.md": "before\n```\nNEEDLE inside fence\n```\nafter",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let input = GrepToolInput {
+            regex: "NEEDLE".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+        task.await.expect("grep tool should succeed");
+        let update = events.expect_update_fields().await;
+
+        // Find the snippet text block emitted alongside the clickable link.
+        let content = update.content.expect("expected content blocks");
+        let snippet = content
+            .iter()
+            .find_map(|block| match block {
+                acp::ToolCallContent::Content(inner) => match &inner.content {
+                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("expected a snippet text block in the tool-call content");
+
+        // The snippet embeds a three-backtick fence, so the wrapping fence must be
+        // at least four backticks long to avoid breaking out of the code block.
+        assert!(
+            snippet.contains("NEEDLE inside fence"),
+            "snippet should contain the matched line, got:\n{snippet}"
+        );
+        assert!(
+            snippet.starts_with("````\n"),
+            "snippet should be wrapped in a fence longer than the inner ```, got:\n{snippet}"
+        );
+    }
+
     /// Helper function to set up a syntax test environment
     async fn setup_syntax_test(cx: &mut TestAppContext) -> Entity<Project> {
         use unindent::Unindent;
