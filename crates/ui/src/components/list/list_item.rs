@@ -55,6 +55,7 @@ pub struct ListItem {
     height: Option<DefiniteLength>,
     aria_role: Option<Role>,
     aria_label: Option<SharedString>,
+    aria_active_descendant: bool,
 }
 
 impl ListItem {
@@ -88,6 +89,7 @@ impl ListItem {
             height: None,
             aria_role: None,
             aria_label: None,
+            aria_active_descendant: false,
         }
     }
 
@@ -104,6 +106,18 @@ impl ListItem {
     /// label exists.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Reports this item as the accessibility focus, overriding the element
+    /// that holds real keyboard focus. Requires [`Self::aria_role`] to be set.
+    ///
+    /// Use this on the selected item of a composite widget (e.g. a menu) that
+    /// keeps keyboard focus on its container. It is honored only while the
+    /// container actually holds focus, so it is safe to set unconditionally on
+    /// the selected item. See [`StatefulInteractiveElement::aria_active_descendant`].
+    pub fn aria_active_descendant(mut self) -> Self {
+        self.aria_active_descendant = true;
         self
     }
 
@@ -294,6 +308,9 @@ impl RenderOnce for ListItem {
                     // handler, so assistive technology reports one actionable
                     // node (e.g. a menu item) rather than an inert container.
                     .when_some(self.aria_role, |this, role| this.role(role))
+                    .when(self.aria_role.is_some() && self.aria_active_descendant, |this| {
+                        this.aria_active_descendant()
+                    })
                     .when_some(self.aria_label, |this, label| this.aria_label(label))
                     .when(self.aria_role.is_some(), |this| {
                         this.aria_selected(self.selected)

@@ -767,6 +767,11 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                     };
 
                                     h_flex()
+                                        .id((self.id.clone(), "editor"))
+                                        .role(Role::TextInput)
+                                        .when_some(self.aria_label.clone(), |this, label| {
+                                            this.aria_label(label)
+                                        })
                                         .flex_1()
                                         .h_full()
                                         .track_focus(&focus_handle)

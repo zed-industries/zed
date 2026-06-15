@@ -460,6 +460,13 @@ impl RenderOnce for Switch {
 
         let switch = div()
             .id((self.id.clone(), "switch"))
+            .role(Role::Switch)
+            .when_some(aria_label, |this, label| this.aria_label(label))
+            .aria_toggled(match self.toggle_state {
+                ToggleState::Selected => Toggled::True,
+                ToggleState::Indeterminate => Toggled::Mixed,
+                ToggleState::Unselected => Toggled::False,
+            })
             .p(px(1.0))
             .border_2()
             .border_color(cx.theme().colors().border_transparent)
@@ -509,13 +516,6 @@ impl RenderOnce for Switch {
 
         h_flex()
             .id(self.id)
-            .role(Role::Switch)
-            .when_some(aria_label, |this, label| this.aria_label(label))
-            .aria_toggled(match self.toggle_state {
-                ToggleState::Selected => Toggled::True,
-                ToggleState::Indeterminate => Toggled::Mixed,
-                ToggleState::Unselected => Toggled::False,
-            })
             .cursor_pointer()
             .gap(DynamicSpacing::Base06.rems(cx))
             .when(self.full_width, |this| this.w_full().justify_between())

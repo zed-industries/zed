@@ -1201,6 +1201,43 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Report this element as the focused node in the accessibility tree,
+    /// overriding the element that holds real keyboard focus — but only while
+    /// one of its ancestors actually holds focus.
+    ///
+    /// This implements the `aria-activedescendant` pattern for composite
+    /// widgets that keep keyboard focus on a container (e.g. a menu or
+    /// listbox) while a child is "selected": set this on the selected child so
+    /// assistive technology announces and highlights it as focused.
+    ///
+    /// The element must also have a [`role`][Self::role] (and an id) so it
+    /// produces an accessibility node. Unlike the web's container-side
+    /// `aria-activedescendant`, this is set on the descendant; GPUI honors it
+    /// only when a focused ancestor is present in the tree, so it is safe to
+    /// set unconditionally on the selected child — if the container isn't
+    /// focused, the claim is ignored.
+    fn aria_active_descendant(mut self) -> Self {
+        self.interactivity().report_active_descendant_focus = true;
+        self
+    }
+
+    /// Contribute synthetic accessibility nodes — nodes that don't correspond
+    /// to any element — as children of this element's a11y node. For example,
+    /// text runs describing an editor's text content.
+    ///
+    /// The closure is called after this element is prepainted, and only if it
+    /// contributed a node to the accessibility tree (i.e. it has an id and a
+    /// [`role`][StatefulInteractiveElement::role]).
+    ///
+    /// See [`Element::a11y_synthetic_children`] for details.
+    fn a11y_synthetic_children(
+        mut self,
+        f: impl FnOnce(&mut crate::A11ySubtreeBuilder) + 'static,
+    ) -> Self {
+        self.interactivity().a11y_synthetic_children = Some(Box::new(f));
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria_selected = Some(selected);
@@ -1643,6 +1680,16 @@ impl Element for Div {
         self.interactivity.write_a11y_info(node);
     }
 
+    fn a11y_synthetic_children(
+        &mut self,
+        _prepaint: &mut Self::PrepaintState,
+        builder: &mut crate::A11ySubtreeBuilder,
+    ) {
+        if let Some(f) = self.interactivity.a11y_synthetic_children.take() {
+            f(builder);
+        }
+    }
+
     #[stacksafe]
     fn request_layout(
         &mut self,
@@ -1882,6 +1929,8 @@ pub struct Interactivity {
 
     pub(crate) a11y_action_listeners:
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
+    pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
+    pub(crate) report_active_descendant_focus: bool,
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria_label: Option<SharedString>,
     pub(crate) aria_selected: Option<bool>,
@@ -2026,11 +2075,18 @@ impl Interactivity {
             if window.a11y.is_active() {
                 if let Some(global_id) = global_id {
                     let node_id = global_id.accesskit_node_id();
-                    window.a11y.focus_ids.insert(node_id, focus_handle.id);
-                    if focus_handle.is_focused(window) && window.a11y.nodes.has_node(node_id) {
-                        window.a11y.nodes.set_focus(node_id);
+                    window.a11y.set_focusable(node_id, focus_handle.id);
+                    if focus_handle.is_focused(window) {
+                        window.a11y.set_focus(node_id);
                     }
                 }
+            }
+        }
+
+        if self.report_active_descendant_focus && window.a11y.is_active() {
+            if let Some(global_id) = global_id {
+                window.a11y
+                    .set_active_descendant(global_id.accesskit_node_id());
             }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
@@ -3583,6 +3639,14 @@ where
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
         self.element.write_a11y_info(node);
+    }
+
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut crate::A11ySubtreeBuilder,
+    ) {
+        self.element.a11y_synthetic_children(prepaint, builder);
     }
 
     fn request_layout(

@@ -57,7 +57,7 @@ use zed_actions::{
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
     SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
-    theme_picker,
+    text_field_a11y_state, theme_picker,
 };
 use crate::pages::{render_input_audio_device_dropdown, render_output_audio_device_dropdown};
 
@@ -2838,11 +2838,18 @@ impl SettingsWindow {
     //     }
     // }
 
-    fn render_search(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render_search(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (a11y_value, a11y_text_runs) =
+            text_field_a11y_state("settings-ui-search", &self.search_bar, window, cx);
+
         h_flex()
             .id("settings-ui-search")
             .role(Role::SearchInput)
             .aria_label("Search Settings")
+            .aria_value(a11y_value)
+            .aria_placeholder("Search settings…")
+            .track_focus(&self.search_bar.focus_handle(cx))
+            .a11y_synthetic_children(a11y_text_runs)
             .py_1()
             .px_1p5()
             .mb_3()
