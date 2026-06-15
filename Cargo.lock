@@ -21839,6 +21839,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9d782e804c2f632e395708e99a94275910eb9100b2114651e04744e9b125006"
 
 [[package]]
+name = "windows_file_icons"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "resvg",
+ "usvg",
+]
+
+[[package]]
 name = "windows_i686_gnu"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -99,6 +99,13 @@ function GenerateLicenses {
     . $PSScriptRoot/generate-licenses.ps1
 }
 
+function GenerateWindowsFileIcons {
+    $fileIconsSrc = "$env:ZED_WORKSPACE\assets\icons\file_icons"
+    $fileIconsDst = "$innoDir\file-icons"
+    Write-Output "Generating Windows file association icons"
+    cargo run --package windows_file_icons -- "$fileIconsSrc" "$fileIconsDst"
+}
+
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
     # Build zed.exe, cli.exe and auto_update_helper.exe
@@ -368,6 +375,7 @@ $debugStoreKey = "$env:ZED_RELEASE_CHANNEL/zed-$env:RELEASE_VERSION-$env:ZED_REL
 CheckEnvironmentVariables
 PrepareForBundle
 GenerateLicenses
+GenerateWindowsFileIcons
 BuildZedAndItsFriends
 BuildRemoteServer
 MakeAppx
