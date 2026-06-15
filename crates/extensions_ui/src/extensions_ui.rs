@@ -37,7 +37,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
-    notifications::{NotificationId, simple_message_notification::MessageNotification},
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 use zed_actions::ExtensionCategoryFilter;
 
@@ -64,6 +64,30 @@ pub struct RebuildDevExtension {
     /// Default: opens a picker if multiple dev extensions are installed.
     #[serde(default)]
     pub extension_id: Option<String>,
+}
+
+#[derive(Default)]
+struct DevExtensionNotInstalledError {
+    extension_id: Option<SharedString>,
+}
+
+impl WorkspaceError for DevExtensionNotInstalledError {
+    fn primary_message(&self) -> SharedString {
+        match &self.extension_id {
+            Some(extension_id) => {
+                format!("Dev extension '{extension_id}' is not installed.").into()
+            }
+            None => "No dev extensions are installed.".into(),
+        }
+    }
+
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::new("Install Dev Extension", InstallDevExtension)
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Warning
+    }
 }
 
 fn update_rebuild_dev_extension_visibility(store: &Entity<ExtensionStore>, cx: &mut App) {
@@ -222,27 +246,11 @@ pub fn init(cx: &mut App) {
                             store.rebuild_dev_extension(extension_id, cx);
                         });
                     } else {
-                        struct DevExtensionNotInstalledNotification;
-                        workspace.show_notification(
-                            NotificationId::composite::<DevExtensionNotInstalledNotification>(
-                                SharedString::from(target_id),
-                            ),
-                            cx,
-                            |cx| {
-                                cx.new(|cx| {
-                                    MessageNotification::new(
-                                        format!("Dev extension '{target_id}' is not installed."),
-                                        cx,
-                                    )
-                                    .primary_message("Install Dev Extension")
-                                    .primary_on_click(
-                                        move |window, cx| {
-                                            window
-                                                .dispatch_action(Box::new(InstallDevExtension), cx);
-                                        },
-                                    )
-                                })
+                        workspace.show_error(
+                            DevExtensionNotInstalledError {
+                                extension_id: Some(SharedString::from(target_id.to_owned())),
                             },
+                            cx,
                         );
                     }
                     return;
@@ -256,21 +264,7 @@ pub fn init(cx: &mut App) {
 
                 match dev_extensions.len() {
                     0 => {
-                        struct NoDevExtensionsInstalledNotification;
-                        workspace.show_notification(
-                            NotificationId::unique::<NoDevExtensionsInstalledNotification>(),
-                            cx,
-                            |cx| {
-                                cx.new(|cx| {
-                                    MessageNotification::new("No dev extensions are installed.", cx)
-                                        .primary_message("Install Dev Extension")
-                                        .primary_on_click(move |window, cx| {
-                                            window
-                                                .dispatch_action(Box::new(InstallDevExtension), cx);
-                                        })
-                                })
-                            },
-                        );
+                        workspace.show_error(DevExtensionNotInstalledError::default(), cx);
                     }
                     1 => {
                         let extension_id = dev_extensions[0].id.clone();
