@@ -4422,7 +4422,7 @@ impl BackgroundScanner {
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
         let skipped_file_names_in_dot_git = [COMMIT_MESSAGE, FETCH_HEAD, ORIG_HEAD, BISECT_LOG];
-        let skipped_extensions_in_dot_git = ["lock", "new", "tmp"];
+        let skipped_extensions_in_dot_git = ["lock", "new", "tmp", "pid"];
         let skipped_dirs_in_dot_git = [
             FSMONITOR_DAEMON,
             LFS_DIR,
