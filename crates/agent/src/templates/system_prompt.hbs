@@ -166,14 +166,17 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
   Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 - Network: outbound network access is blocked.
 
+Network access works through an HTTP/HTTPS proxy (standard proxy environment variables are set for the command). Tools that don't honor proxy environment variables (SSH, FTP, raw sockets, etc.) can't reach the network even when access is granted, so use `https://` URLs instead of `git@`/`ssh://` when cloning or pushing.
+
 You can request elevated permissions on individual `terminal` calls:
 
-- `allow_network: true` — allow outbound network access.
+- `allow_hosts: ["github.com", "*.npmjs.org"]` — allow outbound HTTP/HTTPS to specific hosts (exact hostnames or leading-`*.` subdomain wildcards; no IP literals). Prefer this whenever you know which hosts the command needs.
+- `allow_all_hosts: true` — allow outbound HTTP/HTTPS to any host. Use only when the specific hosts can't be enumerated up front.
 - `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write.
 - `allow_fs_write_all: true` — allow unrestricted filesystem writes. Only use this when the specific paths can't be enumerated up front.
 - `unsandboxed: true` — run the command with no sandbox at all. Use only when none of the above suffice.
 
-The user will be prompted to approve before the command runs, and can grant a sandbox request for that command, for the rest of the thread, or always. Once a write path is granted for the thread or always, later commands in this thread writing under that path won't prompt again.
+The user will be prompted to approve before the command runs, and can grant a sandbox request for that command, for the rest of the thread, or always. Once a host or write path is granted for the thread or always, later commands in this thread reaching that host or writing under that path won't prompt again.
 
 These sandbox settings are guaranteed to remain in effect for the entire duration of this thread. If they ever change, you will be told.
 
