@@ -732,8 +732,7 @@ fn connect_remote(
     remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
-/// Creates a new git worktree in the given workspace, mirroring the behavior
-/// of the worktree picker's "Create new worktree" entries.
+// Mirrors the behavior of the worktree picker's "Create new worktree" entries.
 fn create_worktree_in_workspace(
     workspace: &Entity<Workspace>,
     branch_target: NewWorktreeBranchTarget,
