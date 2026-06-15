@@ -9233,10 +9233,15 @@ impl Element for EditorElement {
                             scrollbars_layout.visible && scrollbars_layout.horizontal.is_some()
                         });
 
+                    let horizontal_scrollbar_layout = scrollbars_layout
+                        .as_ref()
+                        .and_then(|scrollbars_layout| scrollbars_layout.horizontal.clone());
+
                     self.editor.update(cx, |editor, _| {
                         editor.last_position_map = Some(position_map.clone());
                         editor.last_right_margin = right_margin;
                         editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
+                        editor.last_horizontal_scrollbar_layout = horizontal_scrollbar_layout;
                     });
 
                     EditorLayout {
@@ -9647,7 +9652,7 @@ impl EditorScrollbars {
 }
 
 #[derive(Clone)]
-struct ScrollbarLayout {
+pub(crate) struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_range: Range<ScrollOffset>,
     text_unit_size: Pixels,

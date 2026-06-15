@@ -150,7 +150,7 @@ use edit_prediction_types::{
     EditPredictionGranularity, SuggestionDisplayType,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
-use element::{LineWithInvisibles, PositionMap, layout_line};
+use element::{LineWithInvisibles, PositionMap, ScrollbarLayout, layout_line};
 use futures::{
     FutureExt,
     future::{self, Shared},
@@ -1106,6 +1106,17 @@ pub struct Editor {
     /// Used by `SplitBufferHeadersElement` to clip buffer headers so they don't
     /// paint over the scrollbar.
     last_horizontal_scrollbar_visible: bool,
+    /// The horizontal scrollbar's layout from the last prepaint, if one was
+    /// laid out.
+    /// Snapshotted so `SplitBufferHeadersElement` can paint the split pane's
+    /// horizontal scrollbars itself, above the buffer headers.
+    /// much space to reserve for buffer headers.
+    last_horizontal_scrollbar_layout: Option<ScrollbarLayout>,
+    /// When set, `EditorElement` lays out and keeps the horizontal scrollbar
+    /// interactive but skips painting it. Set by `SplitBufferHeadersElement`,
+    /// which repains it on top of the buffer headers so they show through the
+    /// translucent scrollbar.
+    suppress_horizontal_scrollbar_paint: bool,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
@@ -2278,6 +2289,8 @@ impl Editor {
             last_position_map: None,
             last_right_margin: Pixels::ZERO,
             last_horizontal_scrollbar_visible: false,
+            last_horizontal_scrollbar_layout: None,
+            suppress_horizontal_scrollbar_paint: false,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -2694,6 +2707,21 @@ impl Editor {
 
     pub(crate) fn last_horizontal_scrollbar_visible(&self) -> bool {
         self.last_horizontal_scrollbar_visible
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn last_horizontal_scrollbar_layout(&self) -> Option<&ScrollbarLayout> {
+        self.last_horizontal_scrollbar_layout.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn suppress_horizontal_scrollbar_paint(&self) -> bool {
+        self.suppress_horizontal_scrollbar_paint
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn set_suppress_horizontal_scrollbar_paint(&mut self, suppress: bool) {
+        self.suppress_horizontal_scrollbar_paint = suppress;
     }
 
     pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {
