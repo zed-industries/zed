@@ -370,7 +370,13 @@ impl Terminal {
                             original_content_len,
                             content_line_count,
                         });
-                        this._network_proxy = None;
+                        // Dropping the proxy handle joins its listener thread
+                        // (after a loopback wakeup connect); do that off the
+                        // foreground thread so a slow/wedged shutdown can't
+                        // stall the UI.
+                        if let Some(proxy) = this._network_proxy.take() {
+                            cx.background_spawn(async move { drop(proxy) }).detach();
+                        }
                         this._sandbox_config = None;
                         cx.notify();
                     })
