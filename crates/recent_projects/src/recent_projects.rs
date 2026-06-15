@@ -1195,37 +1195,25 @@ impl PickerDelegate for RecentProjectsDelegate {
                             let host = key.host();
                             if let Some(task) = handle
                                 .update(cx, |multi_workspace, window, cx| {
-                                    if host.is_some() {
-                                        let modal_workspace = multi_workspace.workspace().clone();
-                                        multi_workspace.find_or_create_workspace(
-                                            path_list,
-                                            host,
-                                            Some(key.clone()),
-                                            move |options, window, cx| {
-                                                connect_with_modal(
-                                                    &modal_workspace,
-                                                    options,
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                            &[],
-                                            None,
-                                            OpenMode::Activate,
-                                            window,
-                                            cx,
-                                        )
-                                    } else {
-                                        multi_workspace.find_or_create_local_workspace(
-                                            path_list,
-                                            Some(key.clone()),
-                                            &[],
-                                            None,
-                                            OpenMode::Activate,
-                                            window,
-                                            cx,
-                                        )
-                                    }
+                                    let modal_workspace = multi_workspace.workspace().clone();
+                                    multi_workspace.find_or_create_workspace(
+                                        path_list,
+                                        host,
+                                        Some(key.clone()),
+                                        move |options, window, cx| {
+                                            connect_with_modal(
+                                                &modal_workspace,
+                                                options,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                        &[],
+                                        None,
+                                        OpenMode::Activate,
+                                        window,
+                                        cx,
+                                    )
                                 })
                                 .log_err()
                             {
