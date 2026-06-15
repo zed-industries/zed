@@ -1541,6 +1541,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let updated_image_tag = features_build_info.image_tag.clone();
 
         let mut command = Command::new(self.docker_client.docker_cli());
+        // Without a usable BuildKit, force the classic builder: the build's
+        // `FROM $BASE_IMAGE` references the locally-built features image, which
+        // only resolves from the daemon's image store under the classic builder.
+        if !self.docker_client.supports_compose_buildkit()
+            && self.docker_client.docker_cli() != "podman"
+        {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
         command.args(["build"]);
         command.args(["-f", &dockerfile_path.display().to_string()]);
         command.args(["-t", &updated_image_tag]);
@@ -1644,6 +1652,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             })?;
 
         let mut command = Command::new(self.docker_client.docker_cli());
+        // This path runs only when BuildKit is unavailable, so force the classic
+        // builder: the feature content image is consumed by a later multi-stage
+        // `FROM`, which requires it to live in the daemon's image store.
+        if self.docker_client.docker_cli() != "podman" {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
         command.args([
             "build",
             "-t",
@@ -2375,9 +2389,9 @@ pub(crate) async fn read_devcontainer_configuration(
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman").await
+        Docker::new("podman", context.use_buildkit).await
     } else {
-        Docker::new("docker").await
+        Docker::new("docker", context.use_buildkit).await
     };
     let mut dev_container = DevContainerManifest::new(
         context,
@@ -2399,9 +2413,9 @@ pub(crate) async fn spawn_dev_container(
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman").await
+        Docker::new("podman", context.use_buildkit).await
     } else {
-        Docker::new("docker").await
+        Docker::new("docker", context.use_buildkit).await
     };
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
@@ -3062,6 +3076,7 @@ mod test {
         let context = DevContainerContext {
             project_directory: SanitizedPath::cast_arc(project_path),
             use_podman: false,
+            use_buildkit: None,
             fs: fs.clone(),
             http_client: http_client.clone(),
             environment: project_environment.downgrade(),
