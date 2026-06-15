@@ -3054,7 +3054,7 @@ mod tests {
                     RecentProjects::popover(
                         workspace.downgrade(),
                         augmented_groups,
-                        false,
+                        Some(false),
                         fh,
                         window,
                         cx,
