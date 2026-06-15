@@ -177,6 +177,9 @@ impl Model {
         if supports_speed {
             extra_beta_headers.push(FAST_MODE_BETA_HEADER.to_string());
         }
+        if supports_compaction {
+            extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
+        }
 
         Self {
             display_name: entry.display_name,
@@ -1200,7 +1203,11 @@ mod tests {
         ));
 
         assert!(model.supports_speed);
-        assert_eq!(model.beta_headers().as_deref(), Some(FAST_MODE_BETA_HEADER));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
     }
 
     #[test]
