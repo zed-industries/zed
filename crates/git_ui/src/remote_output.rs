@@ -22,10 +22,31 @@ impl RemoteAction {
     }
 }
 
+/// Returns the first URL printed on a `remote:` line of git's output.
+fn find_remote_link(stderr: &str) -> Option<String> {
+    let finder = LinkFinder::new();
+    stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with("remote:"))
+        .find_map(|line| {
+            finder
+                .links(line)
+                .find(|link| *link.kind() == LinkKind::Url)
+                .map(|link| link.as_str().to_string())
+        })
+}
+
 pub enum SuccessStyle {
     Toast,
     ToastWithLog { output: RemoteCommandOutput },
-    PushPrLink { text: String, link: String },
+    /// The push created a branch for which a new pull/merge request can be
+    /// opened. The button triggers the same `CreatePullRequest` action as the
+    /// command palette, deriving the URL from the git hosting provider, and
+    /// falls back to `fallback_url` (the link git printed) if that fails.
+    CreatePullRequest { label: String, fallback_url: String },
+    /// The push references an existing merge request; follow the link git
+    /// printed since there is nothing to create.
+    OpenLink { label: String, link: String },
 }
 
 pub struct SuccessMessage {
@@ -128,32 +149,41 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
             let style = if output.stderr.ends_with("Everything up-to-date\n") {
                 Some(SuccessStyle::Toast)
             } else if output.stderr.contains("\nremote: ") {
-                let pr_hints = [
+                // Hints git prints after a push. The "create" hints are handled
+                // by the canonical `CreatePullRequest` action (which builds the
+                // URL from the hosting provider), keeping git's link only as a
+                // fallback. The "view" hint points at an already-existing merge
+                // request, which we can only reach via the link git gave us.
+                const CREATE_HINTS: &[(&str, &str)] = &[
                     ("Create a pull request", "Create Pull Request"), // GitHub
                     ("Create pull request", "Create Pull Request"),   // Bitbucket
                     ("create a merge request", "Create Merge Request"), // GitLab
-                    ("View merge request", "View Merge Request"),     // GitLab
                 ];
-                pr_hints
+                const VIEW_HINTS: &[(&str, &str)] = &[
+                    ("View merge request", "View Merge Request"), // GitLab
+                ];
+
+                if let Some((_, label)) = CREATE_HINTS
                     .iter()
                     .find(|(indicator, _)| output.stderr.contains(indicator))
-                    .and_then(|(_, mapped)| {
-                        let finder = LinkFinder::new();
-
-                        output
-                            .stderr
-                            .lines()
-                            .filter(|line| line.trim_start().starts_with("remote:"))
-                            .find_map(|line| {
-                                finder
-                                    .links(line)
-                                    .find(|link| *link.kind() == LinkKind::Url)
-                                    .map(|link| SuccessStyle::PushPrLink {
-                                        text: mapped.to_string(),
-                                        link: link.as_str().to_string(),
-                                    })
-                            })
+                {
+                    find_remote_link(&output.stderr).map(|link| {
+                        SuccessStyle::CreatePullRequest {
+                            label: label.to_string(),
+                            fallback_url: link,
+                        }
                     })
+                } else if let Some((_, label)) = VIEW_HINTS
+                    .iter()
+                    .find(|(indicator, _)| output.stderr.contains(indicator))
+                {
+                    find_remote_link(&output.stderr).map(|link| SuccessStyle::OpenLink {
+                        label: label.to_string(),
+                        link,
+                    })
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -195,11 +225,15 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { text: hint, link } = &msg.style {
-            assert_eq!(hint, "Create Pull Request");
-            assert_eq!(link, "https://example.com/test/test/pull/new/test");
+        if let SuccessStyle::CreatePullRequest {
+            label,
+            fallback_url,
+        } = &msg.style
+        {
+            assert_eq!(label, "Create Pull Request");
+            assert_eq!(fallback_url, "https://example.com/test/test/pull/new/test");
         } else {
-            panic!("Expected PushPrLink variant");
+            panic!("Expected CreatePullRequest variant");
         }
     }
 
@@ -228,14 +262,18 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { text, link } = &msg.style {
-            assert_eq!(text, "Create Merge Request");
+        if let SuccessStyle::CreatePullRequest {
+            label,
+            fallback_url,
+        } = &msg.style
+        {
+            assert_eq!(label, "Create Merge Request");
             assert_eq!(
-                link,
+                fallback_url,
                 "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
             );
         } else {
-            panic!("Expected PushPrLink variant");
+            panic!("Expected CreatePullRequest variant");
         }
     }
 
@@ -268,11 +306,11 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { text, link } = &msg.style {
-            assert_eq!(text, "View Merge Request");
+        if let SuccessStyle::OpenLink { label, link } = &msg.style {
+            assert_eq!(label, "View Merge Request");
             assert_eq!(link, "https://example.com/test/test/-/merge_requests/99999");
         } else {
-            panic!("Expected PushPrLink variant");
+            panic!("Expected OpenLink variant");
         }
     }
 
