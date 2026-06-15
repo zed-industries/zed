@@ -136,7 +136,12 @@ pub(crate) fn apply_sandbox_wrap(
     {
         // No sandbox integration available; ignore the wrap request and
         // let the command run with the agent's ambient permissions.
-        let _ = (sandbox_wrap, network_policy);
+        if let NetworkPolicy::Proxied(port) = network_policy {
+            log::debug!(
+                "[sandbox/network] ignoring proxy port {port} because this platform has no sandbox integration"
+            );
+        }
+        let _sandbox_wrap = sandbox_wrap;
         Ok((program, args, None))
     }
 }
