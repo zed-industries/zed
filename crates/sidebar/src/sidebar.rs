@@ -69,8 +69,9 @@ use workspace::{
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
-use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
+use git_ui::worktree_service::{RemoteBranchName, worktree_create_targets};
 use zed_actions::editor::{MoveDown, MoveUp};
+use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
 
 use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
 
@@ -626,7 +627,7 @@ impl WorkspaceMenuWorktreeLabel {
             })
             .child(Label::new(self.primary_name.clone()).truncate())
             .when_some(self.secondary_name.clone(), |this, secondary_name| {
-                this.child(Label::new(":").alpha(0.5))
+                this.child(Label::new("/").alpha(0.5))
                     .child(Label::new(secondary_name).truncate())
             })
     }
@@ -731,20 +732,6 @@ fn connect_remote(
     remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
-/// Parses a remote default branch name (e.g. `origin/main` or
-/// `refs/remotes/origin/main`) into its `(remote_name, branch_name)` parts.
-fn parse_remote_default_branch(name: &str) -> Option<(SharedString, SharedString)> {
-    let name = name.strip_prefix("refs/remotes/").unwrap_or(name);
-    let (remote_name, branch_name) = name.split_once('/')?;
-    if remote_name.is_empty() || branch_name.is_empty() {
-        return None;
-    }
-    Some((
-        SharedString::from(remote_name.to_string()),
-        SharedString::from(branch_name.to_string()),
-    ))
-}
-
 /// Creates a new git worktree in the given workspace, mirroring the behavior
 /// of the worktree picker's "Create new worktree" entries.
 fn create_worktree_in_workspace(
@@ -817,11 +804,7 @@ pub struct Sidebar {
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
-    /// Cached remote default branch (remote name, branch name) for each project
-    /// group, used to populate the "Create New Worktree" submenu in the new
-    /// thread popover. An entry maps to `None` when the repository has no
-    /// resolvable default branch. Populated lazily when the popover opens.
-    worktree_default_branches: HashMap<ProjectGroupKey, Option<(SharedString, SharedString)>>,
+    worktree_default_branches: HashMap<ProjectGroupKey, Option<RemoteBranchName>>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     update_task: Option<Task<()>>,
@@ -2627,7 +2610,7 @@ impl Sidebar {
             Some(ContextMenu::build(
                 window,
                 cx,
-                move |mut menu, _window, _cx| {
+                move |mut menu, _window, cx| {
                     menu = menu.header("New Thread In…");
 
                     for (workspace, labels) in open_workspaces
@@ -2684,24 +2667,28 @@ impl Sidebar {
                         .cloned()
                         .or_else(|| open_workspaces.first().cloned());
 
-                    if let Some(base_workspace) = base_workspace {
+                    // Only offer worktree creation when the base project can
+                    // actually create one; otherwise the submenu would expand to
+                    // nothing. Mirrors the picker's `creation_blocked_reason`.
+                    let creation_blocked = base_workspace.as_ref().is_none_or(|base_workspace| {
+                        let project = base_workspace.read(cx).project().read(cx);
+                        project.is_via_collab() || project.repositories(cx).is_empty()
+                    });
+
+                    if let Some(base_workspace) = base_workspace.filter(|_| !creation_blocked) {
                         menu = menu.separator().submenu("Create New Worktree…", {
                             let this = this.clone();
                             move |mut submenu, _window, submenu_cx| {
                                 let project = base_workspace.read(submenu_cx).project().clone();
                                 let project_ref = project.read(submenu_cx);
-                                let creation_blocked = project_ref.is_via_collab()
-                                    || project_ref.repositories(submenu_cx).is_empty();
-                                if creation_blocked {
-                                    return submenu;
-                                }
                                 let has_multiple_repositories =
                                     project_ref.repositories(submenu_cx).len() > 1;
                                 let current_branch =
                                     project_ref.active_repository(submenu_cx).and_then(|repo| {
-                                        repo.read(submenu_cx).branch.as_ref().map(|branch| {
-                                            SharedString::from(branch.name().to_string())
-                                        })
+                                        repo.read(submenu_cx)
+                                            .branch
+                                            .as_ref()
+                                            .map(|branch| branch.name().to_string())
                                     });
                                 let default_branch = this
                                     .read_with(submenu_cx, |sidebar, _| {
@@ -2711,46 +2698,25 @@ impl Sidebar {
                                     .flatten()
                                     .flatten();
 
-                                // Mirror the worktree picker's `build_fixed_entries`
-                                // rules for which create options to surface.
-                                let (show_default, show_current) = if has_multiple_repositories {
-                                    (false, true)
-                                } else if let Some((_, ref branch_name)) = default_branch {
-                                    let is_different = current_branch.as_ref().is_none_or(
-                                        |current| current.as_ref() != branch_name.as_ref(),
+                                let targets = worktree_create_targets(
+                                    has_multiple_repositories,
+                                    default_branch,
+                                    current_branch.as_deref(),
+                                );
+                                for target in targets {
+                                    let label = format!(
+                                        "Based on {}",
+                                        target.branch_label(
+                                            has_multiple_repositories,
+                                            current_branch.as_deref(),
+                                        )
                                     );
-                                    (true, is_different)
-                                } else {
-                                    (false, true)
-                                };
-
-                                if show_default
-                                    && let Some((remote_name, branch_name)) = default_branch
-                                {
-                                    let label = format!("Based on {remote_name}/{branch_name}");
+                                    let branch_target = target.branch_target();
                                     let workspace = base_workspace.clone();
                                     submenu = submenu.entry(label, None, move |window, cx| {
                                         create_worktree_in_workspace(
                                             &workspace,
-                                            NewWorktreeBranchTarget::RemoteBranch {
-                                                remote_name: remote_name.to_string(),
-                                                branch_name: branch_name.to_string(),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                    });
-                                }
-
-                                if show_current {
-                                    let label = current_branch
-                                        .map(|branch| format!("Based on {branch}"))
-                                        .unwrap_or_else(|| "Based on current branch".to_string());
-                                    let workspace = base_workspace.clone();
-                                    submenu = submenu.entry(label, None, move |window, cx| {
-                                        create_worktree_in_workspace(
-                                            &workspace,
-                                            NewWorktreeBranchTarget::CurrentBranch,
+                                            branch_target.clone(),
                                             window,
                                             cx,
                                         );
@@ -2780,17 +2746,21 @@ impl Sidebar {
         workspace: &Entity<Workspace>,
         cx: &mut Context<Self>,
     ) {
+        // The default branch can't change mid-session, so a resolved entry is
+        // kept; presence of the key means we've already fetched it. The
+        // no-repository case is deliberately not cached so it retries on a later
+        // open once the repository has finished loading.
+        if self.worktree_default_branches.contains_key(key) {
+            return;
+        }
         let Some(repository) = workspace.read(cx).project().read(cx).active_repository(cx) else {
-            self.worktree_default_branches.insert(key.clone(), None);
             return;
         };
         let request = repository.update(cx, |repository, _| repository.default_branch(true));
         let key = key.clone();
         cx.spawn(async move |this, cx| {
             let default_branch = request.await.ok().and_then(Result::ok).flatten();
-            let parsed = default_branch
-                .as_deref()
-                .and_then(parse_remote_default_branch);
+            let parsed = default_branch.as_deref().and_then(RemoteBranchName::parse);
             this.update(cx, |sidebar, cx| {
                 sidebar.worktree_default_branches.insert(key, parsed);
                 cx.notify();
