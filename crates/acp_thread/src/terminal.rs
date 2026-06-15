@@ -171,9 +171,9 @@ pub(crate) fn setup_network_proxy(
         return Ok((None, NetworkPolicy::Unrestricted));
     }
 
-    // Chain through the user's real upstream proxy if their environment names
-    // one. A malformed value shouldn't break the terminal, so log and skip.
-    let upstream = match UpstreamProxy::from_env() {
+    // Chain through the user's real upstream proxy if the command's environment
+    // names one. A malformed value shouldn't break the terminal, so log and skip.
+    let upstream = match upstream_proxy_from_child_env(env) {
         Ok(upstream) => upstream,
         Err(error) => {
             log::warn!("[sandbox/network] ignoring upstream proxy env: {error:#}");
@@ -193,6 +193,36 @@ pub(crate) fn setup_network_proxy(
     spawn_proxy_event_logger(events_rx, cx);
 
     Ok((Some(handle), NetworkPolicy::Proxied(port)))
+}
+
+fn upstream_proxy_from_child_env(env: &HashMap<String, String>) -> Result<Option<UpstreamProxy>> {
+    let url = first_nonempty_env_value(
+        env,
+        &[
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+        ],
+    );
+    let no_proxy = first_nonempty_env_value(env, &["NO_PROXY", "no_proxy"]);
+    UpstreamProxy::parse(url, no_proxy)
+}
+
+fn first_nonempty_env_value<'a>(
+    env: &'a HashMap<String, String>,
+    names: &[&str],
+) -> Option<&'a str> {
+    for name in names {
+        if let Some(value) = env.get(*name)
+            && !value.trim().is_empty()
+        {
+            return Some(value.as_str());
+        }
+    }
+    None
 }
 
 /// Point the child's proxy env vars at the in-process proxy and strip any
@@ -517,6 +547,26 @@ pub async fn create_terminal_entity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_proxy_from_child_env_uses_from_env_precedence() {
+        let mut env = HashMap::default();
+        env.insert("HTTPS_PROXY".to_string(), " ".to_string());
+        env.insert("https_proxy".to_string(), "http://lower:1111".to_string());
+        env.insert("ALL_PROXY".to_string(), "http://all:2222".to_string());
+        env.insert("HTTP_PROXY".to_string(), "http://http:3333".to_string());
+        env.insert("NO_PROXY".to_string(), "".to_string());
+        env.insert("no_proxy".to_string(), "internal.example".to_string());
+
+        let upstream = upstream_proxy_from_child_env(&env)
+            .expect("proxy env should parse")
+            .expect("proxy env should configure an upstream");
+
+        assert_eq!(upstream.host, "lower");
+        assert_eq!(upstream.port, 1111);
+        assert!(upstream.bypasses("internal.example", 443));
+        assert!(!upstream.bypasses("zed.dev", 443));
+    }
 
     #[test]
     fn apply_proxy_env_points_all_proxy_vars_at_proxy_and_blanks_no_proxy() {
