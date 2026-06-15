@@ -1,0 +1,56 @@
+# Community PR Board — daily meta information refresh
+#
+# Walks every open PR on the community board and recomputes its signal
+# fields. Backstop for changes that don't reach the event-driven workflow,
+# either because the relevant webhook isn't subscribed or doesn't fire at all.
+
+name: PR Board Meta Fields Refresh
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-pr-board-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 15
+
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: |
+            script/github-community-pr-board.py
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Refresh all board items
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "85"
+          REFRESH_ALL: "1"
+        run: python script/github-community-pr-board.py

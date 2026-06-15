@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
+    RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -425,6 +428,7 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     affinity: Option<String>,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
@@ -434,7 +438,8 @@ pub async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key.trim()))
         .when_some(affinity, |this, affinity| {
             this.header("x-affinity", affinity)
-        });
+        })
+        .extra_headers(extra_headers);
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

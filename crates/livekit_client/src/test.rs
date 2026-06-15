@@ -56,6 +56,7 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
+    revoked_identities: Mutex<HashSet<String>>,
     executor: BackgroundExecutor,
 }
 
@@ -73,6 +74,7 @@ impl TestServer {
                 api_key,
                 secret_key,
                 rooms: Default::default(),
+                revoked_identities: Default::default(),
                 executor,
             });
             e.insert(server.clone());
@@ -104,6 +106,18 @@ impl TestServer {
         }
     }
 
+    /// Simulates LiveKit Cloud revoking an identity's tokens, as happens when
+    /// `remove_participant` is called for that identity (e.g. by the collab
+    /// server's stale connection cleanup) around the time a token is issued.
+    pub fn set_token_revoked(&self, identity: &str, revoked: bool) {
+        let mut revoked_identities = self.revoked_identities.lock();
+        if revoked {
+            revoked_identities.insert(identity.to_string());
+        } else {
+            revoked_identities.remove(identity);
+        }
+    }
+
     pub async fn create_room(&self, room: String) -> Result<()> {
         self.simulate_random_delay().await;
 
@@ -132,6 +146,13 @@ impl TestServer {
         let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
+
+        if self.revoked_identities.lock().contains(&identity.0) {
+            anyhow::bail!(
+                "signal failure: client error: 401 Unauthorized - invalid token: revoked"
+            );
+        }
+
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 

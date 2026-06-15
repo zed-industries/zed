@@ -6,7 +6,7 @@ description: "Overview of programming language support in Zed, including built-i
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.
-Some work out-of-the box and others rely on 3rd party extensions.
+Some work out-of-the-box and others rely on 3rd party extensions.
 
 > The ones included out-of-the-box, natively built into Zed, are marked with \*.
 

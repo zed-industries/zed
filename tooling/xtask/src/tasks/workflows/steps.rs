@@ -754,11 +754,6 @@ pub fn download_artifact() -> DownloadArtifactStep {
     }
 }
 
-pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
-        .add_env(("REF_NAME", ref_name.to_string()))
-}
-
 /// Non-exhaustive list of the permissions to be set for a GitHub app token.
 ///
 /// See https://github.com/actions/create-github-app-token?tab=readme-ov-file#permission-permission-name
