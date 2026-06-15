@@ -58,11 +58,13 @@ pub use conflict_view::MergeConflictIndicator;
 pub fn get_provider_icon(name: &str) -> IconName {
     match name {
         "Bitbucket" => IconName::Bitbucket,
+        "Chromium" => IconName::Gerrit,
         "Codeberg" => IconName::Codeberg,
         "Forgejo Self-Hosted" => IconName::Forgejo,
         "GitHub" => IconName::Github,
         "GitLab" => IconName::Gitlab,
         "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
     }
 }

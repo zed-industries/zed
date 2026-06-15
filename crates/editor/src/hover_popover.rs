@@ -797,10 +797,15 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
-pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+pub fn open_markdown_url(
+    workspace: Option<Entity<Workspace>>,
+    link: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = Workspace::for_window(window, cx)
+        && let Some(workspace) = workspace
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
@@ -847,7 +852,14 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
         });
         return;
     }
-    cx.open_url(&link);
+
+    if let Some(workspace) = workspace {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_url_or_file(&link, None, window, cx);
+        });
+    } else {
+        cx.open_url(&link);
+    }
 }
 
 #[derive(Default)]
@@ -1033,6 +1045,7 @@ impl InfoPopover {
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let this = cx.entity().downgrade();
+        let this2 = this.clone();
         let bounds_cell = self.last_bounds.clone();
         div()
             .id("info_popover")
@@ -1083,7 +1096,17 @@ impl InfoPopover {
                                     wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                     border: false,
                                 })
-                                .on_url_click(open_markdown_url)
+                                .on_url_click(move |link, window, cx| {
+                                    open_markdown_url(
+                                        this2
+                                            .read_with(cx, |editor, _| editor.workspace())
+                                            .ok()
+                                            .flatten(),
+                                        link,
+                                        window,
+                                        cx,
+                                    )
+                                })
                                 .p_2(),
                         ),
                 )

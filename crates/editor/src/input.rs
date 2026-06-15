@@ -523,7 +523,13 @@ impl Editor {
             }
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             refresh_linked_ranges(this, window, cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
         });
     }
@@ -572,8 +578,9 @@ impl Editor {
                                 },
                                 prevent_auto_indent: false,
                             };
+                            let mut delimiter = None;
 
-                            let comment_delimiter = maybe!({
+                            if let Some(comment_delimiter) = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -587,9 +594,16 @@ impl Editor {
                                     &buffer,
                                     language,
                                 );
-                            });
-
-                            let doc_delimiter = maybe!({
+                            }) {
+                                delimiter = Some(comment_delimiter);
+                                if let NewlineConfig::Newline {
+                                    extra_line_additional_indent,
+                                    ..
+                                } = &mut newline_config
+                                {
+                                    *extra_line_additional_indent = None;
+                                }
+                            } else if let Some(doc_delimiter) = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -604,9 +618,9 @@ impl Editor {
                                     language,
                                     &mut newline_config,
                                 );
-                            });
-
-                            let list_delimiter = maybe!({
+                            }) {
+                                delimiter = Some(doc_delimiter);
+                            } else if let Some(list_delimiter) = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -621,12 +635,11 @@ impl Editor {
                                     language,
                                     &mut newline_config,
                                 );
-                            });
+                            }) {
+                                delimiter = Some(list_delimiter);
+                            }
 
-                            (
-                                comment_delimiter.or(doc_delimiter).or(list_delimiter),
-                                newline_config,
-                            )
+                            (delimiter, newline_config)
                         } else {
                             (
                                 None,
@@ -759,7 +772,13 @@ impl Editor {
                 .collect();
 
             this.change_selections(Default::default(), window, cx, |s| s.select(new_selections));
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             if let Some(task) = this.trigger_on_type_formatting("\n".to_owned(), window, cx) {
                 task.detach_and_log_err(cx);
             }
@@ -841,7 +860,7 @@ impl Editor {
         }
 
         let mut buffer_edits: HashMap<EntityId, (Entity<Buffer>, Vec<Point>)> = HashMap::default();
-        let mut rows = Vec::new();
+        let mut rows: Vec<Option<u32>> = Vec::new();
         let mut rows_inserted = 0;
 
         for selection in self.selections.all_adjusted(&self.display_snapshot(cx)) {
@@ -852,6 +871,7 @@ impl Editor {
             let Some((buffer_handle, buffer_point)) =
                 self.buffer.read(cx).point_to_buffer_point(point, cx)
             else {
+                rows.push(None);
                 continue;
             };
 
@@ -862,7 +882,7 @@ impl Editor {
                 .push(buffer_point);
 
             rows_inserted += 1;
-            rows.push(row + rows_inserted);
+            rows.push(Some(row + rows_inserted));
         }
 
         self.transact(window, cx, |editor, window, cx| {
@@ -882,21 +902,21 @@ impl Editor {
 
             editor.change_selections(Default::default(), window, cx, |s| {
                 let mut index = 0;
-                s.move_cursors_with(&mut |map, _, _| {
-                    let row = rows[index];
+                s.maybe_move_cursors_with(&mut |map, _, _| {
+                    let row = rows.get(index).copied().flatten();
                     index += 1;
 
-                    let point = Point::new(row, 0);
+                    let point = Point::new(row?, 0);
                     let boundary = map.next_line_boundary(point).1;
                     let clipped = map.clip_point(boundary, Bias::Left);
 
-                    (clipped, SelectionGoal::None)
+                    Some((clipped, SelectionGoal::None))
                 });
             });
 
             let mut indent_edits = Vec::new();
             let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
-            for row in rows {
+            for row in rows.into_iter().flatten() {
                 let indents = multibuffer_snapshot.suggested_indents(row..row + 1, cx);
                 for (row, indent) in indents {
                     if indent.len == 0 {
@@ -2363,7 +2383,7 @@ impl NewlineConfig {
             .range_to_buffer_ranges(range.start..range.end)
             .as_slice()
         {
-            [(buffer_snapshot, range, _)] => (buffer_snapshot.clone(), range.clone()),
+            [(buffer_snapshot, range, _)] => (*buffer_snapshot, range.clone()),
             _ => return false,
         };
         let pair = {
