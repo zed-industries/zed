@@ -103,6 +103,7 @@ members = [
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
+    "crates/http_proxy",
     "crates/icons",
     "crates/image_viewer",
     "crates/input_latency_ui",
@@ -357,6 +358,7 @@ gpui_util = { path = "crates/gpui_util" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
+http_proxy = { path = "crates/http_proxy" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 edit_prediction_types = { path = "crates/edit_prediction_types" }
@@ -604,6 +606,7 @@ human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
+idna = "1.0"
 ignore = "0.4.22"
 image = "0.25.1"
 imara-diff = "0.1.8"
