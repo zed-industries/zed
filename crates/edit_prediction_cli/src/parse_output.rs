@@ -5,7 +5,9 @@ use crate::{
     repair,
 };
 use anyhow::{Context as _, Result};
-use zeta_prompt::{ZetaFormat, parse_zeta2_model_output, parsed_output_to_patch};
+use zeta_prompt::{
+    ZetaFormat, parse_zeta2_model_output, parse_zeta2_model_output_as_patch, parsed_output_to_patch,
+};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -61,6 +63,13 @@ fn parse_zeta2_output(
         .prompt_inputs
         .as_ref()
         .context("prompt_inputs required")?;
+
+    if format == ZetaFormat::V0615HashRegions {
+        return Ok((
+            parse_zeta2_model_output_as_patch(actual_output, format, prompt_inputs)?,
+            None,
+        ));
+    }
 
     let parsed = parse_zeta2_model_output(actual_output, format, prompt_inputs)?;
     let range_in_excerpt = parsed.range_in_excerpt.clone();

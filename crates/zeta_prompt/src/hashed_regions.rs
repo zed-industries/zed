@@ -11,12 +11,18 @@
 //! context retrieval includes the current file via `ContextSource::CurrentFile`,
 //! so the cursor file is expected to be one of the related files.
 
-use crate::{ZetaPromptInput, multi_region};
+use crate::{ContextSource, ZetaPromptInput, multi_region, udiff};
 use anyhow::{Context as _, Result, anyhow};
-use std::collections::HashSet;
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 pub const MARKER_TAG_PREFIX: &str = "<|marker_";
 pub const MARKER_TAG_SUFFIX: &str = "|>";
+pub const V0615_END_MARKER: &str = "<[end▁of▁sentence]>";
+pub const NO_EDITS: &str = "NO_EDITS";
 /// Number of base64 characters in a marker tag identifier.
 pub const TAG_ID_LEN: usize = 4;
 
@@ -42,20 +48,45 @@ pub struct SnippetMarkers {
 /// The assignment is deterministic and independent of any later budget-based
 /// truncation, so the same table can be rebuilt when parsing model output.
 pub fn build_marker_table(input: &ZetaPromptInput) -> Vec<SnippetMarkers> {
+    build_marker_table_with_filter(input, |_| true)
+}
+
+pub fn build_editable_marker_table(input: &ZetaPromptInput) -> Vec<SnippetMarkers> {
+    build_marker_table_with_filter(input, is_hash_region_editable_context_source)
+}
+
+pub fn is_hash_region_editable_context_source(context_source: ContextSource) -> bool {
+    matches!(
+        context_source,
+        ContextSource::CurrentFile | ContextSource::EditHistory
+    )
+}
+
+fn build_marker_table_with_filter(
+    input: &ZetaPromptInput,
+    include_context_source: impl Fn(ContextSource) -> bool,
+) -> Vec<SnippetMarkers> {
     let mut used_ids = HashSet::new();
     let mut snippets = Vec::new();
     if let Some(related_files) = input.related_files.as_deref() {
         for (file_ix, file) in related_files.iter().enumerate() {
             for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
-                snippets.push(SnippetMarkers {
-                    file_ix,
-                    excerpt_ix,
-                    markers: assign_tags(&excerpt.text, &mut used_ids),
-                });
+                if include_context_source(excerpt.context_source) {
+                    snippets.push(SnippetMarkers {
+                        file_ix,
+                        excerpt_ix,
+                        markers: assign_tags(&excerpt.text, &mut used_ids),
+                    });
+                }
             }
         }
     }
     snippets
+}
+
+pub fn markers_for_text(text: &str) -> Vec<(String, usize)> {
+    let mut used_ids = HashSet::new();
+    assign_tags(text, &mut used_ids)
 }
 
 fn assign_tags(text: &str, used_ids: &mut HashSet<String>) -> Vec<(String, usize)> {
@@ -155,6 +186,16 @@ pub fn write_snippet_with_markers(
 /// between the first and last marker tags, with any intermediate marker tags
 /// stripped.
 pub fn extract_marker_span(text: &str) -> Result<(String, String, String)> {
+    let (start_id, end_id, content) = extract_marker_span_allow_same(text)?;
+    if start_id == end_id {
+        return Err(anyhow!(
+            "start and end markers are the same (marker {start_id})"
+        ));
+    }
+    Ok((start_id, end_id, content))
+}
+
+pub fn extract_marker_span_allow_same(text: &str) -> Result<(String, String, String)> {
     let first_tag_start = text
         .find(MARKER_TAG_PREFIX)
         .context("no start marker found in output")?;
@@ -179,12 +220,6 @@ pub fn extract_marker_span(text: &str) -> Result<(String, String, String)> {
         .context("malformed end marker tag")?;
     let end_id = &text[last_id_start..last_id_end];
 
-    if start_id == end_id {
-        return Err(anyhow!(
-            "start and end markers are the same (marker {start_id})"
-        ));
-    }
-
     let mut content_start = first_tag_end;
     if text.as_bytes().get(content_start) == Some(&b'\n') {
         content_start += 1;
@@ -193,6 +228,398 @@ pub fn extract_marker_span(text: &str) -> Result<(String, String, String)> {
     let content = &text[content_start..content_end.max(content_start)];
     let content = multi_region::strip_marker_tags(content);
     Ok((start_id.to_string(), end_id.to_string(), content))
+}
+
+pub struct RelatedFileCursor {
+    pub file_ix: usize,
+    pub excerpt_ix: usize,
+    pub offset_in_excerpt: usize,
+}
+
+struct ParseSnippet<'a> {
+    file_ix: usize,
+    first_excerpt_ix: usize,
+    last_excerpt_ix: usize,
+    end_row: u32,
+    text: Cow<'a, str>,
+    markers: Vec<(String, usize)>,
+}
+
+pub fn related_file_patch_path(cursor_path: &Path, related_path: &Path) -> PathBuf {
+    let stripped: PathBuf = related_path.iter().skip(1).collect();
+    if stripped == cursor_path {
+        return stripped;
+    }
+
+    let cursor_first_component = cursor_path.components().next();
+    let related_first_component = related_path.components().next();
+    if related_first_component.is_some()
+        && cursor_first_component != related_first_component
+        && related_path.components().count() > 1
+    {
+        stripped
+    } else {
+        related_path.to_path_buf()
+    }
+}
+
+fn line_start_offset(text: &str, row: usize) -> Option<usize> {
+    let mut offset = 0;
+    for _ in 0..row {
+        offset += text[offset..].find('\n')? + 1;
+    }
+    Some(offset)
+}
+
+pub fn locate_cursor_in_related_files(input: &ZetaPromptInput) -> Option<RelatedFileCursor> {
+    let related_files = input.related_files.as_deref()?;
+    let excerpt_start_row = input.excerpt_start_row?;
+    let cursor_offset = input.cursor_offset_in_excerpt;
+    let excerpt_prefix = input.cursor_excerpt.get(..cursor_offset)?;
+    let cursor_row = excerpt_start_row + excerpt_prefix.matches('\n').count() as u32;
+    let cursor_column = cursor_offset - excerpt_prefix.rfind('\n').map_or(0, |pos| pos + 1);
+
+    for (file_ix, file) in related_files.iter().enumerate() {
+        if related_file_patch_path(&input.cursor_path, &file.path) != input.cursor_path.as_ref() {
+            continue;
+        }
+
+        for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
+            if cursor_row < excerpt.row_range.start || cursor_row > excerpt.row_range.end {
+                continue;
+            }
+            let row_in_excerpt = (cursor_row - excerpt.row_range.start) as usize;
+            let line_start = line_start_offset(&excerpt.text, row_in_excerpt)?;
+            let line_len = excerpt.text[line_start..]
+                .lines()
+                .next()
+                .unwrap_or("")
+                .len();
+            if cursor_column <= line_len {
+                return Some(RelatedFileCursor {
+                    file_ix,
+                    excerpt_ix,
+                    offset_in_excerpt: line_start + cursor_column,
+                });
+            }
+        }
+    }
+
+    None
+}
+
+pub fn marker_table_for_excerpt(
+    marker_table: &[SnippetMarkers],
+    file_ix: usize,
+    excerpt_ix: usize,
+) -> Option<&[(String, usize)]> {
+    marker_table.iter().find_map(|snippet| {
+        (snippet.file_ix == file_ix && snippet.excerpt_ix == excerpt_ix)
+            .then_some(snippet.markers.as_slice())
+    })
+}
+
+fn merge_contiguous_snippets(
+    input: &ZetaPromptInput,
+    marker_table: Vec<SnippetMarkers>,
+) -> Result<Vec<ParseSnippet<'_>>> {
+    let related_files = input
+        .related_files
+        .as_deref()
+        .context("prompt inputs are missing related files")?;
+    let mut snippets: Vec<ParseSnippet> = Vec::new();
+    for snippet in marker_table {
+        let file = related_files
+            .get(snippet.file_ix)
+            .context("related file index out of range")?;
+        let excerpt = file
+            .excerpts
+            .get(snippet.excerpt_ix)
+            .context("related excerpt index out of range")?;
+        if let Some(last) = snippets.last_mut()
+            && last.file_ix == snippet.file_ix
+            && last.last_excerpt_ix + 1 == snippet.excerpt_ix
+            && last.end_row == excerpt.row_range.start
+        {
+            let text = last.text.to_mut();
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            let base = text.len();
+            text.push_str(&excerpt.text);
+            last.markers.extend(
+                snippet
+                    .markers
+                    .into_iter()
+                    .map(|(id, offset)| (id, base + offset)),
+            );
+            last.last_excerpt_ix = snippet.excerpt_ix;
+            last.end_row = excerpt.row_range.end;
+        } else {
+            snippets.push(ParseSnippet {
+                file_ix: snippet.file_ix,
+                first_excerpt_ix: snippet.excerpt_ix,
+                last_excerpt_ix: snippet.excerpt_ix,
+                end_row: excerpt.row_range.end,
+                text: Cow::Borrowed(excerpt.text.as_ref()),
+                markers: snippet.markers,
+            });
+        }
+    }
+    Ok(snippets)
+}
+
+fn snippet_path_and_start_row(
+    input: &ZetaPromptInput,
+    snippet: &ParseSnippet<'_>,
+) -> Result<(PathBuf, u32)> {
+    let related_files = input
+        .related_files
+        .as_deref()
+        .context("prompt inputs are missing related files")?;
+    let file = related_files
+        .get(snippet.file_ix)
+        .context("related file index out of range")?;
+    let excerpt = file
+        .excerpts
+        .get(snippet.first_excerpt_ix)
+        .context("related excerpt index out of range")?;
+    Ok((
+        related_file_patch_path(&input.cursor_path, &file.path),
+        excerpt.row_range.start,
+    ))
+}
+
+fn find_marker(snippets: &[ParseSnippet<'_>], marker_id: &str) -> Option<(usize, usize)> {
+    snippets
+        .iter()
+        .enumerate()
+        .find_map(|(snippet_ix, snippet)| {
+            snippet
+                .markers
+                .iter()
+                .find_map(|(id, offset)| (id == marker_id).then_some((snippet_ix, *offset)))
+        })
+}
+
+fn common_prefix_suffix(a: &[u8], b: &[u8]) -> (usize, usize) {
+    let prefix = a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count();
+    let remaining_a = a.len() - prefix;
+    let remaining_b = b.len() - prefix;
+    let max_suffix = remaining_a.min(remaining_b);
+    let suffix = a[a.len() - max_suffix..]
+        .iter()
+        .rev()
+        .zip(b[b.len() - max_suffix..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    (prefix, suffix)
+}
+
+fn nearest_marker_id(markers: &[(String, usize)], cursor_offset: Option<usize>) -> &str {
+    let cursor = cursor_offset.unwrap_or(0);
+    markers
+        .iter()
+        .min_by_key(|(_, offset)| (*offset as isize - cursor as isize).unsigned_abs())
+        .map(|(id, _)| id.as_str())
+        .unwrap_or("unknown")
+}
+
+pub fn encode_from_old_and_new(
+    old_text: &str,
+    new_text: &str,
+    markers: &[(String, usize)],
+    cursor_offset_in_new: Option<usize>,
+    cursor_marker: &str,
+) -> Result<String> {
+    let no_edit_id = nearest_marker_id(markers, cursor_offset_in_new);
+    if old_text == new_text {
+        let tag = marker_tag(no_edit_id);
+        return Ok(format!("{tag}{tag}{V0615_END_MARKER}"));
+    }
+
+    let (common_prefix, common_suffix) =
+        common_prefix_suffix(old_text.as_bytes(), new_text.as_bytes());
+    let change_end_in_old = old_text.len() - common_suffix;
+    let mut start_marker_ix = markers
+        .iter()
+        .rposition(|(_, offset)| *offset <= common_prefix)
+        .unwrap_or(0);
+    let mut end_marker_ix = markers
+        .iter()
+        .position(|(_, offset)| *offset >= change_end_in_old)
+        .unwrap_or_else(|| markers.len().saturating_sub(1));
+
+    if start_marker_ix == end_marker_ix {
+        if end_marker_ix < markers.len().saturating_sub(1) {
+            end_marker_ix += 1;
+        } else if start_marker_ix > 0 {
+            start_marker_ix -= 1;
+        }
+    }
+
+    let old_start = markers
+        .get(start_marker_ix)
+        .map(|(_, offset)| *offset)
+        .context("start marker out of range")?;
+    let old_end = markers
+        .get(end_marker_ix)
+        .map(|(_, offset)| *offset)
+        .context("end marker out of range")?;
+    let new_start = old_start;
+    let new_end = new_text
+        .len()
+        .saturating_sub(old_text.len().saturating_sub(old_end));
+    let new_span = &new_text[new_start..new_end];
+
+    let mut result = String::new();
+    result.push_str(&marker_tag(&markers[start_marker_ix].0));
+    result.push('\n');
+    if let Some(cursor_offset) = cursor_offset_in_new {
+        if cursor_offset >= new_start && cursor_offset <= new_end {
+            let cursor_in_span = cursor_offset - new_start;
+            result.push_str(&new_span[..cursor_in_span]);
+            result.push_str(cursor_marker);
+            result.push_str(&new_span[cursor_in_span..]);
+        } else {
+            result.push_str(new_span);
+        }
+    } else {
+        result.push_str(new_span);
+    }
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&marker_tag(&markers[end_marker_ix].0));
+    result.push_str(V0615_END_MARKER);
+    Ok(result)
+}
+
+pub fn parse_output_as_patch(
+    input: &ZetaPromptInput,
+    output: &str,
+    cursor_marker: &str,
+) -> Result<String> {
+    let output = output.strip_suffix(V0615_END_MARKER).unwrap_or(output);
+    if output.trim() == NO_EDITS {
+        return Ok(String::new());
+    }
+
+    let marker_table = build_marker_table(input);
+    let snippets = merge_contiguous_snippets(input, marker_table)?;
+    let (start_id, end_id, mut new_span) = extract_marker_span_allow_same(output)?;
+    let (start_snippet, start_byte) = find_marker(&snippets, &start_id)
+        .with_context(|| format!("unknown start marker `{start_id}`"))?;
+    let (end_snippet, end_byte) = find_marker(&snippets, &end_id)
+        .with_context(|| format!("unknown end marker `{end_id}`"))?;
+
+    if start_snippet != end_snippet {
+        return Err(anyhow!(
+            "markers `{start_id}` and `{end_id}` belong to different context snippets"
+        ));
+    }
+    if start_byte > end_byte {
+        return Err(anyhow!(
+            "start marker `{start_id}` must come before end marker `{end_id}`"
+        ));
+    }
+    if start_id == end_id {
+        return Ok(String::new());
+    }
+
+    let snippet = &snippets[start_snippet];
+    let old_text = snippet.text.as_ref();
+    let old_span = &old_text[start_byte..end_byte];
+    if old_span.is_empty() {
+        if !new_span.is_empty() && !new_span.ends_with('\n') {
+            new_span.push('\n');
+        }
+    } else {
+        if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
+            new_span.push('\n');
+        }
+        if !old_span.ends_with('\n') && new_span.ends_with('\n') {
+            new_span.pop();
+        }
+    }
+
+    let mut new_text = String::new();
+    new_text.push_str(&old_text[..start_byte]);
+    new_text.push_str(&new_span.replace(cursor_marker, ""));
+    new_text.push_str(&old_text[end_byte..]);
+
+    let (path, start_row) = snippet_path_and_start_row(input, snippet)?;
+    let diff = udiff::unified_diff_with_context(old_text, &new_text, start_row, start_row, 3);
+    if diff.is_empty() {
+        return Ok(String::new());
+    }
+
+    let path = path.to_string_lossy();
+    Ok(format!("--- a/{path}\n+++ b/{path}\n{diff}"))
+}
+
+pub fn encode_patch_as_output(
+    input: &ZetaPromptInput,
+    patch: &str,
+    cursor_offset: Option<usize>,
+    cursor_marker: &str,
+) -> Result<String> {
+    if patch.lines().count() <= 3 {
+        return Ok(format!("{NO_EDITS}{V0615_END_MARKER}"));
+    }
+
+    let marker_table = build_marker_table(input);
+    let snippets = merge_contiguous_snippets(input, marker_table)?;
+    let mut parser = udiff::DiffParser::new(patch);
+    let mut encoded_output = None;
+
+    while let Some(event) = parser.next().context("failed to parse expected patch")? {
+        let udiff::DiffEvent::Hunk {
+            path,
+            mut hunk,
+            status: _,
+        } = event
+        else {
+            continue;
+        };
+
+        if encoded_output.is_some() {
+            anyhow::bail!("hashed-region expected-output encoding supports one hunk");
+        }
+
+        let (snippet_ix, start_row) = snippets
+            .iter()
+            .enumerate()
+            .find_map(|(snippet_ix, snippet)| {
+                let (snippet_path, start_row) = snippet_path_and_start_row(input, snippet).ok()?;
+                (snippet_path == Path::new(path.as_ref())).then_some((snippet_ix, start_row))
+            })
+            .with_context(|| format!("no hash-region context for patch path `{path}`"))?;
+        let snippet = &snippets[snippet_ix];
+        let old_text = snippet.text.as_ref();
+        let candidates = udiff::find_context_candidates(old_text, &mut hunk);
+        let hunk_offset =
+            udiff::disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
+                start_row + old_text[..offset].matches('\n').count() as u32
+            })
+            .ok_or_else(|| anyhow!("couldn't resolve hunk in hash-region context"))?;
+
+        let mut new_text = old_text.to_string();
+        for edit in hunk.edits.iter().rev() {
+            let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
+            new_text.replace_range(range, &edit.text);
+        }
+        let cursor_in_new = cursor_offset.map(|cursor| (hunk_offset + cursor).min(new_text.len()));
+        encoded_output = Some(encode_from_old_and_new(
+            old_text,
+            &new_text,
+            &snippet.markers,
+            cursor_in_new,
+            cursor_marker,
+        )?);
+    }
+
+    encoded_output.context("expected patch did not contain an encodable hunk")
 }
 
 #[cfg(test)]
