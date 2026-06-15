@@ -1218,7 +1218,7 @@ mod tests {
             json!({
                 "TEST (1)": {},
                 "Project (2,3)": {},
-                "data-vis template": {},
+                "test 123": {},
             }),
         )
         .await;
@@ -1226,7 +1226,7 @@ mod tests {
         let inputs = vec![
             path!("/root/TEST (1)").to_string(),
             path!("/root/Project (2,3)").to_string(),
-            path!("/root/data-vis template").to_string(),
+            path!("/root/test 123").to_string(),
         ];
         let result = derive_paths_with_position(fs.as_ref(), inputs).await;
 
@@ -1239,7 +1239,7 @@ mod tests {
             vec![
                 (path!("/root/TEST (1)").to_string(), None, None),
                 (path!("/root/Project (2,3)").to_string(), None, None),
-                (path!("/root/data-vis template").to_string(), None, None),
+                (path!("/root/test 123").to_string(), None, None),
             ]
         );
     }
