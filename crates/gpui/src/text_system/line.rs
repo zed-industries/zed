@@ -585,7 +585,7 @@ fn paint_line(
                 if is_transformed || max_glyph_bounds.intersects(&content_mask.bounds) {
                     let vertical_offset = point(px(0.0), glyph.position.y);
                     if glyph.is_emoji {
-                        window.paint_emoji(
+                        window.paint_emoji_transformed(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
@@ -593,7 +593,7 @@ fn paint_line(
                             transformation,
                         )?;
                     } else {
-                        window.paint_glyph(
+                        window.paint_glyph_transformed(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,

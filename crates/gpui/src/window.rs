@@ -3826,6 +3826,17 @@ impl Window {
         glyph_id: GlyphId,
         font_size: Pixels,
         color: Hsla,
+    ) -> Result<()> {
+        self.paint_glyph_transformed(origin, font_id, glyph_id, font_size, color, TransformationMatrix::unit())
+    }
+
+    pub(crate) fn paint_glyph_transformed(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
         transformation: TransformationMatrix,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
@@ -3930,6 +3941,16 @@ impl Window {
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_emoji(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<()> {
+        self.paint_emoji_transformed(origin, font_id, glyph_id, font_size, TransformationMatrix::unit())
+    }
+
+    pub(crate) fn paint_emoji_transformed(
         &mut self,
         origin: Point<Pixels>,
         font_id: FontId,
