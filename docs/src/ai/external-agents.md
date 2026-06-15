@@ -58,7 +58,7 @@ Use Gemini CLI when you want Gemini running as an ACP-integrated External Agent 
 
 Install Gemini CLI from the [ACP Registry](#registry), then start a Gemini CLI thread from the Agent Panel or Threads Sidebar. Gemini CLI owns its own authentication and may prompt you to log in with Google, Vertex AI, or another Gemini-supported flow.
 
-If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI may use that key. Zed-configured Google AI provider settings are separate from Gemini CLI's native configuration.
+If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI uses that key. Otherwise, if you have configured an API key for Zed's Google AI provider, Zed passes that key to Gemini CLI as `GEMINI_API_KEY`.
 
 ## OpenCode {#opencode}
 
@@ -149,9 +149,9 @@ Registry-installed agents can also have per-agent settings under `agent_servers.
 
 ## Extension-Provided Agents {#extension-agents}
 
-Some extensions can provide agents. Registry installation is the primary path for common agents, but extension-provided agents still exist.
+Extension-provided agents are deprecated. The [ACP Registry](#registry) is now the way to install agents, and previously installed extension agents are automatically migrated to their registry equivalents.
 
-For extension authoring, see [Agent Server Extensions](../extensions/agent-servers.md).
+For details, see [Agent Server Extensions](../extensions/agent-servers.md).
 
 ## Importing Threads {#importing-threads}
 

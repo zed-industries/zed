@@ -1,0 +1,20 @@
+[package]
+name = "http_proxy"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/http_proxy.rs"
+
+[dependencies]
+anyhow.workspace = true
+idna.workspace = true
+percent-encoding.workspace = true
+proxyvars.workspace = true
+thiserror.workspace = true
+url.workspace = true
