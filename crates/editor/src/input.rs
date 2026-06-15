@@ -523,7 +523,13 @@ impl Editor {
             }
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             refresh_linked_ranges(this, window, cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
         });
     }
@@ -759,7 +765,13 @@ impl Editor {
                 .collect();
 
             this.change_selections(Default::default(), window, cx, |s| s.select(new_selections));
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             if let Some(task) = this.trigger_on_type_formatting("\n".to_owned(), window, cx) {
                 task.detach_and_log_err(cx);
             }
@@ -2364,7 +2376,7 @@ impl NewlineConfig {
             .range_to_buffer_ranges(range.start..range.end)
             .as_slice()
         {
-            [(buffer_snapshot, range, _)] => (buffer_snapshot.clone(), range.clone()),
+            [(buffer_snapshot, range, _)] => (*buffer_snapshot, range.clone()),
             _ => return false,
         };
         let pair = {

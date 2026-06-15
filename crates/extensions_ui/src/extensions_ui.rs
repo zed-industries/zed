@@ -132,7 +132,12 @@ pub fn init(cx: &mut App) {
                             Err(err) => {
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
-                                        workspace.show_portal_error(err.to_string(), cx);
+                                        workspace.show_error(
+                                            workspace::workspace_error::PortalError::new(
+                                                err.to_string(),
+                                            ),
+                                            cx,
+                                        );
                                     })
                                     .ok();
                                 return None;
@@ -149,10 +154,10 @@ pub fn init(cx: &mut App) {
                                 log::error!("Failed to install dev extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
+                                        // NOTE: using `anyhow::context` here ends up not printing
+                                        // the error
                                         workspace.show_error(
-                                            // NOTE: using `anyhow::context` here ends up not printing
-                                            // the error
-                                            &format!("Failed to install dev extension: {}", err),
+                                            format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
                                     })
@@ -1733,31 +1738,34 @@ impl Render for ExtensionsPage {
                                 this.change_provides_filter(None, cx);
                             })),
                     )
-                    .children(ExtensionProvides::iter().filter_map(|provides| {
-                        match provides {
-                            ExtensionProvides::SlashCommands
-                            | ExtensionProvides::IndexedDocsProviders => return None,
-                            _ => {}
-                        }
+                    .children(
+                        ExtensionProvides::iter()
+                            .filter(|provides| match provides {
+                                ExtensionProvides::AgentServers
+                                | ExtensionProvides::Grammars // grammars do not add anything of value to users currently
+                                | ExtensionProvides::IndexedDocsProviders
+                                | ExtensionProvides::SlashCommands => false,
+                                _ => true,
+                            })
+                            .map(|provides| {
+                                let label = extension_provides_label(provides);
+                                let button_id =
+                                    SharedString::from(format!("filter-category-{}", label));
 
-                        let label = extension_provides_label(provides);
-                        let button_id = SharedString::from(format!("filter-category-{}", label));
-
-                        Some(
-                            Button::new(button_id, label)
-                                .style(if self.provides_filter == Some(provides) {
-                                    ButtonStyle::Filled
-                                } else {
-                                    ButtonStyle::Subtle
-                                })
-                                .toggle_state(self.provides_filter == Some(provides))
-                                .on_click({
-                                    cx.listener(move |this, _event, _, cx| {
-                                        this.change_provides_filter(Some(provides), cx);
+                                Button::new(button_id, label)
+                                    .style(if self.provides_filter == Some(provides) {
+                                        ButtonStyle::Filled
+                                    } else {
+                                        ButtonStyle::Subtle
                                     })
-                                }),
-                        )
-                    })),
+                                    .toggle_state(self.provides_filter == Some(provides))
+                                    .on_click({
+                                        cx.listener(move |this, _event, _, cx| {
+                                            this.change_provides_filter(Some(provides), cx);
+                                        })
+                                    })
+                            }),
+                    ),
             )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {

@@ -8,7 +8,7 @@ use super::{
 use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{LanguageAwareStyling, Point};
-use multi_buffer::{MultiBufferSnapshot, RowInfo};
+use multi_buffer::RowInfo;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
@@ -379,11 +379,6 @@ impl WrapSnapshot {
             tab_snapshot,
             interpolated: true,
         }
-    }
-
-    #[ztracing::instrument(skip_all)]
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        self.tab_snapshot.buffer_snapshot()
     }
 
     #[ztracing::instrument(skip_all)]

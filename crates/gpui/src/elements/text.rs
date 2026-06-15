@@ -669,6 +669,7 @@ impl TextLayout {
                         match text_overflow {
                             TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
                             TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
+                            TextOverflow::TruncateMiddle(s) => (width, s, TruncateFrom::Middle),
                         }
                     } else {
                         (None, "".into(), TruncateFrom::End)

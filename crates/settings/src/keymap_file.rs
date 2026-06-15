@@ -221,6 +221,27 @@ impl KeymapFile {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn load_asset_cached(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
+        static CACHED: std::sync::OnceLock<KeymapFile> = std::sync::OnceLock::new();
+        let keymap = CACHED
+            .get_or_init(|| Self::parse(asset_str::<SettingsAssets>(asset_path).as_ref()).unwrap());
+        match keymap.load_keymap(cx) {
+            KeymapFileLoadResult::SomeFailedToLoad {
+                key_bindings,
+                error_message,
+                ..
+            } if key_bindings.is_empty() => {
+                anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}")
+            }
+            KeymapFileLoadResult::Success { key_bindings, .. }
+            | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
+            KeymapFileLoadResult::JsonParseFailure { error } => {
+                anyhow::bail!("JSON parse error in built-in keymap \"{asset_path}\": {error}")
+            }
+        }
+    }
+
     #[cfg(feature = "test-support")]
     pub fn load_panic_on_failure(content: &str, cx: &App) -> Vec<KeyBinding> {
         match Self::load(content, cx) {
@@ -241,7 +262,10 @@ impl KeymapFile {
                 return KeymapFileLoadResult::JsonParseFailure { error };
             }
         };
+        keymap_file.load_keymap(cx)
+    }
 
+    pub fn load_keymap(&self, cx: &App) -> KeymapFileLoadResult {
         // Accumulate errors in order to support partial load of user keymap in the presence of
         // errors in context and binding parsing.
         let mut errors = Vec::new();
@@ -253,7 +277,7 @@ impl KeymapFile {
             unbind,
             bindings,
             unrecognized_fields,
-        } in keymap_file.0.iter()
+        } in self.0.iter()
         {
             let context_predicate: Option<Rc<KeyBindingContextPredicate>> = if context.is_empty() {
                 None

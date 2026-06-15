@@ -370,7 +370,7 @@ impl FollowableItem for Editor {
         };
         drop(buffer);
         self.set_selections_from_remote(vec![selection], None, window, cx);
-        self.request_autoscroll_remotely(Autoscroll::fit(), cx);
+        self.request_autoscroll_remotely(Autoscroll::focused(), cx);
     }
 }
 
@@ -783,11 +783,20 @@ impl Item for Editor {
 
         h_flex()
             .gap_2()
+            .when(params.truncate_title_middle, |this| {
+                this.w_full().min_w_0().overflow_hidden()
+            })
             .child(
-                Label::new(util::truncate_and_trailoff(
-                    &self.title(cx),
-                    params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
-                ))
+                Label::new(if params.truncate_title_middle {
+                    self.title(cx).to_string()
+                } else {
+                    util::truncate_and_trailoff(
+                        &self.title(cx),
+                        params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+                    )
+                })
+                .when(params.truncate_title_middle, |this| this.truncate_middle())
+                .when(params.truncate_title_middle, |this| this.flex_1())
                 .color(label_color)
                 .when(params.preview, |this| this.italic())
                 .when(was_deleted, |this| this.strikethrough()),
@@ -796,6 +805,9 @@ impl Item for Editor {
                 this.child(
                     Label::new(description)
                         .size(LabelSize::XSmall)
+                        .when(params.truncate_title_middle, |this| {
+                            this.truncate_start().flex_shrink()
+                        })
                         .color(Color::Muted),
                 )
             })
@@ -2243,7 +2255,7 @@ mod tests {
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
         let file: Arc<dyn language::File> = Arc::new(TestFile {
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
             root_name: String::new(),
             local_root: None,
         });
