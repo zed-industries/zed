@@ -2323,10 +2323,7 @@ impl DisplaySnapshot {
                         .is_some_and(|scope| {
                             matches!(
                                 scope.override_name(),
-                                Some("string")
-                                    | Some("comment")
-                                    | Some("comment.inclusive")
-                                    | Some("preproc")
+                                Some("string") | Some("comment") | Some("preproc")
                             )
                         });
                     if in_string_or_comment_or_preproc_scope
