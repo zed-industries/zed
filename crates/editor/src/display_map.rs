@@ -2318,15 +2318,18 @@ impl DisplaySnapshot {
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    let in_string_or_comment_scope = snapshot
+                    let in_string_or_comment_or_preproc_scope = snapshot
                         .language_scope_at(Point::new(row, 0))
                         .is_some_and(|scope| {
                             matches!(
                                 scope.override_name(),
-                                Some("string") | Some("comment") | Some("comment.inclusive")
+                                Some("string")
+                                    | Some("comment")
+                                    | Some("comment.inclusive")
+                                    | Some("preproc")
                             )
                         });
-                    if in_string_or_comment_scope
+                    if in_string_or_comment_or_preproc_scope
                         && let Some(end) = foldable_node_end
                         && Point::new(row, 0).to_offset(snapshot) < end
                     {
