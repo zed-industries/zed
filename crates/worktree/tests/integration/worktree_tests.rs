@@ -4201,6 +4201,8 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         path!("/main_repo/.git/FETCH_HEAD"),
         path!("/main_repo/.git/ORIG_HEAD"),
         path!("/main_repo/.git/BISECT_LOG"),
+        path!("/main_repo/.git/info/refs"),
+        path!("/main_repo/.git/info/refs_lzOf51"),
         path!("/main_repo/.git/gc.pid"),
         // Linked-worktree specific skipped paths
         path!("/main_repo/.git/worktrees/feature/index.lock"),
@@ -4219,6 +4221,7 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         // Standard common git dir rescan paths
         path!("/main_repo/.git/logs/refs/stash"),
         path!("/main_repo/.git/refs/heads/main"),
+        path!("/main_repo/.git/info/exclude"),
         // Linked-worktree worktree-specific rescan paths
         path!("/main_repo/.git/worktrees/feature/index"),
         path!("/main_repo/.git/worktrees/feature/HEAD"),

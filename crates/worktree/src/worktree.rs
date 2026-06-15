@@ -23,8 +23,8 @@ use futures::{
 use fuzzy::CharBag;
 use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GITIGNORE, HOOKS_DIR,
-    LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD, REBASE_APPLY_DIR, REBASE_MERGE_DIR,
-    REPO_EXCLUDE, SEQUENCER_DIR, status::GitSummary,
+    INFO_DIR, LFS_DIR, LOGS_DIR, LOGS_REF_STASH, OBJECTS_DIR, ORIG_HEAD, REBASE_APPLY_DIR,
+    REBASE_MERGE_DIR, REPO_EXCLUDE, SEQUENCER_DIR, status::GitSummary,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
@@ -4466,6 +4466,8 @@ impl BackgroundScanner {
                             .is_some_and(|file_name| file_name == OsStr::new(skipped))
                     }) || (path_in_git_dir.starts_with(LOGS_DIR)
                         && path_in_git_dir != Path::new(LOGS_REF_STASH))
+                        || (path_in_git_dir.starts_with(INFO_DIR)
+                            && path_in_git_dir != Path::new(REPO_EXCLUDE))
                         || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
                             path_in_git_dir.starts_with(skipped_git_subdir)
                         })
