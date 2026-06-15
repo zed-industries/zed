@@ -1063,13 +1063,16 @@ pub async fn derive_paths_with_position(
         let original_path = Path::new(path_str.as_ref());
         let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
 
-        // If the unparsed path string actually points to a file, use that file instead of parsing out the line/col number.
+        // If the unparsed path string actually points to an existing file or directory, use it
+        // instead of parsing out the line/col number. This matters for paths whose final
+        // component looks like a position suffix, e.g. a folder named `Test (3)` would
+        // otherwise be parsed as `Test ` at row 3.
         // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
         // However, the colon is not valid in NTFS file names, so we can just skip this logic.
         if !cfg!(windows)
             && parsed.row.is_some()
             && parsed.path != original_path
-            && fs.is_file(original_path).await
+            && (fs.is_file(original_path).await || fs.is_dir(original_path).await)
         {
             parsed = PathWithPosition::from_path(original_path.to_path_buf());
         }
@@ -1199,6 +1202,46 @@ mod tests {
         for (input, expected_url, host, username, port, path) in cases {
             assert_ssh_parse(cx, input, expected_url, host, username, port, path);
         }
+    }
+
+    #[gpui::test]
+    async fn test_derive_paths_with_position_directory_with_position_like_name(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        // A folder whose name ends in `(N)` or `(row,col)` would otherwise be parsed as a
+        // path with a row/column suffix (e.g. the MSVC-style `file.c(22)`), truncating the name.
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "TEST (1)": {},
+                "Project (2,3)": {},
+                "data-vis template": {},
+            }),
+        )
+        .await;
+
+        let inputs = vec![
+            path!("/root/TEST (1)").to_string(),
+            path!("/root/Project (2,3)").to_string(),
+            path!("/root/data-vis template").to_string(),
+        ];
+        let result = derive_paths_with_position(fs.as_ref(), inputs).await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                (path!("/root/TEST (1)").to_string(), None, None),
+                (path!("/root/Project (2,3)").to_string(), None, None),
+                (path!("/root/data-vis template").to_string(), None, None),
+            ]
+        );
     }
 
     #[gpui::test]
