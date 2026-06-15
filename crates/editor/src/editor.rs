@@ -7554,8 +7554,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // TODO: Figure out what happened to `Editor::hide_mouse_cursor`.
-        // self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_offsets_with(&mut |snapshot, selection| {
                 // For languages that don't register quotes as bracket pairs in their
