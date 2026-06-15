@@ -445,6 +445,7 @@
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-r": "search::ToggleRegex", // vscode
+      "ctrl-alt-p": "project_search::OpenTextFinder",
     },
   },
   {
@@ -475,6 +476,14 @@
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-r": "search::ToggleRegex", // vscode
+      "ctrl-alt-p": "project_search::OpenTextFinder",
+    },
+  },
+  {
+    "context": "TextPicker",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-alt-p": "text_finder::ToProjectSearch",
     },
   },
   {
