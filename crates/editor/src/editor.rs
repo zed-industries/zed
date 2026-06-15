@@ -1793,6 +1793,8 @@ impl Editor {
                         depth: outline_item.depth,
                         range: multi_buffer
                             .buffer_anchor_range_to_anchor_range(outline_item.range)?,
+                        selection_range: multi_buffer
+                            .buffer_anchor_range_to_anchor_range(outline_item.selection_range)?,
                         source_range_for_text: multi_buffer.buffer_anchor_range_to_anchor_range(
                             outline_item.source_range_for_text,
                         )?,

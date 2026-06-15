@@ -348,7 +348,9 @@ async fn run_terminal_tool(
 
     if request.needs_escalation() {
         let title = sandbox_approval_title(&request);
-        let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
+        let command = Some(input.command.clone());
+        let approve =
+            cx.update(|cx| event_stream.authorize_sandbox(title, command, request.clone(), cx));
         if let Err(error) = approve.await {
             if want_unsandboxed {
                 return Ok(format!(
@@ -2490,6 +2492,7 @@ mod tests {
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("legacy allow_fs_write should request sandbox authorization details");
+        assert_eq!(details.command.as_deref(), Some("echo hi"));
         assert!(!details.network);
         assert!(details.allow_fs_write_all);
         assert!(!details.unsandboxed);
@@ -2586,6 +2589,7 @@ mod tests {
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("unsandboxed should request sandbox authorization details");
+        assert_eq!(details.command.as_deref(), Some("echo hi"));
         assert!(!details.network);
         assert!(!details.allow_fs_write_all);
         assert!(details.unsandboxed);
