@@ -31,6 +31,7 @@ pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
 pub const FETCH_HEAD: &str = "FETCH_HEAD";
 pub const ORIG_HEAD: &str = "ORIG_HEAD";
 pub const BISECT_LOG: &str = "BISECT_LOG";
+pub const GC_PID: &str = "gc.pid";
 pub const INFO_DIR: &str = "info";
 pub const REPO_EXCLUDE: &str = "info/exclude";
 
