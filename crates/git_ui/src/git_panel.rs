@@ -3657,7 +3657,7 @@ impl GitPanel {
         self.active_repository = active_repository;
         self._repo_subscriptions.clear();
         if self.active_tab == GitPanelTab::History {
-            self.set_commit_history(CommitHistory::Loading);
+            self.set_commit_history(CommitHistory::Loading, cx);
         }
     }
 
@@ -5296,7 +5296,7 @@ impl GitPanel {
             }
             GitPanelTab::Changes => {
                 self.focus_handle.focus(window, cx);
-                self.set_commit_history(CommitHistory::Loading);
+                self.set_commit_history(CommitHistory::Loading, cx);
                 self._repo_subscriptions.clear();
             }
         }
@@ -5352,7 +5352,7 @@ impl GitPanel {
 
         let Some(log_source) = Self::commit_history_log_source(&active_repository, cx) else {
             // No HEAD commit at all (unborn/empty repository).
-            self.set_commit_history(CommitHistory::Loaded(Vec::new()));
+            self.set_commit_history(CommitHistory::Loaded(Vec::new()), cx);
             return;
         };
         let log_order = LogOrder::DateOrder;
@@ -5363,15 +5363,19 @@ impl GitPanel {
             (shas, response.is_loading, response.error)
         });
 
-        self.set_commit_history(commit_history_from_response(shas, is_loading, error));
+        self.set_commit_history(commit_history_from_response(shas, is_loading, error), cx);
     }
 
-    fn set_commit_history(&mut self, commit_history: CommitHistory) {
+    fn set_commit_history(&mut self, commit_history: CommitHistory, cx: &mut Context<Self>) {
+        let changed = self.commit_history != commit_history;
         self.commit_history = commit_history;
         // Keep the focused entry within range as the history grows or clears.
         let count = self.commit_history_shas().len();
         let focused = self.focused_history_entry.unwrap_or(0);
         self.focused_history_entry = (count > 0).then(|| focused.min(count - 1));
+        if changed {
+            cx.notify();
+        }
     }
 
     fn commit_history_log_source(
@@ -7656,6 +7660,13 @@ mod tests {
         panel
     }
 
+    async fn wait_for_commit_history_to_settle(panel: &Entity<GitPanel>, cx: &mut TestAppContext) {
+        cx.condition(panel, |panel, _| {
+            !matches!(panel.commit_history, CommitHistory::Loading)
+        })
+        .await;
+    }
+
     #[test]
     fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
         let rpc_error = RpcError::from_proto(
@@ -7714,6 +7725,7 @@ mod tests {
 
         let panel = history_panel_for_project(fs.clone(), cx).await;
 
+        wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loaded(Vec::new()));
         });
@@ -7742,6 +7754,7 @@ mod tests {
 
         let panel = history_panel_for_project(fs.clone(), cx).await;
 
+        wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.commit_history, CommitHistory::Loaded(vec![sha]));
         });
@@ -7771,6 +7784,7 @@ mod tests {
 
         let panel = history_panel_for_project(fs.clone(), cx).await;
 
+        wait_for_commit_history_to_settle(&panel, cx).await;
         panel.read_with(cx, |panel, _| {
             assert!(matches!(panel.commit_history, CommitHistory::Error(_)));
         });
