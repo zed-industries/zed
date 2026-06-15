@@ -448,7 +448,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tail_proximity_bonus_prefers_shallow_cargo_toml(cx: &mut TestAppContext) {
+async fn test_tail_proximity_bonus_prefers_later_match(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
