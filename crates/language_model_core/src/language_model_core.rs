@@ -28,13 +28,6 @@ pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 pub use crate::util::{fix_streamed_json, parse_prompt_too_long, parse_tool_arguments};
 pub use gpui_shared_string::SharedString;
 
-#[derive(Clone, Debug)]
-pub struct LanguageModelCacheConfiguration {
-    pub max_cache_anchors: usize,
-    pub should_speculate: bool,
-    pub min_total_token: u64,
-}
-
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
@@ -95,6 +88,14 @@ impl LanguageModelCompletionEvent {
 pub enum LanguageModelCompletionError {
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
+    /// The model requires the user to consent to the upstream provider
+    /// retaining inference logs (see `LanguageModel::requires_data_retention`)
+    /// and that consent has not been given.
+    #[error(
+        "{model_name} cannot be offered with Zero Data Retention. \
+        Anthropic will retain inference logs."
+    )]
+    DataRetentionConsentRequired { model_name: String },
     #[error("missing {provider} API key")]
     NoApiKey { provider: LanguageModelProviderName },
     #[error("{provider}'s API rate limit exceeded")]
@@ -173,6 +174,8 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    #[error("payment required to use this language model; please upgrade your account")]
+    PaymentRequired,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -378,7 +381,7 @@ pub struct LanguageModelId(pub SharedString);
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelName(pub SharedString);
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]

@@ -86,6 +86,7 @@ fn docs_build_steps(
 
     steps::use_clang(
         job.add_env(("DOCS_AMPLITUDE_API_KEY", vars::DOCS_AMPLITUDE_API_KEY))
+            .add_env(("DOCS_CONSENT_IO_INSTANCE", vars::DOCS_CONSENT_IO_INSTANCE))
             .add_step(
                 steps::checkout_repo().when_some(checkout_ref, |step, checkout_ref| {
                     step.with_ref(checkout_ref)
@@ -257,7 +258,9 @@ pub(crate) fn deploy_docs_workflow_call(
             "zed-industries",
             "zed",
             ".github/workflows/deploy_docs.yml",
-            "main",
+            // Pinned to a commit rather than the mutable `main` ref (supply-chain hardening).
+            // Same-repo reusable workflow; bump via Dependabot or alongside deploy_docs.yml changes.
+            "3f16f7b9082f8828e4d6ae207d2349b1ef932517",
         )
         .with(
             Input::default()
@@ -268,6 +271,10 @@ pub(crate) fn deploy_docs_workflow_call(
             (
                 "DOCS_AMPLITUDE_API_KEY".to_owned(),
                 vars::DOCS_AMPLITUDE_API_KEY.to_owned(),
+            ),
+            (
+                "DOCS_CONSENT_IO_INSTANCE".to_owned(),
+                vars::DOCS_CONSENT_IO_INSTANCE.to_owned(),
             ),
             (
                 "CLOUDFLARE_API_TOKEN".to_owned(),
@@ -324,6 +331,13 @@ pub(crate) fn deploy_docs() -> Workflow {
                             "DOCS_AMPLITUDE_API_KEY".to_owned(),
                             WorkflowCallSecret {
                                 description: "DOCS_AMPLITUDE_API_KEY".to_owned(),
+                                required: true,
+                            },
+                        ),
+                        (
+                            "DOCS_CONSENT_IO_INSTANCE".to_owned(),
+                            WorkflowCallSecret {
+                                description: "DOCS_CONSENT_IO_INSTANCE".to_owned(),
                                 required: true,
                             },
                         ),

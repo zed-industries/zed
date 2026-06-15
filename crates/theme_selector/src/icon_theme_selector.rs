@@ -299,6 +299,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let theme_match = &self.matches.get(ix)?;
+        let is_original_theme = theme_match.string.as_str() == self.original_theme.0.as_ref();
 
         Some(
             ListItem::new(ix)
@@ -308,7 +309,10 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                 .child(HighlightedLabel::new(
                     theme_match.string.clone(),
                     theme_match.positions.clone(),
-                )),
+                ))
+                .when(is_original_theme, |this| {
+                    this.end_slot(Icon::new(IconName::Check).color(Color::Muted))
+                }),
         )
     }
 
