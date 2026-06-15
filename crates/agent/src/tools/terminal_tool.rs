@@ -413,6 +413,7 @@ async fn run_terminal_tool(
             extra_write_paths: effective.write_paths,
             network: network_request_to_allowlist(&effective.network),
             allow_fs_write: effective.allow_fs_write_all,
+            is_local: is_local_project,
         })
     } else {
         None

@@ -51,6 +51,10 @@ pub struct SandboxWrap {
     pub network: Allowlist,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
+    /// Whether the project (and therefore this terminal) is local. The
+    /// enforcing proxy binds a loopback port on this host, so it can only
+    /// confine local commands; a remote terminal can't reach it.
+    pub is_local: bool,
 }
 
 impl SandboxWrap {
@@ -67,17 +71,26 @@ impl SandboxWrap {
 /// whose only job is to drop with the entity.
 pub type SandboxConfigHandle = Box<dyn std::any::Any + Send>;
 
+/// The outbound-network policy resolved for a sandboxed command.
+pub(crate) enum NetworkPolicy {
+    /// The command requested no outbound network.
+    Denied,
+    /// Egress is confined to the in-process proxy on this loopback port.
+    Proxied(u16),
+    /// Network was requested but couldn't be confined to the proxy (a
+    /// non-local project, or a host with no sandbox integration). The agent
+    /// layer widens such requests to "arbitrary network access" before
+    /// prompting (see `run_terminal_tool`), so the user approved exactly this.
+    Unrestricted,
+}
+
 /// Apply a [`SandboxWrap`] to a `(program, args)` pair, substituting the
 /// platform's sandbox-launcher invocation in place of the original. The
 /// returned `SandboxConfigHandle` (when `Some`) must be kept alive for the
 /// duration of the spawned command — dropping it deletes any on-disk
 /// config the launcher reads at startup.
 ///
-/// `proxy_port`, when set, is the loopback port of the in-process network
-/// proxy spawned for this command (see [`setup_network_proxy`]); the sandbox
-/// is narrowed to permit outbound TCP only to that port. When network was
-/// requested but no proxy is running (e.g. a non-local project), egress falls
-/// back to unrestricted.
+/// `network_policy` is the decision resolved by [`setup_network_proxy`];
 ///
 /// On non-macOS hosts this is a no-op: the inputs pass through unchanged
 /// and the returned handle is `None`. (We don't yet have a sandbox
@@ -86,7 +99,7 @@ pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
     sandbox_wrap: Option<SandboxWrap>,
-    proxy_port: Option<u16>,
+    network_policy: NetworkPolicy,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
     let Some(sandbox_wrap) = sandbox_wrap else {
         return Ok((program, args, None));
@@ -102,17 +115,10 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
-        let network = if let Some(port) = proxy_port {
-            NetworkAccess::LocalhostPort(port)
-        } else if sandbox_wrap.wants_network() {
-            // Network was requested but we couldn't stand up the enforcing
-            // proxy (e.g. a non-local project). Don't silently deny — fall
-            // back to unrestricted egress. The agent layer widens such
-            // requests to "arbitrary network access" before prompting (see
-            // `run_terminal_tool`), so the user approved exactly this.
-            NetworkAccess::All
-        } else {
-            NetworkAccess::None
+        let network = match network_policy {
+            NetworkPolicy::Proxied(port) => NetworkAccess::LocalhostPort(port),
+            NetworkPolicy::Unrestricted => NetworkAccess::All,
+            NetworkPolicy::Denied => NetworkAccess::None,
         };
         let permissions = sandbox::macos_seatbelt::SandboxPermissions {
             network,
@@ -130,7 +136,7 @@ pub(crate) fn apply_sandbox_wrap(
     {
         // No sandbox integration available; ignore the wrap request and
         // let the command run with the agent's ambient permissions.
-        let _ = (sandbox_wrap, proxy_port);
+        let _ = (sandbox_wrap, network_policy);
         Ok((program, args, None))
     }
 }
@@ -138,23 +144,31 @@ pub(crate) fn apply_sandbox_wrap(
 /// Spawn the in-process network proxy for a sandboxed command, if one is
 /// needed, and wire the child's environment to route through it.
 ///
-/// Returns the proxy handle (which must outlive the command) and its loopback
-/// port. Returns `(None, None)` when no proxy is needed: no sandbox wrap, no
-/// network requested, a non-local project (the loopback proxy can't serve a
-/// remote terminal), or a non-macOS host (no sandbox to confine the child).
+/// Returns the proxy handle (which must outlive the command) alongside the
+/// resolved [`NetworkPolicy`] the sandbox should enforce. The handle is `Some`
+/// only when a proxy was actually spawned — a local macOS project that
+/// requested network. In every other case it is `None`, and the policy is
+/// [`NetworkPolicy::Denied`] (no network requested) or
+/// [`NetworkPolicy::Unrestricted`] (network requested but unenforceable: a
+/// non-local project, where the loopback proxy can't serve a remote terminal,
+/// or a non-macOS host with no sandbox to confine the child).
 pub(crate) fn setup_network_proxy(
     sandbox_wrap: Option<&SandboxWrap>,
-    is_local: bool,
     env: &mut HashMap<String, String>,
     cx: &mut AsyncApp,
-) -> Result<(Option<ProxyHandle>, Option<u16>)> {
+) -> Result<(Option<ProxyHandle>, NetworkPolicy)> {
     let Some(sandbox_wrap) = sandbox_wrap else {
-        return Ok((None, None));
+        return Ok((None, NetworkPolicy::Denied));
     };
+    if !sandbox_wrap.wants_network() {
+        return Ok((None, NetworkPolicy::Denied));
+    }
     // The proxy only buys us anything when a Seatbelt sandbox confines the
-    // child to its loopback port, and only works for local projects.
-    if !cfg!(target_os = "macos") || !is_local || !sandbox_wrap.wants_network() {
-        return Ok((None, None));
+    // child to its loopback port, and only works for local projects. When we
+    // can't enforce it, fall back to unrestricted egress (already approved as
+    // such by the agent layer).
+    if !cfg!(target_os = "macos") || !sandbox_wrap.is_local {
+        return Ok((None, NetworkPolicy::Unrestricted));
     }
 
     // Chain through the user's real upstream proxy if their environment names
@@ -178,7 +192,7 @@ pub(crate) fn setup_network_proxy(
     apply_proxy_env(env, port);
     spawn_proxy_event_logger(events_rx, cx);
 
-    Ok((Some(handle), Some(port)))
+    Ok((Some(handle), NetworkPolicy::Proxied(port)))
 }
 
 /// Point the child's proxy env vars at the in-process proxy and strip any

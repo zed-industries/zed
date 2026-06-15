@@ -3380,9 +3380,6 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
-        // The network proxy binds a loopback port on this host, so it can only
-        // confine commands for local projects.
-        let is_local = project.read(cx).is_local();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -3404,10 +3401,10 @@ impl AcpThread {
                 // generating the sandbox policy, since the policy must pin the
                 // child to the proxy's loopback port. This also injects the
                 // child's proxy env vars.
-                let (proxy_handle, proxy_port) =
-                    setup_network_proxy(sandbox_wrap.as_ref(), is_local, &mut env, cx)?;
+                let (proxy_handle, network_policy) =
+                    setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
                 let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, proxy_port)?;
+                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, network_policy)?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
