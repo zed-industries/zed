@@ -3621,10 +3621,13 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "client",
  "collections",
  "component",
  "db",
+ "editor",
+ "env_logger 0.11.8",
  "fs",
  "gpui",
  "gpui_platform",
@@ -7359,7 +7362,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
- "linkify",
  "log",
  "markdown",
  "menu",
