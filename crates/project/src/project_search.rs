@@ -61,7 +61,7 @@ enum SearchKind {
 #[must_use]
 pub struct SearchResultsHandle {
     results: Receiver<SearchResult>,
-    matching_buffers: Receiver<Entity<Buffer>>,
+    matching_buffers: Receiver<(Entity<Buffer>, u32)>,
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
@@ -76,7 +76,7 @@ impl SearchResultsHandle {
             rx: self.results,
         }
     }
-    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<Entity<Buffer>> {
+    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<(Entity<Buffer>, u32)> {
         SearchResults {
             _task_handle: (self.trigger_search)(cx),
             rx: self.matching_buffers,
@@ -181,7 +181,7 @@ impl Search {
         let (tx, rx) = unbounded();
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
             unbounded::<(Entity<Buffer>, u32)>();
-        let (matching_buffers_tx, matching_buffers_rx) = unbounded::<Entity<Buffer>>();
+        let matching_buffers = grab_buffer_snapshot_rx.clone();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
@@ -369,7 +369,6 @@ impl Search {
                 // Grabbing buffer snapshots is only necessary when we're looking for all matches. If the caller decided that they're not interested
                 // in all matches, running that task unconditionally would hinder caller's ability to observe all matching file paths.
                 let buffer_snapshots = if should_find_all_matches {
-                    drop(matching_buffers_tx);
                     Some(
                         Self::grab_buffer_snapshots(
                             grab_buffer_snapshot_rx,
@@ -381,16 +380,7 @@ impl Search {
                     )
                 } else {
                     drop(find_all_matches_tx);
-                    Some(
-                        cx.background_spawn(async move {
-                            while let Ok((buffer, _)) = grab_buffer_snapshot_rx.recv().await {
-                                if matching_buffers_tx.send(buffer).await.is_err() {
-                                    break;
-                                }
-                            }
-                        })
-                        .boxed_local(),
-                    )
+                    None
                 };
                 let ensure_matches_are_reported_in_order = if should_find_all_matches {
                     Some(
@@ -399,6 +389,7 @@ impl Search {
                     )
                 } else {
                     drop(tx);
+
                     None
                 };
 
@@ -415,7 +406,7 @@ impl Search {
 
         SearchResultsHandle {
             results: rx,
-            matching_buffers: matching_buffers_rx,
+            matching_buffers,
             trigger_search,
         }
     }
