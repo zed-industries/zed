@@ -119,7 +119,7 @@ pub enum ZetaFormat {
     /// V0318-style prompt with buffer diagnostics
     V0420Diagnostics,
     /// V0318-style multi-region format using Qwen FIM tokens and PSM ordering.
-    QwenMultiRegions,
+    V0608QwenMultiRegions,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -287,7 +287,7 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0318SeedMultiRegions
-        | ZetaFormat::QwenMultiRegions => 4096,
+        | ZetaFormat::V0608QwenMultiRegions => 4096,
         ZetaFormat::V0420Diagnostics => 8192,
         ZetaFormat::V0327SingleFile => 16384,
     };
@@ -333,7 +333,7 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
             ];
             TOKENS
         }
-        ZetaFormat::QwenMultiRegions => {
+        ZetaFormat::V0608QwenMultiRegions => {
             static TOKENS: &[&str] = &[
                 qwen::FIM_PREFIX,
                 qwen::FIM_SUFFIX,
@@ -401,7 +401,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::QwenMultiRegions
+        | ZetaFormat::V0608QwenMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0327SingleFile
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
@@ -428,7 +428,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
             &[multi_region::V0318_END_MARKER]
         }
-        ZetaFormat::QwenMultiRegions => &[qwen::END_MARKER],
+        ZetaFormat::V0608QwenMultiRegions => &[qwen::END_MARKER],
         ZetaFormat::V0317SeedMultiRegions => &[multi_region::V0317_END_MARKER],
         ZetaFormat::V0327SingleFile => &[multi_region::V0327_END_MARKER],
     }
@@ -464,7 +464,7 @@ pub fn training_delimiters_for_format(format: ZetaFormat) -> TrainingDelimiters 
             instruction_part: seed_coder::FIM_SUFFIX,
             response_part: seed_coder::FIM_MIDDLE,
         },
-        ZetaFormat::QwenMultiRegions => TrainingDelimiters {
+        ZetaFormat::V0608QwenMultiRegions => TrainingDelimiters {
             instruction_part: qwen::FIM_PREFIX,
             response_part: qwen::FIM_MIDDLE,
         },
@@ -519,7 +519,7 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::QwenMultiRegions => (
+        | ZetaFormat::V0608QwenMultiRegions => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -627,7 +627,7 @@ pub fn write_cursor_excerpt_section_for_format(
                 seed_coder::FILE_MARKER,
             ));
         }
-        ZetaFormat::QwenMultiRegions => {
+        ZetaFormat::V0608QwenMultiRegions => {
             prompt.push_str(&build_v0318_cursor_prefix(
                 path,
                 context,
@@ -880,7 +880,7 @@ pub fn format_prompt_with_budget_for_format(
                 budget_with_margin,
             )
         }
-        ZetaFormat::QwenMultiRegions => {
+        ZetaFormat::V0608QwenMultiRegions => {
             let mut cursor_section = String::new();
 
             write_cursor_excerpt_section_for_format(
@@ -1070,7 +1070,7 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::QwenMultiRegions
+        | ZetaFormat::V0608QwenMultiRegions
         | ZetaFormat::V0327SingleFile => 6,
     }
 }
@@ -1097,7 +1097,7 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::QwenMultiRegions
+        | ZetaFormat::V0608QwenMultiRegions
         | ZetaFormat::V0327SingleFile => String::new(),
     }
 }
@@ -1114,7 +1114,7 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0316SeedMultiRegions => Some(multi_region::V0316_END_MARKER),
         ZetaFormat::V0318SeedMultiRegions => Some(multi_region::V0318_END_MARKER),
         ZetaFormat::V0420Diagnostics => Some(multi_region::V0318_END_MARKER),
-        ZetaFormat::QwenMultiRegions => Some(qwen::END_MARKER),
+        ZetaFormat::V0608QwenMultiRegions => Some(qwen::END_MARKER),
         ZetaFormat::V0317SeedMultiRegions => Some(multi_region::V0317_END_MARKER),
         ZetaFormat::V0327SingleFile => Some(multi_region::V0327_END_MARKER),
 
@@ -1176,7 +1176,7 @@ pub fn encode_patch_as_output_for_format(
                 Ok(None)
             }
         }
-        ZetaFormat::QwenMultiRegions => {
+        ZetaFormat::V0608QwenMultiRegions => {
             let empty_patch = patch.lines().count() <= 3;
             if empty_patch {
                 let marker_offsets =
@@ -1272,7 +1272,7 @@ pub fn format_expected_output(
                 multi_region::V0318_END_MARKER,
             )
         }
-        ZetaFormat::QwenMultiRegions => {
+        ZetaFormat::V0608QwenMultiRegions => {
             let (new_editable, first_hunk_offset) =
                 udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
             let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
@@ -1447,7 +1447,7 @@ pub fn parse_zeta2_model_output(
         ),
         ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::QwenMultiRegions => (
+        | ZetaFormat::V0608QwenMultiRegions => (
             editable_range_in_context,
             multi_region::apply_marker_span_v0318(old_editable_region, output)?,
         ),
@@ -3546,7 +3546,7 @@ pub mod qwen {
             FILE_MARKER,
             "edit_history",
             budget_after_cursor,
-            max_edit_event_count_for_format(&ZetaFormat::QwenMultiRegions),
+            max_edit_event_count_for_format(&ZetaFormat::V0608QwenMultiRegions),
         );
         let edit_history_tokens = estimate_tokens(edit_history_section.len() + "\n".len());
         let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
@@ -5547,7 +5547,7 @@ mod tests {
         );
 
         assert_eq!(
-            format_prompt_with_budget_for_format(&input, ZetaFormat::QwenMultiRegions, 10000)
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0608QwenMultiRegions, 10000)
                 .expect("qwen prompt formatting should succeed"),
             indoc! {r#"
                 <|fim_prefix|><|file_sep|>related.rs
