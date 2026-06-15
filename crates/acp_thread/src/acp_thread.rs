@@ -3392,7 +3392,7 @@ impl AcpThread {
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let env = env.await;
+                let mut env = env.await;
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3404,8 +3404,14 @@ impl AcpThread {
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
+                // Spawn the network proxy (if the wrap requests network) before
+                // generating the sandbox policy, since the policy must pin the
+                // child to the proxy's loopback port. This also injects the
+                // child's proxy env vars.
+                let (proxy_handle, network_policy) =
+                    setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
                 let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, network_policy)?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -3430,6 +3436,7 @@ impl AcpThread {
                         terminal,
                         language_registry,
                         sandbox_config,
+                        proxy_handle,
                         cx,
                     )
                 }))
@@ -3511,6 +3518,7 @@ impl AcpThread {
                 language_registry,
                 // External terminal providers manage their own sandboxing
                 // (if any). We don't wrap their commands.
+                None,
                 None,
                 cx,
             )
