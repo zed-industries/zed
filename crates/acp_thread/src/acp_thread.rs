@@ -3406,11 +3406,8 @@ impl AcpThread {
                 // child's proxy env vars.
                 let (proxy_handle, proxy_port) =
                     setup_network_proxy(sandbox_wrap.as_ref(), is_local, &mut env, cx)?;
-                let (task_command, task_args, config_handle) =
+                let (task_command, task_args, sandbox_config) =
                     apply_sandbox_wrap(task_command, task_args, sandbox_wrap, proxy_port)?;
-                // A single handle keeps both the Seatbelt config and the proxy
-                // alive, dropping them together at the end of the command's lifetime.
-                let sandbox_config = combine_sandbox_resources(config_handle, proxy_handle);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -3435,6 +3432,7 @@ impl AcpThread {
                         terminal,
                         language_registry,
                         sandbox_config,
+                        proxy_handle,
                         cx,
                     )
                 }))
@@ -3516,6 +3514,7 @@ impl AcpThread {
                 language_registry,
                 // External terminal providers manage their own sandboxing
                 // (if any). We don't wrap their commands.
+                None,
                 None,
                 cx,
             )

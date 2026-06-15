@@ -135,30 +135,6 @@ pub(crate) fn apply_sandbox_wrap(
     }
 }
 
-/// Bundles the per-command sandbox RAII resources so a single
-/// [`SandboxConfigHandle`] keeps both the Seatbelt config file and the network
-/// proxy alive for exactly the command's lifetime. Dropping it deletes the
-/// config file and shuts the proxy listener down.
-struct SandboxResources {
-    _config: Option<SandboxConfigHandle>,
-    _proxy: Option<ProxyHandle>,
-}
-
-/// Combine an optional Seatbelt config handle and an optional proxy handle into
-/// a single RAII handle, or `None` if neither is present.
-pub(crate) fn combine_sandbox_resources(
-    config: Option<SandboxConfigHandle>,
-    proxy: Option<ProxyHandle>,
-) -> Option<SandboxConfigHandle> {
-    if config.is_none() && proxy.is_none() {
-        return None;
-    }
-    Some(Box::new(SandboxResources {
-        _config: config,
-        _proxy: proxy,
-    }) as SandboxConfigHandle)
-}
-
 /// Spawn the in-process network proxy for a sandboxed command, if one is
 /// needed, and wire the child's environment to route through it.
 ///
@@ -289,10 +265,11 @@ pub struct Terminal {
     /// (e.g., clicking the Stop button). This is set before kill() is called
     /// so that code awaiting wait_for_exit() can check it deterministically.
     user_stopped: Arc<AtomicBool>,
-    /// RAII handle kept alive for the duration of the sandboxed command.
-    /// `None` when the command isn't sandboxed (the common case for
-    /// terminals not created by the agent).
+    /// Seatbelt config kept alive until the sandboxed command exits.
+    /// `None` when the command isn't sandboxed or after it finishes.
     _sandbox_config: Option<SandboxConfigHandle>,
+    /// In-process network proxy kept alive until the sandboxed command exits.
+    _network_proxy: Option<ProxyHandle>,
 }
 
 pub struct TerminalOutput {
@@ -312,12 +289,14 @@ impl Terminal {
         terminal: Entity<terminal::Terminal>,
         language_registry: Arc<LanguageRegistry>,
         sandbox_config: Option<SandboxConfigHandle>,
+        network_proxy: Option<ProxyHandle>,
         cx: &mut Context<Self>,
     ) -> Self {
         let command_task = terminal.read(cx).wait_for_completed_task(cx);
         Self {
             id,
             _sandbox_config: sandbox_config,
+            _network_proxy: network_proxy,
             command: cx.new(|cx| {
                 Markdown::new(
                     format!("```\n{}\n```", command_label).into(),
@@ -347,6 +326,7 @@ impl Terminal {
                             original_content_len,
                             content_line_count,
                         });
+                        this._network_proxy = None;
                         this._sandbox_config = None;
                         cx.notify();
                     })
