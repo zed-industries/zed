@@ -265,6 +265,7 @@ pub enum MessageContent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum CompactionContent {
+    Pending,
     Summary {
         content: Option<Arc<str>>,
     },

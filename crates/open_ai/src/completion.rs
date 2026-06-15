@@ -355,9 +355,11 @@ fn append_message_to_response_items(
                     encrypted_content,
                 }));
             }
-            // Summary compaction blocks come from other providers and cannot
-            // be replayed to OpenAI.
-            MessageContent::Compaction(CompactionContent::Summary { .. }) => {}
+            // Summary compaction blocks come from other providers, and a
+            // Pending block is a streaming-only UI signal; neither is replayed.
+            MessageContent::Compaction(
+                CompactionContent::Summary { .. } | CompactionContent::Pending,
+            ) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -779,9 +781,12 @@ impl OpenAiResponseEventMapper {
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
-                    ResponseOutputItem::Reasoning(_)
-                    | ResponseOutputItem::Compaction(_)
-                    | ResponseOutputItem::Unknown => {}
+                    ResponseOutputItem::Compaction(_) => {
+                        events.push(Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionContent::Pending,
+                        )));
+                    }
+                    ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
                 }
                 events
             }
@@ -3423,12 +3428,13 @@ mod tests {
 
         assert_eq!(
             mapped,
-            vec![LanguageModelCompletionEvent::Compaction(
-                CompactionContent::Encrypted {
+            vec![
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Pending),
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Encrypted {
                     id: Some("cmp_1".into()),
                     encrypted_content: "encrypted-blob".into(),
-                }
-            )]
+                }),
+            ]
         );
     }
 }

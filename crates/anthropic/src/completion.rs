@@ -160,9 +160,11 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
                 cache_control: None,
             })
         }
-        // Encrypted compaction blocks come from other providers and cannot be
-        // replayed to Anthropic.
-        MessageContent::Compaction(CompactionContent::Encrypted { .. }) => None,
+        // Encrypted compaction blocks come from other providers, and a
+        // Pending block is a streaming-only UI signal; neither is replayed.
+        MessageContent::Compaction(
+            CompactionContent::Encrypted { .. } | CompactionContent::Pending,
+        ) => None,
     }
 }
 
