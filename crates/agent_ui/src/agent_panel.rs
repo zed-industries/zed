@@ -65,7 +65,7 @@ use anyhow::{Context as _, Result, anyhow};
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
-use client::{UserStore, zed_urls};
+use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -5704,10 +5704,6 @@ impl AgentPanel {
                                         },
                                     );
                                 }
-
-                                menu = menu.entry("Rules Library", None, |_window, cx| {
-                                    cx.open_url(&zed_urls::rules_docs(cx));
-                                });
 
                                 menu = menu.separator();
                             }
