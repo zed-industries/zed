@@ -43,12 +43,8 @@ pub struct SandboxWrap {
     /// model-requested paths that passed a user-approval prompt. They are
     /// merged with `writable_paths` when generating the sandbox policy.
     pub extra_write_paths: Vec<PathBuf>,
-    /// Outbound network the command may reach, as a hostname allowlist. An
-    /// empty allowlist (the default) means no network. A non-empty allowlist
-    /// (or [`Allowlist::any`]) causes an in-process HTTP/HTTPS proxy to be
-    /// spawned that enforces the policy, with the sandbox confined to its
-    /// loopback port.
-    pub network: Allowlist,
+    /// Outbound network access explicitly approved for this command.
+    pub network: SandboxNetworkAccess,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
     /// Whether the project (and therefore this terminal) is local. The
@@ -57,11 +53,25 @@ pub struct SandboxWrap {
     pub is_local: bool,
 }
 
-impl SandboxWrap {
-    /// Whether this wrap requests any outbound network access, and therefore
-    /// needs the in-process proxy to be spawned.
-    fn wants_network(&self) -> bool {
-        !self.network.is_deny_all()
+#[derive(Clone, Debug, Default)]
+pub enum SandboxNetworkAccess {
+    /// Block all outbound network access.
+    #[default]
+    None,
+    /// Allow only hosts in this allowlist, enforced by routing HTTP/HTTPS
+    /// through an in-process proxy and confining the command to the proxy's
+    /// loopback port.
+    Restricted(Allowlist),
+    /// Allow unrestricted outbound network access.
+    All,
+}
+
+impl SandboxNetworkAccess {
+    fn restricted_allowlist(&self) -> Option<&Allowlist> {
+        match self {
+            Self::Restricted(allowlist) => Some(allowlist),
+            Self::None | Self::All => None,
+        }
     }
 }
 
@@ -77,10 +87,8 @@ pub(crate) enum NetworkPolicy {
     Denied,
     /// Egress is confined to the in-process proxy on this loopback port.
     Proxied(u16),
-    /// Network was requested but couldn't be confined to the proxy (a
-    /// non-local project, or a host with no sandbox integration). The agent
-    /// layer widens such requests to "arbitrary network access" before
-    /// prompting (see `run_terminal_tool`), so the user approved exactly this.
+    /// The command explicitly requested, and the user approved, unrestricted
+    /// outbound network access.
     Unrestricted,
 }
 
@@ -90,7 +98,9 @@ pub(crate) enum NetworkPolicy {
 /// duration of the spawned command — dropping it deletes any on-disk
 /// config the launcher reads at startup.
 ///
-/// `network_policy` is the decision resolved by [`setup_network_proxy`];
+/// `network_policy` is the decision resolved by [`setup_network_proxy`].
+/// Unrestricted network access must be requested explicitly via
+/// [`SandboxNetworkAccess::All`].
 ///
 /// On non-macOS hosts this is a no-op: the inputs pass through unchanged
 /// and the returned handle is `None`. (We don't yet have a sandbox
@@ -146,17 +156,16 @@ pub(crate) fn apply_sandbox_wrap(
     }
 }
 
-/// Spawn the in-process network proxy for a sandboxed command, if one is
-/// needed, and wire the child's environment to route through it.
+/// Spawn the in-process network proxy for a sandboxed command with restricted
+/// network access, and wire the child's environment to route through it.
 ///
 /// Returns the proxy handle (which must outlive the command) alongside the
 /// resolved [`NetworkPolicy`] the sandbox should enforce. The handle is `Some`
-/// only when a proxy was actually spawned — a local macOS project that
-/// requested network. In every other case it is `None`, and the policy is
-/// [`NetworkPolicy::Denied`] (no network requested) or
-/// [`NetworkPolicy::Unrestricted`] (network requested but unenforceable: a
-/// non-local project, where the loopback proxy can't serve a remote terminal,
-/// or a non-macOS host with no sandbox to confine the child).
+/// only when a proxy was actually spawned. Unrestricted network access skips
+/// proxy setup and resolves to [`NetworkPolicy::Unrestricted`]. Restricted
+/// network access requires a local macOS project so the sandbox can confine
+/// egress to the proxy; otherwise this rejects the command instead of widening
+/// it.
 pub(crate) fn setup_network_proxy(
     sandbox_wrap: Option<&SandboxWrap>,
     env: &mut HashMap<String, String>,
@@ -165,15 +174,19 @@ pub(crate) fn setup_network_proxy(
     let Some(sandbox_wrap) = sandbox_wrap else {
         return Ok((None, NetworkPolicy::Denied));
     };
-    if !sandbox_wrap.wants_network() {
-        return Ok((None, NetworkPolicy::Denied));
-    }
+    let Some(allowlist) = sandbox_wrap.network.restricted_allowlist() else {
+        let policy = match &sandbox_wrap.network {
+            SandboxNetworkAccess::None => NetworkPolicy::Denied,
+            SandboxNetworkAccess::All => NetworkPolicy::Unrestricted,
+            SandboxNetworkAccess::Restricted(_) => unreachable!(),
+        };
+        return Ok((None, policy));
+    };
+
     // The proxy only buys us anything when a Seatbelt sandbox confines the
-    // child to its loopback port, and only works for local projects. When we
-    // can't enforce it, fall back to unrestricted egress (already approved as
-    // such by the agent layer).
+    // child to its loopback port, and only works for local projects.
     if !cfg!(target_os = "macos") || !sandbox_wrap.is_local {
-        return Ok((None, NetworkPolicy::Unrestricted));
+        anyhow::bail!("restricted network access requested, but no enforcing proxy is available");
     }
 
     // Chain through the user's real upstream proxy if the command's environment
@@ -188,7 +201,7 @@ pub(crate) fn setup_network_proxy(
 
     let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
     let handle = ProxyHandle::spawn(ProxyConfig {
-        allowlist: sandbox_wrap.network.clone(),
+        allowlist: allowlist.clone(),
         upstream,
         events: events_tx,
     })?;
@@ -558,6 +571,19 @@ pub async fn create_terminal_entity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_restricted_network_access_uses_proxy_allowlist() {
+        assert!(SandboxNetworkAccess::None.restricted_allowlist().is_none());
+        assert!(SandboxNetworkAccess::All.restricted_allowlist().is_none());
+        assert!(
+            SandboxNetworkAccess::Restricted(Allowlist::from_patterns([
+                http_proxy::HostPattern::parse("example.com").unwrap()
+            ]))
+            .restricted_allowlist()
+            .is_some()
+        );
+    }
 
     #[test]
     fn upstream_proxy_from_child_env_uses_from_env_precedence() {
