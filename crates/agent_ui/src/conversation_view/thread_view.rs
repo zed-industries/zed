@@ -7792,7 +7792,11 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
-        if details.write_paths.is_empty() && !has_network {
+        let command = details
+            .command
+            .as_deref()
+            .filter(|command| !command.is_empty());
+        if details.write_paths.is_empty() && !has_network && command.is_none() {
             return Empty.into_any_element();
         }
 
@@ -7904,6 +7908,11 @@ impl ThreadView {
             return v_flex()
                 .border_t_1()
                 .border_color(self.tool_card_border_color(cx))
+                .when_some(command, |this, command| {
+                    this.child(Self::render_sandbox_authorization_command(
+                        entry_ix, command, cx,
+                    ))
+                })
                 .children(network_section)
                 .into_any_element();
         }
@@ -7913,11 +7922,15 @@ impl ThreadView {
             .contains(tool_call_id);
         let mut paths = details.write_paths.clone();
         paths.sort();
-        let command = details.command.as_deref();
 
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
+            .when_some(command, |this, command| {
+                this.child(Self::render_sandbox_authorization_command(
+                    entry_ix, command, cx,
+                ))
+            })
             .children(network_section)
             .child(
                 h_flex()
@@ -7955,11 +7968,6 @@ impl ThreadView {
                         }
                     })),
             )
-            .when_some(command.filter(|_| is_open), |this, command| {
-                this.child(Self::render_sandbox_authorization_command(
-                    entry_ix, command, cx,
-                ))
-            })
             .when(is_open && !paths.is_empty(), |this| {
                 this.child(
                     v_flex()
