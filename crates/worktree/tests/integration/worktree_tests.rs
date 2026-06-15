@@ -4222,6 +4222,8 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         path!("/main_repo/.git/logs/refs/stash"),
         path!("/main_repo/.git/refs/heads/main"),
         path!("/main_repo/.git/info/exclude"),
+        path!("/main_repo/.git/refs/heads/branch.new"),
+        path!("/main_repo/.git/refs/heads/branch.tmp"),
         // Linked-worktree worktree-specific rescan paths
         path!("/main_repo/.git/worktrees/feature/index"),
         path!("/main_repo/.git/worktrees/feature/HEAD"),

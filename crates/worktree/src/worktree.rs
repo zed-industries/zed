@@ -4423,7 +4423,6 @@ impl BackgroundScanner {
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
         let skipped_file_names_in_dot_git =
             [COMMIT_MESSAGE, FETCH_HEAD, ORIG_HEAD, BISECT_LOG, GC_PID];
-        let skipped_extensions_in_dot_git = ["lock", "new", "tmp"];
         let skipped_dirs_in_dot_git = [
             FSMONITOR_DAEMON,
             LFS_DIR,
@@ -4472,11 +4471,11 @@ impl BackgroundScanner {
                         || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
                             path_in_git_dir.starts_with(skipped_git_subdir)
                         })
-                        || path_in_git_dir.extension().is_some_and(|ext| {
-                            skipped_extensions_in_dot_git
-                                .iter()
-                                .any(|&skipped| ext == skipped)
-                        });
+                        || path_in_git_dir.extension().is_some_and(|ext| ext == "lock")
+                        || (path_in_git_dir.components().count() == 1
+                            && path_in_git_dir
+                                .extension()
+                                .is_some_and(|ext| ext == "new" || ext == "tmp"));
                     let is_dot_git = path_in_git_dir == Path::new("")
                         && matches!(event.kind, Some(PathEventKind::Changed))
                         && self.fs.is_dir(&dot_git_abs_path).await;
