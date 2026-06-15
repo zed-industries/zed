@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU8, AtomicU32, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -36,7 +36,7 @@ enum FsWatcherRegistration {
     },
     Registered {
         id: WatcherRegistrationId,
-        mode: WatcherMode,
+        coverage: RegistrationCoverage,
     },
 }
 
@@ -75,9 +75,7 @@ impl Watcher for FsWatcher {
         let path_is_covered = path.ancestors().skip(1).any(|ancestor| {
             paths.get(ancestor).is_some_and(|entry| match entry {
                 FsWatcherRegistration::Pending { .. } => false,
-                FsWatcherRegistration::Registered { mode, .. } => {
-                    platform_recursive_mode(*mode) == notify::RecursiveMode::Recursive
-                }
+                FsWatcherRegistration::Registered { coverage, .. } => coverage.is_recursive(),
             })
         });
         if path_is_covered || paths.contains_key(path) {
@@ -105,10 +103,16 @@ impl Watcher for FsWatcher {
         } else {
             WatcherMode::Native
         };
-        let id = self
+        let registration = self
             .global
             .add(path.clone(), mode, self.make_callback(&path));
-        paths.insert(path, FsWatcherRegistration::Registered { id, mode });
+        paths.insert(
+            path,
+            FsWatcherRegistration::Registered {
+                id: registration.id,
+                coverage: registration.coverage,
+            },
+        );
         Ok(())
     }
 
@@ -304,8 +308,11 @@ async fn poll_path_until_created(
             } else {
                 WatcherMode::Native
             };
-            let id = global.add(path.clone(), mode, callback.clone());
-            *entry = FsWatcherRegistration::Registered { id, mode };
+            let registration = global.add(path.clone(), mode, callback.clone());
+            *entry = FsWatcherRegistration::Registered {
+                id: registration.id,
+                coverage: registration.coverage,
+            };
         }
 
         enqueue_path_events(
@@ -461,15 +468,56 @@ fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct WatcherRegistrationId(u32);
 
+pub(crate) struct WatchRegistration {
+    id: WatcherRegistrationId,
+    coverage: RegistrationCoverage,
+}
+
+impl From<WatchRegistration> for WatcherRegistrationId {
+    fn from(registration: WatchRegistration) -> Self {
+        registration.id
+    }
+}
+
+#[derive(Clone)]
+struct RegistrationCoverage(Arc<AtomicU8>);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CoverageState {
+    NonRecursive = 0,
+    Recursive = 1,
+}
+
+impl RegistrationCoverage {
+    fn new() -> Self {
+        Self(Arc::new(AtomicU8::new(CoverageState::NonRecursive as u8)))
+    }
+
+    fn set(&self, state: CoverageState) {
+        self.0.store(state as u8, Ordering::Release);
+    }
+
+    fn is_recursive(&self) -> bool {
+        self.0.load(Ordering::Acquire) == CoverageState::Recursive as u8
+    }
+}
+
+impl Default for RegistrationCoverage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct WatcherRegistrationState {
     callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
     path: Arc<std::path::Path>,
     mode: WatcherMode,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Default)]
 struct PathRegistrationState {
     count: u32,
+    coverage: RegistrationCoverage,
 }
 
 struct WatcherState {
@@ -573,10 +621,17 @@ impl GlobalWatcher {
         path: Arc<Path>,
         mode: WatcherMode,
         callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
-    ) -> WatcherRegistrationId {
+    ) -> WatchRegistration {
         let id = WatcherRegistrationId(self.next_registration_id.fetch_add(1, Ordering::Relaxed));
+        let coverage;
         {
             let mut state = self.state.lock();
+            let path_registration = state
+                .path_registrations_mut(mode)
+                .entry(path.clone())
+                .or_default();
+            path_registration.count += 1;
+            coverage = path_registration.coverage.clone();
             state.watchers.insert(
                 id,
                 WatcherRegistrationState {
@@ -585,18 +640,14 @@ impl GlobalWatcher {
                     mode,
                 },
             );
-            state
-                .path_registrations_mut(mode)
-                .entry(path.clone())
-                .or_default()
-                .count += 1;
             state.dirty_paths.push((mode, path));
         }
         self.request_reconciliation();
-        id
+        WatchRegistration { id, coverage }
     }
 
-    pub(crate) fn remove(&self, id: WatcherRegistrationId) {
+    pub(crate) fn remove(&self, registration: impl Into<WatcherRegistrationId>) {
+        let id = registration.into();
         {
             let mut state = self.state.lock();
             let Some(registration) = state.watchers.remove(&id) else {
@@ -722,6 +773,26 @@ fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
     a.into_iter().chain(b).min()
 }
 
+fn insert_affected_path(
+    affected_paths: &mut HashSet<Arc<Path>>,
+    registrations: &BTreeMap<Arc<Path>, PathRegistrationState>,
+    path: Arc<Path>,
+    is_recursive: bool,
+) {
+    if is_recursive {
+        for (descendant, _) in registrations.range::<Path, _>((
+            std::ops::Bound::Excluded(path.as_ref()),
+            std::ops::Bound::Unbounded,
+        )) {
+            if !descendant.starts_with(&path) {
+                break;
+            }
+            affected_paths.insert(descendant.clone());
+        }
+    }
+    affected_paths.insert(path);
+}
+
 impl Reconciler {
     async fn run(mut self, wake_rx: async_channel::Receiver<()>) {
         let mut wake_at: Option<Instant> = None;
@@ -767,18 +838,12 @@ impl Reconciler {
                     WatcherMode::Native => (&mut native_affected_paths, self.native.is_recursive()),
                     WatcherMode::Poll => (&mut poll_affected_paths, self.poll.is_recursive()),
                 };
-                if is_recursive {
-                    for (descendant, _) in state.path_registrations(mode).range::<Path, _>((
-                        std::ops::Bound::Excluded(path.as_ref()),
-                        std::ops::Bound::Unbounded,
-                    )) {
-                        if !descendant.starts_with(&path) {
-                            break;
-                        }
-                        affected_paths.insert(descendant.clone());
-                    }
-                }
-                affected_paths.insert(path);
+                insert_affected_path(
+                    affected_paths,
+                    state.path_registrations(mode),
+                    path,
+                    is_recursive,
+                );
             }
         }
         native_affected_paths.extend(self.native.deferred_paths.iter().cloned());
@@ -844,8 +909,8 @@ impl BackendState {
         {
             let watcher_state = watcher_state.lock();
             let registrations = watcher_state.path_registrations(self.mode);
-            for path in affected_paths {
-                let is_desired = registrations.contains_key(&path);
+            for path in &affected_paths {
+                let is_desired = registrations.contains_key(path);
                 let is_covered = self.is_recursive()
                     && path.ancestors().skip(1).any(|ancestor| {
                         registrations.contains_key(ancestor)
@@ -853,21 +918,21 @@ impl BackendState {
                     });
                 let should_watch = is_desired && !is_covered;
                 if !should_watch {
-                    self.deferred_paths.remove(&path);
+                    self.deferred_paths.remove(path);
                 }
                 if cfg!(any(test, debug_assertions)) {
                     assert!(
-                        should_watch || !self.deferred_paths.contains(&path),
+                        should_watch || !self.deferred_paths.contains(path),
                         "{:?} keeps a covered or unregistered path queued for a watch: {:?}",
                         self.mode,
                         path,
                     )
                 }
-                let is_applied = self.applied_paths.contains(&path);
+                let is_applied = self.applied_paths.contains(path);
                 if should_watch && !is_applied {
-                    to_watch.push(path);
+                    to_watch.push(path.clone());
                 } else if !should_watch && is_applied {
-                    to_unwatch.push(path);
+                    to_unwatch.push(path.clone());
                 }
             }
         }
@@ -875,11 +940,22 @@ impl BackendState {
         to_unwatch.sort();
         let watch_count = to_watch.len();
         let unwatch_count = to_unwatch.len();
+        let watched_paths_to_publish = to_watch.clone();
 
-        let wake_at = earliest(
-            self.apply_unwatches(to_unwatch),
-            self.apply_watches(to_watch, watcher_state),
-        );
+        let unwatch_wake_at = self.apply_unwatches(to_unwatch);
+        let watch_wake_at = self.apply_watches(to_watch, watcher_state);
+        let wake_at = earliest(unwatch_wake_at, watch_wake_at);
+        let mut coverage_paths = affected_paths;
+        if self.is_recursive() {
+            let watcher_state = watcher_state.lock();
+            let registrations = watcher_state.path_registrations(self.mode);
+            for path in watched_paths_to_publish {
+                if self.applied_paths.contains(&path) {
+                    insert_affected_path(&mut coverage_paths, registrations, path, true);
+                }
+            }
+        }
+        self.publish_registration_coverage(&coverage_paths, watcher_state);
         if self.deferred_paths.is_empty() {
             self.stream_restart_rescan_pending = false;
         }
@@ -894,6 +970,58 @@ impl BackendState {
         );
 
         wake_at
+    }
+
+    fn publish_registration_coverage(
+        &self,
+        paths: &HashSet<Arc<Path>>,
+        watcher_state: &Mutex<WatcherState>,
+    ) {
+        if !self.is_recursive() {
+            return;
+        }
+        let updates = {
+            let watcher_state = watcher_state.lock();
+            let registrations = watcher_state.path_registrations(self.mode);
+            paths
+                .iter()
+                .filter_map(|path| {
+                    let path_state = registrations.get(path)?;
+                    let state = if self.is_recursively_protected(path, registrations) {
+                        CoverageState::Recursive
+                    } else {
+                        CoverageState::NonRecursive
+                    };
+                    Some((path_state.coverage.clone(), state))
+                })
+                .collect::<Vec<_>>()
+        };
+        for (coverage, state) in updates {
+            coverage.set(state);
+        }
+    }
+
+    fn is_recursively_protected(
+        &self,
+        path: &Path,
+        registrations: &BTreeMap<Arc<Path>, PathRegistrationState>,
+    ) -> bool {
+        self.is_recursive()
+            && (self.is_recursive_coverage_source(path, registrations)
+                || path
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| self.is_recursive_coverage_source(ancestor, registrations)))
+    }
+
+    fn is_recursive_coverage_source(
+        &self,
+        path: &Path,
+        registrations: &BTreeMap<Arc<Path>, PathRegistrationState>,
+    ) -> bool {
+        registrations.contains_key(path)
+            && (self.applied_paths.contains(path)
+                || (self.stream_restart_rescan_pending && self.suspect_paths.contains(path)))
     }
 
     fn verify_backend_watches(&self) {
@@ -2671,6 +2799,195 @@ mod tests {
         executor.run_until_parked();
         assert_eq!(backend.lock().unwatch_calls, &[dir.path().to_path_buf()]);
         assert!(backend.lock().watched_paths.is_empty());
+    }
+
+    #[gpui::test]
+    async fn sink_recursive_parent_covers_child_after_flush(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let child = dir.path().join("sub");
+        std::fs::create_dir(&child).expect("create child dir");
+
+        sink.add(dir.path()).expect("add parent succeeds");
+        let mut flushed = sink.global.flush();
+        executor.run_until_parked();
+        assert_eq!(flushed.try_recv(), Ok(Some(())));
+
+        sink.add(&child).expect("add child succeeds");
+        executor.run_until_parked();
+
+        assert_eq!(backend.lock().watch_calls, &[dir.path().to_path_buf()]);
+    }
+
+    #[gpui::test]
+    async fn sink_failed_recursive_parent_does_not_cover_child(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let child = dir.path().join("sub");
+        std::fs::create_dir(&child).expect("create child dir");
+        backend
+            .lock()
+            .watch_errors
+            .insert(dir.path().to_path_buf(), generic_error);
+
+        sink.add(dir.path()).expect("add parent succeeds");
+        executor.run_until_parked();
+        sink.add(&child).expect("add child succeeds");
+        executor.run_until_parked();
+
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[dir.path().to_path_buf(), child.clone()]
+        );
+        assert!(!backend.lock().watched_paths.contains(dir.path()));
+        assert!(backend.lock().watched_paths.contains(&child));
+    }
+
+    #[gpui::test]
+    async fn sink_watch_limit_parent_does_not_cover_child_before_retry(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let child = dir.path().join("sub");
+        let grandchild = child.join("grandchild");
+        std::fs::create_dir_all(&grandchild).expect("create nested dirs");
+        backend
+            .lock()
+            .watch_errors
+            .insert(dir.path().to_path_buf(), watch_limit_error);
+
+        sink.add(dir.path()).expect("add parent succeeds");
+        executor.run_until_parked();
+        sink.add(&child).expect("add child succeeds");
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[dir.path().to_path_buf()]);
+
+        backend.lock().watch_errors.clear();
+        executor.advance_clock(*NATIVE_WATCH_LIMIT_COOLDOWN + Duration::from_secs(1));
+        executor.run_until_parked();
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[
+                dir.path().to_path_buf(),
+                dir.path().to_path_buf(),
+                child.clone()
+            ]
+        );
+
+        let watch_calls = backend.lock().watch_calls.clone();
+        sink.add(&grandchild).expect("add grandchild succeeds");
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, watch_calls);
+    }
+
+    #[gpui::test]
+    async fn sink_stream_restart_failure_keeps_parent_locally_recursive(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let child = dir.path().join("sub");
+        let other = Arc::<Path>::from(Path::new("/other"));
+        std::fs::create_dir(&child).expect("create child dir");
+
+        sink.add(dir.path()).expect("add parent succeeds");
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[dir.path().to_path_buf()]);
+
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        sink.global
+            .add(other.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+
+        sink.add(&child).expect("add child succeeds");
+        executor.run_until_parked();
+
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[dir.path().to_path_buf(), other.to_path_buf()]
+        );
+    }
+
+    #[gpui::test]
+    async fn removed_parent_does_not_cover_child_after_stream_restart_failure(
+        executor: BackgroundExecutor,
+    ) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let global = test_global(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/sub"));
+
+        let parent_registration = global.add(parent.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        let child_registration = global.add(child.clone(), WatcherMode::Native, noop_callback());
+        executor.run_until_parked();
+        assert!(child_registration.coverage.is_recursive());
+        assert_eq!(backend.lock().watch_calls, &[parent.to_path_buf()]);
+
+        backend.lock().stream_restart_error = Some(stream_restart_error);
+        global.remove(parent_registration);
+        executor.run_until_parked();
+        assert!(!child_registration.coverage.is_recursive());
+
+        backend.lock().stream_restart_error = None;
+        executor.advance_clock(*FILE_WATCHER_RETRY_DELAY + Duration::from_secs(1));
+        executor.run_until_parked();
+        assert!(child_registration.coverage.is_recursive());
+        assert!(backend.lock().watched_paths.contains(child.as_ref()));
+    }
+
+    #[gpui::test]
+    async fn sink_removing_recursive_parent_allows_child_watch(executor: BackgroundExecutor) {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let (sink, _rx, _pending) = test_sink(
+            &executor,
+            Some((backend.clone(), RecursiveMode::Recursive)),
+            None,
+        );
+        let dir = tempfile::TempDir::new().expect("create temp dir");
+        let child = dir.path().join("sub");
+        std::fs::create_dir(&child).expect("create child dir");
+
+        sink.add(dir.path()).expect("add parent succeeds");
+        executor.run_until_parked();
+        sink.add(&child).expect("add child succeeds");
+        executor.run_until_parked();
+        assert_eq!(backend.lock().watch_calls, &[dir.path().to_path_buf()]);
+
+        sink.remove(dir.path()).expect("remove parent succeeds");
+        executor.run_until_parked();
+        sink.add(&child).expect("add child succeeds");
+        executor.run_until_parked();
+
+        assert_eq!(
+            backend.lock().watch_calls,
+            &[dir.path().to_path_buf(), child]
+        );
     }
 
     #[gpui::test]
