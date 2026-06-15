@@ -5,14 +5,17 @@ use std::process::Command;
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 
-/// Runs the Linux Landlock sandboxing NixOS VM tests (see `nix/tests/sandboxing`).
+/// Runs the Linux Bubblewrap sandboxing NixOS VM tests (see `nix/tests/sandboxing`).
 ///
-/// Each test boots a real kernel under QEMU to exercise Landlock behavior across
-/// kernel ABI levels (and with the LSM disabled). They therefore only run on
-/// Linux with `/dev/kvm` available, and require `nix` with flakes enabled.
+/// Each test boots a real kernel under QEMU to exercise bwrap behavior: one
+/// scenario with unprivileged user namespaces available (the sandbox must be
+/// enforced) and one with them disabled (the launcher must report the failure
+/// and degrade gracefully). They therefore only run on Linux with `/dev/kvm`
+/// available, and require `nix` with flakes enabled.
 #[derive(Parser)]
 pub struct SandboxTestsArgs {
-    /// Names of specific tests to run (e.g. `landlock-6_12`). Defaults to all.
+    /// Names of specific tests to run (e.g. `sandbox-userns-enabled`). Defaults
+    /// to all.
     tests: Vec<String>,
 
     /// Nix system to build for. Defaults to the host system.
@@ -33,7 +36,7 @@ pub struct SandboxTestsArgs {
 }
 
 /// Tests in `nix/tests/sandboxing` are exposed as flake checks with this prefix.
-const TEST_PREFIX: &str = "landlock-";
+const TEST_PREFIX: &str = "sandbox-";
 
 pub fn run_sandbox_tests(args: SandboxTestsArgs) -> Result<()> {
     let system = args.system.unwrap_or_else(host_system);

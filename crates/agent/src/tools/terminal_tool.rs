@@ -110,9 +110,13 @@ pub struct SandboxedTerminalToolInput {
     /// Paths the command needs to write to outside the default-writable
     /// locations.
     ///
-    /// Sandboxed commands can already write to the project worktree
-    /// directories and a per-command temporary directory, so only list paths
-    /// outside those. Provide absolute or worktree-relative paths; each
+    #[cfg_attr(
+        target_os = "macos",
+        doc = "Sandboxed commands can already write to the project worktree \
+        directories and a per-command temporary directory, so only list paths \
+        outside those."
+    )]
+    /// Provide absolute or worktree-relative paths; each
     /// directory grants write access to its whole subtree. Prefer this over
     /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
     /// paths triggers a user approval prompt.
@@ -413,6 +417,12 @@ async fn run_terminal_tool(
 
     let extra_env = Vec::new();
 
+    // Build the sandbox request, then decide whether we can actually sandbox.
+    // The sandbox itself never silently runs a command unsandboxed: if it can't
+    // create the sandbox it aborts. As the consumer we fail *open* for now — we
+    // re-run the command without a sandbox so a missing/blocked `bwrap` doesn't
+    // break the terminal — but we tell the model we did, via `sandbox_fallback`.
+    let mut sandbox_fallback: Option<String> = None;
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         let sandbox_permissions = cx.update(|cx| {
             agent_settings::AgentSettings::get_global(cx)
@@ -427,12 +437,32 @@ async fn run_terminal_tool(
                 .map(|w| w.read(cx).abs_path().to_path_buf())
                 .collect::<Vec<_>>()
         });
-        Some(acp_thread::SandboxWrap {
+        let wrap = acp_thread::SandboxWrap {
             writable_paths,
             extra_write_paths: effective.write_paths,
             allow_network: effective.network,
             allow_fs_write: effective.allow_fs_write_all,
-        })
+        };
+
+        // The viability check runs a brief probe subprocess, so do it off the
+        // main thread.
+        let probe_wrap = wrap.clone();
+        let probe_cwd = working_dir.clone();
+        let availability = cx
+            .background_executor()
+            .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+            .await;
+
+        match availability {
+            Ok(()) => Some(wrap),
+            Err(reason) => {
+                sandbox_fallback = Some(format!(
+                    "Note: failed to create the sandbox ({reason}); ran this command \
+                     WITHOUT a sandbox."
+                ));
+                None
+            }
+        }
     } else {
         None
     };
@@ -502,13 +532,11 @@ async fn run_terminal_tool(
 
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
-    Ok(process_content(
-        output,
-        &input.command,
-        timed_out,
-        user_stopped,
-        selection,
-    ))
+    let result = process_content(output, &input.command, timed_out, user_stopped, selection);
+    Ok(match sandbox_fallback {
+        Some(note) => format!("{note}\n\n{result}"),
+        None => result,
+    })
 }
 
 /// Resolve model-requested write paths into absolute paths.

@@ -1,5 +1,5 @@
-# Builds the `landlock_test_helper` binary (sandbox crate, `nixos-test`
-# feature) used by the Landlock VM tests in this directory.
+# Builds the `bwrap_test_helper` binary (sandbox crate, `nixos-test` feature)
+# used by the Bubblewrap sandbox VM tests in this directory.
 {
   pkgs,
   inputs,
@@ -30,15 +30,15 @@ let
         ".config"
         ".cargo"
       ];
-    name = "landlock-test-helper-source";
+    name = "bwrap-test-helper-source";
   };
 
   commonArgs = {
-    pname = "landlock-test-helper";
+    pname = "bwrap-test-helper";
     version = "0.0.0";
     inherit src;
     cargoLock = ../../../Cargo.lock;
-    cargoExtraArgs = "-p sandbox --bin landlock_test_helper --features sandbox/nixos-test --locked";
+    cargoExtraArgs = "-p sandbox --bin bwrap_test_helper --features sandbox/nixos-test --locked";
     CARGO_PROFILE = "dev";
     doCheck = false;
 
@@ -58,12 +58,12 @@ craneLib.buildPackage (
     installPhase = ''
       runHook preInstall
       mkdir -p $out/bin
-      cp target/debug/landlock_test_helper $out/bin/landlock_test_helper
+      cp target/debug/bwrap_test_helper $out/bin/bwrap_test_helper
       runHook postInstall
     '';
 
     meta = {
-      description = "Landlock sandbox behavior test helper";
+      description = "Bubblewrap sandbox behavior test helper";
       platforms = lib.platforms.linux;
     };
   }
