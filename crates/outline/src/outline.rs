@@ -90,6 +90,8 @@ fn outline_for_editor(
                     depth: item.depth,
                     range: multibuffer.anchor_in_buffer(item.range.start)?
                         ..multibuffer.anchor_in_buffer(item.range.end)?,
+                    selection_range: multibuffer.anchor_in_buffer(item.selection_range.start)?
+                        ..multibuffer.anchor_in_buffer(item.selection_range.end)?,
                     source_range_for_text: multibuffer
                         .anchor_in_buffer(item.source_range_for_text.start)?
                         ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
