@@ -164,7 +164,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         {
             let updated = vim.update_editor(cx, |_, editor, _| {
                 editor.modify_transaction_selection_history(transaction_id, |selections| {
-                    selections.0 = original_selections;
+                    selections.undo = original_selections;
                 })
             });
             debug_assert_ne!(updated, Some(false));

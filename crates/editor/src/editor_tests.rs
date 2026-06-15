@@ -342,9 +342,10 @@ fn test_undo_redo_with_empty_history_selections_does_not_panic(cx: &mut TestAppC
             .end_transaction_at(now, cx)
             .expect("transaction should be created");
         assert_eq!(editor.text(cx), "a123456");
+
         editor.modify_transaction_selection_history(transaction_id, |selections| {
-            selections.0 = Vec::new().into();
-            selections.1 = Some(Vec::new().into());
+            selections.undo = Vec::new().into();
+            selections.redo = Some(Vec::new().into());
         });
 
         editor.undo(&Undo, window, cx);

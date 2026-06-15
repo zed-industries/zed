@@ -1390,11 +1390,15 @@ struct DeferredSelectionEffectsState {
     history_entry: SelectionHistoryEntry,
 }
 
+#[derive(Clone, Debug)]
+pub struct TransactionSelections {
+    pub undo: Arc<[Selection<Anchor>]>,
+    pub redo: Option<Arc<[Selection<Anchor>]>>,
+}
+
 #[derive(Default)]
 struct SelectionHistory {
-    #[allow(clippy::type_complexity)]
-    selections_by_transaction:
-        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    selections_by_transaction: HashMap<TransactionId, TransactionSelections>,
     mode: SelectionHistoryMode,
     undo_stack: VecDeque<SelectionHistoryEntry>,
     redo_stack: VecDeque<SelectionHistoryEntry>,
@@ -1414,23 +1418,23 @@ impl SelectionHistory {
             );
             return;
         }
-        self.selections_by_transaction
-            .insert(transaction_id, (selections, None));
+        self.selections_by_transaction.insert(
+            transaction_id,
+            TransactionSelections {
+                undo: selections,
+                redo: None,
+            },
+        );
     }
 
-    #[allow(clippy::type_complexity)]
-    fn transaction(
-        &self,
-        transaction_id: TransactionId,
-    ) -> Option<&(Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+    fn transaction(&self, transaction_id: TransactionId) -> Option<&TransactionSelections> {
         self.selections_by_transaction.get(&transaction_id)
     }
 
-    #[allow(clippy::type_complexity)]
     fn transaction_mut(
         &mut self,
         transaction_id: TransactionId,
-    ) -> Option<&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+    ) -> Option<&mut TransactionSelections> {
         self.selections_by_transaction.get_mut(&transaction_id)
     }
 
@@ -7379,24 +7383,17 @@ impl Editor {
         });
     }
 
-    #[track_caller]
-    fn restore_selections_from_history(
+    fn restore_selections(
         &mut self,
         selections: Option<Arc<[Selection<Anchor>]>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selections) = selections.filter(|selections| !selections.is_empty()) else {
-            log::error!(
-                "No selections to restore from selection history; \
-                 the selection was left unchanged. Caller: {}",
-                std::panic::Location::caller()
-            );
-            return;
-        };
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_anchors(selections.to_vec());
-        });
+        if let Some(selections) = selections.filter(|selections| !selections.is_empty()) {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_anchors(selections.to_vec());
+            });
+        }
     }
 
     pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
@@ -7405,11 +7402,12 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            let selections = self
-                .selection_history
-                .transaction(transaction_id)
-                .map(|(selections, _)| selections.clone());
-            self.restore_selections_from_history(selections, window, cx);
+            let transaction = self.selection_history.transaction(transaction_id);
+            if transaction.is_none() {
+                log::error!("No selection history for undone transaction; selection unchanged");
+            }
+            let selections = transaction.map(|transaction| transaction.undo.clone());
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(
@@ -7433,8 +7431,8 @@ impl Editor {
             let selections = self
                 .selection_history
                 .transaction(transaction_id)
-                .and_then(|(_, selections)| selections.clone());
-            self.restore_selections_from_history(selections, window, cx);
+                .and_then(|transaction| transaction.redo.clone());
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(
@@ -7948,7 +7946,7 @@ impl Editor {
                 // will take you back to where you made the last edit, instead of staying where you scrolled
                 self.selection_history
                     .transaction(transaction_id_prev)
-                    .map(|t| t.0.clone())
+                    .map(|t| t.undo.clone())
             })
             .unwrap_or_else(|| self.selections.disjoint_anchors_arc());
 
@@ -8174,10 +8172,8 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) =
-                self.selection_history.transaction_mut(transaction_id)
-            {
-                *end_selections = Some(self.selections.disjoint_anchors_arc());
+            if let Some(transaction) = self.selection_history.transaction_mut(transaction_id) {
+                transaction.redo = Some(self.selections.disjoint_anchors_arc());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -8192,7 +8188,7 @@ impl Editor {
     pub fn modify_transaction_selection_history(
         &mut self,
         transaction_id: TransactionId,
-        modify: impl FnOnce(&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)),
+        modify: impl FnOnce(&mut TransactionSelections),
     ) -> bool {
         self.selection_history
             .transaction_mut(transaction_id)
