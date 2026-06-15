@@ -45,6 +45,8 @@ pub struct SearchInputs {
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
+pub type LineHint = u32;
+
 impl SearchInputs {
     pub fn as_str(&self) -> &str {
         self.query.as_ref()
@@ -390,7 +392,7 @@ impl SearchQuery {
     pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
-    ) -> Result<Option<u32>> {
+    ) -> Result<Option<LineHint>> {
         let query_str = self.as_str();
         if query_str.is_empty() {
             return Ok(None);
@@ -406,13 +408,13 @@ impl SearchQuery {
                     reader.read_to_string(&mut text)?;
                     text::LineEnding::normalize(&mut text);
                     if search.is_match(&text) {
-                        Ok(Some(0))
+                        Ok(Some(LineHint::default()))
                     } else {
                         Ok(None)
                     }
                 } else {
                     let mut bytes_read = 0;
-                    let mut line_number = 0u32;
+                    let mut line_number: LineHint = LineHint::default();
                     while reader.read_line(&mut text)? > 0 {
                         if search.is_match(&text) {
                             return Ok(Some(line_number));
@@ -436,13 +438,13 @@ impl SearchQuery {
                     reader.read_to_string(&mut text)?;
                     text::LineEnding::normalize(&mut text);
                     if regex.is_match(&text)? {
-                        Ok(Some(0))
+                        Ok(Some(LineHint::default()))
                     } else {
                         Ok(None)
                     }
                 } else {
                     let mut bytes_read = 0;
-                    let mut line_number = 0u32;
+                    let mut line_number: LineHint = LineHint::default();
                     while reader.read_line(&mut text)? > 0 {
                         if regex.is_match(&text)? {
                             return Ok(Some(line_number));

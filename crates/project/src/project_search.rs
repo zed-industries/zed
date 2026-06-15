@@ -27,7 +27,7 @@ use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
     buffer_store::BufferStore,
-    search::{SearchQuery, SearchResult},
+    search::{LineHint, SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
 };
 
@@ -61,7 +61,7 @@ enum SearchKind {
 #[must_use]
 pub struct SearchResultsHandle {
     results: Receiver<SearchResult>,
-    matching_buffers: Receiver<(Entity<Buffer>, u32)>,
+    matching_buffers: Receiver<(Entity<Buffer>, LineHint)>,
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
@@ -76,7 +76,7 @@ impl SearchResultsHandle {
             rx: self.results,
         }
     }
-    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<(Entity<Buffer>, u32)> {
+    pub fn matching_buffers(self, cx: &mut App) -> SearchResults<(Entity<Buffer>, LineHint)> {
         SearchResults {
             _task_handle: (self.trigger_search)(cx),
             rx: self.matching_buffers,
@@ -180,12 +180,14 @@ impl Search {
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
-            unbounded::<(Entity<Buffer>, u32)>();
+            unbounded::<(Entity<Buffer>, LineHint)>();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
-                    _ = grab_buffer_snapshot_tx.send((buffer, 0)).await;
+                    _ = grab_buffer_snapshot_tx
+                        .send((buffer, LineHint::default()))
+                        .await;
                 }
 
                 let (find_all_matches_tx, find_all_matches_rx) =
@@ -197,7 +199,9 @@ impl Search {
                         let fill_requests = cx
                             .background_spawn(async move {
                                 for buffer in open_buffers {
-                                    if let Err(_) = grab_buffer_snapshot_tx.send((buffer, 0)).await
+                                    if let Err(_) = grab_buffer_snapshot_tx
+                                        .send((buffer, LineHint::default()))
+                                        .await
                                     {
                                         return;
                                     }
@@ -307,7 +311,7 @@ impl Search {
                                     let forward_buffers = cx.background_spawn(async move {
                                         while let Ok(buffer) = buffer_rx.recv().await {
                                             let _ = grab_buffer_snapshot_tx
-                                                .send((buffer.await?, 0))
+                                                .send((buffer.await?, LineHint::default()))
                                                 .await;
                                         }
                                         anyhow::Ok(())
@@ -415,7 +419,7 @@ impl Search {
         worktrees: Vec<Entity<Worktree>>,
         query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
-        results: Sender<oneshot::Receiver<(ProjectPath, u32)>>,
+        results: Sender<oneshot::Receiver<(ProjectPath, LineHint)>>,
         results_tx: Sender<SearchResult>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
@@ -498,8 +502,8 @@ impl Search {
     }
 
     async fn maintain_sorted_search_results(
-        rx: Receiver<oneshot::Receiver<(ProjectPath, u32)>>,
-        paths_for_full_scan: Sender<(ProjectPath, u32)>,
+        rx: Receiver<oneshot::Receiver<(ProjectPath, LineHint)>>,
+        paths_for_full_scan: Sender<(ProjectPath, LineHint)>,
         limit: usize,
     ) {
         let mut rx = pin!(rx);
@@ -526,14 +530,15 @@ impl Search {
     /// Background workers cannot open buffers by themselves, hence main thread will do it on their behalf.
     async fn open_buffers(
         buffer_store: Entity<BufferStore>,
-        rx: Receiver<(ProjectPath, u32)>,
-        find_all_matches_tx: Sender<(Entity<Buffer>, u32)>,
+        rx: Receiver<(ProjectPath, LineHint)>,
+        find_all_matches_tx: Sender<(Entity<Buffer>, LineHint)>,
         mut cx: AsyncApp,
     ) {
         let mut rx = pin!(rx.ready_chunks(64));
         _ = maybe!(async move {
             while let Some(requested_paths) = rx.next().await {
-                let line_hints: Vec<u32> = requested_paths.iter().map(|(_, line)| *line).collect();
+                let line_hints: Vec<LineHint> =
+                    requested_paths.iter().map(|(_, line)| *line).collect();
                 let mut buffers = buffer_store.update(&mut cx, |this, cx| {
                     requested_paths
                         .into_iter()
@@ -542,7 +547,7 @@ impl Search {
                 });
                 let mut line_hints = line_hints.into_iter();
                 while let Some(buffer) = buffers.next().await {
-                    let line_hint = line_hints.next().unwrap_or(0);
+                    let line_hint = line_hints.next().unwrap_or(LineHint::default());
                     if let Some(buffer) = buffer.log_err() {
                         find_all_matches_tx.send((buffer, line_hint)).await?;
                     }
@@ -554,11 +559,11 @@ impl Search {
     }
 
     async fn grab_buffer_snapshots(
-        rx: Receiver<(Entity<Buffer>, u32)>,
+        rx: Receiver<(Entity<Buffer>, LineHint)>,
         find_all_matches_tx: Sender<(
             Entity<Buffer>,
             BufferSnapshot,
-            u32,
+            LineHint,
             oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         )>,
         results: Sender<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
@@ -660,7 +665,7 @@ struct Worker {
     find_all_matches_rx: Receiver<(
         Entity<Buffer>,
         BufferSnapshot,
-        u32,
+        LineHint,
         oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
     )>,
 }
@@ -748,7 +753,7 @@ impl RequestHandler<'_> {
         (buffer, snapshot, line_hint, mut report_matches): (
             Entity<Buffer>,
             BufferSnapshot,
-            u32,
+            LineHint,
             oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
         ),
     ) {
@@ -844,7 +849,7 @@ impl RequestHandler<'_> {
                             worktree_id: snapshot.id(),
                             path: entry.path.clone(),
                         },
-                        0,
+                        LineHint::default(),
                     ))
                     .await?;
             } else {
@@ -869,13 +874,13 @@ impl RequestHandler<'_> {
 struct InputPath {
     entry: Entry,
     snapshot: Snapshot,
-    should_scan_tx: oneshot::Sender<(ProjectPath, u32)>,
+    should_scan_tx: oneshot::Sender<(ProjectPath, LineHint)>,
 }
 
 struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
-    should_scan_tx: oneshot::Sender<(ProjectPath, u32)>,
+    should_scan_tx: oneshot::Sender<(ProjectPath, LineHint)>,
 }
 
 /// This struct encapsulates the logic to decide whether a given gitignored directory should be
