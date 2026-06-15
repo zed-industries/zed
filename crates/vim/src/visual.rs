@@ -10,6 +10,7 @@ use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
+use text::TransactionId;
 use util::ResultExt;
 use workspace::searchable::Direction;
 
@@ -625,9 +626,14 @@ impl Vim {
         });
     }
 
-    pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn visual_delete(
+        &mut self,
+        line_mode: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
         self.store_visual_marks(window, cx);
-        self.update_editor(cx, |vim, editor, cx| {
+        let transaction_id = self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = line_mode || editor.selections.line_mode();
             editor.selections.set_line_mode(false);
@@ -707,7 +713,9 @@ impl Vim {
                 });
             })
         });
+        let transaction_id = transaction_id.flatten();
         self.switch_mode(Mode::Normal, true, window, cx);
+        transaction_id
     }
 
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -788,7 +796,10 @@ impl Vim {
                     {
                         let range = row_range.start.to_offset(&display_map, Bias::Right)
                             ..row_range.end.to_offset(&display_map, Bias::Right);
-                        let text = text.repeat(range.end - range.start);
+                        let grapheme_count = display_map
+                            .buffer_snapshot()
+                            .grapheme_count_for_range(&range);
+                        let text = text.repeat(grapheme_count);
                         edits.push((range, text));
                     }
                 }
@@ -894,6 +905,9 @@ impl Vim {
             }
         });
         if !match_exists {
+            self.update_editor(cx, |_, editor, _| {
+                editor.set_collapse_matches(true);
+            });
             self.clear_operator(window, cx);
             self.stop_replaying(cx);
             return;
@@ -922,7 +936,7 @@ impl Vim {
             Some(Operator::Change) => self.substitute(None, false, window, cx),
             Some(Operator::Delete) => {
                 self.stop_recording(cx);
-                self.visual_delete(false, window, cx)
+                self.visual_delete(false, window, cx);
             }
             Some(Operator::Yank) => self.visual_yank(false, window, cx),
             _ => {} // Ignoring other operators
@@ -1562,6 +1576,38 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_visual_block_insert_after_ctrl_d_scroll(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let shared_state_lines = (1..=10)
+            .map(|line_number| format!("{line_number:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let shared_state = format!("ˇ{shared_state_lines}\n");
+
+        cx.set_scroll_height(5).await;
+        cx.set_shared_state(&shared_state).await;
+
+        cx.simulate_shared_keystrokes("ctrl-v ctrl-d").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.simulate_shared_keystrokes("shift-i x escape").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "
+            ˇx01
+            x02
+            x03
+            x04
+            x05
+            06
+            07
+            08
+            09
+            10
+            "
+        });
+    }
+
+    #[gpui::test]
     async fn test_visual_block_wrapping_selection(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1984,5 +2030,22 @@ mod test {
         // The specific behavior of syntax sibling selection in vim mode
         // would depend on the key bindings configured, but the actions
         // are now available for use
+    }
+
+    #[gpui::test]
+    async fn test_visual_replace_uses_graphemes(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("«Hällöˇ» Wörld", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ11111 Wörld", Mode::Normal);
+
+        cx.set_state("«e\u{301}ˇ»", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ1", Mode::Normal);
+
+        cx.set_state("«🙂ˇ»", Mode::Visual);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("ˇ1", Mode::Normal);
     }
 }

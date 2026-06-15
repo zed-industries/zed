@@ -56,7 +56,7 @@ use std::{
 use util::paths::{PathStyle, RemotePathBuf};
 
 /// Unique identifier for a mock connection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MockConnectionOptions {
     pub id: u64,
 }

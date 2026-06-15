@@ -4,7 +4,7 @@ use crate::{
     object::{Object, surrounding_markers},
     state::Mode,
 };
-use editor::{Bias, MultiBufferOffset, movement};
+use editor::{Anchor, Bias, MultiBufferOffset, ToOffset, movement};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -61,11 +61,18 @@ pub const SURROUND_PAIRS: &[SurroundPair] = &[
 ];
 
 /// Bracket-only pairs for AnyBrackets matching.
-const BRACKET_PAIRS: &[SurroundPair] = &[
+pub const BRACKET_PAIRS: &[SurroundPair] = &[
     SurroundPair::new('(', ')'),
     SurroundPair::new('[', ']'),
     SurroundPair::new('{', '}'),
     SurroundPair::new('<', '>'),
+];
+
+/// Quote-only pairs for AnyQuotes matching.
+pub const QUOTE_PAIRS: &[SurroundPair] = &[
+    SurroundPair::new('"', '"'),
+    SurroundPair::new('\'', '\''),
+    SurroundPair::new('`', '`'),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -275,6 +282,7 @@ impl Vim {
         text: Arc<str>,
         target: Object,
         opening: bool,
+        bracket_anchors: Vec<Option<(Anchor, Anchor)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -301,94 +309,66 @@ impl Vim {
                         will_replace_pair.start == will_replace_pair.end || !opening;
 
                     let display_map = editor.display_snapshot(cx);
-                    let selections = editor.selections.all_adjusted_display(&display_map);
                     let mut edits = Vec::new();
-                    let mut anchors = Vec::new();
 
-                    for selection in &selections {
-                        let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) =
-                            target.range(&display_map, selection.clone(), true, None)
-                        {
-                            if !target.is_multiline() {
-                                let is_same_row = selection.start.row() == range.start.row()
-                                    && selection.end.row() == range.end.row();
-                                if !is_same_row {
-                                    anchors.push(start..start);
-                                    continue;
-                                }
-                            }
-
-                            // Keeps track of the length of the string that is
-                            // going to be edited on the start so we can ensure
-                            // that the end replacement string does not exceed
-                            // this value. Helpful when dealing with newlines.
-                            let mut edit_len = 0;
-                            let mut open_range_end = MultiBufferOffset(0);
-                            let mut chars_and_offset = display_map
-                                .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
-                                .peekable();
-
-                            while let Some((ch, offset)) = chars_and_offset.next() {
-                                if ch.to_string() == will_replace_pair.start {
-                                    let mut open_str = pair.start.clone();
-                                    let start = offset;
-                                    open_range_end = start + 1usize;
-                                    while let Some((next_ch, _)) = chars_and_offset.next()
-                                        && next_ch == ' '
-                                    {
-                                        open_range_end += 1;
-
-                                        if preserve_space {
-                                            open_str.push(next_ch);
-                                        }
-                                    }
-
-                                    if add_space {
-                                        open_str.push(' ');
-                                    };
-
-                                    edit_len = open_range_end - start;
-                                    edits.push((start..open_range_end, open_str));
-                                    anchors.push(start..start);
-                                    break;
-                                }
-                            }
-
-                            let mut reverse_chars_and_offsets = display_map
-                                .reverse_buffer_chars_at(
-                                    range.end.to_offset(&display_map, Bias::Left),
-                                )
-                                .peekable();
-                            while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
-                                if ch.to_string() == will_replace_pair.end {
-                                    let mut close_str = String::new();
-                                    let mut start = offset;
-                                    let end = start + 1usize;
-                                    while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
-                                        && next_ch == ' '
-                                        && close_str.len() < edit_len - 1
-                                        && start > open_range_end
-                                    {
-                                        start -= 1;
-
-                                        if preserve_space {
-                                            close_str.push(next_ch);
-                                        }
-                                    }
-
-                                    if add_space {
-                                        close_str.push(' ');
-                                    };
-
-                                    close_str.push_str(&pair.end);
-                                    edits.push((start..end, close_str));
-                                    break;
-                                }
-                            }
-                        } else {
-                            anchors.push(start..start);
+                    // Collect (open_offset, close_offset) pairs to replace from the
+                    // pre-computed anchors stored during check_and_move_to_valid_bracket_pair.
+                    let mut pairs_to_replace: Vec<(MultiBufferOffset, MultiBufferOffset)> =
+                        Vec::new();
+                    let snapshot = display_map.buffer_snapshot();
+                    for anchors in &bracket_anchors {
+                        let Some((open_anchor, close_anchor)) = anchors else {
+                            continue;
+                        };
+                        let pair = (
+                            open_anchor.to_offset(&snapshot),
+                            close_anchor.to_offset(&snapshot),
+                        );
+                        if !pairs_to_replace.contains(&pair) {
+                            pairs_to_replace.push(pair);
                         }
+                    }
+
+                    for (open_offset, close_offset) in pairs_to_replace {
+                        let mut open_str = pair.start.clone();
+                        let mut chars_and_offset =
+                            display_map.buffer_chars_at(open_offset).peekable();
+                        chars_and_offset.next(); // skip the bracket itself
+                        let mut open_range_end = open_offset + 1usize;
+                        while let Some((next_ch, _)) = chars_and_offset.next()
+                            && next_ch == ' '
+                        {
+                            open_range_end += 1;
+                            if preserve_space {
+                                open_str.push(next_ch);
+                            }
+                        }
+                        if add_space {
+                            open_str.push(' ');
+                        }
+                        let edit_len = open_range_end - open_offset;
+                        edits.push((open_offset..open_range_end, open_str));
+
+                        let mut close_str = String::new();
+                        let close_end = close_offset + 1usize;
+                        let mut close_start = close_offset;
+                        for (next_ch, _) in display_map.reverse_buffer_chars_at(close_offset) {
+                            if next_ch != ' '
+                                || close_str.len() >= edit_len - 1
+                                || close_start <= open_range_end
+                            {
+                                break;
+                            }
+                            close_start -= 1;
+                            if preserve_space {
+                                close_str.push(next_ch);
+                            }
+                        }
+                        if add_space {
+                            close_str.push(' ');
+                        }
+                        close_str.push_str(&pair.end);
+                        edits.push((close_start..close_end, close_str));
                     }
 
                     let stable_anchors = editor
@@ -411,67 +391,83 @@ impl Vim {
         }
     }
 
-    /// Checks if any of the current cursors are surrounded by a valid pair of brackets.
+    /// **Only intended for use by the `cs` (change surrounds) operator.**
     ///
-    /// This method supports multiple cursors and checks each cursor for a valid pair of brackets.
-    /// A pair of brackets is considered valid if it is well-formed and properly closed.
+    /// For each cursor, checks whether it is surrounded by a valid bracket pair for the given
+    /// object. Moves each cursor to the opening bracket of its found pair, and returns a
+    /// `Vec<Option<(Anchor, Anchor)>>` with one entry per selection containing the pre-computed
+    /// open and close bracket positions.
     ///
-    /// If a valid pair of brackets is found, the method returns `true` and the cursor is automatically moved to the start of the bracket pair.
-    /// If no valid pair of brackets is found for any cursor, the method returns `false`.
-    pub fn check_and_move_to_valid_bracket_pair(
+    /// Storing these anchors avoids re-running the bracket search from the moved cursor position,
+    /// which can misidentify the opening bracket for symmetric quote characters when the same
+    /// character appears earlier on the line (e.g. `I'm 'good'`).
+    ///
+    /// Returns an empty `Vec` if no valid pair was found for any cursor.
+    pub fn prepare_and_move_to_valid_bracket_pair(
         &mut self,
         object: Object,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let mut valid = false;
+    ) -> Vec<Option<(Anchor, Anchor)>> {
+        let mut matched_pair_anchors: Vec<Option<(Anchor, Anchor)>> = Vec::new();
         if let Some(pair) = self.object_to_bracket_pair(object, cx) {
             self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
                     let display_map = editor.display_snapshot(cx);
                     let selections = editor.selections.all_adjusted_display(&display_map);
-                    let mut anchors = Vec::new();
+                    let mut updated_cursor_ranges = Vec::new();
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) =
-                            object.range(&display_map, selection.clone(), true, None)
-                        {
-                            // If the current parenthesis object is single-line,
-                            // then we need to filter whether it is the current line or not
-                            if object.is_multiline()
-                                || (!object.is_multiline()
-                                    && selection.start.row() == range.start.row()
-                                    && selection.end.row() == range.end.row())
-                            {
-                                valid = true;
-                                let chars_and_offset = display_map
-                                    .buffer_chars_at(
-                                        range.start.to_offset(&display_map, Bias::Left),
-                                    )
-                                    .peekable();
-                                for (ch, offset) in chars_and_offset {
-                                    if ch.to_string() == pair.start {
-                                        anchors.push(offset..offset);
-                                        break;
-                                    }
-                                }
-                            } else {
-                                anchors.push(start..start)
-                            }
+                        let in_range = object
+                            .range(&display_map, selection.clone(), true, None)
+                            .filter(|range| {
+                                object.is_multiline()
+                                    || (selection.start.row() == range.start.row()
+                                        && selection.end.row() == range.end.row())
+                            });
+                        let Some(range) = in_range else {
+                            updated_cursor_ranges.push(start..start);
+                            matched_pair_anchors.push(None);
+                            continue;
+                        };
+
+                        let range_start = range.start.to_offset(&display_map, Bias::Left);
+                        let range_end = range.end.to_offset(&display_map, Bias::Left);
+                        let open_offset = display_map
+                            .buffer_chars_at(range_start)
+                            .find(|(ch, _)| ch.to_string() == pair.start)
+                            .map(|(_, offset)| offset);
+                        let close_offset = display_map
+                            .reverse_buffer_chars_at(range_end)
+                            .find(|(ch, _)| ch.to_string() == pair.end)
+                            .map(|(_, offset)| offset);
+
+                        if let (Some(open), Some(close)) = (open_offset, close_offset) {
+                            let snapshot = &display_map.buffer_snapshot();
+                            updated_cursor_ranges.push(open..open);
+                            matched_pair_anchors.push(Some((
+                                snapshot.anchor_before(open),
+                                snapshot.anchor_before(close),
+                            )));
                         } else {
-                            anchors.push(start..start)
+                            updated_cursor_ranges.push(start..start);
+                            matched_pair_anchors.push(None);
                         }
                     }
                     editor.change_selections(Default::default(), window, cx, |s| {
-                        s.select_ranges(anchors);
+                        s.select_ranges(updated_cursor_ranges);
                     });
                     editor.set_clip_at_line_ends(true, cx);
+
+                    if !matched_pair_anchors.iter().any(|a| a.is_some()) {
+                        matched_pair_anchors.clear();
+                    }
                 });
             });
         }
-        valid
+        matched_pair_anchors
     }
 
     fn object_to_bracket_pair(
@@ -483,10 +479,19 @@ impl Vim {
             return Some(pair.to_bracket_pair());
         }
 
-        if object != Object::AnyBrackets {
-            return None;
+        match object {
+            Object::AnyBrackets => self.any_pair(BRACKET_PAIRS, cx),
+            Object::AnyQuotes => self.any_pair(QUOTE_PAIRS, cx),
+            Object::MiniQuotes | Object::MiniBrackets => self.mini_pair(object, cx),
+            _ => None,
         }
+    }
 
+    fn any_pair(
+        &self,
+        allowed_pairs: &[SurroundPair],
+        cx: &mut Context<Self>,
+    ) -> Option<BracketPair> {
         // If we're dealing with `AnyBrackets`, which can map to multiple bracket
         // pairs, we'll need to first determine which `BracketPair` to target.
         // As such, we keep track of the smallest range size, so that in cases
@@ -519,7 +524,7 @@ impl Vim {
                 let relative_to = selection.head();
                 let cursor_offset = relative_to.to_offset(&display_map, Bias::Left);
 
-                for pair in BRACKET_PAIRS {
+                for pair in allowed_pairs {
                     if let Some(range) = surrounding_markers(
                         &display_map,
                         relative_to,
@@ -544,6 +549,25 @@ impl Vim {
         });
 
         best_pair.map(|p| p.to_bracket_pair())
+    }
+
+    fn mini_pair(&self, object: Object, cx: &mut Context<Self>) -> Option<BracketPair> {
+        self.editor
+            .update(cx, |editor, cx| {
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_adjusted_display(&display_map);
+                // For now, only primary selection is used to select the bracket/quote pair. It might be weird
+                // if multi-select resulted in different quote kinds being replaced for different selections.
+                // any_pair uses the same logic, so this should be consistent across {Any,Mini}{Quotes,Brackets}
+                let selection = selections.first()?.clone();
+                let range = object.range(&display_map, selection, true, None)?;
+                let start_offset = range.start.to_offset(&display_map, Bias::Left);
+                let (pair_char, _) = display_map.buffer_chars_at(start_offset).next()?;
+                literal_surround_pair(pair_char)
+            })
+            .ok()
+            .flatten()
+            .map(|surround| surround.to_bracket_pair())
     }
 }
 
@@ -639,7 +663,12 @@ mod test {
     use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{PushAddSurrounds, object::AnyBrackets, state::Mode, test::VimTestContext};
+    use crate::{
+        PushAddSurrounds,
+        object::{AnyBrackets, AnyQuotes, MiniBrackets, MiniQuotes},
+        state::Mode,
+        test::VimTestContext,
+    };
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
@@ -1285,6 +1314,14 @@ mod test {
         cx.set_state(indoc! {"'ˇfoobar'"}, Mode::Normal);
         cx.simulate_keystrokes("c s ' }");
         cx.assert_state(indoc! {"ˇ{foobar}"}, Mode::Normal);
+
+        cx.set_state(indoc! {"I'm 'goˇod'"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' \"");
+        cx.assert_state(indoc! {"I'm ˇ\"good\""}, Mode::Normal);
+
+        cx.set_state(indoc! {"I'm 'goˇod'"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' {");
+        cx.assert_state(indoc! {"I'm ˇ{ good }"}, Mode::Normal);
     }
 
     #[gpui::test]
@@ -1336,6 +1373,108 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_mini_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update keybindings so that using `csb` triggers Vim's `MiniBrackets` action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                MiniBrackets,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        cx.set_state(indoc! {"{braˇcketed}"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"[braˇcketed]"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b {");
+        cx.assert_state(indoc! {"ˇ{ bracketed }"}, Mode::Normal);
+
+        cx.set_state(indoc! {"<braˇcketed>"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"(braˇcketed)"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"(<ˇZed>)"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b )");
+        cx.assert_state(indoc! {"(ˇ(Zed))"}, Mode::Normal);
+
+        cx.set_state(
+            indoc! {"
+                (<ˇZed>)
+                (<ˇDeltaDB>)
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s b (");
+        cx.assert_state(
+            indoc! {"
+                (ˇ( Zed ))
+                (ˇ( DeltaDB ))
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_any_quotes(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update keybindings so that using `csq` triggers Vim's `AnyQuotes` action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "q",
+                AnyQuotes,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        cx.set_state(indoc! {"'  ˇstr  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q \"");
+        cx.assert_state(indoc! {"ˇ\"  str  \""}, Mode::Normal);
+
+        cx.set_state(indoc! {"`  ˇstr  `"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q '");
+        cx.assert_state(indoc! {"ˇ'  str  '"}, Mode::Normal);
+
+        cx.set_state(indoc! {"\"  ˇstr  \""}, Mode::Normal);
+        cx.simulate_keystrokes("c s q `");
+        cx.assert_state(indoc! {"ˇ`  str  `"}, Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_mini_quotes(cx: &mut gpui::TestAppContext) {
+        // NOTE: needs TypeScript test cx to recognize single/backquotes
+        let mut cx = VimTestContext::new_typescript(cx).await;
+
+        // Update keybindings so that using `csq` triggers Vim's `MiniQuotes` action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "q",
+                MiniQuotes,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+        cx.set_state(indoc! {"'  ˇstr  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q \"");
+        cx.assert_state(indoc! {"ˇ\"  str  \""}, Mode::Normal);
+
+        cx.set_state(indoc! {"`  ˇstr  `"}, Mode::Normal);
+        cx.simulate_keystrokes("c s q '");
+        cx.assert_state(indoc! {"ˇ'  str  '"}, Mode::Normal);
+
+        cx.set_state(indoc! {"\"  ˇstr  \""}, Mode::Normal);
+        cx.simulate_keystrokes("c s q `");
+        cx.assert_state(indoc! {"ˇ`  str  `"}, Mode::Normal);
     }
 
     // The following test cases all follow tpope/vim-surround's behaviour

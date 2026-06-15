@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -40,6 +40,15 @@ pub enum ConnectionState {
     Disconnected,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct SessionStats {
+    pub publisher_stats: Vec<RtcStats>,
+    pub subscriber_stats: Vec<RtcStats>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RtcStats {}
+
 static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
 
 pub struct TestServer {
@@ -47,6 +56,7 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
+    revoked_identities: Mutex<HashSet<String>>,
     executor: BackgroundExecutor,
 }
 
@@ -64,6 +74,7 @@ impl TestServer {
                 api_key,
                 secret_key,
                 rooms: Default::default(),
+                revoked_identities: Default::default(),
                 executor,
             });
             e.insert(server.clone());
@@ -95,6 +106,18 @@ impl TestServer {
         }
     }
 
+    /// Simulates LiveKit Cloud revoking an identity's tokens, as happens when
+    /// `remove_participant` is called for that identity (e.g. by the collab
+    /// server's stale connection cleanup) around the time a token is issued.
+    pub fn set_token_revoked(&self, identity: &str, revoked: bool) {
+        let mut revoked_identities = self.revoked_identities.lock();
+        if revoked {
+            revoked_identities.insert(identity.to_string());
+        } else {
+            revoked_identities.remove(identity);
+        }
+    }
+
     pub async fn create_room(&self, room: String) -> Result<()> {
         self.simulate_random_delay().await;
 
@@ -123,6 +146,13 @@ impl TestServer {
         let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
+
+        if self.revoked_identities.lock().contains(&identity.0) {
+            anyhow::bail!(
+                "signal failure: client error: 401 Unauthorized - invalid token: revoked"
+            );
+        }
+
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 
@@ -411,7 +441,80 @@ impl TestServer {
         Ok(sid)
     }
 
-    pub(crate) async fn unpublish_track(&self, _token: String, _track: &TrackSid) -> Result<()> {
+    pub(crate) async fn unpublish_track(&self, token: String, track_sid: &TrackSid) -> Result<()> {
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let room_name = claims.video.room.unwrap();
+
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .with_context(|| format!("room {room_name} does not exist"))?;
+
+        if let Some(video_to_unpublish) = room.video_tracks.iter().position(|t| t.sid == *track_sid)
+        {
+            let video_to_unpublish = room.video_tracks.remove(video_to_unpublish);
+            for client_room in room
+                .client_rooms
+                .iter()
+                .filter(|(id, _)| **id != identity)
+                .map(|(_, room)| room)
+            {
+                let track = RemoteTrack::Video(RemoteVideoTrack {
+                    server_track: video_to_unpublish.clone(),
+                    _room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: track_sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                let event = RoomEvent::TrackUnsubscribed {
+                    track,
+                    publication,
+                    participant,
+                };
+
+                client_room.0.lock().updates_tx.blocking_send(event).ok();
+            }
+        }
+
+        if let Some(audio_to_unpublish) = room.audio_tracks.iter().position(|t| t.sid == *track_sid)
+        {
+            let audio_to_unpublish = room.audio_tracks.remove(audio_to_unpublish);
+            for client_room in room
+                .client_rooms
+                .iter()
+                .filter(|(id, _)| **id != identity)
+                .map(|(_, room)| room)
+            {
+                let track = RemoteTrack::Audio(RemoteAudioTrack {
+                    server_track: audio_to_unpublish.clone(),
+                    room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: track_sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                let event = RoomEvent::TrackUnsubscribed {
+                    track,
+                    publication,
+                    participant,
+                };
+
+                client_room.0.lock().updates_tx.blocking_send(event).ok();
+            }
+        }
+
         Ok(())
     }
 
@@ -739,8 +842,16 @@ impl Room {
         _track_name: String,
         _is_staff: bool,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream)> {
+    ) -> Result<(LocalTrackPublication, AudioStream, Arc<AtomicU64>)> {
         self.local_participant().publish_microphone_track(cx).await
+    }
+
+    pub async fn get_stats(&self) -> Result<SessionStats> {
+        Ok(SessionStats::default())
+    }
+
+    pub fn stats_task(&self, _cx: &impl gpui::AppContext) -> gpui::Task<Result<SessionStats>> {
+        gpui::Task::ready(Ok(SessionStats::default()))
     }
 }
 

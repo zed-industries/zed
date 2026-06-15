@@ -7,15 +7,14 @@ use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Context as _;
-use client::zed_urls;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Focusable,
-    InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TextStyle,
+    Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
+    InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TaskExt, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
@@ -23,7 +22,7 @@ use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
     ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
@@ -67,11 +66,6 @@ pub fn init(cx: &mut App) {
                         }
                         ExtensionCategoryFilter::ContextServers => {
                             ExtensionProvides::ContextServers
-                        }
-                        ExtensionCategoryFilter::AgentServers => ExtensionProvides::AgentServers,
-                        ExtensionCategoryFilter::SlashCommands => ExtensionProvides::SlashCommands,
-                        ExtensionCategoryFilter::IndexedDocsProviders => {
-                            ExtensionProvides::IndexedDocsProviders
                         }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
                         ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
@@ -138,7 +132,12 @@ pub fn init(cx: &mut App) {
                             Err(err) => {
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
-                                        workspace.show_portal_error(err.to_string(), cx);
+                                        workspace.show_error(
+                                            workspace::workspace_error::PortalError::new(
+                                                err.to_string(),
+                                            ),
+                                            cx,
+                                        );
                                     })
                                     .ok();
                                 return None;
@@ -155,10 +154,10 @@ pub fn init(cx: &mut App) {
                                 log::error!("Failed to install dev extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
+                                        // NOTE: using `anyhow::context` here ends up not printing
+                                        // the error
                                         workspace.show_error(
-                                            // NOTE: using `anyhow::context` here ends up not printing
-                                            // the error
-                                            &format!("Failed to install dev extension: {}", err),
+                                            format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
                                     })
@@ -291,19 +290,6 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
-fn acp_registry_upsell_keywords() -> &'static [&'static str] {
-    &[
-        "opencode",
-        "mistral",
-        "auggie",
-        "stakpak",
-        "codebuddy",
-        "autohand",
-        "factory droid",
-        "corust",
-    ]
-}
-
 fn extension_button_id(extension_id: &Arc<str>, operation: ExtensionOperation) -> ElementId {
     (SharedString::from(extension_id.clone()), operation as usize).into()
 }
@@ -330,7 +316,6 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
-    show_acp_registry_upsell: bool,
 }
 
 impl ExtensionsPage {
@@ -393,7 +378,6 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
-                show_acp_registry_upsell: false,
             };
             this.fetch_extensions(
                 this.search_query(cx),
@@ -828,7 +812,8 @@ impl ExtensionsPage {
                                             .iter()
                                             .filter_map(|provides| {
                                                 match provides {
-                                                    ExtensionProvides::SlashCommands
+                                                    ExtensionProvides::AgentServers
+                                                    | ExtensionProvides::SlashCommands
                                                     | ExtensionProvides::IndexedDocsProviders => {
                                                         return None;
                                                     }
@@ -927,7 +912,7 @@ impl ExtensionsPage {
                                     )
                                     .icon_size(IconSize::Small),
                                 )
-                                .anchor(Corner::TopRight)
+                                .anchor(Anchor::TopRight)
                                 .offset(Point {
                                     x: px(0.0),
                                     y: px(2.0),
@@ -1420,13 +1405,11 @@ impl ExtensionsPage {
     fn refresh_feature_upsells(&mut self, cx: &mut Context<Self>) {
         let Some(search) = self.search_query(cx) else {
             self.upsells.clear();
-            self.show_acp_registry_upsell = false;
             return;
         };
 
         if let Some(id) = search.strip_prefix("id:") {
             self.upsells.clear();
-            self.show_acp_registry_upsell = false;
 
             let upsell = match id.to_lowercase().as_str() {
                 "ruff" => Some(Feature::ExtensionRuff),
@@ -1458,61 +1441,6 @@ impl ExtensionsPage {
                 self.upsells.remove(feature);
             }
         }
-
-        self.show_acp_registry_upsell = acp_registry_upsell_keywords()
-            .iter()
-            .any(|keyword| search_terms.iter().any(|term| keyword.contains(term)));
-    }
-
-    fn render_acp_registry_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let registry_url = zed_urls::acp_registry_blog(cx);
-
-        let view_registry = Button::new("view_registry", "View Registry")
-            .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-            .on_click({
-                let registry_url = registry_url.clone();
-                move |_, window, cx| {
-                    telemetry::event!(
-                        "ACP Registry Opened from Extensions",
-                        source = "ACP Registry Upsell",
-                        url = registry_url,
-                    );
-                    window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
-                }
-            });
-        let open_registry_button = Button::new("open_registry", "Learn More")
-            .end_icon(
-                Icon::new(IconName::ArrowUpRight)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
-            .on_click({
-                move |_event, _window, cx| {
-                    telemetry::event!(
-                        "ACP Registry Viewed",
-                        source = "ACP Registry Upsell",
-                        url = registry_url,
-                    );
-                    cx.open_url(&registry_url)
-                }
-            });
-
-        div().pt_4().px_4().child(
-            Banner::new()
-                .severity(Severity::Warning)
-                .child(
-                    Label::new(
-                        "Agent Server extensions will be deprecated in favor of the ACP registry.",
-                    )
-                    .mt_0p5(),
-                )
-                .action_slot(
-                    h_flex()
-                        .gap_1()
-                        .child(open_registry_button)
-                        .child(view_registry),
-                ),
-        )
     }
 
     fn render_feature_upsell_banner(
@@ -1810,36 +1738,34 @@ impl Render for ExtensionsPage {
                                 this.change_provides_filter(None, cx);
                             })),
                     )
-                    .children(ExtensionProvides::iter().filter_map(|provides| {
-                        match provides {
-                            ExtensionProvides::SlashCommands
-                            | ExtensionProvides::IndexedDocsProviders => return None,
-                            _ => {}
-                        }
+                    .children(
+                        ExtensionProvides::iter()
+                            .filter(|provides| match provides {
+                                ExtensionProvides::AgentServers
+                                | ExtensionProvides::Grammars // grammars do not add anything of value to users currently
+                                | ExtensionProvides::IndexedDocsProviders
+                                | ExtensionProvides::SlashCommands => false,
+                                _ => true,
+                            })
+                            .map(|provides| {
+                                let label = extension_provides_label(provides);
+                                let button_id =
+                                    SharedString::from(format!("filter-category-{}", label));
 
-                        let label = extension_provides_label(provides);
-                        let button_id = SharedString::from(format!("filter-category-{}", label));
-
-                        Some(
-                            Button::new(button_id, label)
-                                .style(if self.provides_filter == Some(provides) {
-                                    ButtonStyle::Filled
-                                } else {
-                                    ButtonStyle::Subtle
-                                })
-                                .toggle_state(self.provides_filter == Some(provides))
-                                .on_click({
-                                    cx.listener(move |this, _event, _, cx| {
-                                        this.change_provides_filter(Some(provides), cx);
+                                Button::new(button_id, label)
+                                    .style(if self.provides_filter == Some(provides) {
+                                        ButtonStyle::Filled
+                                    } else {
+                                        ButtonStyle::Subtle
                                     })
-                                }),
-                        )
-                    })),
-            )
-            .when(
-                self.provides_filter == Some(ExtensionProvides::AgentServers)
-                    || self.show_acp_registry_upsell,
-                |this| this.child(self.render_acp_registry_upsell(cx)),
+                                    .toggle_state(self.provides_filter == Some(provides))
+                                    .on_click({
+                                        cx.listener(move |this, _event, _, cx| {
+                                            this.change_provides_filter(Some(provides), cx);
+                                        })
+                                    })
+                            }),
+                    ),
             )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
@@ -1854,7 +1780,7 @@ impl Render for ExtensionsPage {
                     let scroll_handle = &self.list;
                     this.child(
                         uniform_list("entries", count, cx.processor(Self::render_extensions))
-                            .flex_grow()
+                            .flex_grow_1()
                             .pb_4()
                             .track_scroll(scroll_handle),
                     )

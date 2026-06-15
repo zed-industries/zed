@@ -1,9 +1,9 @@
 use anyhow::{Context as _, Result};
 
-use audio::{AudioSettings, CHANNEL_COUNT, LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE, SAMPLE_RATE};
+use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
 use cpal::DeviceId;
 use cpal::traits::{DeviceTrait, StreamTrait as _};
-use futures::channel::mpsc::UnboundedSender;
+use futures::channel::mpsc::Sender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
     AsyncApp, BackgroundExecutor, Priority, ScreenCaptureFrame, ScreenCaptureSource,
@@ -22,17 +22,19 @@ use livekit::webrtc::{
 };
 use log::info;
 use parking_lot::Mutex;
-use rodio::Source;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
 
-mod source;
+struct TimestampedFrame {
+    frame: AudioFrame<'static>,
+    captured_at: Instant,
+}
 
 pub(crate) struct AudioStack {
     executor: BackgroundExecutor,
@@ -42,42 +44,29 @@ pub(crate) struct AudioStack {
     next_ssrc: AtomicI32,
 }
 
-pub(crate) fn play_remote_audio_track(
-    track: &livekit::track::RemoteAudioTrack,
-    speaker: Speaker,
-    cx: &mut gpui::App,
-) -> Result<AudioStream> {
-    info!("speaker: {speaker:?}");
-    let stream =
-        source::LiveKitStream::new(cx.background_executor(), track, speaker.sends_legacy_audio);
-
-    let stop_handle = Arc::new(AtomicBool::new(false));
-    let stop_handle_clone = stop_handle.clone();
-    let stream = stream
-        .stoppable()
-        .periodic_access(Duration::from_millis(50), move |s| {
-            if stop_handle.load(Ordering::Relaxed) {
-                s.stop();
-            }
-        });
-
-    info!("sample_rate: {:?}", stream.sample_rate());
-    info!("channel_count: {:?}", stream.channels());
-    audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
-        .context("Could not play audio")?;
-
-    let on_drop = util::defer(move || {
-        stop_handle_clone.store(true, Ordering::Relaxed);
-    });
-    Ok(AudioStream::Output {
-        _drop: Box::new(on_drop),
-    })
-}
-
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
+        // AGC2's `adaptive_digital` is what actually levels speech toward a target;
+        // the `gain_controller2.enabled` master switch alone leaves it off, which
+        // historically meant capture was effectively unleveled. Defaults match
+        // what Chrome/Meet ship with -- in particular `max_gain_db = 50` paired
+        // with `max_output_noise_level_dbfs = -50`, which lets the AGC reach
+        // very quiet talkers while the noise-level estimator backs off before
+        // boosting amplifies the noise floor.
         let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
-            true, true, true, true,
+            apm::AudioProcessingConfig {
+                echo_canceller_enabled: true,
+                gain_controller2: apm::GainController2Config {
+                    enabled: true,
+                    adaptive_digital: apm::AdaptiveDigitalConfig {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                high_pass_filter_enabled: true,
+                noise_suppression_enabled: true,
+            },
         )));
         let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
         Self {
@@ -99,8 +88,8 @@ impl AudioStack {
         let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: LEGACY_SAMPLE_RATE.get(),
-            num_channels: LEGACY_CHANNEL_COUNT.get() as u32,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
@@ -145,8 +134,8 @@ impl AudioStack {
                     executor,
                     apm,
                     mixer,
-                    LEGACY_SAMPLE_RATE.get(),
-                    LEGACY_CHANNEL_COUNT.get().into(),
+                    SAMPLE_RATE.get(),
+                    CHANNEL_COUNT.get().into(),
                     output_audio_device,
                 )
                 .await
@@ -162,33 +151,18 @@ impl AudioStack {
         user_name: String,
         is_staff: bool,
         cx: &AsyncApp,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
-        let legacy_audio_compatible =
-            AudioSettings::try_read_global(cx, |setting| setting.legacy_audio_compatible)
-                .unwrap_or(true);
-
-        let source = if legacy_audio_compatible {
-            NativeAudioSource::new(
-                // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-                AudioSourceOptions::default(),
-                LEGACY_SAMPLE_RATE.get(),
-                LEGACY_CHANNEL_COUNT.get().into(),
-                10,
-            )
-        } else {
-            NativeAudioSource::new(
-                // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-                AudioSourceOptions::default(),
-                SAMPLE_RATE.get(),
-                CHANNEL_COUNT.get().into(),
-                10,
-            )
-        };
+    ) -> Result<(crate::LocalAudioTrack, AudioStream, Arc<AtomicU64>)> {
+        let source = NativeAudioSource::new(
+            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+            AudioSourceOptions::default(),
+            SAMPLE_RATE.get(),
+            CHANNEL_COUNT.get().into(),
+            10,
+        );
 
         let speaker = Speaker {
             name: user_name,
             is_staff,
-            sends_legacy_audio: legacy_audio_compatible,
         };
         log::info!("Microphone speaker: {speaker:?}");
         let track_name = serde_urlencoded::to_string(speaker)
@@ -201,29 +175,19 @@ impl AudioStack {
 
         let apm = self.apm.clone();
 
-        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
+        let input_lag_us = Arc::new(AtomicU64::new(0));
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::channel::<TimestampedFrame>(1);
         let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
+            let input_lag_us = input_lag_us.clone();
             async move {
-                while let Some(frame) = frame_rx.next().await {
-                    source.capture_frame(&frame).await.log_err();
+                while let Some(timestamped) = frame_rx.next().await {
+                    let lag = timestamped.captured_at.elapsed();
+                    input_lag_us.store(lag.as_micros() as u64, Ordering::Relaxed);
+                    source.capture_frame(&timestamped.frame).await.log_err();
                 }
             }
         });
-        let rodio_pipeline =
-            AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or_default();
-        let capture_task = if rodio_pipeline {
-            info!("Using experimental.rodio_audio audio pipeline");
-            let voip_parts = audio::VoipParts::new(cx)?;
-            // Audio needs to run real-time and should never be paused. That is
-            // why we are using a normal std::thread and not a background task
-            self.executor
-                .spawn_with_priority(Priority::RealtimeAudio, async move {
-                    // microphone is non send on mac
-                    let microphone = audio::Audio::open_microphone(voip_parts)?;
-                    send_to_livekit(frame_tx, microphone);
-                    Ok(())
-                })
-        } else {
+        let capture_task = {
             let input_audio_device =
                 AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                     .flatten();
@@ -233,8 +197,8 @@ impl AudioStack {
                     executor,
                     apm,
                     frame_tx,
-                    LEGACY_SAMPLE_RATE.get(),
-                    LEGACY_CHANNEL_COUNT.get().into(),
+                    SAMPLE_RATE.get(), // TODO(audio): was legacy removed for now
+                    CHANNEL_COUNT.get().into(),
                     input_audio_device,
                 )
                 .await
@@ -250,6 +214,7 @@ impl AudioStack {
             AudioStream::Output {
                 _drop: Box::new(on_drop),
             },
+            input_lag_us,
         ))
     }
 
@@ -344,7 +309,7 @@ impl AudioStack {
     async fn capture_input(
         executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
-        frame_tx: UnboundedSender<AudioFrame<'static>>,
+        frame_tx: Sender<TimestampedFrame>,
         sample_rate: u32,
         num_channels: u32,
         input_audio_device: Option<DeviceId>,
@@ -354,7 +319,7 @@ impl AudioStack {
             let (device, config) = crate::default_device(true, input_audio_device.as_ref())?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
-            let frame_tx = frame_tx.clone();
+            let mut frame_tx = frame_tx.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
 
             executor
@@ -375,6 +340,7 @@ impl AudioStack {
                                 &config.config(),
                                 config.sample_format(),
                                 move |data, _: &_| {
+                                    let captured_at = Instant::now();
                                     let data = crate::get_sample_data(config.sample_format(), data)
                                         .log_err();
                                     let Some(data) = data else {
@@ -399,6 +365,7 @@ impl AudioStack {
                                                     sample_rate,
                                                 )
                                                 .to_owned();
+
                                             apm.lock()
                                                 .process_stream(
                                                     &mut sampled,
@@ -407,12 +374,16 @@ impl AudioStack {
                                                 )
                                                 .log_err();
                                             buf.clear();
+
                                             frame_tx
-                                                .unbounded_send(AudioFrame {
-                                                    data: Cow::Owned(sampled),
-                                                    sample_rate,
-                                                    num_channels,
-                                                    samples_per_channel: sample_rate / 100,
+                                                .try_send(TimestampedFrame {
+                                                    frame: AudioFrame {
+                                                        data: Cow::Owned(sampled),
+                                                        sample_rate,
+                                                        num_channels,
+                                                        samples_per_channel: sample_rate / 100,
+                                                    },
+                                                    captured_at,
                                                 })
                                                 .ok();
                                         }
@@ -442,35 +413,6 @@ impl AudioStack {
 pub struct Speaker {
     pub name: String,
     pub is_staff: bool,
-    pub sends_legacy_audio: bool,
-}
-
-fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphone: impl Source) {
-    use cpal::Sample;
-    let sample_rate = microphone.sample_rate().get();
-    let num_channels = microphone.channels().get() as u32;
-    let buffer_size = sample_rate / 100 * num_channels;
-
-    loop {
-        let sampled: Vec<_> = microphone
-            .by_ref()
-            .take(buffer_size as usize)
-            .map(|s| s.to_sample())
-            .collect();
-
-        if frame_tx
-            .unbounded_send(AudioFrame {
-                sample_rate,
-                num_channels,
-                samples_per_channel: sampled.len() as u32 / num_channels,
-                data: Cow::Owned(sampled),
-            })
-            .is_err()
-        {
-            // must rx has dropped or is not consuming
-            break;
-        }
-    }
 }
 
 use super::LocalVideoTrack;

@@ -5,16 +5,17 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
+use credentials_provider::CredentialsProvider;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, Global, SharedString, Task,
+    App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt,
     http_client::{self, AsyncBody, HttpClient, Method, StatusCode},
 };
 use language::{ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
 use serde::{Deserialize, Serialize};
-use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
+use std::{mem, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
@@ -49,12 +50,14 @@ impl Mercury {
             events,
             related_files,
             debug_tx,
+            trigger,
             ..
         }: EditPredictionModelInput,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut Context<EditPredictionStore>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         self.api_token.update(cx, |key_state, cx| {
-            _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
+            _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, credentials_provider, cx);
         });
         let Some(api_token) = self.api_token.read(cx).key(&MERCURY_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
@@ -67,7 +70,7 @@ impl Mercury {
 
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
-        let buffer_snapshotted_at = Instant::now();
+        let request_start = cx.background_executor().now();
         let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
@@ -107,7 +110,6 @@ impl Mercury {
                     - excerpt_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt,
-                experiment: None,
                 excerpt_start_row: Some(excerpt_point_range.start.row),
                 excerpt_ranges,
                 syntax_ranges: Some(syntax_ranges),
@@ -137,6 +139,7 @@ impl Mercury {
                     content: open_ai::MessageContent::Plain(prompt),
                 }],
                 stream: false,
+                stream_options: None,
                 max_completion_tokens: None,
                 stop: vec![],
                 temperature: None,
@@ -145,6 +148,7 @@ impl Mercury {
                 tools: vec![],
                 prompt_cache_key: None,
                 reasoning_effort: None,
+                service_tier: None,
             };
 
             let buf = serde_json::to_vec(&request_body)?;
@@ -171,7 +175,6 @@ impl Mercury {
                 .await
                 .context("Failed to read response body")?;
 
-            let response_received_at = Instant::now();
             if !response.status().is_success() {
                 if response.status() == StatusCode::PAYMENT_REQUIRED {
                     anyhow::bail!(MercuryPaymentRequiredError(
@@ -222,7 +225,9 @@ impl Mercury {
                 );
             }
 
-            anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
+            let editable_range = snapshot.anchor_range_inside(editable_offset_range);
+
+            anyhow::Ok((id, edits, snapshot, inputs, editable_range))
         });
 
         cx.spawn(async move |ep_store, cx| {
@@ -240,7 +245,7 @@ impl Mercury {
                 cx.notify();
             })?;
 
-            let (id, edits, old_snapshot, response_received_at, inputs) = result?;
+            let (id, edits, old_snapshot, inputs, editable_range) = result?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -248,10 +253,11 @@ impl Mercury {
                     &old_snapshot,
                     edits.into(),
                     None,
-                    buffer_snapshotted_at,
-                    response_received_at,
+                    Some(editable_range),
                     inputs,
                     None,
+                    trigger,
+                    cx.background_executor().now() - request_start,
                     cx,
                 )
                 .await,
@@ -388,8 +394,9 @@ pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
 }
 
 pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
+    let credentials_provider = zed_credentials_provider::global(cx);
     mercury_api_token(cx).update(cx, |key_state, cx| {
-        key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx)
+        key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, credentials_provider, cx)
     })
 }
 

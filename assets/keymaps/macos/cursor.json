@@ -20,7 +20,6 @@
       "cmd-shift-l": "agent::AddSelectionToThread", // In cursor uses "Ask" mode
       "cmd-l": "agent::AddSelectionToThread", // In cursor uses "Agent" mode
       "cmd-k": "assistant::InlineAssist",
-      "cmd-shift-k": "assistant::InsertIntoEditor",
     },
   },
   {
@@ -35,7 +34,7 @@
     },
   },
   {
-    "context": "AgentPanel || ContextEditor || (MessageEditor > Editor)",
+    "context": "AgentPanel || (MessageEditor > Editor)",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-i": "workspace::ToggleRightDock",
@@ -48,7 +47,6 @@
       "cmd-shift-backspace": "editor::Cancel",
       "cmd-r": "agent::NewThread",
       "cmd-shift-v": "editor::Paste",
-      "cmd-shift-k": "assistant::InsertIntoEditor",
       // "escape": "agent::ToggleFocus"
       ///// Enable when Zed supports multiple thread tabs
       // "cmd-t": // new thread tab

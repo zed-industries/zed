@@ -14,7 +14,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, SlashCommandSettings, fallible_options,
+    RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -78,9 +78,6 @@ pub struct ProjectSettingsContent {
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: Option<DirenvSettings>,
 
-    /// Settings for slash commands.
-    pub slash_commands: Option<SlashCommandSettings>,
-
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
@@ -90,15 +87,33 @@ pub struct ProjectSettingsContent {
     pub disable_ai: Option<SaturatingBool>,
 }
 
+/// When to scan content of linked directories.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanSymlinksSetting {
+    /// Always scan symlinked directories
+    Always,
+    /// Only scan symlinked directories when they've been expanded in the workspace
+    #[default]
+    Expanded,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or null, the root directory name
-    /// will be displayed.
-    ///
-    /// Default: null
-    pub project_name: Option<String>,
-
     /// Whether to prevent this project from being shared in public channels.
     ///
     /// Default: false
@@ -128,6 +143,11 @@ pub struct WorktreeSettingsContent {
     ///  "docker-compose.*.yml",
     /// ]
     pub file_scan_inclusions: Option<Vec<String>>,
+
+    /// When to scan content of linked directories.
+    ///
+    /// Default: expanded
+    pub scan_symlinks: Option<ScanSymlinksSetting>,
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
@@ -279,6 +299,18 @@ pub struct SemanticTokenRule {
     pub font_style: Option<SemanticTokenFontStyle>,
 }
 
+impl SemanticTokenRule {
+    pub fn no_style_defined(&self) -> bool {
+        self.style.is_empty()
+            && self.foreground_color.is_none()
+            && self.background_color.is_none()
+            && self.underline.is_none()
+            && self.strikethrough.is_none()
+            && self.font_weight.is_none()
+            && self.font_style.is_none()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum SemanticTokenColorOverride {
@@ -385,6 +417,10 @@ pub enum ContextServerSettingsContent {
         headers: HashMap<String, String>,
         /// Timeout for tool calls in seconds. Defaults to global context_server_timeout if not specified.
         timeout: Option<u64>,
+        /// Pre-registered OAuth client credentials for authorization servers that
+        /// require out-of-band client registration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<OAuthClientSettings>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -424,6 +460,20 @@ impl ContextServerSettingsContent {
             } => *remote_enabled = enabled,
         }
     }
+}
+
+/// Pre-registered OAuth client credentials for MCP servers that don't support
+/// Dynamic Client Registration.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+pub struct OAuthClientSettings {
+    /// The OAuth client ID obtained from out-of-band registration with the
+    /// authorization server.
+    pub client_id: String,
+    /// The OAuth client secret, if this is a confidential client. For security,
+    /// prefer providing this interactively; we will prompt and store it in
+    /// the system keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 #[with_fallible_options]
@@ -497,6 +547,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Whether to show the stage and restore buttons on diff hunks.
+    ///
+    /// Default: true
+    pub show_stage_restore_buttons: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///

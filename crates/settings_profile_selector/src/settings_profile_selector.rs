@@ -286,12 +286,12 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::Settings;
-    use theme::{self, ThemeSettings};
+    use theme_settings::ThemeSettings;
     use workspace::{self, AppState, MultiWorkspace};
     use zed_actions::settings_profile_selector;
 
     async fn init_test(
-        profiles_json: serde_json::Value,
+        user_settings_json: serde_json::Value,
         cx: &mut TestAppContext,
     ) -> (Entity<Workspace>, &mut VisualTestContext) {
         cx.update(|cx| {
@@ -299,7 +299,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             settings::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             super::init(cx);
             editor::init(cx);
             state
@@ -307,13 +307,8 @@ mod tests {
 
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                let settings_json = json!({
-                    "buffer_font_size": 10.0,
-                    "profiles": profiles_json,
-                });
-
                 store
-                    .set_user_settings(&settings_json.to_string(), cx)
+                    .set_user_settings(&user_settings_json.to_string(), cx)
                     .unwrap();
             });
         });
@@ -328,7 +323,6 @@ mod tests {
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
         });
 
         (workspace, cx)
@@ -354,15 +348,22 @@ mod tests {
         let classroom_and_streaming_profile_name = "Classroom / Streaming".to_string();
         let demo_videos_profile_name = "Demo Videos".to_string();
 
-        let profiles_json = json!({
-            classroom_and_streaming_profile_name.clone(): {
-                "buffer_font_size": 20.0,
-            },
-            demo_videos_profile_name.clone(): {
-                "buffer_font_size": 15.0
+        let user_settings_json = json!({
+            "buffer_font_size": 10.0,
+            "profiles": {
+                classroom_and_streaming_profile_name.clone(): {
+                    "settings": {
+                        "buffer_font_size": 20.0,
+                    }
+                },
+                demo_videos_profile_name.clone(): {
+                    "settings": {
+                        "buffer_font_size": 15.0
+                    }
+                }
             }
         });
-        let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
+        let (workspace, cx) = init_test(user_settings_json, cx).await;
 
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);
@@ -576,23 +577,133 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_settings_profile_with_user_base(cx: &mut TestAppContext) {
+        let user_settings_json = json!({
+            "buffer_font_size": 10.0,
+            "profiles": {
+                "Explicit User": {
+                    "base": "user",
+                    "settings": {
+                        "buffer_font_size": 20.0
+                    }
+                },
+                "Implicit User": {
+                    "settings": {
+                        "buffer_font_size": 20.0
+                    }
+                }
+            }
+        });
+        let (workspace, cx) = init_test(user_settings_json, cx).await;
+
+        // Select "Explicit User" (index 1) — profile applies on top of user settings.
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                picker.delegate.selected_profile_name.as_deref(),
+                Some("Explicit User")
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
+        });
+
+        cx.dispatch_action(Confirm);
+
+        // Select "Implicit User" (index 2) — no base specified, same behavior.
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                picker.delegate.selected_profile_name.as_deref(),
+                Some("Implicit User")
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
+        });
+
+        cx.dispatch_action(Confirm);
+    }
+
+    #[gpui::test]
+    async fn test_settings_profile_with_default_base(cx: &mut TestAppContext) {
+        let user_settings_json = json!({
+            "buffer_font_size": 10.0,
+            "profiles": {
+                "Clean Slate": {
+                    "base": "default"
+                },
+                "Custom on Defaults": {
+                    "base": "default",
+                    "settings": {
+                        "buffer_font_size": 30.0
+                    }
+                }
+            }
+        });
+        let (workspace, cx) = init_test(user_settings_json, cx).await;
+
+        // User has buffer_font_size: 10, factory default is 15.
+        cx.update(|_, cx| {
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
+        });
+
+        // "Clean Slate" has base: "default" with no settings overrides,
+        // so we get the factory default (15), not the user's value (10).
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                picker.delegate.selected_profile_name.as_deref(),
+                Some("Clean Slate")
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
+        });
+
+        // "Custom on Defaults" has base: "default" with buffer_font_size: 30,
+        // so the profile's override (30) applies on top of the factory default,
+        // not on top of the user's value (10).
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                picker.delegate.selected_profile_name.as_deref(),
+                Some("Custom on Defaults")
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(30.0));
+        });
+
+        cx.dispatch_action(Confirm);
+
+        cx.update(|_, cx| {
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(30.0));
+        });
+    }
+
+    #[gpui::test]
     async fn test_settings_profile_selector_is_in_user_configuration_order(
         cx: &mut TestAppContext,
     ) {
         // Must be unique names (HashMap)
-        let profiles_json = json!({
-            "z": {},
-            "e": {},
-            "d": {},
-            " ": {},
-            "r": {},
-            "u": {},
-            "l": {},
-            "3": {},
-            "s": {},
-            "!": {},
+        let user_settings_json = json!({
+            "profiles": {
+                "z": { "settings": {} },
+                "e": { "settings": {} },
+                "d": { "settings": {} },
+                " ": { "settings": {} },
+                "r": { "settings": {} },
+                "u": { "settings": {} },
+                "l": { "settings": {} },
+                "3": { "settings": {} },
+                "s": { "settings": {} },
+                "!": { "settings": {} },
+            }
         });
-        let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
+        let (workspace, cx) = init_test(user_settings_json, cx).await;
 
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);

@@ -37,7 +37,6 @@ use worktree_settings_file::LocalSettingsKind;
 
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
-pub use tables::user::Model as User;
 pub use tables::*;
 
 #[cfg(feature = "test-support")]
@@ -366,13 +365,6 @@ pub struct WaitlistSummary {
     pub unknown_count: i64,
 }
 
-/// The parameters to create a new user.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NewUserParams {
-    pub github_login: String,
-    pub github_user_id: i32,
-}
-
 /// The result of creating a new user.
 #[derive(Debug)]
 pub struct NewUserResult {
@@ -495,6 +487,7 @@ pub struct RejoinedRoom {
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
     pub channel: Option<channel::Model>,
+    pub role: ChannelRole,
 }
 
 pub struct ResharedProject {
@@ -532,6 +525,7 @@ impl RejoinedProject {
                     root_name: worktree.root_name.clone(),
                     visible: worktree.visible,
                     abs_path: worktree.abs_path.clone(),
+                    root_repo_common_dir: None,
                 })
                 .collect(),
             collaborators: self
@@ -559,6 +553,7 @@ pub struct RejoinedWorktree {
     pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
+    pub root_repo_common_dir: Option<String>,
 }
 
 pub struct LeftRoom {
@@ -589,6 +584,7 @@ pub struct Project {
     pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<LanguageServer>,
     pub path_style: PathStyle,
+    pub features: Vec<String>,
 }
 
 pub struct ProjectCollaborator {
@@ -637,6 +633,7 @@ pub struct Worktree {
     pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
+    pub root_repo_common_dir: Option<String>,
 }
 
 #[derive(Debug)]

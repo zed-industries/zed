@@ -6,10 +6,9 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{
-    Anchor, Buffer, BufferSnapshot, ToOffset, ToPoint as _,
+    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
     language_settings::all_language_settings,
 };
-use settings::EditPredictionPromptFormat;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{ZetaPromptInput, compute_editable_and_context_ranges};
 
@@ -18,11 +17,10 @@ const FIM_CONTEXT_TOKENS: usize = 512;
 struct FimRequestOutput {
     request_id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
+    editable_range: std::ops::Range<Anchor>,
     snapshot: BufferSnapshot,
-    response_received_at: Instant,
     inputs: ZetaPromptInput,
     buffer: Entity<Buffer>,
-    buffer_snapshotted_at: Instant,
 }
 
 pub fn request_prediction(
@@ -31,6 +29,7 @@ pub fn request_prediction(
         snapshot,
         position,
         events,
+        trigger,
         ..
     }: EditPredictionModelInput,
     prompt_format: EditPredictionPromptFormat,
@@ -47,7 +46,7 @@ pub fn request_prediction(
 
     let http_client = cx.http_client();
     let cursor_point = position.to_point(&snapshot);
-    let buffer_snapshotted_at = Instant::now();
+    let request_start = cx.background_executor().now();
 
     let Some(settings) = (match provider {
         settings::EditPredictionProvider::Ollama => settings.ollama.clone(),
@@ -89,7 +88,6 @@ pub fn request_prediction(
             cursor_excerpt,
             excerpt_ranges: Default::default(),
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -119,7 +117,7 @@ pub fn request_prediction(
 
         log::debug!(
             "fim: completion received ({:.2}s)",
-            (response_received_at - buffer_snapshotted_at).as_secs_f64()
+            (response_received_at - request_start).as_secs_f64()
         );
 
         let completion: Arc<str> = clean_fim_completion(&response_text).into();
@@ -131,14 +129,18 @@ pub fn request_prediction(
             vec![(anchor..anchor, completion)]
         };
 
+        let editable_range = snapshot.anchor_range_inside(
+            (excerpt_offset_range.start + editable_range.start)
+                ..(excerpt_offset_range.start + editable_range.end),
+        );
+
         anyhow::Ok(FimRequestOutput {
             request_id,
             edits,
+            editable_range,
             snapshot,
-            response_received_at,
             inputs,
             buffer,
-            buffer_snapshotted_at,
         })
     });
 
@@ -151,10 +153,11 @@ pub fn request_prediction(
                 &output.snapshot,
                 output.edits.into(),
                 None,
-                output.buffer_snapshotted_at,
-                output.response_received_at,
+                Some(output.editable_range),
                 output.inputs,
                 None,
+                trigger,
+                cx.background_executor().now() - request_start,
                 cx,
             )
             .await,
