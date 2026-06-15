@@ -5242,6 +5242,7 @@ impl ToolCallEventStream {
     pub(crate) fn authorize_sandbox(
         &self,
         title: impl Into<String>,
+        command: Option<String>,
         request: SandboxRequest,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -6856,7 +6857,7 @@ mod tests {
         };
 
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+            event_stream.authorize_sandbox("Allow write access?", None, request.clone(), cx)
         });
         let authorization = receiver.expect_authorization().await;
         let details =

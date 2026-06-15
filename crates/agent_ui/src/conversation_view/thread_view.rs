@@ -24,7 +24,7 @@ use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
-    LanguageModelProviderId, LanguageModelRegistry, Speed,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
@@ -1820,28 +1820,30 @@ impl ThreadView {
                     None,
                     "Context too large for the model's context window.".into(),
                 ),
-                ThreadError::NoApiKey { provider } => (
+                ThreadError::NoCredentials { provider } => (
                     "no_api_key",
                     None,
-                    format!("No API key configured for {provider}.").into(),
+                    format!("No credentials configured for {provider}.").into(),
                 ),
                 ThreadError::StreamError { provider } => (
                     "stream_error",
                     None,
                     format!("Connection to {provider}'s API was interrupted.").into(),
                 ),
-                ThreadError::InvalidApiKey { provider } => (
+                ThreadError::AuthenticationFailed { provider } => (
                     "invalid_api_key",
                     None,
-                    format!("Invalid or expired API key for {provider}.").into(),
+                    format!("Authentication with {provider} failed.").into(),
                 ),
-                ThreadError::PermissionDenied { provider } => (
+                ThreadError::PermissionDenied { provider, message } => (
                     "permission_denied",
                     None,
-                    format!(
-                        "{provider}'s API rejected the request due to insufficient permissions."
-                    )
-                    .into(),
+                    message.clone().unwrap_or_else(|| {
+                        format!(
+                            "{provider}'s API rejected the request due to insufficient permissions."
+                        )
+                        .into()
+                    }),
                 ),
                 ThreadError::RequestFailed => (
                     "request_failed",
@@ -7911,6 +7913,7 @@ impl ThreadView {
             .contains(tool_call_id);
         let mut paths = details.write_paths.clone();
         paths.sort();
+        let has_command = command.is_some();
 
         v_flex()
             .border_t_1()
@@ -7930,45 +7933,32 @@ impl ThreadView {
                                 Label::new("Write access")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                            )
-                            .child(
-                                Label::new("•")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
-                            .child(
-                                Label::new(format!(
-                                    "{} {}",
-                                    paths.len(),
-                                    if paths.len() == 1 { "path" } else { "paths" }
-                                ))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown),
-                    )
-                    .on_click(cx.listener({
-                        let tool_call_id = tool_call_id.clone();
-                        move |this, _event, _window, cx| {
-                            if this
-                                .collapsed_sandbox_authorization_details
-                                .remove(&tool_call_id)
-                            {
-                                cx.notify();
-                                return;
-                            }
+                                ),
+                        )
+                        .child(
+                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if this
+                                    .collapsed_sandbox_authorization_details
+                                    .remove(&tool_call_id)
+                                {
+                                    cx.notify();
+                                    return;
+                                }
 
-                            this.collapsed_sandbox_authorization_details
-                                .insert(tool_call_id.clone());
-                            cx.notify();
-                        }
-                    })),
-            )
-            .when(is_open, |this| {
+                                this.collapsed_sandbox_authorization_details
+                                    .insert(tool_call_id.clone());
+                                cx.notify();
+                            }
+                        })),
+                )
+            })
+            .when(is_open && !paths.is_empty(), |this| {
                 this.child(
                     v_flex()
                         .id(("sandbox-authorization-paths-list", entry_ix))
@@ -7986,6 +7976,49 @@ impl ThreadView {
                 )
             })
             .into_any_element()
+    }
+
+    fn render_sandbox_authorization_command(entry_ix: usize, command: &str, cx: &App) -> Div {
+        let group = SharedString::from(format!("sandbox-authorization-command-{entry_ix}"));
+        let command = SharedString::from(command.to_string());
+
+        v_flex()
+            .group(group.clone())
+            .relative()
+            .p_1p5()
+            .gap_1()
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                Label::new("Command")
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(
+                div()
+                    .id(("sandbox-authorization-command-scroll", entry_ix))
+                    .flex()
+                    .flex_1()
+                    .w_full()
+                    .min_w_0()
+                    .overflow_x_scroll()
+                    .whitespace_nowrap()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .p_1()
+                    .child(
+                        Label::new(command.clone())
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall),
+                    ),
+            )
+            .child(
+                div().absolute().top_1().right_1().child(
+                    CopyButton::new("copy-sandbox-authorization-command", command)
+                        .tooltip_label("Copy Command")
+                        .visible_on_hover(group),
+                ),
+            )
     }
 
     fn render_sandbox_authorization_path_row(
@@ -9626,6 +9659,13 @@ impl ThreadView {
         rems_from_px(13.)
     }
 
+    fn provider_by_name(name: &SharedString, cx: &App) -> Option<Arc<dyn LanguageModelProvider>> {
+        LanguageModelRegistry::read_global(cx)
+            .providers()
+            .into_iter()
+            .find(|provider| provider.name().0 == *name)
+    }
+
     pub(crate) fn render_thread_error(
         &mut self,
         window: &mut Window,
@@ -9666,17 +9706,14 @@ impl ThreadView {
                 cx,
             ),
             ThreadError::PromptTooLarge => self.render_prompt_too_large_error(cx),
-            ThreadError::NoApiKey { provider } => self.render_error_callout(
-                "API Key Missing",
-                format!(
-                    "No API key is configured for {provider}. \
-                    Add your key via the Agent Panel settings to continue."
-                )
-                .into(),
-                false,
-                true,
-                cx,
-            ),
+            ThreadError::NoCredentials { provider } => {
+                let message = Self::provider_by_name(provider, cx)
+                    .map(|provider| provider.missing_credentials_error_message())
+                    .unwrap_or_else(|| {
+                        format!("No credentials are configured for {provider}.").into()
+                    });
+                self.render_error_callout("Credentials Missing", message, false, true, cx)
+            }
             ThreadError::StreamError { provider } => self.render_error_callout(
                 "Connection Interrupted",
                 format!(
@@ -9688,28 +9725,20 @@ impl ThreadView {
                 true,
                 cx,
             ),
-            ThreadError::InvalidApiKey { provider } => self.render_error_callout(
-                "Invalid API Key",
-                format!(
-                    "The API key for {provider} is invalid or has expired. \
-                    Update your key via the Agent Panel settings to continue."
-                )
-                .into(),
-                false,
-                false,
-                cx,
-            ),
-            ThreadError::PermissionDenied { provider } => self.render_error_callout(
-                "Permission Denied",
-                format!(
-                    "{provider}'s API rejected the request due to insufficient permissions. \
-                    Check that your API key has access to this model."
-                )
-                .into(),
-                false,
-                false,
-                cx,
-            ),
+            ThreadError::AuthenticationFailed { provider } => {
+                let message = Self::provider_by_name(provider, cx)
+                    .map(|provider| provider.authentication_error_message())
+                    .unwrap_or_else(|| format!("Could not authenticate with {provider}.").into());
+                self.render_error_callout("Authentication Failed", message, false, false, cx)
+            }
+            ThreadError::PermissionDenied { provider, message } => {
+                let message: SharedString = message.clone().unwrap_or_else(|| {
+                    format!("{provider} rejected the request due to insufficient permissions.")
+                        .into()
+                });
+
+                self.render_error_callout("Permission Denied", message, false, false, cx)
+            }
             ThreadError::RequestFailed => self.render_error_callout(
                 "Request Failed",
                 "The request could not be completed after multiple attempts. \
