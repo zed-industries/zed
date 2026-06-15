@@ -5242,6 +5242,7 @@ impl ToolCallEventStream {
     pub(crate) fn authorize_sandbox(
         &self,
         title: impl Into<String>,
+        command: Option<String>,
         request: SandboxRequest,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -5251,6 +5252,7 @@ impl ToolCallEventStream {
 
         let title = title.into();
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
+            command,
             network: request.network,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
@@ -6822,12 +6824,13 @@ mod tests {
         };
 
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+            event_stream.authorize_sandbox("Allow write access?", None, request.clone(), cx)
         });
         let authorization = receiver.expect_authorization().await;
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("sandbox authorization should include request details");
+        assert_eq!(details.command, None);
         assert_eq!(details.network, request.network);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
