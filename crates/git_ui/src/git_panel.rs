@@ -844,8 +844,11 @@ impl GitPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_)
-                    | GitStoreEvent::GlobalConfigurationUpdated
-                    | GitStoreEvent::ActiveRepositoryChanged(_) => {
+                    | GitStoreEvent::GlobalConfigurationUpdated => {
+                        this.schedule_update(window, cx);
+                    }
+                    GitStoreEvent::ActiveRepositoryChanged(_) => {
+                        this.refresh_active_repository(cx);
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -3637,6 +3640,27 @@ impl GitPanel {
         });
     }
 
+    fn refresh_active_repository(&mut self, cx: &mut Context<Self>) {
+        let previous_repository_id = self
+            .active_repository
+            .as_ref()
+            .map(|repository| repository.entity_id());
+        let active_repository = self.project.read(cx).active_repository(cx);
+        let next_repository_id = active_repository
+            .as_ref()
+            .map(|repository| repository.entity_id());
+
+        if previous_repository_id == next_repository_id {
+            return;
+        }
+
+        self.active_repository = active_repository;
+        self._repo_subscriptions.clear();
+        if self.active_tab == GitPanelTab::History {
+            self.set_commit_history(CommitHistory::Loading);
+        }
+    }
+
     fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repo) = self.active_repository.as_ref() else {
             return;
@@ -3704,7 +3728,6 @@ impl GitPanel {
             .as_ref()
             .and_then(|op| self.entry_by_path(&op.anchor));
 
-        self.active_repository = self.project.read(cx).active_repository(cx);
         self.entries.clear();
         self.entries_indices.clear();
         self.single_staged_entry.take();
