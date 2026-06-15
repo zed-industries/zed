@@ -1,4 +1,4 @@
-use pulldown_cmark::{Parser, Event, Options};
+use pulldown_cmark::{Options, Parser};
 
 fn main() {
     let text = "Here is a sentence. \nHere is another. `code` here";
