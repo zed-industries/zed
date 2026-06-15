@@ -1,9 +1,10 @@
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-use editor::EditorSettings;
+use editor::{EditorSettings, MultiBufferSnapshot};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{AsyncApp, DismissEvent, HighlightStyle, StyledText, Task, TextStyle};
@@ -13,6 +14,7 @@ use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
 use settings::Settings;
+use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -135,40 +137,89 @@ async fn get_ongoing_search(
     ongoing_search.await
 }
 
-fn plunder_multibuffer(
-    project_search_view: Entity<ProjectSearchView>,
-    cx: &App,
-) -> Vec<SearchMatch> {
-    let ps = project_search_view.read(cx).entity.read(cx);
-    let mb = ps.excerpts.read(cx).snapshot(cx);
-    ps.match_ranges
-        .iter()
-        .filter_map(|mb_range| {
-            let (buffer_snapshot, text_range) =
-                mb.anchor_range_to_buffer_anchor_range(*mb_range)?;
+fn multibuffer_ranges_to_search_matches<'a>(
+    match_ranges: &'a [Range<multi_buffer::Anchor>],
+    multi_buffer: &'a editor::MultiBuffer,
+    snapshot: MultiBufferSnapshot,
+    cx: &'a App,
+) -> impl Iterator<Item = SearchMatch> + 'a {
+    match_ranges.iter().cloned().filter_map(move |mb_range| {
+        let (buffer_snapshot, text_range) =
+            snapshot.anchor_range_to_buffer_anchor_range(mb_range)?;
 
-
-        let range = text_range.map(|anchor| anchor.to_offset(buffer_snapshot));
-
-        let line_text = {
-            let mut start = Point
-            text_range.start
+        let file = buffer_snapshot.file()?;
+        let path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: Arc::clone(file.path()),
         };
+        let buffer = multi_buffer.buffer(buffer_snapshot.remote_id())?;
 
-            Some(SearchMatch {
-                path: ProjectPath {
-                    worktree_id: buffer_snapshot.file()?.worktree_id(cx),
-                    path: Arc::clone(buffer_snapshot.file()?.path()),
-                },
-                buffer: todo!(),
-                anchor_range: text_range,
-                range: todo!(),
-                relative_range: todo!(),
-                line_text: todo!(),
-                line_number: todo!(),
-            })
+        let start_offset: usize = buffer_snapshot.summary_for_anchor(&text_range.start);
+        let end_offset: usize = buffer_snapshot.summary_for_anchor(&text_range.end);
+        let line_number = buffer_snapshot.offset_to_point(start_offset).row + 1;
+
+        let text = buffer_snapshot.text();
+        let line_start = text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_end = text[start_offset..]
+            .find('\n')
+            .map(|i| start_offset + i)
+            .unwrap_or(text.len());
+        let line_text = text[line_start..line_end].to_string();
+
+        let relative_start = start_offset - line_start;
+        let relative_end = end_offset - line_start;
+
+        Some(SearchMatch {
+            path,
+            buffer,
+            anchor_range: text_range,
+            range: start_offset..end_offset,
+            relative_range: relative_start..relative_end,
+            line_text,
+            line_number,
         })
-        .collect()
+    })
+}
+
+async fn plunder_multibuffer(
+    project_search_view: Entity<ProjectSearchView>,
+    cx: &AsyncApp,
+) -> Vec<SearchMatch> {
+    let chunk_size = 1000;
+    let mut n_read = 0;
+    let mut matches = Vec::new();
+
+    loop {
+        let res = project_search_view.read_with(cx, |view, cx| {
+            let ps = view.entity.read(cx);
+            let multi_buffer = ps.excerpts.read(cx);
+            let snapshot = multi_buffer.snapshot(cx);
+
+            let chunk = if n_read + chunk_size < ps.match_ranges.len() {
+                &ps.match_ranges[n_read..]
+            } else if n_read < ps.match_ranges.len() {
+                &ps.match_ranges[n_read..n_read + chunk_size]
+            } else {
+                return ControlFlow::Break(());
+            };
+            matches.extend(multibuffer_ranges_to_search_matches(
+                chunk,
+                multi_buffer,
+                snapshot,
+                cx,
+            ));
+            n_read += chunk_size; // the above filters so we can not just set this to matches.len()
+            return ControlFlow::Continue(());
+        });
+
+        if res.is_break() {
+            break;
+        }
+
+        // Critical or the seach tranformation will hold the background thread for too long
+        yield_now().await;
+    }
+    matches
 }
 
 impl Delegate {
@@ -178,7 +229,7 @@ impl Delegate {
     ) -> Task<Delegate> {
         cx.spawn(|cx| async move {
             if let Some(ongoing) = get_ongoing_search(project_search, cx).await {
-                plunder_multibuffer(project_search, cx);
+                plunder_multibuffer(project_search, &cx);
             }
 
             Self {
