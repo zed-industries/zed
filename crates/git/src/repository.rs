@@ -2644,6 +2644,9 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
+                // This command outputs a list of remote tracking refs, e.g.:
+                // refs/remotes/origin/HEAD
+                // refs/remotes/origin/main
                 let Ok(output) = git?
                     .run(&[
                         "for-each-ref",
