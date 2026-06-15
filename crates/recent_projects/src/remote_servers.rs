@@ -16,9 +16,8 @@ use extension_host::ExtensionStore;
 use filter::{FilterData, FilteredServer};
 use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    Action, AnyElement, App, ClipboardItem, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, TaskExt,
-    WeakEntity, Window,
+    Action, AnyElement, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, PromptLevel, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use log::{debug, info};
 use open_path_prompt::OpenPathDelegate;
@@ -39,13 +38,13 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{self, AtomicUsize},
+        atomic::{self, AtomicBool, AtomicUsize},
     },
 };
 
 use ui::{
-    CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, ListItem,
-    ListSeparator, Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, prelude::*,
+    CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, ListItem, ListSeparator,
+    Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, prelude::*,
 };
 use util::{
     ResultExt,
@@ -624,34 +623,23 @@ impl From<WslServerIndex> for ServerIndex {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct ProjectEntry {
-    navigation: NavigableEntry,
     project: RemoteProject,
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 enum RemoteEntry {
     Project {
-        open_folder: NavigableEntry,
         projects: Vec<ProjectEntry>,
-        configure: NavigableEntry,
         connection: Connection,
         index: ServerIndex,
     },
     SshConfig {
-        open_folder: NavigableEntry,
         host: SharedString,
     },
 }
 
 impl RemoteEntry {
-    #[allow(dead_code)]
-    fn is_from_zed(&self) -> bool {
-        matches!(self, Self::Project { .. })
-    }
-
     fn display_host(&self) -> &str {
         match self {
             Self::Project { connection, .. } => match connection {
@@ -692,12 +680,7 @@ impl RemoteEntry {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct DefaultState {
-    scroll_handle: ScrollHandle,
-    add_new_server: NavigableEntry,
-    add_new_devcontainer: NavigableEntry,
-    add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
     /// `None` when no filter is active; `Some` carries the fuzzy match results
     /// (server/project indices plus highlight positions) sorted by score.
@@ -707,11 +690,6 @@ struct DefaultState {
 
 impl DefaultState {
     fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
-        let handle = ScrollHandle::new();
-        let add_new_server = NavigableEntry::new(&handle, cx);
-        let add_new_devcontainer = NavigableEntry::new(&handle, cx);
-        let add_new_wsl = NavigableEntry::new(&handle, cx);
-
         let ssh_settings = RemoteSettings::get_global(cx);
         let read_ssh_config = ssh_settings.read_ssh_config;
 
@@ -719,19 +697,14 @@ impl DefaultState {
             .ssh_connections()
             .enumerate()
             .map(|(index, connection)| {
-                let open_folder = NavigableEntry::new(&handle, cx);
-                let configure = NavigableEntry::new(&handle, cx);
                 let projects = connection
                     .projects
                     .iter()
                     .map(|project| ProjectEntry {
-                        navigation: NavigableEntry::new(&handle, cx),
                         project: project.clone(),
                     })
                     .collect();
                 RemoteEntry::Project {
-                    open_folder,
-                    configure,
                     projects,
                     index: ServerIndex::Ssh(SshServerIndex(index)),
                     connection: connection.into(),
@@ -742,19 +715,14 @@ impl DefaultState {
             .wsl_connections()
             .enumerate()
             .map(|(index, connection)| {
-                let open_folder = NavigableEntry::new(&handle, cx);
-                let configure = NavigableEntry::new(&handle, cx);
                 let projects = connection
                     .projects
                     .iter()
                     .map(|project| ProjectEntry {
-                        navigation: NavigableEntry::new(&handle, cx),
                         project: project.clone(),
                     })
                     .collect();
                 RemoteEntry::Project {
-                    open_folder,
-                    configure,
                     projects,
                     index: ServerIndex::Wsl(WslServerIndex(index)),
                     connection: connection.into(),
@@ -774,20 +742,15 @@ impl DefaultState {
                     extra_servers_from_config.remove(&SharedString::new(ssh_options.host.clone()));
                 }
             }
-            servers.extend(extra_servers_from_config.into_iter().map(|host| {
-                RemoteEntry::SshConfig {
-                    open_folder: NavigableEntry::new(&handle, cx),
-                    host,
-                }
-            }));
+            servers.extend(
+                extra_servers_from_config
+                    .into_iter()
+                    .map(|host| RemoteEntry::SshConfig { host }),
+            );
         }
 
         let filter_data = Arc::new(FilterData::build(&servers));
         Self {
-            scroll_handle: handle,
-            add_new_server,
-            add_new_devcontainer,
-            add_new_wsl,
             servers,
             filtered_servers: None,
             filter_data,
@@ -801,73 +764,6 @@ impl DefaultState {
         }
         self.filtered_servers = Some(filter::run_sync(&self.filter_data, query));
     }
-
-    /// Resolves [`filtered_servers`] (or the unfiltered source list) into a
-    /// flat list of borrowed `RemoteEntry`s paired with their highlight
-    /// positions. Rendering iterates this list rather than touching either
-    /// source directly; the borrowed entries avoid cloning the underlying
-    /// `RemoteEntry`/`RemoteProject` data on the per-keystroke path (only the
-    /// lightweight borrow vectors are allocated).
-    #[allow(dead_code)]
-    fn visible_servers(&self) -> Vec<VisibleEntry<'_>> {
-        match &self.filtered_servers {
-            None => self
-                .servers
-                .iter()
-                .map(|server| VisibleEntry {
-                    server,
-                    host_positions: &[],
-                    visible_projects: match server {
-                        RemoteEntry::Project { projects, .. } => projects
-                            .iter()
-                            .map(|entry| VisibleProject {
-                                entry,
-                                highlight_positions: &[],
-                            })
-                            .collect(),
-                        RemoteEntry::SshConfig { .. } => Vec::new(),
-                    },
-                })
-                .collect(),
-            Some(results) => results
-                .iter()
-                .filter_map(|filtered| {
-                    let server = self.servers.get(filtered.server_index)?;
-                    let visible_projects = match server {
-                        RemoteEntry::Project { projects, .. } => filtered
-                            .project_matches
-                            .iter()
-                            .filter_map(|pm| {
-                                projects.get(pm.project_index).map(|entry| VisibleProject {
-                                    entry,
-                                    highlight_positions: &pm.path_positions,
-                                })
-                            })
-                            .collect(),
-                        RemoteEntry::SshConfig { .. } => Vec::new(),
-                    };
-                    Some(VisibleEntry {
-                        server,
-                        host_positions: &filtered.host_positions,
-                        visible_projects,
-                    })
-                })
-                .collect(),
-        }
-    }
-}
-
-#[allow(dead_code)]
-struct VisibleEntry<'a> {
-    server: &'a RemoteEntry,
-    host_positions: &'a [usize],
-    visible_projects: Vec<VisibleProject<'a>>,
-}
-
-#[allow(dead_code)]
-struct VisibleProject<'a> {
-    entry: &'a ProjectEntry,
-    highlight_positions: &'a [usize],
 }
 
 #[derive(Clone)]
@@ -916,7 +812,6 @@ impl Mode {
 enum RemoteMatch {
     AddServer,
     AddDevContainer,
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     AddWsl,
     Separator,
     ServerHeader {
@@ -988,18 +883,22 @@ impl RemoteServerPickerDelegate {
         self.has_open_project = has_open_project;
         self.is_local = is_local;
         self.state = DefaultState::new(ssh_config_servers, cx);
+        // Settings/ssh-config changes are rare, so re-applying the active query
+        // synchronously here is fine; the per-keystroke path filters off-thread.
+        self.state.filter_sync(self.query.trim());
         self.rebuild_matches();
     }
 
+    /// Flattens the current (already-filtered) `DefaultState` into the picker's
+    /// match list. The fuzzy filtering itself runs separately (off-thread on the
+    /// keystroke path, see [`Self::update_matches`]); this only reads
+    /// [`DefaultState::filtered_servers`].
     fn rebuild_matches(&mut self) {
-        let query = self.query.trim();
-        self.state.filter_sync(query);
-
         let has_open_project = self.has_open_project;
         let is_local = self.is_local;
 
         let mut matches = Vec::new();
-        if query.is_empty() {
+        if self.query.trim().is_empty() {
             matches.push(RemoteMatch::AddServer);
             if has_open_project && is_local {
                 matches.push(RemoteMatch::AddDevContainer);
@@ -1054,7 +953,13 @@ impl RemoteServerPickerDelegate {
                         }
                         RemoteEntry::SshConfig { .. } => Vec::new(),
                     };
-                    push_server(&mut matches, server_index, server, Vec::new(), project_matches);
+                    push_server(
+                        &mut matches,
+                        server_index,
+                        server,
+                        Vec::new(),
+                        project_matches,
+                    );
                 }
             }
             Some(results) => {
@@ -1135,9 +1040,8 @@ impl RemoteServerPickerDelegate {
                         ),
                 )
                 .children(
-                    aux_label.map(|label| {
-                        Label::new(label).size(LabelSize::Small).color(Color::Muted)
-                    }),
+                    aux_label
+                        .map(|label| Label::new(label).size(LabelSize::Small).color(Color::Muted)),
                 )
                 .into_any_element(),
         )
@@ -1199,13 +1103,38 @@ impl PickerDelegate for RemoteServerPickerDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         self.query = query;
-        self.rebuild_matches();
-        cx.notify();
-        Task::ready(())
+        let query = self.query.trim().to_string();
+
+        if query.is_empty() {
+            self.state.filtered_servers = None;
+            self.rebuild_matches();
+            cx.notify();
+            return Task::ready(());
+        }
+
+        let filter_data = self.state.filter_data.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn_in(window, async move |picker, cx| {
+            // A fresh, never-set cancel flag: stale runs are abandoned when the
+            // Picker drops this task on the next keystroke, so out-of-order
+            // results can't be applied (mirrors `command_palette`).
+            let cancel = AtomicBool::new(false);
+            let Some(results) = filter::run_async(&filter_data, &query, &cancel, executor).await
+            else {
+                return;
+            };
+            picker
+                .update(cx, |picker, cx| {
+                    picker.delegate.state.filtered_servers = Some(results);
+                    picker.delegate.rebuild_matches();
+                    cx.notify();
+                })
+                .ok();
+        })
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -1218,8 +1147,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddServer => {
                 remote_server_projects
                     .update(cx, |this, cx| {
-                        this.mode =
-                            Mode::CreateRemoteServer(CreateRemoteServer::new(window, cx));
+                        this.mode = Mode::CreateRemoteServer(CreateRemoteServer::new(window, cx));
                         cx.notify();
                     })
                     .ok();
@@ -1240,7 +1168,9 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                     })
                     .ok();
             }
-            RemoteMatch::Project { server, project, .. } => {
+            RemoteMatch::Project {
+                server, project, ..
+            } => {
                 let Some(RemoteEntry::Project {
                     connection,
                     index,
@@ -1334,12 +1264,9 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddServer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect SSH Server", selected))
             }
-            RemoteMatch::AddDevContainer => Some(self.render_action_item(
-                ix,
-                IconName::Plus,
-                "Connect Dev Container",
-                selected,
-            )),
+            RemoteMatch::AddDevContainer => {
+                Some(self.render_action_item(ix, IconName::Plus, "Connect Dev Container", selected))
+            }
             RemoteMatch::AddWsl => {
                 Some(self.render_action_item(ix, IconName::Plus, "Add WSL Distro", selected))
             }
@@ -1358,7 +1285,10 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                 positions,
             } => {
                 let server_entry = self.state.servers.get(*server)?;
-                let RemoteEntry::Project { projects, index, .. } = server_entry else {
+                let RemoteEntry::Project {
+                    projects, index, ..
+                } = server_entry
+                else {
                     return None;
                 };
                 let project_entry = projects.get(*project)?;
@@ -1535,9 +1465,8 @@ impl RemoteServerProjects {
             Task::ready(())
         };
 
-        let settings_subscription = cx.observe_global_in::<SettingsStore>(
-            window,
-            move |recent_projects, window, cx| {
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |recent_projects, window, cx| {
                 let new_read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
                 if read_ssh_config != new_read_ssh_config {
                     read_ssh_config = new_read_ssh_config;
@@ -1549,8 +1478,7 @@ impl RemoteServerProjects {
                     }
                 }
                 recent_projects.refresh_default_picker(window, cx);
-            },
-        );
+            });
 
         let dismiss_subscription = cx.subscribe(&default_picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
@@ -3185,49 +3113,34 @@ impl Render for RemoteServerProjects {
 mod filter_tests {
     use super::*;
 
-    fn ssh_config_entry(cx: &App, handle: &ScrollHandle, host: &'static str) -> RemoteEntry {
+    fn ssh_config_entry(host: &'static str) -> RemoteEntry {
         RemoteEntry::SshConfig {
-            open_folder: NavigableEntry::new(handle, cx),
             host: SharedString::from(host),
         }
     }
 
-    #[gpui::test]
-    async fn test_filter_sync_repopulates_after_rebuild(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            let handle = ScrollHandle::new();
-            let entries = vec![
-                ssh_config_entry(cx, &handle, "alpha"),
-                ssh_config_entry(cx, &handle, "beta"),
-            ];
-            let mut state = DefaultState {
-                scroll_handle: handle.clone(),
-                add_new_server: NavigableEntry::new(&handle, cx),
-                add_new_devcontainer: NavigableEntry::new(&handle, cx),
-                add_new_wsl: NavigableEntry::new(&handle, cx),
-                filter_data: Arc::new(FilterData::build(&entries)),
-                servers: entries,
-                filtered_servers: None,
-            };
+    #[test]
+    fn test_filter_sync_repopulates_after_rebuild() {
+        let entries = vec![ssh_config_entry("alpha"), ssh_config_entry("beta")];
+        let mut state = DefaultState {
+            filter_data: Arc::new(FilterData::build(&entries)),
+            servers: entries,
+            filtered_servers: None,
+        };
 
-            state.filter_sync("alp");
-            let filtered = state.filtered_servers.as_ref().expect("should filter");
-            assert_eq!(filtered.len(), 1);
-            assert_eq!(filtered[0].server_index, 0);
-            assert!(!filtered[0].host_positions.is_empty());
+        state.filter_sync("alp");
+        let filtered = state.filtered_servers.as_ref().expect("should filter");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].server_index, 0);
+        assert!(!filtered[0].host_positions.is_empty());
 
-            // visible_servers should resolve the filtered indices back into
-            // the original `RemoteEntry`s with positions attached.
-            let visible = state.visible_servers();
-            assert_eq!(visible.len(), 1);
-            match visible[0].server {
-                RemoteEntry::SshConfig { host, .. } => assert_eq!(host.as_ref(), "alpha"),
-                _ => panic!("expected SshConfig"),
-            }
-            assert!(!visible[0].host_positions.is_empty());
+        // The filtered index resolves back into the original server list.
+        match &state.servers[filtered[0].server_index] {
+            RemoteEntry::SshConfig { host, .. } => assert_eq!(host.as_ref(), "alpha"),
+            _ => panic!("expected SshConfig"),
+        }
 
-            state.filter_sync("");
-            assert!(state.filtered_servers.is_none());
-        });
+        state.filter_sync("");
+        assert!(state.filtered_servers.is_none());
     }
 }
