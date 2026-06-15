@@ -61,30 +61,25 @@ enum SearchKind {
 #[must_use]
 pub struct SearchResultsHandle {
     results: Receiver<SearchResult>,
-    results_tx: Sender<SearchResult>,
     matching_buffers: Receiver<Entity<Buffer>>,
-    matching_buffers_tx: Sender<Entity<Buffer>>,
     trigger_search: Box<dyn FnOnce(&mut App) -> Task<()> + Send + Sync>,
 }
 
 pub struct SearchResults<T> {
     pub task_handle: Task<()>,
     pub rx: Receiver<T>,
-    pub tx: Sender<T>,
 }
 impl SearchResultsHandle {
     pub fn results(self, cx: &mut App) -> SearchResults<SearchResult> {
         SearchResults {
             task_handle: (self.trigger_search)(cx),
             rx: self.results,
-            tx: self.results_tx,
         }
     }
     pub fn matching_buffers(self, cx: &mut App) -> SearchResults<Entity<Buffer>> {
         SearchResults {
             task_handle: (self.trigger_search)(cx),
             rx: self.matching_buffers,
-            tx: self.matching_buffers_tx,
         }
     }
 }
@@ -184,10 +179,8 @@ impl Search {
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
-        let results_tx = tx.clone();
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
-        let matching_buffers_tx = grab_buffer_snapshot_tx.clone();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
@@ -409,9 +402,7 @@ impl Search {
 
         SearchResultsHandle {
             results: rx,
-            results_tx,
             matching_buffers,
-            matching_buffers_tx,
             trigger_search,
         }
     }

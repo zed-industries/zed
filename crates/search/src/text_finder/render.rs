@@ -4,13 +4,14 @@ use ui::{Context, InteractiveElement, IntoElement, ParentElement, Render, Window
 use super::TextFinder;
 
 impl Render for TextFinder {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // let key_context = self.picker.read(cx).delegate.key_context(window, cx);
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("TextPicker");
 
         v_flex()
             .key_context(key_context)
+            .on_action(cx.listener(Self::to_project_search))
             // .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             // .on_action(cx.listener(Self::handle_select_prev))
             // .on_action(cx.listener(Self::handle_filter_toggle_menu))

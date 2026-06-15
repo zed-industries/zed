@@ -3,11 +3,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
-use collections::HashSet;
-use editor::MultiBufferSnapshot;
+use collections::{HashMap, HashSet};
+use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncApp, DismissEvent, HighlightStyle, StyledText, Task, TextStyle};
+use gpui::{
+    AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task, TextStyle,
+};
 use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
@@ -23,7 +25,6 @@ use ui::{
     StyledTypography, Toggleable, Tooltip, Window, div, h_flex, relative,
 };
 use util::ResultExt;
-use util::paths::PathMatcher;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
 
@@ -53,35 +54,6 @@ use crate::{ProjectSearchView, SearchOptions};
 ///                             |                  |          closes modal)
 ///                             |                  V
 ///                             . --------  Project seach tab
-///
-/// Questions:
-/// - Should each text finder be backend by a project search tab from the start?
-///   or only when switching?
-///   => Yes, no more duplicate stuff. Also having the project search state
-///   disconnected from the tab opens the door to cnext
-/// - How do we store the tab when it is not being shown?
-/// - Do we support seach history in the modal already?
-///   => No
-///
-///
-/// Steps:
-/// 1. add the switch from ProjectSearch to this
-///       - use a ProjectSearch entity to back this
-/// 2. switch to ProjectSearch from this
-/// 3. re-enable making a new this from nothing
-
-/// cameron's 2 designs (+ yara's better one)
-/// 1. single source of truth
-///   - both picker and tab share a source of truth
-///   - picker *could* use either vec or MB, but tab *must* use MB
-///   - single source of truth must be MB
-///   - BAD: MB slow
-/// 2. picker has 2 modes
-///   - `Delegate` is an enum, with variants: `TabExists` and `TabDoesntExist`
-///   - in the `TabExists` case, we are
-/// 3. shared source of truth   <<-- THIS ONE
-///   - picker maintains Vec, tab maintains MB and Vec.
-///   - On switch to tab we populate MB from the Vec.
 
 pub struct Delegate {
     pub(crate) project_search_view: Entity<ProjectSearchView>,
@@ -94,6 +66,11 @@ pub struct Delegate {
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
+    /// The query that produced the matches currently held in `matches`. Stashed
+    /// by [`Self::update_matches`] so that when switching to the project search
+    /// we hand over exactly the query that ran, rather than rebuilding it from
+    /// the (possibly newer / debounced) editor text.
+    pub(crate) active_query: Option<SearchQuery>,
     /// When `is_ready` there is not a search in progress
     pub(crate) in_progress_search: InProgressSearch,
     pub(crate) unique_files: HashSet<ProjectPath>,
@@ -102,24 +79,6 @@ pub struct Delegate {
     /// delegate cannot read the picker entity while rendering.
     pub(crate) preview_layout_is_horizontal: bool,
 }
-
-// *tab.pending_search = picker.pending_search;
-
-// search match -> Range<mb::Anchor>
-// Range<mb::Anchor> -> search match:
-//  - extract text::Anchor from mb::Anchor
-//  - compute the text String
-
-// /// ONLY WORKS if we can PULL the RX out of the pending_search_task
-// fn terrible_to_project_search(self) -> ProjectSearch {
-//      let matches = self.matches;
-//      let stream = <>
-//      for item in mathes {
-//           stream.tx.send(SearchResult::from_seach_match);
-//      }
-//      let project_seach = thing;
-//      project_search.pending_search = line416_ish(rx)
-// }
 
 async fn get_ongoing_search(
     project_search_view: &Entity<ProjectSearchView>,
@@ -198,9 +157,9 @@ async fn plunder_multibuffer(
             let snapshot = multi_buffer.snapshot(cx);
 
             let chunk = if n_read + chunk_size < ps.match_ranges.len() {
-                &ps.match_ranges[n_read..]
-            } else if n_read < ps.match_ranges.len() {
                 &ps.match_ranges[n_read..n_read + chunk_size]
+            } else if n_read < ps.match_ranges.len() {
+                &ps.match_ranges[n_read..]
             } else {
                 return ControlFlow::Break(());
             };
@@ -224,7 +183,7 @@ async fn plunder_multibuffer(
     matches
 }
 
-enum InProgressSearch {
+pub(crate) enum InProgressSearch {
     Connected(Task<Option<SearchResults<SearchResult>>>),
     Disconnected(SearchResults<SearchResult>),
     None,
@@ -238,6 +197,19 @@ impl InProgressSearch {
             std::mem::swap(self, &mut placeholder);
             match placeholder {
                 InProgressSearch::Disconnected(results_stream) => return Some(results_stream),
+                _ => unreachable!("guarded with matches! above"),
+            }
+        } else {
+            None
+        }
+    }
+
+    /// If a search is currently streaming into the picker, take its task so it
+    /// can be awaited to recover the underlying result stream.
+    pub(crate) fn take_connected(&mut self) -> Option<Task<Option<SearchResults<SearchResult>>>> {
+        if matches!(self, InProgressSearch::Connected(_)) {
+            match std::mem::replace(self, InProgressSearch::None) {
+                InProgressSearch::Connected(task) => Some(task),
                 _ => unreachable!("guarded with matches! above"),
             }
         } else {
@@ -291,7 +263,9 @@ impl Delegate {
                 InProgressSearch::None
             };
 
-            let search_options = cx.read_entity(&project_search, |ps, _| ps.search_options);
+            let (search_options, active_query) = cx.read_entity(&project_search, |ps, cx| {
+                (ps.search_options, ps.entity.read(cx).active_query.clone())
+            });
             // Note, potentially slow for huge inputs yielding to too long yield times
             // if you see that chunk this and insert yield_nows
             let unique_files = results_already_yielded
@@ -309,6 +283,7 @@ impl Delegate {
                 last_selection_change_time: None,
                 last_click: None,
                 search_options,
+                active_query,
                 in_progress_search,
                 unique_files,
                 preview_layout_is_horizontal: false,
@@ -339,6 +314,66 @@ impl Delegate {
 
     pub(crate) fn project<'a>(&self, cx: &'a App) -> &'a Entity<Project> {
         &self.project_search_view.read(cx).entity.read(cx).project
+    }
+}
+
+/// Convert the picker's list of matches into multibuffer. Inverse of
+/// [`plunder_multibuffer`]
+pub(crate) async fn matches_to_multibuffer(
+    project_search_view: &Entity<ProjectSearchView>,
+    matches: &[SearchMatch],
+    cx: &mut AsyncApp,
+) {
+    let mut buffer_order_in_text_finder: Vec<EntityId> = Vec::new();
+    let mut by_buffer: HashMap<_, (_, Vec<_>)> = HashMap::default();
+
+    for m in matches {
+        let buffer = Entity::clone(&m.buffer);
+        by_buffer
+            .entry(buffer.entity_id())
+            .and_modify(|(_, ranges)| ranges.push(m.anchor_range.clone()))
+            .or_insert_with(|| {
+                buffer_order_in_text_finder.push(buffer.entity_id());
+                (buffer, vec![m.anchor_range.clone()])
+            });
+    }
+
+    let excerpts =
+        project_search_view.read_with(cx, |view, cx| view.entity.read(cx).excerpts.clone());
+    excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
+    project_search_view.update(cx, |view, cx| {
+        view.entity
+            .update(cx, |search, _| search.match_ranges.clear())
+    });
+
+    let context_lines = cx.update(|cx| multibuffer_context_lines(cx));
+
+    let mut excerpts_added = 0;
+    for buffer_id in buffer_order_in_text_finder {
+        let (buffer, ranges) = by_buffer.remove(&buffer_id).expect("just put them in");
+        excerpts_added += ranges.len();
+        let new_ranges = excerpts
+            .update(cx, |excerpts, cx| {
+                excerpts.set_anchored_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer,
+                    ranges,
+                    context_lines,
+                    cx,
+                )
+            })
+            .await;
+        project_search_view.update(cx, |view, cx| {
+            view.entity
+                .update(cx, |search, _| search.match_ranges.extend(new_ranges));
+        });
+
+        // Adding items to the multibuffer can take time. Be sure to not hold
+        // the foreground hostage.
+        if excerpts_added > 100 {
+            yield_now().await;
+            excerpts_added = 0;
+        }
     }
 }
 
@@ -390,15 +425,18 @@ impl PickerDelegate for Delegate {
         let text_finder_turning_into_project_search =
             Arc::clone(&self.text_finder_turning_into_project_search);
 
-        let open_buffers = None; // TODO!(yara) this is not true right?
-
-        let Some(search_query) = self.build_search_query(&query, open_buffers, cx) else {
+        let Some(search_query) = self.build_search_query(&query, cx) else {
             self.matches.clear();
             self.unique_files.clear();
             self.selected_index = 0;
+            self.active_query = None;
             cx.notify();
             return Task::ready(());
         };
+
+        // Remember the exact query we are running so that a later switch to the
+        // project search hands over a query consistent with the results.
+        self.active_query = Some(search_query.clone());
 
         let search_results = self.project_search_view.update(cx, |ps, cx| {
             ps.entity.update(cx, |pr, cx| {
@@ -762,49 +800,33 @@ impl Delegate {
     pub(crate) fn build_search_query(
         &mut self,
         query: &str,
-        open_buffers: Option<Vec<Entity<Buffer>>>,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<SearchQuery> {
         if query.is_empty() {
             return None;
         }
 
-        let files_to_include = PathMatcher::default();
-        let files_to_exclude = PathMatcher::default();
+        // Reuse the include/exclude filters configured on the shared project
+        // search view so the text finder respects them too.
+        let (files_to_include, files_to_exclude) =
+            self.project_search_view.read(cx).file_path_filters(cx);
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
         let match_full_paths = self.project(cx).read(cx).visible_worktrees(cx).count() > 1;
+        let open_buffers = None;
 
-        let result = if self.search_options.contains(SearchOptions::REGEX) {
-            SearchQuery::regex(
+        self.search_options
+            .build_query(
                 query,
-                self.search_options.contains(SearchOptions::WHOLE_WORD),
-                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
-                self.search_options
-                    .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 files_to_include,
                 files_to_exclude,
                 match_full_paths,
                 open_buffers,
             )
-        } else {
-            SearchQuery::text(
-                query,
-                self.search_options.contains(SearchOptions::WHOLE_WORD),
-                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
-                files_to_include,
-                files_to_exclude,
-                match_full_paths,
-                open_buffers,
-            )
-        };
-
-        result.log_err()
+            .log_err()
     }
 
     /// Create things from MB

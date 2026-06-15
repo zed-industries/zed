@@ -2,8 +2,9 @@ use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 pub use editor::HighlightKey;
 use editor::SearchSettings;
-use gpui::{Action, App, ClickEvent, FocusHandle, IntoElement, actions};
+use gpui::{Action, App, ClickEvent, Entity, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
+use util::paths::PathMatcher;
 pub use project_search::ProjectSearchView;
 use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
@@ -191,6 +192,43 @@ impl SearchOptions {
         options.set(SearchOptions::INCLUDE_IGNORED, settings.include_ignored);
         options.set(SearchOptions::REGEX, settings.regex);
         options
+    }
+
+    /// Build a [`SearchQuery`] from these options, selecting the regex or text
+    /// constructor based on [`SearchOptions::REGEX`]. Inverse of
+    /// [`SearchOptions::from_query`].
+    pub fn build_query(
+        &self,
+        query: impl ToString,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
+        match_full_paths: bool,
+        buffers: Option<Vec<Entity<language::Buffer>>>,
+    ) -> anyhow::Result<SearchQuery> {
+        if self.contains(SearchOptions::REGEX) {
+            SearchQuery::regex(
+                query,
+                self.contains(SearchOptions::WHOLE_WORD),
+                self.contains(SearchOptions::CASE_SENSITIVE),
+                self.contains(SearchOptions::INCLUDE_IGNORED),
+                self.contains(SearchOptions::ONE_MATCH_PER_LINE),
+                files_to_include,
+                files_to_exclude,
+                match_full_paths,
+                buffers,
+            )
+        } else {
+            SearchQuery::text(
+                query,
+                self.contains(SearchOptions::WHOLE_WORD),
+                self.contains(SearchOptions::CASE_SENSITIVE),
+                self.contains(SearchOptions::INCLUDE_IGNORED),
+                files_to_include,
+                files_to_exclude,
+                match_full_paths,
+                buffers,
+            )
+        }
     }
 }
 

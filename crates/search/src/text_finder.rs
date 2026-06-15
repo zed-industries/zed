@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::atomic::Ordering};
 
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -14,15 +14,12 @@ use workspace::{DismissDecision, ModalView, Workspace};
 
 mod delegate;
 mod render;
-use delegate::Delegate;
+use delegate::{Delegate, matches_to_multibuffer};
+use util::ResultExt as _;
 
-use crate::{ProjectSearchView, project_search::ProjectSearchBar};
+use crate::ProjectSearchView;
 
-actions!(
-    // TODO! reuse most of the ones from project search
-    text_finder,
-    [ToProjectSearch,]
-);
+actions!(text_finder, [ToProjectSearch,]);
 
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
@@ -55,13 +52,14 @@ impl TextFinder {
         });
     }
 
-    pub fn open_from_project_search(
+    pub fn open_from_project_search<T: 'static>(
         project_search_view: Entity<ProjectSearchView>,
         window: &mut Window,
-        cx: &mut Context<ProjectSearchBar>,
+        cx: &mut Context<T>,
     ) -> Task<()> {
-        let workspace = WeakEntity::clone(&project_search_view.read(cx).workspace);
         cx.spawn_in(window, async move |_, cx| {
+            let workspace =
+                project_search_view.read_with(cx, |view, _| WeakEntity::clone(&view.workspace));
             let delegate = Delegate::new_from_project_search(project_search_view, cx).await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -70,6 +68,84 @@ impl TextFinder {
                 })
                 .ok();
         })
+    }
+
+    /// Transition this text finder into a project search tab, carrying over the
+    /// current results (and any in-progress search stream) instead of re-running
+    /// the search. Inverse of [`Self::open_from_project_search`].
+    fn to_project_search(
+        &mut self,
+        _: &ToProjectSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = Entity::clone(&self.picker);
+        let workspace = self.weak_workspace(cx);
+
+        let connected_task = self.take_seach_task(cx);
+        let project_search_view = self.project_search_view(cx);
+        let query = picker.read(cx).delegate.active_query.clone();
+        let search_options = picker.read(cx).delegate.search_options;
+
+        cx.spawn_in(window, async move |this, cx| {
+            let search_stream = connected_task.unwrap_or(gpui::Task::ready(None)).await;
+            let matches =
+                picker.update(cx, |picker, _| std::mem::take(&mut picker.delegate.matches));
+            matches_to_multibuffer(&project_search_view, &matches, cx).await;
+
+            if let Some(stream) = search_stream {
+                project_search_view.update(cx, |view, cx| {
+                    view.entity
+                        .update(cx, |search, cx| search.hook_up_ongoing_seach(stream, cx));
+                });
+            }
+
+            project_search_view
+                .update_in(cx, |view, window, cx| {
+                    view.adopt_text_finder_state(search_options, query, window, cx);
+                })
+                .log_err();
+
+            this.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.add_item_to_active_pane(
+                        Box::new(project_search_view),
+                        None,
+                        true, // focus item
+                        window,
+                        cx,
+                    );
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn weak_workspace(&self, cx: &App) -> WeakEntity<Workspace> {
+        let workspace = WeakEntity::clone(
+            &self
+                .picker
+                .read(cx)
+                .delegate
+                .project_search_view
+                .read(cx)
+                .workspace,
+        );
+        workspace
+    }
+
+    fn take_seach_task(
+        &self,
+        cx: &mut App,
+    ) -> Option<Task<Option<project::SearchResults<project::search::SearchResult>>>> {
+        self.picker
+            .read(cx)
+            .delegate
+            .text_finder_turning_into_project_search
+            .store(true, Ordering::Relaxed);
+        self.picker
+            .update(cx, |p, _| p.delegate.in_progress_search.take_connected())
     }
 
     pub fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
@@ -104,6 +180,10 @@ impl TextFinder {
             picker,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
         }
+    }
+
+    fn project_search_view(&self, cx: &mut App) -> Entity<ProjectSearchView> {
+        Entity::clone(&self.picker.read(cx).delegate.project_search_view)
     }
 }
 

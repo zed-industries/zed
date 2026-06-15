@@ -241,31 +241,13 @@ impl QuickSearchDelegate {
         // paths for convenience.
         let match_full_paths = self.project.read(cx).visible_worktrees(cx).count() > 1;
 
-        let result = if self.search_options.contains(SearchOptions::REGEX) {
-            SearchQuery::regex(
-                query,
-                self.search_options.contains(SearchOptions::WHOLE_WORD),
-                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
-                self.search_options
-                    .contains(SearchOptions::ONE_MATCH_PER_LINE),
-                files_to_include,
-                files_to_exclude,
-                match_full_paths,
-                open_buffers,
-            )
-        } else {
-            SearchQuery::text(
-                query,
-                self.search_options.contains(SearchOptions::WHOLE_WORD),
-                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
-                self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
-                files_to_include,
-                files_to_exclude,
-                match_full_paths,
-                open_buffers,
-            )
-        };
+        let result = self.search_options.build_query(
+            query,
+            files_to_include,
+            files_to_exclude,
+            match_full_paths,
+            open_buffers,
+        );
 
         match result {
             Ok(search_query) => {
