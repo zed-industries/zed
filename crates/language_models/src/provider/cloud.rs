@@ -373,6 +373,16 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
+    fn authentication_error_message(&self) -> SharedString {
+        "Failed to sign in with your Zed account (401).".into()
+    }
+
+    fn missing_credentials_error_message(&self) -> SharedString {
+        "You are not signed in to your Zed account. \
+        Sign in to continue."
+            .into()
+    }
+
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
             title: "Enable Fast Mode for Zed?".into(),
