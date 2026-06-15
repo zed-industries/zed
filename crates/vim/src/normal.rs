@@ -160,6 +160,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let transaction_id = vim.visual_delete(false, window, cx);
         if let (Some(original_selections), Some(transaction_id)) =
             (original_selections, transaction_id)
+            && !original_selections.is_empty()
         {
             let updated = vim.update_editor(cx, |_, editor, _| {
                 editor.modify_transaction_selection_history(transaction_id, |selections| {

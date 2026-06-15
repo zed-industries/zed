@@ -7379,26 +7379,37 @@ impl Editor {
         });
     }
 
+    #[track_caller]
+    fn restore_selections_from_history(
+        &mut self,
+        selections: Option<Arc<[Selection<Anchor>]>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selections) = selections.filter(|selections| !selections.is_empty()) else {
+            log::error!(
+                "No selections to restore from selection history; \
+                 the selection was left unchanged. Caller: {}",
+                std::panic::Location::caller()
+            );
+            return;
+        };
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchors(selections.to_vec());
+        });
+    }
+
     pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
             return;
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for undo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
-                );
-            }
+            let selections = self
+                .selection_history
+                .transaction(transaction_id)
+                .map(|(selections, _)| selections.clone());
+            self.restore_selections_from_history(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(
@@ -7419,20 +7430,11 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for redo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
-                );
-            }
+            let selections = self
+                .selection_history
+                .transaction(transaction_id)
+                .and_then(|(_, selections)| selections.clone());
+            self.restore_selections_from_history(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(
