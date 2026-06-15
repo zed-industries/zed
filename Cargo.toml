@@ -697,6 +697,7 @@ profiling = "1"
 # replace this with main when #635 is merged
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
+proxyvars = "0.2"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
