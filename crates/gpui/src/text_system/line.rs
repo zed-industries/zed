@@ -1,7 +1,7 @@
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
-    ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window,
-    WrapBoundary, WrappedLineLayout, black, fill, point, px, size,
+    ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign, TransformationMatrix,
+    UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px, size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -97,6 +97,51 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            TransformationMatrix::unit(),
+            window,
+            cx,
+        )?;
+
+        Ok(())
+    }
+
+    /// Paint the line of text to the window, applying a transformation (e.g. rotation)
+    /// to every glyph.
+    ///
+    /// All glyphs share the same `transformation`, applied in device (scaled-pixel) space,
+    /// so the whole line rotates/scales as a single rigid body:
+    ///
+    /// ```no_run
+    /// # use gpui::{TransformationMatrix, Radians};
+    /// let transformation = TransformationMatrix::unit().rotate(Radians(0.5));
+    /// ```
+    ///
+    /// `rotate`/`scale` operate around the device-space origin (top-left of the window).
+    /// To rotate around an arbitrary pivot (e.g. the center of the line), translate the
+    /// pivot to the origin first, then rotate, then translate back — see
+    /// `Transformation::into_matrix` in `elements/svg.rs` for the same pattern.
+    ///
+    /// Note that subpixel anti-aliasing is disabled for transformed glyphs, since it
+    /// relies on the fixed horizontal pixel layout of the display.
+    pub fn paint_transformed(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        transformation: TransformationMatrix,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        paint_line(
+            origin,
+            &self.layout,
+            line_height,
+            align,
+            align_width,
+            &self.decoration_runs,
+            &[],
+            transformation,
             window,
             cx,
         )?;
@@ -293,6 +338,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            TransformationMatrix::unit(),
             window,
             cx,
         )?;
@@ -339,6 +385,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    transformation: TransformationMatrix,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -349,7 +396,16 @@ fn paint_line(
             line_height * (wrap_boundaries.len() as f32 + 1.),
         ),
     );
-    window.paint_layer(line_bounds, |window| {
+    // When a non-identity transformation (e.g. rotation) is applied, the glyphs' device
+    // positions after transform can exceed `line_bounds`, which would cause the inner
+    // paint_layer clip rect to discard them silently. Use the parent content mask so only
+    // the window/canvas boundary clips rotated content.
+    let layer_bounds = if transformation == TransformationMatrix::unit() {
+        line_bounds
+    } else {
+        window.content_mask().bounds
+    };
+    window.paint_layer(layer_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let mut decoration_runs = decoration_runs.iter();
@@ -522,7 +578,11 @@ fn paint_line(
                 };
 
                 let content_mask = window.content_mask();
-                if max_glyph_bounds.intersects(&content_mask.bounds) {
+                // `max_glyph_bounds` is computed from the unrotated layout, so it can't be
+                // used to cull when a transform is applied (the glyph's real position moves).
+                // Skip CPU culling in that case and let the GPU clip against the content mask.
+                let is_transformed = transformation != TransformationMatrix::unit();
+                if is_transformed || max_glyph_bounds.intersects(&content_mask.bounds) {
                     let vertical_offset = point(px(0.0), glyph.position.y);
                     if glyph.is_emoji {
                         window.paint_emoji(
@@ -530,6 +590,7 @@ fn paint_line(
                             run.font_id,
                             glyph.id,
                             layout.font_size,
+                            transformation,
                         )?;
                     } else {
                         window.paint_glyph(
@@ -538,6 +599,7 @@ fn paint_line(
                             glyph.id,
                             layout.font_size,
                             color,
+                            transformation,
                         )?;
                     }
                 }
