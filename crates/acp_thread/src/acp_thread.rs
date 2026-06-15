@@ -162,6 +162,8 @@ impl SandboxPermission {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
     /// Specific hosts the command requested network access to, in canonical
     /// form (`github.com`, `*.npmjs.org`). Empty when no specific hosts were
     /// requested (see `network_all_hosts`).

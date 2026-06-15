@@ -7913,7 +7913,7 @@ impl ThreadView {
             .contains(tool_call_id);
         let mut paths = details.write_paths.clone();
         paths.sort();
-        let has_command = command.is_some();
+        let command = details.command.as_deref();
 
         v_flex()
             .border_t_1()
@@ -7927,36 +7927,38 @@ impl ThreadView {
                     .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Write access")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                ),
-                        )
-                        .child(
-                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown),
-                        )
-                        .on_click(cx.listener({
-                            let tool_call_id = tool_call_id.clone();
-                            move |this, _event, _window, cx| {
-                                if this
-                                    .collapsed_sandbox_authorization_details
-                                    .remove(&tool_call_id)
-                                {
-                                    cx.notify();
-                                    return;
-                                }
-
-                                this.collapsed_sandbox_authorization_details
-                                    .insert(tool_call_id.clone());
+                        h_flex().gap_1().child(
+                            Label::new("Write access")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(
+                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown),
+                    )
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call_id.clone();
+                        move |this, _event, _window, cx| {
+                            if this
+                                .collapsed_sandbox_authorization_details
+                                .remove(&tool_call_id)
+                            {
                                 cx.notify();
+                                return;
                             }
-                        })),
-                )
+
+                            this.collapsed_sandbox_authorization_details
+                                .insert(tool_call_id.clone());
+                            cx.notify();
+                        }
+                    })),
+            )
+            .when_some(command.filter(|_| is_open), |this, command| {
+                this.child(Self::render_sandbox_authorization_command(
+                    entry_ix, command, cx,
+                ))
             })
             .when(is_open && !paths.is_empty(), |this| {
                 this.child(

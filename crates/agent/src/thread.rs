@@ -5259,6 +5259,7 @@ impl ToolCallEventStream {
             }
         };
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
+            command,
             network_hosts,
             network_all_hosts,
             allow_fs_write_all: request.allow_fs_write_all,
