@@ -3251,7 +3251,13 @@ impl Window {
         result
     }
 
-    pub(crate) fn with_element_opacity<R>(
+    /// Executes the given closure with an additional element opacity multiplier.
+    ///
+    /// This is used to implement inherited opacity for custom elements that paint directly
+    /// via window APIs.
+    ///
+    /// This method should only be called during the prepaint or paint phase of element drawing.
+    pub fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
         f: impl FnOnce(&mut Self) -> R,
@@ -3363,7 +3369,7 @@ impl Window {
     /// Obtain the current element opacity. This method should only be called during the
     /// prepaint phase of element drawing.
     #[inline]
-    pub(crate) fn element_opacity(&self) -> f32 {
+    pub fn element_opacity(&self) -> f32 {
         self.invalidator.debug_assert_paint_or_prepaint();
         self.element_opacity
     }
