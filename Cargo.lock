@@ -3623,10 +3623,13 @@ name = "component_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "client",
  "collections",
  "component",
  "db",
+ "editor",
+ "env_logger 0.11.8",
  "fs",
  "gpui",
  "gpui_platform",
@@ -6378,6 +6381,7 @@ dependencies = [
  "anyhow",
  "cloud_api_types",
  "collections",
+ "command_palette_hooks",
  "db",
  "editor",
  "extension",
@@ -6391,6 +6395,7 @@ dependencies = [
  "picker",
  "project",
  "release_channel",
+ "schemars 1.0.4",
  "semver",
  "serde",
  "settings",
@@ -7361,7 +7366,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
- "linkify",
  "log",
  "markdown",
  "menu",
@@ -9668,6 +9672,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tree-sitter",
+ "tree-sitter-c",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
@@ -19821,6 +19826,7 @@ dependencies = [
  "util_macros",
  "walkdir",
  "which 6.0.3",
+ "windows 0.61.3",
 ]
 
 [[package]]

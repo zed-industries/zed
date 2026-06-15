@@ -990,7 +990,9 @@ impl MultiWorkspace {
                         .map(|group| group.key.clone())
                 });
 
-                if let Some(neighboring_group_key) = neighboring_group_key {
+                if let Some(neighboring_group_key) = neighboring_group_key
+                    && neighboring_group_key.host().is_none()
+                {
                     return this.find_or_create_local_workspace(
                         neighboring_group_key.path_list().clone(),
                         Some(neighboring_group_key),
@@ -1052,7 +1054,9 @@ impl MultiWorkspace {
         self.remove(
             workspaces,
             move |this, window, cx| {
-                if let Some(neighbor_key) = neighbor_key {
+                if let Some(neighbor_key) = neighbor_key
+                    && neighbor_key.host().is_none()
+                {
                     return this.find_or_create_local_workspace(
                         neighbor_key.path_list().clone(),
                         Some(neighbor_key.clone()),

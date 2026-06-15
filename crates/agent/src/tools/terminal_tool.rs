@@ -379,7 +379,9 @@ async fn run_terminal_tool(
 
     if request.needs_escalation() {
         let title = sandbox_approval_title(&request);
-        let approve = cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
+        let command = Some(input.command.clone());
+        let approve =
+            cx.update(|cx| event_stream.authorize_sandbox(title, command, request.clone(), cx));
         if let Err(error) = approve.await {
             if want_unsandboxed {
                 return Ok(format!(

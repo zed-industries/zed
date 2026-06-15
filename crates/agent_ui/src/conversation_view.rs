@@ -133,17 +133,18 @@ pub(crate) enum ThreadError {
         provider: SharedString,
     },
     PromptTooLarge,
-    NoApiKey {
+    NoCredentials {
         provider: SharedString,
     },
     StreamError {
         provider: SharedString,
     },
-    InvalidApiKey {
+    AuthenticationFailed {
         provider: SharedString,
     },
     PermissionDenied {
         provider: SharedString,
+        message: Option<SharedString>,
     },
     RequestFailed,
     MaxOutputTokens,
@@ -180,7 +181,7 @@ impl From<anyhow::Error> for ThreadError {
                 }
                 PromptTooLarge { .. } => Self::PromptTooLarge,
                 PaymentRequired => Self::PaymentRequired,
-                NoApiKey { provider } => Self::NoApiKey {
+                NoApiKey { provider } => Self::NoCredentials {
                     provider: provider.to_string().into(),
                 },
                 StreamEndedUnexpectedly { provider }
@@ -189,11 +190,12 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
-                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                AuthenticationError { provider, .. } => Self::AuthenticationFailed {
                     provider: provider.to_string().into(),
                 },
-                PermissionError { provider, .. } => Self::PermissionDenied {
+                PermissionError { provider, message } => Self::PermissionDenied {
                     provider: provider.to_string().into(),
+                    message: Some(message.clone().into()),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
                 DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,

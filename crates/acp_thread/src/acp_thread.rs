@@ -162,6 +162,8 @@ impl SandboxPermission {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
     /// Specific hosts the command requested network access to, in canonical
     /// form (`github.com`, `*.npmjs.org`). Empty when no specific hosts were
     /// requested (see `network_all_hosts`).
@@ -2840,6 +2842,9 @@ impl AcpThread {
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             }
+                            if is_same_turn {
+                                this.mark_pending_entries_as_canceled(cx);
+                            }
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
@@ -2902,7 +2907,9 @@ impl AcpThread {
                     }
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
-
+                        if is_same_turn {
+                            this.mark_pending_entries_as_canceled(cx);
+                        }
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
