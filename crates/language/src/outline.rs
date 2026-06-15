@@ -318,6 +318,7 @@ mod tests {
         let item = OutlineItem {
             depth: 0,
             range: range.clone(),
+            selection_range: range.clone(),
             source_range_for_text: range,
             text: "completion".into(),
             highlight_ranges: Vec::new(),
