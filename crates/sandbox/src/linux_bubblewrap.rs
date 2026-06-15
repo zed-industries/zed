@@ -9,13 +9,13 @@
 //! seccomp.
 //!
 //! ## The launcher
-//! 
+//!
 //! We fork/exec the running zed binary because:
 //! - previously we used landlock, which can only restrict the *current
 //!   process*, so we need a subprocess running our code to restrict.
 //! - seccomp is similar, and while we don't have that yet, we will in the
 //!   future, so we keep the machinery for now.
-//! 
+//!
 //! This approach also avoids `pre_exec`, which is scary.
 //!
 //! ## Status reporting
@@ -26,7 +26,7 @@
 //!   for security reasons)
 //! - there is a `bwrap` on the path, but it fails to create the sandbox (see
 //!   [`probe_bwrap`]).
-//! 
+//!
 //! If one of these happens, we report it back to the parent over a `SOCK_DGRAM`
 //! and then *abort*: the launcher never runs the command unsandboxed on its own.
 //! What to do about a failure is the caller's decision — the agent currently
@@ -479,7 +479,10 @@ fn run_launcher(invocation: LauncherInvocation) -> ! {
             Ok(prepared) => prepared,
             Err(status) => {
                 report_status(socket.as_deref(), status);
-                eprintln!("zed: could not create sandbox: {}; aborting", status.describe());
+                eprintln!(
+                    "zed: could not create sandbox: {}; aborting",
+                    status.describe()
+                );
                 std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
             }
         };
