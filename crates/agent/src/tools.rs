@@ -25,12 +25,14 @@ mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
 mod tool_permissions;
-mod update_plan_tool;
-mod update_title_tool;
 mod web_search_tool;
 mod write_file_tool;
 
 use crate::AgentTool;
+use feature_flags::{
+    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
+};
+use gpui::App;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 use serde::{
     Deserialize, Deserializer,
@@ -84,8 +86,6 @@ pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
-pub use update_plan_tool::*;
-pub use update_title_tool::*;
 pub use web_search_tool::*;
 pub use write_file_tool::*;
 
@@ -158,7 +158,7 @@ macro_rules! tools {
 }
 
 // Adding a tool here (and constructing it in `Thread::add_default_tools`) is
-// not enough to make the model actually receive it. Two further gates will
+// not enough to make the model actually receive it. Three further gates will
 // silently drop the tool rather than fail to compile:
 //
 // 1. `assets/settings/default.json`: the `write` and `ask` agent profiles each
@@ -169,6 +169,9 @@ macro_rules! tools {
 //    `crates/settings_ui/src/pages/tool_permissions_setup.rs`: every tool must
 //    be in the permission-UI `TOOLS` list (if it calls
 //    `decide_permission_from_settings`) or in `EXCLUDED_TOOLS`.
+// 3. `tool_feature_flag_enabled`: some tools are gated behind a feature flag and
+//    are dropped unless it is active. The agent-profile UI uses the same gate so
+//    it never offers a tool the agent can't actually use.
 tools! {
     ApplyCodeActionTool,
     CopyPathTool,
@@ -191,8 +194,27 @@ tools! {
     SkillTool,
     SpawnAgentTool,
     TerminalTool,
-    UpdatePlanTool,
-    UpdateTitleTool,
     WebSearchTool,
     WriteFileTool,
+}
+
+/// Some built-in tools are gated behind a feature flag and only become usable
+/// once that flag is active. Tools without a flag are always available.
+///
+/// This is the single source of truth for that gating: `Thread::enabled_tools`
+/// uses it to decide what the model receives, and the agent-profile
+/// configuration UI uses it to decide what to offer — so the UI can never list
+/// a tool the agent would silently drop (see #56778).
+pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
+    match tool_name {
+        RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+        FindReferencesTool::NAME
+        | GetCodeActionsTool::NAME
+        | ApplyCodeActionTool::NAME
+        | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+        CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
+            cx.has_flag::<CreateThreadToolFeatureFlag>()
+        }
+        _ => true,
+    }
 }

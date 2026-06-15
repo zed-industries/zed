@@ -207,6 +207,7 @@ impl MasterProcess {
 
     pub fn new(
         askpass_script_path: &std::ffi::OsStr,
+        askpass_socket_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
         destination: &str,
     ) -> Result<Self> {
@@ -229,6 +230,7 @@ impl MasterProcess {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", askpass_script_path)
+            .env("ZED_ASKPASS_SOCKET", askpass_socket_path)
             .args(additional_args)
             .arg(destination)
             .args(args);
@@ -696,6 +698,7 @@ impl SshRemoteConnection {
 
             let mut master_process = MasterProcess::new(
                 askpass.script_path().as_ref(),
+                askpass.socket_path().as_ref(),
                 connection_options.additional_args(),
                 &destination,
             )?;
@@ -1277,6 +1280,10 @@ impl SshSocket {
         envs.insert(
             "SSH_ASKPASS".into(),
             _proxy.script_path().as_ref().display().to_string(),
+        );
+        envs.insert(
+            "ZED_ASKPASS_SOCKET".into(),
+            _proxy.socket_path().as_ref().display().to_string(),
         );
 
         Ok(Self {
@@ -1927,9 +1934,9 @@ fn build_command_posix(
         ));
     }
 
-    // -q suppresses the "Connection to ... closed." message that SSH prints when
-    // the connection terminates with -t (pseudo-terminal allocation)
-    args.push("-q".into());
+    // LogLevel=ERROR suppresses the "Connection to ... closed." message while
+    // preserving SSH errors.
+    args.extend(["-o".into(), "LogLevel=ERROR".into()]);
     match interactive {
         // -t forces pseudo-TTY allocation (for interactive use)
         Interactive::Yes => args.push("-t".into()),
@@ -2022,9 +2029,9 @@ fn build_command_windows(
         ));
     }
 
-    // -q suppresses the "Connection to ... closed." message that SSH prints when
-    // the connection terminates with -t (pseudo-terminal allocation)
-    args.push("-q".into());
+    // LogLevel=ERROR suppresses the "Connection to ... closed." message while
+    // preserving SSH errors.
+    args.extend(["-o".into(), "LogLevel=ERROR".into()]);
     match interactive {
         // -t forces pseudo-TTY allocation (for interactive use)
         Interactive::Yes => args.push("-t".into()),
@@ -2103,7 +2110,8 @@ mod tests {
             [
                 "-p",
                 "2222",
-                "-q",
+                "-o",
+                "LogLevel=ERROR",
                 "-t",
                 "user@host",
                 "cd \"$HOME\"/work && exec env 'INPUT_VA=val' remote_program arg1 arg2"
@@ -2139,7 +2147,8 @@ mod tests {
                 "2222",
                 "-L",
                 "1:foo:2",
-                "-q",
+                "-o",
+                "LogLevel=ERROR",
                 "-t",
                 "user@host",
                 "cd && exec env 'INPUT_VA=val' /bin/fish -l"

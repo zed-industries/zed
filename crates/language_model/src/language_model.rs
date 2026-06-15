@@ -1,5 +1,4 @@
 mod api_key;
-mod model;
 mod registry;
 mod request;
 
@@ -17,7 +16,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
-pub use crate::model::*;
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
@@ -60,6 +58,18 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether requests to this model require the user to consent to the
+    /// upstream provider retaining inference logs (i.e. the model cannot be
+    /// offered with Zero Data Retention).
+    fn requires_data_retention(&self) -> bool {
+        false
+    }
+
+    /// When this model refuses a request, the model ID to fall back to (same provider).
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        None
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
@@ -74,6 +84,13 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports thinking.
     fn supports_thinking(&self) -> bool {
         false
+    }
+
+    /// Whether thinking can be turned off entirely for this model. Some
+    /// models (e.g. Claude Fable 5) always think and cannot honor an "off"
+    /// request. Only meaningful when `supports_thinking` returns `true`.
+    fn supports_disabling_thinking(&self) -> bool {
+        true
     }
 
     fn supports_fast_mode(&self) -> bool {

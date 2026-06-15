@@ -930,24 +930,6 @@ impl RemoteClient {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
-    ) -> Result<CommandTemplate> {
-        self.build_command_with_options(
-            program,
-            args,
-            env,
-            working_dir,
-            port_forward,
-            Interactive::Yes,
-        )
-    }
-
-    pub fn build_command_with_options(
-        &self,
-        program: Option<String>,
-        args: &[String],
-        env: &HashMap<String, String>,
-        working_dir: Option<String>,
-        port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {

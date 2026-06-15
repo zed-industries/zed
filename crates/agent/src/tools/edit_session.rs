@@ -1058,9 +1058,17 @@ async fn resolve_dirty_buffer(
     };
 
     let Some(decision) = decision else {
-        event_stream.update_fields(
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
-        );
+        let outcome = match mode {
+            EditSessionMode::Edit => acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("save"),
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            EditSessionMode::Write => acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("keep"),
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        };
+        event_stream.resolve_authorization(outcome);
         return match mode {
             EditSessionMode::Edit => Ok(()),
             EditSessionMode::Write => Err(

@@ -2376,7 +2376,7 @@ impl NewlineConfig {
             .range_to_buffer_ranges(range.start..range.end)
             .as_slice()
         {
-            [(buffer_snapshot, range, _)] => (buffer_snapshot.clone(), range.clone()),
+            [(buffer_snapshot, range, _)] => (*buffer_snapshot, range.clone()),
             _ => return false,
         };
         let pair = {
