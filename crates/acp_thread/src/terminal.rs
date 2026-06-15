@@ -347,6 +347,7 @@ impl Terminal {
                             original_content_len,
                             content_line_count,
                         });
+                        this._sandbox_config = None;
                         cx.notify();
                     })
                     .ok();
