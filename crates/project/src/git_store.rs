@@ -8581,7 +8581,6 @@ impl Repository {
 
                 let has_head = prev_snapshot.head_commit.is_some();
 
-                let stash_entries = backend.stash_entries().await?;
                 let changed_path_statuses = cx
                     .background_spawn(async move {
                         let mut changed_paths =
@@ -8638,11 +8637,6 @@ impl Repository {
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
-                    if this.snapshot.stash_entries != stash_entries {
-                        cx.emit(RepositoryEvent::StashEntriesChanged);
-                        this.snapshot.stash_entries = stash_entries;
-                    }
-
                     if !changed_path_statuses.is_empty() {
                         cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
@@ -9921,8 +9915,9 @@ async fn compute_snapshot(
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
 
-    let remote_origin_url = backend.remote_url("origin").await;
-    let remote_upstream_url = backend.remote_url("upstream").await;
+    let mut remote_urls = backend.remote_urls().await;
+    let remote_origin_url = remote_urls.remove("origin");
+    let remote_upstream_url = remote_urls.remove("upstream");
 
     log::debug!("fetched remotes");
 
