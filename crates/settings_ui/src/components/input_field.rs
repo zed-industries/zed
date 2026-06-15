@@ -17,6 +17,7 @@ pub struct SettingsInputField {
     display_confirm_button: bool,
     display_clear_button: bool,
     clear_on_confirm: bool,
+    confirm_on_focus_out: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
 }
@@ -33,6 +34,7 @@ impl SettingsInputField {
             display_confirm_button: false,
             display_clear_button: false,
             clear_on_confirm: false,
+            confirm_on_focus_out: false,
             action_slot: None,
             color: None,
         }
@@ -73,6 +75,11 @@ impl SettingsInputField {
 
     pub fn clear_on_confirm(mut self) -> Self {
         self.clear_on_confirm = true;
+        self
+    }
+
+    pub fn confirm_on_focus_out(mut self) -> Self {
+        self.confirm_on_focus_out = true;
         self
     }
 
@@ -125,9 +132,10 @@ impl RenderOnce for SettingsInputField {
                     }
 
                     if let Some(confirm) = confirm.take()
-                        && !self.display_confirm_button
-                        && !self.display_clear_button
-                        && !self.clear_on_confirm
+                        && (self.confirm_on_focus_out
+                            || (!self.display_confirm_button
+                                && !self.display_clear_button
+                                && !self.clear_on_confirm))
                     {
                         cx.on_focus_out(
                             &editor_focus_handle,
@@ -161,9 +169,10 @@ impl RenderOnce for SettingsInputField {
                     }
 
                     if let Some(confirm) = confirm.take()
-                        && !self.display_confirm_button
-                        && !self.display_clear_button
-                        && !self.clear_on_confirm
+                        && (self.confirm_on_focus_out
+                            || (!self.display_confirm_button
+                                && !self.display_clear_button
+                                && !self.clear_on_confirm))
                     {
                         cx.on_focus_out(
                             &editor_focus_handle,
@@ -189,22 +198,21 @@ impl RenderOnce for SettingsInputField {
         // re-renders but use_keyed_state returns the cached editor with stale text.
         // Reconcile with the expected initial_text when the editor is not focused,
         // so we don't clobber what the user is actively typing.
-        if let Some(initial_text) = &self.initial_text
-            && let Some(first_initial) = first_render_initial_text.read(cx)
+        let expected_initial_text = self.initial_text.clone();
+        if *first_render_initial_text.read(cx) != expected_initial_text
+            && !editor.read(cx).is_focused(window)
         {
-            if initial_text != first_initial && !editor.read(cx).is_focused(window) {
-                *first_render_initial_text.as_mut(cx) = self.initial_text.clone();
-                let weak_editor = editor.downgrade();
-                let initial_text = initial_text.clone();
+            *first_render_initial_text.as_mut(cx) = expected_initial_text.clone();
+            let weak_editor = editor.downgrade();
+            let text = expected_initial_text.unwrap_or_default();
 
-                window.defer(cx, move |window, cx| {
-                    weak_editor
-                        .update(cx, |editor, cx| {
-                            editor.set_text(initial_text, window, cx);
-                        })
-                        .ok();
-                });
-            }
+            window.defer(cx, move |window, cx| {
+                weak_editor
+                    .update(cx, |editor, cx| {
+                        editor.set_text(text, window, cx);
+                    })
+                    .ok();
+            });
         }
 
         let weak_editor = editor.downgrade();

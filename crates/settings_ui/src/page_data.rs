@@ -8016,7 +8016,7 @@ fn ai_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Terminal Thread Init Command",
-                description: "Command to automatically run when opening a new terminal thread in the agent panel. Runs in your configured shell.",
+                description: "Command to automatically run when Zed creates a Terminal Thread shell in the agent panel. Runs in your configured shell.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent.terminal_init_command"),
@@ -8036,6 +8036,9 @@ fn ai_page() -> SettingsPage {
                 }),
                 metadata: Some(Box::new(SettingsFieldMetadata {
                     placeholder: Some("e.g. claude"),
+                    display_confirm_button: true,
+                    display_clear_button: true,
+                    confirm_on_focus_out: true,
                     ..Default::default()
                 })),
                 files: USER,

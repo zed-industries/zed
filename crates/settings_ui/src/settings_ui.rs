@@ -413,6 +413,9 @@ impl Focusable for NonFocusableHandle {
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
     should_do_titlecase: Option<bool>,
+    display_confirm_button: bool,
+    display_clear_button: bool,
+    confirm_on_focus_out: bool,
 }
 
 pub fn init(cx: &mut App) {
@@ -4660,6 +4663,18 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.display_confirm_button),
+            |editor| editor.display_confirm_button(),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.display_clear_button),
+            |editor| editor.display_clear_button(),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.confirm_on_focus_out),
+            |editor| editor.confirm_on_focus_out(),
         )
         .on_confirm({
             move |new_text, window, cx| {
