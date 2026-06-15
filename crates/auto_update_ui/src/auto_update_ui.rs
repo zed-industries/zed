@@ -20,9 +20,10 @@ use util::{ResultExt as _, maybe};
 use workspace::{
     Workspace,
     notifications::{
-        ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
+        Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
     },
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 use zed_actions::ShowUpdateNotification;
 
@@ -64,21 +65,28 @@ fn notify_release_notes_failed_to_show(
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    struct ViewReleaseNotesError;
-    workspace.show_notification(
-        NotificationId::unique::<ViewReleaseNotesError>(),
-        cx,
-        |cx| {
-            cx.new(move |cx| {
-                let url = release_notes_url(cx);
-                let mut prompt = ErrorMessagePrompt::new("Couldn't load release notes", cx);
-                if let Some(url) = url {
-                    prompt = prompt.with_link_button("View in Browser".to_string(), url);
-                }
-                prompt
-            })
-        },
-    );
+    let url = release_notes_url(cx);
+
+    struct ReleaseNotesError {
+        url: Option<String>,
+    }
+
+    impl WorkspaceError for ReleaseNotesError {
+        fn primary_message(&self) -> SharedString {
+            "Couldn't load release notes".into()
+        }
+        fn severity(&self) -> ErrorSeverity {
+            ErrorSeverity::Error
+        }
+        fn primary_action(&self) -> ErrorAction {
+            self.url
+                .clone()
+                .map(|url| ErrorAction::link("View in Browser", url))
+                .unwrap_or_else(ErrorAction::dismiss)
+        }
+    }
+
+    workspace.show_error(ReleaseNotesError { url }, cx);
 }
 
 fn view_release_notes_locally(
@@ -217,12 +225,12 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         let mut bullet_items: Vec<SharedString> = Vec::with_capacity(3);
         bullet_items
             .push(format!("Skills live in {GLOBAL_SKILLS_DIR_DISPLAY}/<name>/SKILL.md").into());
+        bullet_items.push("Type / to manually invoke a skill".into());
         if migrated_anything {
             bullet_items.push(
-                "Default Rules are converted into your global AGENTS.md; all other rules become skills".into(),
+                "The Rules Library is making way for skills: your default rules are now in a global AGENTS.md, and your other rules have been converted to skills".into(),
             );
         }
-        bullet_items.push("Type / to manually invoke a skill".into());
 
         Some(AnnouncementContent {
             heading: "Introducing Skills Support".into(),

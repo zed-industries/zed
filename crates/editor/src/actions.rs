@@ -323,7 +323,8 @@ pub struct SplitSelectionIntoLines {
     pub keep_selections: bool,
 }
 
-/// Goes to the next diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the next diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -332,7 +333,8 @@ pub struct GoToDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Goes to the previous diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the previous diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +394,15 @@ actions!(
         /// Toggles the go to line dialog.
         #[action(name = "Toggle")]
         ToggleGoToLine
+    ]
+);
+
+actions!(
+    markdown,
+    [
+        /// Toggles a block quote (`> `) prefix on the selected lines (or the
+        /// current line) while in Markdown files.
+        ToggleBlockQuote,
     ]
 );
 
@@ -762,6 +773,8 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects inside the innermost enclosing bracket pair.
+        SelectInsideEnclosingBracket,
         /// Selects to the start of the next larger syntax node.
         SelectToStartOfLargerSyntaxNode,
         /// Selects to the end of the next larger syntax node.
@@ -916,6 +929,8 @@ actions!(
         AlignSelections,
         /// Saves the current location to navigation history.
         SaveLocation,
+        /// Toggles breadcrumbs display.
+        ToggleBreadcrumb,
     ]
 );
 
