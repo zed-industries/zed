@@ -19,6 +19,7 @@ use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task
 use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
+use rand::rand_core::le;
 use rpc::{AnyProtoClient, proto};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
@@ -560,12 +561,7 @@ impl Search {
 
     async fn grab_buffer_snapshots(
         rx: Receiver<(Entity<Buffer>, LineHint)>,
-        find_all_matches_tx: Sender<(
-            Entity<Buffer>,
-            BufferSnapshot,
-            LineHint,
-            oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
-        )>,
+        find_all_matches_tx: Sender<FindAllMatchesRequest>,
         results: Sender<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         mut cx: AsyncApp,
     ) {
@@ -574,7 +570,12 @@ impl Search {
                 let snapshot = buffer.read_with(&mut cx, |this, _| this.snapshot());
                 let (tx, rx) = oneshot::channel();
                 find_all_matches_tx
-                    .send((buffer, snapshot, line_hint, tx))
+                    .send(FindAllMatchesRequest {
+                        buffer,
+                        snapshot,
+                        line_hint,
+                        report_matches: tx,
+                    })
                     .await?;
                 results.send(rx).await?;
             }
@@ -662,12 +663,7 @@ struct Worker {
     candidates: FindSearchCandidates,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
-    find_all_matches_rx: Receiver<(
-        Entity<Buffer>,
-        BufferSnapshot,
-        LineHint,
-        oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
-    )>,
+    find_all_matches_rx: Receiver<FindAllMatchesRequest>,
 }
 
 impl Worker {
@@ -748,15 +744,13 @@ struct RequestHandler<'worker> {
 }
 
 impl RequestHandler<'_> {
-    async fn handle_find_all_matches(
-        &self,
-        (buffer, snapshot, line_hint, mut report_matches): (
-            Entity<Buffer>,
-            BufferSnapshot,
-            LineHint,
-            oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
-        ),
-    ) {
+    async fn handle_find_all_matches(&self, request: FindAllMatchesRequest) {
+        let FindAllMatchesRequest {
+            buffer,
+            snapshot,
+            line_hint,
+            mut report_matches,
+        } = request;
         let range_offset = if line_hint > 0 {
             snapshot.point_to_offset(Point::new(line_hint, 0))
         } else {
@@ -881,6 +875,13 @@ struct MatchingEntry {
     worktree_root: Arc<Path>,
     path: ProjectPath,
     should_scan_tx: oneshot::Sender<(ProjectPath, LineHint)>,
+}
+
+struct FindAllMatchesRequest {
+    buffer: Entity<Buffer>,
+    snapshot: BufferSnapshot,
+    line_hint: LineHint,
+    report_matches: oneshot::Sender<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
 }
 
 /// This struct encapsulates the logic to decide whether a given gitignored directory should be
