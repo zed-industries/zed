@@ -16744,6 +16744,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "git",
+ "git_ui",
  "gpui",
  "http_client",
  "itertools 0.14.0",

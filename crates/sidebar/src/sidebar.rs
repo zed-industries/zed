@@ -69,7 +69,7 @@ use workspace::{
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
-use zed_actions::OpenRecent;
+use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
 use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
@@ -731,6 +731,43 @@ fn connect_remote(
     remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
+/// Parses a remote default branch name (e.g. `origin/main` or
+/// `refs/remotes/origin/main`) into its `(remote_name, branch_name)` parts.
+fn parse_remote_default_branch(name: &str) -> Option<(SharedString, SharedString)> {
+    let name = name.strip_prefix("refs/remotes/").unwrap_or(name);
+    let (remote_name, branch_name) = name.split_once('/')?;
+    if remote_name.is_empty() || branch_name.is_empty() {
+        return None;
+    }
+    Some((
+        SharedString::from(remote_name.to_string()),
+        SharedString::from(branch_name.to_string()),
+    ))
+}
+
+/// Creates a new git worktree in the given workspace, mirroring the behavior
+/// of the worktree picker's "Create new worktree" entries.
+fn create_worktree_in_workspace(
+    workspace: &Entity<Workspace>,
+    branch_target: NewWorktreeBranchTarget,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    workspace.update(cx, |workspace, cx| {
+        let focused_dock = workspace.focused_dock_position(window, cx);
+        git_ui::worktree_service::handle_create_worktree(
+            workspace,
+            &CreateWorktree {
+                worktree_name: None,
+                branch_target,
+            },
+            window,
+            focused_dock,
+            cx,
+        );
+    });
+}
+
 /// The sidebar re-derives its entire entry list from scratch on every
 /// change via `update_entries` → `rebuild_contents`. Avoid adding
 /// incremental or inter-event coordination state — if something can
@@ -780,6 +817,11 @@ pub struct Sidebar {
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
+    /// Cached remote default branch (remote name, branch name) for each project
+    /// group, used to populate the "Create New Worktree" submenu in the new
+    /// thread popover. An entry maps to `None` when the repository has no
+    /// resolvable default branch. Populated lazily when the popover opens.
+    worktree_default_branches: HashMap<ProjectGroupKey, Option<(SharedString, SharedString)>>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     update_task: Option<Task<()>>,
@@ -917,6 +959,7 @@ impl Sidebar {
             project_header_menu_handles: HashMap::new(),
             project_header_new_thread_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
+            worktree_default_branches: HashMap::new(),
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             update_task: None,
@@ -2544,8 +2587,23 @@ impl Sidebar {
         .anchor(gpui::Anchor::TopLeft)
         .on_open(Rc::new({
             let this = this.clone();
+            let key = key.clone();
+            let open_workspaces = open_workspaces.clone();
             move |_window, cx| {
-                this.update(cx, |_sidebar, cx| cx.notify()).ok();
+                this.update(cx, |sidebar, cx| {
+                    let active = sidebar
+                        .multi_workspace
+                        .upgrade()
+                        .map(|mw| mw.read(cx).workspace().clone());
+                    let base = active
+                        .filter(|workspace| open_workspaces.contains(workspace))
+                        .or_else(|| open_workspaces.first().cloned());
+                    if let Some(base) = base {
+                        sidebar.prefetch_worktree_default_branch(&key, &base, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
             }
         }))
         .menu(move |window, cx| {
@@ -2620,6 +2678,90 @@ impl Sidebar {
                         );
                     }
 
+                    let base_workspace = active_workspace
+                        .as_ref()
+                        .filter(|workspace| open_workspaces.contains(workspace))
+                        .cloned()
+                        .or_else(|| open_workspaces.first().cloned());
+
+                    if let Some(base_workspace) = base_workspace {
+                        menu = menu.separator().submenu("Create New Worktree…", {
+                            let this = this.clone();
+                            move |mut submenu, _window, submenu_cx| {
+                                let project = base_workspace.read(submenu_cx).project().clone();
+                                let project_ref = project.read(submenu_cx);
+                                let creation_blocked = project_ref.is_via_collab()
+                                    || project_ref.repositories(submenu_cx).is_empty();
+                                if creation_blocked {
+                                    return submenu;
+                                }
+                                let has_multiple_repositories =
+                                    project_ref.repositories(submenu_cx).len() > 1;
+                                let current_branch =
+                                    project_ref.active_repository(submenu_cx).and_then(|repo| {
+                                        repo.read(submenu_cx).branch.as_ref().map(|branch| {
+                                            SharedString::from(branch.name().to_string())
+                                        })
+                                    });
+                                let default_branch = this
+                                    .read_with(submenu_cx, |sidebar, _| {
+                                        sidebar.worktree_default_branches.get(&key).cloned()
+                                    })
+                                    .ok()
+                                    .flatten()
+                                    .flatten();
+
+                                // Mirror the worktree picker's `build_fixed_entries`
+                                // rules for which create options to surface.
+                                let (show_default, show_current) = if has_multiple_repositories {
+                                    (false, true)
+                                } else if let Some((_, ref branch_name)) = default_branch {
+                                    let is_different = current_branch.as_ref().is_none_or(
+                                        |current| current.as_ref() != branch_name.as_ref(),
+                                    );
+                                    (true, is_different)
+                                } else {
+                                    (false, true)
+                                };
+
+                                if show_default
+                                    && let Some((remote_name, branch_name)) = default_branch
+                                {
+                                    let label = format!("Based on {remote_name}/{branch_name}");
+                                    let workspace = base_workspace.clone();
+                                    submenu = submenu.entry(label, None, move |window, cx| {
+                                        create_worktree_in_workspace(
+                                            &workspace,
+                                            NewWorktreeBranchTarget::RemoteBranch {
+                                                remote_name: remote_name.to_string(),
+                                                branch_name: branch_name.to_string(),
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+
+                                if show_current {
+                                    let label = current_branch
+                                        .map(|branch| format!("Based on {branch}"))
+                                        .unwrap_or_else(|| "Based on current branch".to_string());
+                                    let workspace = base_workspace.clone();
+                                    submenu = submenu.entry(label, None, move |window, cx| {
+                                        create_worktree_in_workspace(
+                                            &workspace,
+                                            NewWorktreeBranchTarget::CurrentBranch,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+
+                                submenu
+                            }
+                        });
+                    }
+
                     menu
                 },
             ))
@@ -2630,6 +2772,32 @@ impl Sidebar {
             y: px(1.),
         })
         .into_any_element()
+    }
+
+    fn prefetch_worktree_default_branch(
+        &mut self,
+        key: &ProjectGroupKey,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = workspace.read(cx).project().read(cx).active_repository(cx) else {
+            self.worktree_default_branches.insert(key.clone(), None);
+            return;
+        };
+        let request = repository.update(cx, |repository, _| repository.default_branch(true));
+        let key = key.clone();
+        cx.spawn(async move |this, cx| {
+            let default_branch = request.await.ok().and_then(Result::ok).flatten();
+            let parsed = default_branch
+                .as_deref()
+                .and_then(parse_remote_default_branch);
+            this.update(cx, |sidebar, cx| {
+                sidebar.worktree_default_branches.insert(key, parsed);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_project_header_ellipsis_menu(
