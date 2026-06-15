@@ -1336,6 +1336,11 @@ struct FakeFsState {
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
     file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
+    read_dir_block: Option<(
+        PathBuf,
+        async_channel::Sender<()>,
+        async_channel::Receiver<()>,
+    )>,
 }
 
 #[cfg(feature = "test-support")]
@@ -1655,6 +1660,7 @@ impl FakeFs {
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
                 trash: Vec::new(),
                 file_to_create_before_watch_add: None,
+                read_dir_block: None,
             })),
         });
 
@@ -1839,6 +1845,20 @@ impl FakeFs {
             normalize_path(watch_path.as_ref()),
             normalize_path(path.as_ref()),
         ));
+    }
+
+    pub fn block_next_read_dir(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> (async_channel::Receiver<()>, async_channel::Sender<()>) {
+        let (read_started_tx, read_started_rx) = async_channel::bounded(1);
+        let (resume_read_tx, resume_read_rx) = async_channel::bounded(1);
+        self.state.lock().read_dir_block = Some((
+            normalize_path(path.as_ref()),
+            read_started_tx,
+            resume_read_rx,
+        ));
+        (read_started_rx, resume_read_tx)
     }
 
     pub fn flush_events(&self, count: usize) {
@@ -3098,6 +3118,20 @@ impl Fs for FakeFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
+        let read_dir_block = {
+            let mut state = self.state.lock();
+            match &state.read_dir_block {
+                Some((blocked_path, _, _)) if blocked_path == &path => state.read_dir_block.take(),
+                _ => None,
+            }
+        };
+        if let Some((_, read_started_tx, resume_read_rx)) = read_dir_block
+            && read_started_tx.send(()).await.is_ok()
+            && resume_read_rx.recv().await.is_err()
+        {
+            log::debug!("blocked FakeFs::read_dir resumed by dropping the release sender");
+        }
+
         let mut state = self.state.lock();
         state.read_dir_call_count += 1;
         let entry = state.entry(&path)?;

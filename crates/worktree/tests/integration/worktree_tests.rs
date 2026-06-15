@@ -1360,6 +1360,100 @@ async fn test_root_rescan_does_not_miss_event_before_readding_root_watcher(
 }
 
 #[gpui::test]
+async fn test_subtree_rescan_can_publish_removed_descendants_before_readding_them(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.background_executor.set_num_cpus(2);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "child.txt": "",
+                "nested": {
+                    "grandchild.txt": "",
+                },
+            },
+            "other.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let (read_dir_started, resume_read_dir) = fs.block_next_read_dir("/root/dir");
+    fs.emit_fs_event("/root/dir", Some(fs::PathEventKind::Rescan));
+    read_dir_started.recv().await.unwrap();
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .manually_refresh_entries_for_paths(vec![rel_path("other.txt").into()])
+    })
+    .recv()
+    .await;
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .manually_refresh_entries_for_paths(vec![rel_path("dir/nested/grandchild.txt").into()])
+    })
+    .recv()
+    .await;
+
+    tree.update(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("dir")).is_some());
+        assert!(tree.entry_for_path(rel_path("other.txt")).is_some());
+    });
+    tree.update(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("dir/child.txt")).is_none());
+        assert!(tree.entry_for_path(rel_path("dir/nested")).is_none());
+        assert!(
+            tree.entry_for_path(rel_path("dir/nested/grandchild.txt"))
+                .is_some()
+        );
+    });
+
+    assert!(
+        fs.metadata(Path::new("/root/dir/child.txt"))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fs.metadata(Path::new("/root/dir/nested/grandchild.txt"))
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    resume_read_dir.send(()).await.unwrap();
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("dir/child.txt")).is_some()
+                && tree.entry_for_path(rel_path("dir/nested")).is_some()
+                && tree
+                    .entry_for_path(rel_path("dir/nested/grandchild.txt"))
+                    .is_some()
+        })
+    })
+    .await;
+}
+
+#[gpui::test]
 async fn test_subtree_rescan_reports_unchanged_descendants_as_updated(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
