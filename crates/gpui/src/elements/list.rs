@@ -1507,12 +1507,12 @@ impl Element for List {
         cx: &mut App,
     ) {
         let current_view = window.current_view();
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for item in &mut prepaint.layout.item_layouts {
-                item.element.paint(window, cx);
-            }
-        });
 
+        // Register the scroll listener before painting children so that, in
+        // the bubble phase (which runs in reverse registration order),
+        // children's scroll-wheel handlers run first and can stop propagation
+        // to prevent the list from scrolling. This matches the ordering of
+        // div-based scroll containers.
         let list_state = self.state.clone();
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
@@ -1530,6 +1530,12 @@ impl Element for List {
                     window,
                     cx,
                 )
+            }
+        });
+
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            for item in &mut prepaint.layout.item_layouts {
+                item.element.paint(window, cx);
             }
         });
     }
@@ -1638,8 +1644,8 @@ mod test {
     use std::rc::Rc;
 
     use crate::{
-        self as gpui, AppContext, Context, Element, FollowMode, IntoElement, ListState, Render,
-        Styled, TestAppContext, Window, div, list, point, px, size,
+        self as gpui, AppContext, Context, Element, FollowMode, InteractiveElement, IntoElement,
+        ListState, Render, Styled, TestAppContext, Window, div, list, point, px, size,
     };
 
     #[gpui::test]
@@ -1725,6 +1731,60 @@ mod test {
 
         // Test zero distance
         state.scroll_by(px(0.));
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 0);
+        assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_child_scroll_handler_can_stop_list_scroll(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.));
+        let child_saw_event = Rc::new(Cell::new(false));
+
+        struct TestView {
+            state: ListState,
+            child_saw_event: Rc<Cell<bool>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let child_saw_event = self.child_saw_event.clone();
+                list(self.state.clone(), move |_, _, _| {
+                    let child_saw_event = child_saw_event.clone();
+                    div()
+                        .h(px(20.))
+                        .w_full()
+                        .on_scroll_wheel(move |_, _, cx| {
+                            child_saw_event.set(true);
+                            cx.stop_propagation();
+                        })
+                        .into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                child_saw_event: child_saw_event.clone(),
+            })
+            .into_any_element()
+        });
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(50.), px(10.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-30.))),
+            ..Default::default()
+        });
+
+        assert!(
+            child_saw_event.get(),
+            "the child's scroll-wheel handler should run"
+        );
+        // The child stopped propagation, so the list must not have scrolled.
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
