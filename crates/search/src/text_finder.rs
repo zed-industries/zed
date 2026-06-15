@@ -57,12 +57,14 @@ impl TextFinder {
         window: &mut Window,
         cx: &mut Context<T>,
     ) -> Task<()> {
+        let project_search_item_id = project_search_view.entity_id();
         cx.spawn_in(window, async move |_, cx| {
             let workspace =
                 project_search_view.read_with(cx, |view, _| WeakEntity::clone(&view.workspace));
             let delegate = Delegate::new_from_project_search(project_search_view, cx).await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
+                    remove_project_search_tab(project_search_item_id, workspace, window, cx);
                     workspace
                         .toggle_modal(window, cx, |window, cx| Self::new(delegate, window, cx));
                 })
@@ -184,6 +186,19 @@ impl TextFinder {
 
     fn project_search_view(&self, cx: &mut App) -> Entity<ProjectSearchView> {
         Entity::clone(&self.picker.read(cx).delegate.project_search_view)
+    }
+}
+
+fn remove_project_search_tab(
+    project_search_item_id: gpui::EntityId,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<'_, Workspace>,
+) {
+    if let Some(pane) = workspace.pane_for_item_id(project_search_item_id) {
+        pane.update(cx, |pane, cx| {
+            pane.remove_item(project_search_item_id, false, false, window, cx);
+        });
     }
 }
 
