@@ -871,8 +871,6 @@ impl RemoteServerPickerDelegate {
         this
     }
 
-    /// Rebuilds the source `DefaultState` from the latest settings/ssh-config,
-    /// then re-runs the active filter and rebuilds the flattened match list.
     fn reload(
         &mut self,
         ssh_config_servers: &BTreeSet<SharedString>,
@@ -992,8 +990,6 @@ impl RemoteServerPickerDelegate {
             .unwrap_or(0);
     }
 
-    /// Builds the muted server header row (host label with match highlights,
-    /// optional WSL prefix and SSH host alias).
     fn render_server_header(
         &self,
         server_index: usize,
@@ -1296,6 +1292,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                 let remote_project = project_entry.project.clone();
                 let paths = remote_project.paths.clone();
                 let remote_server_projects = self.remote_server_projects.clone();
+
                 Some(
                     ListItem::new(("remote-project", ix))
                         .toggle_state(selected)
