@@ -537,6 +537,7 @@ async fn consume_search_stream(
     }
 
     if project_search_turning_into_text_finder.load(Ordering::Relaxed) {
+        project_search_turning_into_text_finder.store(false, Ordering::Relaxed); // reset
         return Some(search_results);
     }
 

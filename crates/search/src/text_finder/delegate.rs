@@ -66,11 +66,9 @@ pub struct Delegate {
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
-    /// The query that produced the matches currently held in `matches`. Stashed
-    /// by [`Self::update_matches`] so that when switching to the project search
-    /// we hand over exactly the query that ran, rather than rebuilding it from
-    /// the (possibly newer / debounced) editor text.
+    /// Kept around for switching to project search
     pub(crate) active_query: Option<SearchQuery>,
+    pub(crate) imported_from_project_search: bool,
     /// When `is_ready` there is not a search in progress
     pub(crate) in_progress_search: InProgressSearch,
     pub(crate) unique_files: HashSet<ProjectPath>,
@@ -250,12 +248,7 @@ impl Delegate {
     ) -> Task<Delegate> {
         cx.spawn(async move |cx| {
             let ongoing = get_ongoing_search(&project_search, cx).await;
-
-            let results_already_yielded = if ongoing.is_some() {
-                plunder_multibuffer(&project_search, cx).await
-            } else {
-                Vec::new()
-            };
+            let results_already_yielded = plunder_multibuffer(&project_search, cx).await;
 
             let in_progress_search = if let Some(results_stream) = ongoing {
                 InProgressSearch::Disconnected(results_stream)
@@ -273,6 +266,7 @@ impl Delegate {
                 .map(|m| m.path.clone())
                 .collect();
 
+            let imported_from_project_search = !results_already_yielded.is_empty();
             let this = cx.update(move |cx| Self {
                 project_search_view: project_search,
                 focus_handle: cx.focus_handle(),
@@ -284,6 +278,7 @@ impl Delegate {
                 last_click: None,
                 search_options,
                 active_query,
+                imported_from_project_search,
                 in_progress_search,
                 unique_files,
                 preview_layout_is_horizontal: false,
@@ -425,7 +420,16 @@ impl PickerDelegate for Delegate {
         let text_finder_turning_into_project_search =
             Arc::clone(&self.text_finder_turning_into_project_search);
 
+        // The picker runs `update_matches("")` once on open. When the text
+        // finder was opened from an existing project search, the query editor is
+        // empty but we have already plundered that search's matches. Preserve
+        // them on that first call, otherwise the modal would show up empty.
+        let imported_from_project_search = std::mem::take(&mut self.imported_from_project_search);
+
         let Some(search_query) = self.build_search_query(&query, cx) else {
+            if query.is_empty() && imported_from_project_search {
+                return Task::ready(());
+            }
             self.matches.clear();
             self.unique_files.clear();
             self.selected_index = 0;
@@ -717,6 +721,7 @@ async fn stream_results_to_picker(
         // processed before taking out the search result stream. The cancel flag
         // just needs to stop the search.
         if text_finder_turning_into_project_search.load(Ordering::Relaxed) {
+            text_finder_turning_into_project_search.store(false, Ordering::Relaxed);
             return Some(search_results);
         }
 
