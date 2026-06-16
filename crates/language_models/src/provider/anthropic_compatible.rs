@@ -70,6 +70,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_adaptive_thinking: false,
         supports_images: available.capabilities.images,
         supports_speed: false,
+        supports_compaction: false,
         supported_effort_levels: Vec::new(),
         tool_override: available.tool_override.clone(),
         extra_beta_headers: available.extra_beta_headers.clone(),
