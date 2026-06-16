@@ -32,6 +32,7 @@ pub struct EntryViewState {
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
+    expanded_tool_calls: HashSet<acp::ToolCallId>,
 }
 
 impl EntryViewState {
@@ -53,6 +54,25 @@ impl EntryViewState {
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
             expanded_compactions: HashSet::default(),
+            expanded_tool_calls: HashSet::default(),
+        }
+    }
+
+    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp::ToolCallId) -> bool {
+        self.expanded_tool_calls.contains(tool_call_id)
+    }
+
+    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId) {
+        self.expanded_tool_calls.insert(tool_call_id);
+    }
+
+    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp::ToolCallId) {
+        self.expanded_tool_calls.remove(tool_call_id);
+    }
+
+    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp::ToolCallId) {
+        if !self.expanded_tool_calls.remove(tool_call_id) {
+            self.expanded_tool_calls.insert(tool_call_id.clone());
         }
     }
 

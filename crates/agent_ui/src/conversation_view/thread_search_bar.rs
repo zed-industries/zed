@@ -2,7 +2,10 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acp_thread::{AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk};
+use acp_thread::{
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ContentBlock,
+    ToolCallContent,
+};
 use collections::HashMap;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, HighlightKey, SelectionEffects};
 use gpui::{
@@ -835,6 +838,25 @@ fn collect_markdowns(
         }
         AgentThreadEntry::ToolCall(tool_call) => {
             out.push(tool_call.label.clone());
+            if entry_view_state.is_tool_call_expanded(&tool_call.id) {
+                out.extend(
+                    tool_call
+                        .content
+                        .iter()
+                        .filter_map(|content| match content {
+                            ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
+                                Some(markdown.clone())
+                            }
+                            ToolCallContent::ContentBlock(
+                                ContentBlock::Empty
+                                | ContentBlock::ResourceLink { .. }
+                                | ContentBlock::Image { .. },
+                            )
+                            | ToolCallContent::Diff(_)
+                            | ToolCallContent::Terminal(_) => None,
+                        }),
+                );
+            }
         }
         AgentThreadEntry::CompletedPlan(entries) => {
             out.extend(entries.iter().map(|e| e.content.clone()))
