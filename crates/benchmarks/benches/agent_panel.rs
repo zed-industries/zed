@@ -7,7 +7,7 @@
 //! workload is intentionally heavy enough to drop frames so regressions (and
 //! improvements) in agent panel rendering are visible in the frame report.
 
-use std::{cell::RefCell, future::Future, rc::Rc, time::Duration};
+use std::{cell::RefCell, collections::VecDeque, future::Future, rc::Rc, time::Duration};
 
 use acp_thread::{
     AgentThreadEntry, AssistantMessageChunk, SUBAGENT_SESSION_INFO_META_KEY, StubAgentConnection,
@@ -50,6 +50,8 @@ const HUGE_OUTPUT_EVERY: usize = 4;
 const TERMINAL_VIEW_EVERY: usize = 5;
 /// Lines of ANSI-colored output initially written into each embedded terminal.
 const TERMINAL_VIEW_LINES: usize = 600;
+/// Number of external frame inputs to synthesize before measurement starts.
+const PRECOMPUTED_FRAME_INPUTS: usize = 512;
 
 /// Drives a `'static` future to completion by spawning it on the benchmark's
 /// foreground executor and pumping the dispatcher until it resolves.
@@ -251,6 +253,80 @@ fn plan_update(completed_through: usize) -> acp::SessionUpdate {
         })
         .collect();
     acp::SessionUpdate::Plan(acp::Plan::new(entries))
+}
+
+struct HugeEntry {
+    item_ix: usize,
+    tool_call_id: String,
+    turn: usize,
+}
+
+struct FrameInput {
+    cycle_frame: usize,
+    huge_entry_ix: usize,
+    streaming_terminal_id: acp::TerminalId,
+    streaming_terminal_output: Vec<u8>,
+    session_updates: Vec<acp::SessionUpdate>,
+}
+
+fn frame_input(
+    frame_ix: usize,
+    huge_entries: &[HugeEntry],
+    terminal_ids: &[acp::TerminalId],
+) -> FrameInput {
+    let cycle = frame_ix / FRAMES_PER_CYCLE;
+    let cycle_frame = frame_ix % FRAMES_PER_CYCLE;
+    let payload_seed = frame_ix + 1;
+
+    let huge_entry = &huge_entries[cycle % huge_entries.len()];
+    let mut session_updates = Vec::with_capacity(if cycle_frame == 3 { 2 } else { 1 });
+    if cycle_frame == 3 {
+        session_updates.push(plan_update(cycle % 24));
+    }
+
+    if cycle_frame == 2 {
+        let churn_period = if cycle % 2 == 0 { 5 } else { 7 };
+        session_updates.push(acp::SessionUpdate::ToolCallUpdate(
+            acp::ToolCallUpdate::new(
+                format!("edit-{}", huge_entry.turn),
+                acp::ToolCallUpdateFields::new()
+                    .status(acp::ToolCallStatus::InProgress)
+                    .content(vec![acp::ToolCallContent::Diff(
+                        acp::Diff::new(
+                            file_path(huge_entry.turn),
+                            churned_file_text(huge_entry.turn, churn_period),
+                        )
+                        .old_text(old_file_text(huge_entry.turn)),
+                    )]),
+            ),
+        ));
+    } else if cycle_frame == 0 {
+        session_updates.push(acp::SessionUpdate::ToolCallUpdate(
+            acp::ToolCallUpdate::new(
+                huge_entry.tool_call_id.clone(),
+                acp::ToolCallUpdateFields::new()
+                    .status(acp::ToolCallStatus::InProgress)
+                    .content(vec![text_content(huge_terminal_output(payload_seed))]),
+            ),
+        ));
+    } else {
+        session_updates.push(acp::SessionUpdate::ToolCallUpdate(
+            acp::ToolCallUpdate::new(
+                format!("read-{}", payload_seed % TURNS),
+                acp::ToolCallUpdateFields::new()
+                    .status(acp::ToolCallStatus::Completed)
+                    .content(vec![text_content(terminal_output(payload_seed))]),
+            ),
+        ));
+    }
+
+    FrameInput {
+        cycle_frame,
+        huge_entry_ix: huge_entry.item_ix,
+        streaming_terminal_id: terminal_ids[cycle % terminal_ids.len()].clone(),
+        streaming_terminal_output: ansi_terminal_output(payload_seed, 6),
+        session_updates,
+    }
 }
 
 /// Builds the session updates for one conversation turn.
@@ -708,7 +784,7 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     //   terminals, and each cycle advances the live plan.
     // Content alternates rather than accumulating so the workload stays in a
     // steady state across Criterion samples.
-    let huge_entries: Vec<(usize, String)> = cx.read(|cx| {
+    let huge_entries: Vec<HugeEntry> = cx.read(|cx| {
         thread
             .read(cx)
             .entries()
@@ -716,15 +792,23 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
             .enumerate()
             .filter_map(|(entry_ix, entry)| match entry {
                 AgentThreadEntry::ToolCall(tool_call)
-                    if tool_call.id.0.starts_with("terminal-")
-                        && tool_call
-                            .id
-                            .0
-                            .trim_start_matches("terminal-")
-                            .parse::<usize>()
-                            .is_ok_and(|turn| turn % HUGE_OUTPUT_EVERY == 0) =>
+                    if tool_call.id.0.starts_with("terminal-") =>
                 {
-                    Some((entry_ix, tool_call.id.0.to_string()))
+                    let turn = tool_call
+                        .id
+                        .0
+                        .trim_start_matches("terminal-")
+                        .parse::<usize>()
+                        .ok()?;
+                    if turn % HUGE_OUTPUT_EVERY == 0 {
+                        Some(HugeEntry {
+                            item_ix: entry_ix,
+                            tool_call_id: tool_call.id.0.to_string(),
+                            turn,
+                        })
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             })
@@ -738,98 +822,43 @@ fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
         list_state.scroll_to_end();
     });
 
+    let mut frame_inputs: VecDeque<_> = (0..PRECOMPUTED_FRAME_INPUTS)
+        .map(|frame_ix| frame_input(frame_ix, &huge_entries, &terminal_ids))
+        .collect();
     let thread = thread.clone();
-    let mut frame = 0usize;
     let mut direction = -1.0f32;
     cx.bench_iter(move |cx| {
-        let cycle = frame / FRAMES_PER_CYCLE;
-        let cycle_frame = frame % FRAMES_PER_CYCLE;
-        frame += 1;
-
-        let (huge_entry_ix, huge_tool_call_id) = &huge_entries[cycle % huge_entries.len()];
-        let huge_turn: usize = huge_tool_call_id
-            .trim_start_matches("terminal-")
-            .parse()
-            .expect("huge tool call ids are terminal-N");
-
+        let frame_input = frame_inputs.pop_front().expect(
+            "agent panel benchmark consumed all precomputed frame inputs; increase PRECOMPUTED_FRAME_INPUTS",
+        );
         window.update(|_, cx| {
             // Terminal output streams continuously, like `cargo build`
             // running in an embedded terminal card.
-            let streaming_terminal = &terminal_ids[cycle % terminal_ids.len()];
             thread.update(cx, |thread, cx| {
                 thread.on_terminal_provider_event(
                     TerminalProviderEvent::Output {
-                        terminal_id: streaming_terminal.clone(),
-                        data: ansi_terminal_output(frame, 6),
+                        terminal_id: frame_input.streaming_terminal_id,
+                        data: frame_input.streaming_terminal_output,
                     },
                     cx,
                 );
             });
-            if cycle_frame == 3 {
-                // The plan advances as the agent works.
-                connection.send_update(session_id.clone(), plan_update(cycle % 24), cx);
-            }
 
-            if cycle_frame == 2 {
-                // Replace the adjacent edit tool call's diff, alternating its
-                // contents so `needs_update` is always true. This is the
-                // worst-case `edit_file_tool` streaming path: a full
-                // `Diff::finalized` rebuild plus a new editor entity.
-                let churn_period = if cycle % 2 == 0 { 5 } else { 7 };
-                connection.send_update(
-                    session_id.clone(),
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-                        format!("edit-{huge_turn}"),
-                        acp::ToolCallUpdateFields::new()
-                            .status(acp::ToolCallStatus::InProgress)
-                            .content(vec![acp::ToolCallContent::Diff(
-                                acp::Diff::new(
-                                    file_path(huge_turn),
-                                    churned_file_text(huge_turn, churn_period),
-                                )
-                                .old_text(old_file_text(huge_turn)),
-                            )]),
-                    )),
-                    cx,
-                );
-            } else if cycle_frame == 0 {
-                // Fresh giant log streams in, invalidating the entry's
-                // measured height...
-                connection.send_update(
-                    session_id.clone(),
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-                        huge_tool_call_id.clone(),
-                        acp::ToolCallUpdateFields::new()
-                            .status(acp::ToolCallStatus::InProgress)
-                            .content(vec![text_content(huge_terminal_output(frame))]),
-                    )),
-                    cx,
-                );
-            } else {
-                // ...while smaller tool call updates keep arriving.
-                connection.send_update(
-                    session_id.clone(),
-                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-                        format!("read-{}", frame % TURNS),
-                        acp::ToolCallUpdateFields::new()
-                            .status(acp::ToolCallStatus::Completed)
-                            .content(vec![text_content(terminal_output(frame))]),
-                    )),
-                    cx,
-                );
+            for update in frame_input.session_updates {
+                connection.send_update(session_id.clone(), update, cx);
             }
 
             thread_view.update(cx, |view, cx| {
-                if cycle_frame == 1 {
+                if frame_input.cycle_frame == 1 {
                     // Scrollbar-drag jump to the dirtied giant entry.
                     view.list_state.scroll_to(gpui::ListOffset {
-                        item_ix: *huge_entry_ix,
+                        item_ix: frame_input.huge_entry_ix,
                         offset_in_item: px(0.0),
                     });
                     direction = 1.0;
                 } else {
                     view.list_state.scroll_by(px(SCROLL_STEP * direction));
-                    if cycle_frame == FRAMES_PER_CYCLE / 2 {
+                    if frame_input.cycle_frame == FRAMES_PER_CYCLE / 2 {
                         direction = -direction;
                     }
                 }
