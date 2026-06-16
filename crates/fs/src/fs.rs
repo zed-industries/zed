@@ -2518,7 +2518,11 @@ impl FakeFs {
     }
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
-        self.executor.simulate_random_delay()
+        if self.executor.dispatcher().as_test().is_some() {
+            futures::future::Either::Left(self.executor.simulate_random_delay())
+        } else {
+            futures::future::Either::Right(futures::future::ready(()))
+        }
     }
 
     /// Returns list of all tracked trash entries.

@@ -8,31 +8,6 @@ use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc,
 
 pub use scheduler::{FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task};
 
-/// Completes after being polled twice, rescheduling the task in between.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Default)]
-struct YieldOnce {
-    yielded: bool,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Future for YieldOnce {
-    type Output = ();
-
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        if self.yielded {
-            std::task::Poll::Ready(())
-        } else {
-            self.yielded = true;
-            cx.waker().wake_by_ref();
-            std::task::Poll::Pending
-        }
-    }
-}
-
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
 #[derive(Clone)]
@@ -192,18 +167,9 @@ impl BackgroundExecutor {
     }
 
     /// In tests, run an arbitrary number of tasks (determined by the SEED environment variable).
-    ///
-    /// On dispatchers without a virtual clock (e.g. the benchmark dispatcher),
-    /// this yields once instead: the random delay only exists to fuzz the
-    /// deterministic test scheduler's interleavings, but completing instantly
-    /// would let polling loops that use this as a timer spin without ever
-    /// yielding to other tasks.
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
-        match self.dispatcher.as_test() {
-            Some(dispatcher) => futures::future::Either::Left(dispatcher.simulate_random_delay()),
-            None => futures::future::Either::Right(YieldOnce::default()),
-        }
+        self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
     /// In tests, move time forward. This does not run any tasks, but does make `timer`s ready.

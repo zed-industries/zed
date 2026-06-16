@@ -15,7 +15,7 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_ui::AgentPanel;
-use agent_ui::test_support::{StubAgentServer, init_test_app};
+use agent_ui::test_support::{StubAgentServer, init_test};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, BenchAppContext, FollowMode, UpdateGlobal as _, px, size};
@@ -397,7 +397,7 @@ fn turn_updates(turn: usize) -> Vec<acp::SessionUpdate> {
 fn agent_panel_scroll_heavy_thread(cx: &mut BenchAppContext) {
     // === Global init ===
     cx.update(|cx| {
-        init_test_app(cx);
+        init_test(cx);
         assets::Assets.load_test_fonts(cx);
         agent::ThreadStore::init_global(cx);
         agent_ui::thread_metadata_store::ThreadMetadataStore::init_global(cx);

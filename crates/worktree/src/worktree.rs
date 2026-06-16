@@ -5665,8 +5665,10 @@ impl BackgroundScanner {
         }
 
         #[cfg(feature = "test-support")]
-        if self.fs.is_fake() {
-            return self.executor.simulate_random_delay().await;
+        if let Some(dispatcher) = self.executor.dispatcher().as_test()
+            && self.fs.is_fake()
+        {
+            return dispatcher.simulate_random_delay().await;
         }
 
         self.executor.timer(FS_WATCH_LATENCY).await

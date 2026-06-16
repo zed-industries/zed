@@ -20,11 +20,11 @@ use crate::{
 
 /// Returns a benchmark platform backed by this thread's shared dispatcher.
 ///
-/// The platform is a [`TestPlatform`] backed by a multithreaded
-/// [`BenchDispatcher`], so background work runs with production concurrency in
-/// real time. The dispatcher is cached per thread and reused across benchmark
-/// invocations so worker and timer threads persist for the whole process
-/// instead of being recreated for every Criterion calibration pass.
+/// The platform uses this thread's shared multithreaded [`BenchDispatcher`], so
+/// background work runs with production concurrency in real time. The dispatcher
+/// is cached per thread and reused across benchmark invocations so worker and
+/// timer threads persist for the whole process instead of being recreated for
+/// every Criterion calibration pass.
 ///
 /// Text is shaped with the provided platform text system. Benchmarks generated
 /// by `#[gpui::bench]` use the current platform's text system, so text-heavy
