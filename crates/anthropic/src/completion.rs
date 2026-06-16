@@ -567,7 +567,9 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
-    use language_model_core::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+    use language_model_core::{
+        ANTHROPIC_PROVIDER_NAME, LanguageModelImage, LanguageModelRequestMessage, MessageContent,
+    };
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -1022,7 +1024,7 @@ mod tests {
 
     #[test]
     fn test_event_mapper_maps_compaction_block_and_deltas() {
-        let mut mapper = AnthropicEventMapper::new();
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
 
         let start_event: Event = serde_json::from_value(serde_json::json!({
             "type": "content_block_start",
