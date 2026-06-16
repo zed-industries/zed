@@ -362,6 +362,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.supports_fast_mode
     }
 
+    fn supports_server_side_compaction(&self) -> bool {
+        self.model.supports_server_side_compaction
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_effort_levels
@@ -501,7 +505,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     )
                     .await?;
 
-                    let mut mapper = AnthropicEventMapper::new();
+                    let mut mapper = AnthropicEventMapper::new(provider_name.clone());
                     Ok(map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
