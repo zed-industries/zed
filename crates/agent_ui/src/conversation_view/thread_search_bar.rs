@@ -984,14 +984,3 @@ fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
     }
     out
 }
-
-fn collect_tool_call_markdowns(tool_call: &ToolCall, out: &mut Vec<Entity<Markdown>>) {
-    // Only search the tool-call label, not its `content` (command output,
-    // file contents inlined by a tool, etc.). Content is hidden behind an
-    // expand toggle by default; matching inside collapsed blocks produces
-    // high match counts with no visible highlights, which is user-hostile.
-    // The label is always visible, so this keeps "what I see is what is
-    // searched" coherent. Users who want to grep expanded tool output can use
-    // a normal buffer search on the text after expanding the block.
-    out.push(tool_call.label.clone());
-}
