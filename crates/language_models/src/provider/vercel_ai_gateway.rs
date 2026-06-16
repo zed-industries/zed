@@ -7,12 +7,11 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderConfigurationView, RateLimiter,
-    env_var,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    ProviderConfigurationView, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;

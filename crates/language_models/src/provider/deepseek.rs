@@ -8,13 +8,12 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};

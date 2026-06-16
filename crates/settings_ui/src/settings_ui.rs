@@ -129,8 +129,8 @@ struct SettingField<T: 'static> {
 }
 
 enum SettingsPath {
-    Json(&'static str),  // a.b.c
-    Subpage(&'static str),  // a/b/c
+    Json(&'static str),    // a.b.c
+    Subpage(&'static str), // a/b/c
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -783,10 +783,8 @@ pub struct SettingsWindow {
     last_copied_link_path: Option<&'static str>,
     /// Cached configuration views per provider, created lazily. Holds the
     /// provider's chosen presentation ([`Inline`] or [`SubPage`]).
-    pub(crate) provider_configuration_views: HashMap<
-        language_model::LanguageModelProviderId,
-        language_model::ProviderConfigurationView,
-    >,
+    pub(crate) provider_configuration_views:
+        HashMap<language_model::LanguageModelProviderId, language_model::ProviderConfigurationView>,
     /// The provider whose configuration sub-page is currently open, if any.
     pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
     /// Directory path of the skill whose share link was most recently copied,
@@ -1517,8 +1515,7 @@ pub(crate) struct NonJsonItem {
     files: FileMask,
     can_reset: fn(&App) -> bool,
     reset: fn(&mut Window, &mut App),
-    render_control:
-        fn(&SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement,
+    render_control: fn(&SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement,
 }
 
 impl PartialEq for NonJsonItem {
@@ -1959,9 +1956,7 @@ impl SettingsWindow {
                       window: &mut Window,
                       cx: &mut Context<SettingsWindow>| {
                     if this.sub_page_stack.is_empty() {
-                        this.open_and_scroll_to_navbar_entry(
-                            entry_index, None, false, window, cx,
-                        );
+                        this.open_and_scroll_to_navbar_entry(entry_index, None, false, window, cx);
                     }
                 },
             );

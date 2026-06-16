@@ -6,12 +6,12 @@ use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;

@@ -6,11 +6,11 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt,
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
-    ProviderConfigurationView,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
+    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderConfigurationView,
+    RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
