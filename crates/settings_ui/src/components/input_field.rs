@@ -185,22 +185,23 @@ impl RenderOnce for SettingsInputField {
             })
         };
 
-        // When settings change externally (e.g. editing settings.json), the page
-        // re-renders but use_keyed_state returns the cached editor with stale text.
-        // Reconcile with the expected initial_text when the editor is not focused,
-        // so we don't clobber what the user is actively typing.
-        if let Some(initial_text) = &self.initial_text
-            && let Some(first_initial) = first_render_initial_text.read(cx)
-        {
-            if initial_text != first_initial && !editor.read(cx).is_focused(window) {
+        let is_editor_focused = editor.read(cx).is_focused(window);
+        let editor_text = editor.read(cx).text(cx);
+
+        // The cached editor keeps stale text when the setting changes underneath it, so
+        // reconcile it here, skipping focused editors with unsaved edits to avoid clobbering.
+        let synced_text = first_render_initial_text.read(cx);
+        if &self.initial_text != synced_text {
+            let has_unsaved_edits = editor_text != synced_text.as_deref().unwrap_or_default();
+            if !is_editor_focused || !has_unsaved_edits {
                 *first_render_initial_text.as_mut(cx) = self.initial_text.clone();
                 let weak_editor = editor.downgrade();
-                let initial_text = initial_text.clone();
+                let new_text = self.initial_text.clone().unwrap_or_default();
 
                 window.defer(cx, move |window, cx| {
                     weak_editor
                         .update(cx, |editor, cx| {
-                            editor.set_text(initial_text, window, cx);
+                            editor.set_text(new_text, window, cx);
                         })
                         .ok();
                 });
@@ -219,8 +220,7 @@ impl RenderOnce for SettingsInputField {
         let display_confirm_button = self.display_confirm_button;
         let display_clear_button = self.display_clear_button;
         let confirm_for_button = self.confirm.clone();
-        let is_editor_empty = editor.read(cx).text(cx).trim().is_empty();
-        let is_editor_focused = editor.read(cx).is_focused(window);
+        let is_editor_empty = editor_text.trim().is_empty();
 
         h_flex()
             .group("settings-input-field-editor")
