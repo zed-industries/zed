@@ -1490,24 +1490,9 @@ impl Default for RowHighlightOptions {
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
-    color: RowHighlightColor,
+    color: fn(&App) -> Hsla,
     options: RowHighlightOptions,
     type_id: TypeId,
-}
-
-enum RowHighlightColor {
-    #[allow(dead_code)]
-    Fixed(Hsla),
-    Themed(fn(&App) -> Hsla),
-}
-
-impl RowHighlightColor {
-    fn resolve(&self, cx: &App) -> Hsla {
-        match self {
-            RowHighlightColor::Fixed(color) => *color,
-            RowHighlightColor::Themed(function) => function(cx),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -8668,7 +8653,7 @@ impl Editor {
                     }
                     merged = true;
                     prev_highlight.index = index;
-                    prev_highlight.color = RowHighlightColor::Themed(color);
+                    prev_highlight.color = color;
                     prev_highlight.options = options;
                 }
             }
@@ -8679,7 +8664,7 @@ impl Editor {
                     RowHighlight {
                         range,
                         index,
-                        color: RowHighlightColor::Themed(color),
+                        color,
                         options,
                         type_id: TypeId::of::<T>(),
                     },
@@ -8756,7 +8741,7 @@ impl Editor {
             .get(&TypeId::of::<T>())
             .map_or(&[] as &[_], |vec| vec.as_slice())
             .iter()
-            .map(|highlight| (highlight.range.clone(), highlight.color.resolve(cx)))
+            .map(|highlight| (highlight.range.clone(), (highlight.color)(cx)))
     }
 
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
@@ -8793,7 +8778,7 @@ impl Editor {
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
                                     border: None,
-                                    background: highlight.color.resolve(cx).into(),
+                                    background: (highlight.color)(cx).into(),
                                     type_id: Some(highlight.type_id),
                                 },
                             );
