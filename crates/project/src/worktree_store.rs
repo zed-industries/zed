@@ -29,8 +29,8 @@ use util::{
     rel_path::RelPath,
 };
 use worktree::{
-    CreatedEntry, Entry, ProjectEntryId, RootRepoOrigin, UpdatedEntriesSet,
-    UpdatedGitRepositoriesSet, Worktree, WorktreeId,
+    CreatedEntry, Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree,
+    WorktreeId,
 };
 
 use crate::{ProjectPath, trusted_worktrees::TrustedWorktrees};
@@ -827,7 +827,6 @@ impl WorktreeStore {
                         visible,
                         abs_path: response.canonicalized_path,
                         root_repo_common_dir: response.root_repo_common_dir,
-                        root_repo_is_above_project: response.root_repo_is_above_project,
                     },
                     client,
                     path_style,
@@ -1156,10 +1155,6 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
-                    root_repo_is_above_project: worktree
-                        .snapshot()
-                        .root_repo_origin()
-                        .map(|origin| origin == RootRepoOrigin::AboveProjectRoot),
                 }
             })
             .collect()
@@ -1372,16 +1367,14 @@ impl WorktreeStore {
             .map(|worktree| {
                 let snapshot = worktree.read(cx).snapshot();
                 let folder_path = snapshot.abs_path().to_path_buf();
-                let main_path = if snapshot.root_repo_origin()
-                    == Some(RootRepoOrigin::AboveProjectRoot)
-                {
-                    folder_path.clone()
-                } else {
-                    snapshot
-                        .root_repo_common_dir()
-                        .map(|dir| crate::git_store::repo_identity_path(dir).to_path_buf())
-                        .unwrap_or_else(|| folder_path.clone())
-                };
+                let main_path = snapshot
+                    .root_repo_common_dir()
+                    .map(|dir| crate::git_store::repo_identity_path(dir))
+                    .filter(|repo_path| {
+                        *repo_path == folder_path.as_path() || !folder_path.starts_with(*repo_path)
+                    })
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| folder_path.clone());
                 (main_path, folder_path)
             })
             .unzip();
