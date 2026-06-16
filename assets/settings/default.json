@@ -1211,7 +1211,7 @@
     // Set to "" to disable.
     //
     // Example: "terminal_init_command": "claude"
-    "terminal_init_command": "",
+    "terminal_init_command": null,
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto
