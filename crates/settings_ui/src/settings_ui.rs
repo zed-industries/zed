@@ -2847,7 +2847,6 @@ impl SettingsWindow {
             .role(Role::SearchInput)
             .aria_label("Search Settings")
             .aria_value(a11y_value)
-            .aria_placeholder("Search settings…")
             .track_focus(&self.search_bar.focus_handle(cx))
             .a11y_synthetic_children(a11y_text_runs)
             .py_1()
