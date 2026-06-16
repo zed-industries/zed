@@ -490,9 +490,7 @@ impl RulesLibrary {
         };
 
         let picker = cx.new(|cx| {
-            let picker = Picker::list(picker_delegate, window, cx)
-                .modal(false)
-                .max_height(None);
+            let picker = Picker::list(picker_delegate, window, cx).modal(false);
             picker.focus(window, cx);
             picker
         });

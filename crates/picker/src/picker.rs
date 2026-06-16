@@ -71,90 +71,6 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
-/// Size relative to viewport, between 0.0 and 1.0
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ViewPortLength(f32);
-impl Eq for ViewPortLength {}
-
-/// Size relative to viewport, between 0.0 and 1.0
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ViewPortHeight(f32);
-impl Eq for ViewPortHeight {}
-
-/// Size relative to viewport, between 0.0 and 1.0
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ViewPortWidth(f32);
-impl Eq for ViewPortWidth {}
-
-impl ViewPortLength {
-    fn as_pixels(&self, window: &Window) -> Pixels {
-        window.viewport_size().height * self.0
-    }
-    fn from_pixels(height: Pixels, window: &Window) -> Self {
-        Self(height / window.viewport_size().height)
-    }
-}
-
-impl ops::Add for ViewPortLength {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
-    }
-}
-
-impl ViewPortHeight {
-    fn as_pixels(&self, window: &Window) -> Pixels {
-        window.viewport_size().height * self.0
-    }
-    fn from_pixels(height: Pixels, window: &Window) -> Self {
-        Self(height / window.viewport_size().height)
-    }
-}
-
-impl ops::Add for ViewPortHeight {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
-    }
-}
-
-impl ViewPortWidth {
-    const FULL: Self = Self(1.0);
-    fn as_pixels(&self, window: &Window) -> Pixels {
-        window.viewport_size().width * self.0
-    }
-
-    fn from_pixels(width: Pixels, window: &Window) -> Self {
-        Self(width / window.viewport_size().width)
-    }
-}
-
-impl ops::Add for ViewPortWidth {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
-    }
-}
-
-impl ops::Sub for ViewPortWidth {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
-    }
-}
-
-impl ops::Div<f32> for ViewPortWidth {
-    type Output = Self;
-
-    fn div(self, rhs: f32) -> Self::Output {
-        Self(self.0 / rhs)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PositionAndShape {
     /// Absolute position of left most side of the picker
@@ -171,20 +87,113 @@ pub(crate) struct PositionAndShape {
     preview: Pixels,
 }
 
+macro_rules! relative_size {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        pub struct $name {
+            viewport_fraction: f32,
+            rems: Rems,
+        }
+
+        impl From<Rems> for $name {
+            fn from(v: Rems) -> Self {
+                Self::rems(v)
+            }
+        }
+
+        impl $name {
+            pub const FULL: Self = Self {
+                viewport_fraction: 1.0,
+                rems: Rems::ZERO,
+            };
+
+            pub const fn viewport(fraction: f32) -> Self {
+                Self {
+                    viewport_fraction: fraction,
+                    rems: Rems::ZERO,
+                }
+            }
+
+            pub const fn rems(val: Rems) -> Self {
+                Self {
+                    viewport_fraction: 0.0,
+                    rems: val,
+                }
+            }
+
+            pub fn as_pixels(&self, window: &Window) -> Pixels {
+                self.viewport_fraction * window.viewport_size().width
+                    + self.rems * window.rem_size()
+            }
+
+            pub fn from_pixels(width: Pixels, window: &Window) -> Self {
+                Self {
+                    viewport_fraction: width / window.viewport_size().width,
+                    rems: Rems::ZERO,
+                }
+            }
+        }
+
+        impl ops::Add for $name {
+            type Output = Self;
+
+            fn add(self, rhs: Self) -> Self::Output {
+                Self {
+                    viewport_fraction: self.viewport_fraction + rhs.viewport_fraction,
+                    rems: self.rems + rhs.rems,
+                }
+            }
+        }
+
+        impl ops::Sub for $name {
+            type Output = Self;
+
+            fn sub(self, rhs: Self) -> Self::Output {
+                Self {
+                    viewport_fraction: self.viewport_fraction - rhs.viewport_fraction,
+                    rems: self.rems - rhs.rems,
+                }
+            }
+        }
+
+        impl ops::Div<f32> for $name {
+            type Output = Self;
+
+            fn div(mut self, rhs: f32) -> Self::Output {
+                self.viewport_fraction /= rhs;
+                self.rems = Rems(self.rems.0 / rhs);
+                self
+            }
+        }
+    };
+}
+
+relative_size!(RelativeHeight);
+relative_size!(RelativeWidth);
+relative_size!(RelativeLength);
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Shape {
     /// Non centered while user is extending a side
     Resizing(PositionAndShape),
     /// This is also what is serialized
     HorizontallyCentered {
-        width: ViewPortWidth,
-        height: ViewPortHeight,
-        preview_size: ViewPortLength,
+        width: RelativeWidth,
+        height: RelativeHeight,
+        preview_size: RelativeLength,
     },
 }
 
+#[derive(Debug, Default)]
+pub struct SizeBounds {
+    max_width: Option<Rems>,
+    min_width: Option<Rems>,
+    max_height: Option<Rems>,
+    min_height: Option<Rems>,
+}
+
 impl Shape {
-    const TOP: ViewPortHeight = ViewPortHeight(0.10);
+    const TOP: RelativeHeight = RelativeHeight::viewport(0.10); // TODO!(yara) should be able to drop this now right?
     fn picker_position_and_size(&self, window: &Window) -> PositionAndShape {
         let (width, height, preview_size) = match self {
             Shape::Resizing(res) => return *res,
@@ -199,8 +208,8 @@ impl Shape {
             //        W              V: full width     xxxxx: picker modal
             // -----xxxxx------      left = (V - W) / 2
             //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
-            left: ((ViewPortWidth::FULL - *width) / 2.0).as_pixels(window),
-            right: (ViewPortWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
+            left: ((RelativeWidth::FULL - *width) / 2.0).as_pixels(window),
+            right: (RelativeWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
             top: Self::TOP.as_pixels(window),
             bottom: (Self::TOP + *height).as_pixels(window),
             preview: preview_size.as_pixels(window),
@@ -287,9 +296,21 @@ impl Shape {
     /// pixels again
     pub(crate) fn centered_and_relative(pos: PositionAndShape, window: &Window) -> Self {
         Shape::HorizontallyCentered {
-            width: ViewPortWidth::from_pixels(pos.right - pos.left, window),
-            height: ViewPortHeight::from_pixels(pos.bottom - pos.top, window),
-            preview_size: ViewPortLength::from_pixels(pos.preview, window),
+            width: RelativeWidth::from_pixels(pos.right - pos.left, window),
+            height: RelativeHeight::from_pixels(pos.bottom - pos.top, window),
+            preview_size: RelativeLength::from_pixels(pos.preview, window),
+        }
+    }
+
+    fn set_initial_width(&mut self, w: impl Into<RelativeWidth>) {
+        if let Shape::HorizontallyCentered { width, .. } = self {
+            *width = w.into();
+        }
+    }
+
+    fn set_initial_height(&mut self, max_height: impl Into<RelativeHeight>) {
+        if let Shape::HorizontallyCentered { height, .. } = self {
+            *height = max_height.into();
         }
     }
 }
@@ -297,9 +318,9 @@ impl Shape {
 impl Default for Shape {
     fn default() -> Self {
         Self::HorizontallyCentered {
-            width: ViewPortWidth(0.6),
-            height: ViewPortHeight(0.6),
-            preview_size: ViewPortLength(0.3),
+            width: RelativeWidth::viewport(0.6),
+            height: RelativeHeight::viewport(0.6),
+            preview_size: RelativeLength::viewport(0.3),
         }
     }
 }
@@ -312,6 +333,7 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     shape: Shape,
+    size_bounds: SizeBounds,
     widest_item: Option<usize>,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
@@ -629,6 +651,7 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
+            size_bounds: SizeBounds::default(),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -648,10 +671,9 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn width(self, _width: impl Into<gpui::Rems>) -> Self {
-        // TODO!(yara) remove
+    pub fn width(mut self, width: impl Into<RelativeWidth>) -> Self {
+        self.shape.set_initial_width(width);
         self
-        // self.shape.base_width = Some(width.into());
     }
 
     pub fn widest_item(mut self, ix: Option<usize>) -> Self {
@@ -659,9 +681,10 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn max_height(self, _max_height: Option<Rems>) -> Self {
-        // TODO!(yara) do we want this?
-        // self.shape.max_height = max_height;
+    pub fn max_height(mut self, max_height: Option<impl Into<RelativeHeight>>) -> Self {
+        if let Some(h) = max_height {
+            self.shape.set_initial_height(h);
+        }
         self
     }
 

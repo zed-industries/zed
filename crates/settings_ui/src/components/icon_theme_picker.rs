@@ -190,5 +190,5 @@ pub fn icon_theme_picker(
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems_from_px(210.))
-        .max_height(Some(rems(18.).into()))
+        .max_height(Some(rems(18.)))
 }
