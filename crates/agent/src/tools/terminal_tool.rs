@@ -416,7 +416,6 @@ async fn run_terminal_tool(
     // its nearest existing ancestor directory. Reject anything that
     // isn't an already-existing directory so the user is only ever asked to
     // approve — and only ever grants — exactly the paths shown to them.
-    // todo! cameron is this still true?
     #[cfg(target_os = "linux")]
     for path in &write_paths {
         if !path.is_dir() {
