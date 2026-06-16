@@ -70,7 +70,9 @@ use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
-use feature_flags::{CreateThreadToolFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{
+    AgentSettingsUiFeatureFlag, CreateThreadToolFeatureFlag, FeatureFlagAppExt as _,
+};
 
 use fs::Fs;
 use gpui::{
@@ -3569,6 +3571,21 @@ impl AgentPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // When the agent settings have been moved into the settings UI, the
+        // panel no longer shows its own configuration overlay. Instead, route to
+        // the settings UI at the LLM providers page (where the model selector's
+        // "Configure" button expects to land).
+        if cx.has_flag::<AgentSettingsUiFeatureFlag>() {
+            window.dispatch_action(
+                Box::new(zed_actions::OpenSettingsAt {
+                    path: "llm_providers".to_string(),
+                    target: None,
+                }),
+                cx,
+            );
+            return;
+        }
+
         if matches!(self.overlay_view, Some(OverlayView::Configuration)) {
             self.clear_overlay(true, window, cx);
             return;
