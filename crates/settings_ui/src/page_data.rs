@@ -7885,6 +7885,33 @@ fn ai_page() -> SettingsPage {
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Allow Unsandboxed Terminal Commands",
+                description: "When enabled, agent terminal commands run without the OS sandbox instead of prompting when the sandbox can't be created.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some(zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .sandbox_permissions
+                            .as_ref()?
+                            .allow_unsandboxed
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .sandbox_permissions
+                            .get_or_insert_default()
+                            .allow_unsandboxed = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
                 field: Box::new(SettingField {

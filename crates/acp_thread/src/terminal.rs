@@ -9,6 +9,7 @@ use http_proxy::{Allowlist, ProxyConfig, ProxyEvent, ProxyHandle, UpstreamProxy}
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     process::ExitStatus,
@@ -76,9 +77,51 @@ impl SandboxNetworkAccess {
     }
 }
 
+/// A structured, serializable reason the OS sandbox could not be created for a
+/// command. Mirrors the Linux/WSL launcher's failure modes (Bubblewrap);
+/// surfaced to the user (and persisted in tool-call metadata) so the UI can
+/// explain what went wrong.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinuxWslSandboxError {
+    /// No usable `bwrap` binary was found on `PATH`.
+    BwrapNotFound,
+    /// The only `bwrap` found is setuid-root, which Zed refuses to run.
+    SetuidRejected,
+    /// `bwrap` is present but couldn't set up the sandbox (typically because
+    /// unprivileged user namespaces are disabled).
+    SandboxProbeFailed,
+    /// Any other failure, with a human-readable description.
+    Other(String),
+}
+
+impl LinuxWslSandboxError {
+    /// A short, user-facing explanation of why the sandbox couldn't be created,
+    /// suitable for display in the agent panel.
+    pub fn user_facing_message(&self) -> String {
+        match self {
+            LinuxWslSandboxError::BwrapNotFound => {
+                "No usable `bwrap` binary was found on your PATH. Install Bubblewrap to let \
+                 the agent sandbox terminal commands."
+                    .to_string()
+            }
+            LinuxWslSandboxError::SetuidRejected => {
+                "The only `bwrap` available is setuid-root, which Zed refuses to run. Install \
+                 a non-setuid Bubblewrap to let the agent sandbox terminal commands."
+                    .to_string()
+            }
+            LinuxWslSandboxError::SandboxProbeFailed => {
+                "`bwrap` is installed but couldn't create a sandbox, likely because \
+                 unprivileged user namespaces are disabled on this system."
+                    .to_string()
+            }
+            LinuxWslSandboxError::Other(message) => message.clone(),
+        }
+    }
+}
+
 impl SandboxWrap {
     /// Whether the OS sandbox for this request can actually be created right now,
-    /// returning a short human-readable reason when it can't.
+    /// returning a structured [`LinuxWslSandboxError`] when it can't.
     ///
     /// The sandbox implementation never runs a command unsandboxed on its own —
     /// it aborts if it can't create the sandbox. This lets a caller decide, up
@@ -86,9 +129,14 @@ impl SandboxWrap {
     /// (fail-open), or refuse (fail-closed). It runs a brief probe subprocess on
     /// Linux, so call it off the main thread. On platforms whose sandbox can't
     /// fail to set up this way it always returns `Ok`.
-    pub fn can_create_sandbox(&self, cwd: Option<&std::path::Path>) -> Result<(), String> {
+    pub fn can_create_sandbox(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<(), LinuxWslSandboxError> {
         #[cfg(target_os = "linux")]
         {
+            use sandbox::linux_bubblewrap::LauncherStatus;
+
             let writable: Vec<&std::path::Path> = self
                 .writable_paths
                 .iter()
@@ -101,7 +149,17 @@ impl SandboxWrap {
                 allow_fs_write: self.allow_fs_write,
             };
             sandbox::linux_bubblewrap::check_can_create_sandbox(&writable, permissions, cwd)
-                .map_err(|status| status.describe().to_string())
+                .map_err(|status| match status {
+                    LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
+                    LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
+                    LauncherStatus::SandboxProbeFailed => {
+                        LinuxWslSandboxError::SandboxProbeFailed
+                    }
+                    // `Success` never appears in the `Err` arm; map defensively.
+                    LauncherStatus::Success => {
+                        LinuxWslSandboxError::Other(status.describe().to_string())
+                    }
+                })
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -109,6 +167,28 @@ impl SandboxWrap {
             Ok(())
         }
     }
+}
+
+/// Why the OS sandbox was *not* applied to a terminal command, even though
+/// sandboxing is active for the thread. Persisted in tool-call metadata so the
+/// UI can explain the situation after the fact.
+///
+/// This is deliberately platform-agnostic — every variant exists on every
+/// platform — so the serialized form stored in the thread database never
+/// depends on which OS wrote it. Today only Linux/WSL can fail to create a
+/// sandbox (`ErrorLinuxWsl`), but the variant is named so macOS/Windows can
+/// grow their own failure cases later without a migration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SandboxNotAppliedReason {
+    /// Unsandboxed execution is permanently allowed via the `allow_unsandboxed`
+    /// setting.
+    DisabledForever,
+    /// The user allowed unsandboxed execution for the rest of this thread after
+    /// an earlier sandbox failure. There is always a preceding tool call whose
+    /// reason is [`SandboxNotAppliedReason::ErrorLinuxWsl`].
+    DisabledForThisThread,
+    /// The Linux/WSL (Bubblewrap) sandbox could not be created for this command.
+    ErrorLinuxWsl(LinuxWslSandboxError),
 }
 
 /// Opaque RAII handle the sandbox implementation hands back to keep its
