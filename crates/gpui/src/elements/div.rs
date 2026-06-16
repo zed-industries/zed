@@ -2730,7 +2730,6 @@ impl Interactivity {
                     // Press enter, space to trigger click, when the element is focused.
                     window.on_key_event({
                         let click_listeners = click_listeners.clone();
-                        let pending_keyboard_down = pending_keyboard_down;
                         let hitbox = hitbox.clone();
                         move |event: &KeyUpEvent, phase, window, cx| {
                             if phase.bubble() && !window.default_prevented() {
