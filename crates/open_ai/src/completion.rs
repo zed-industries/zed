@@ -563,14 +563,101 @@ fn add_message_content_part(
 }
 
 pub struct OpenAiEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
+    tool_calls_by_key: HashMap<ToolCallKey, RawToolCall>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum ToolCallKey {
+    Index(usize),
+    Id(String),
+    Position(usize),
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
         Self {
-            tool_calls_by_index: HashMap::default(),
+            tool_calls_by_key: HashMap::default(),
         }
+    }
+
+    fn tool_call_key(&mut self, tool_call: &crate::ToolCallChunk, position: usize) -> ToolCallKey {
+        let tool_id = tool_call
+            .id
+            .as_deref()
+            .filter(|tool_id| !tool_id.is_empty());
+        // Some OpenAI-compatible streams omit or mangle `index`. Prefer an
+        // existing provider index, then a stable id, and only use array
+        // position when it does not conflict with an existing id.
+        let key = if let Some(index) = tool_call.index {
+            let indexed_key = ToolCallKey::Index(index);
+            if self.tool_calls_by_key.contains_key(&indexed_key) {
+                indexed_key
+            } else if let Some(tool_id) = tool_id
+                && let Some(key) = self.tool_call_key_for_id(tool_id)
+            {
+                key
+            } else if let Some(key) = self.tool_calls_keyed_by_position(position)
+                && !matches!(key, ToolCallKey::Index(_))
+            {
+                key
+            } else {
+                indexed_key
+            }
+        } else if let Some(tool_id) = tool_id {
+            self.tool_call_key_for_id(tool_id)
+                .or_else(|| self.tool_call_key_for_position_and_id(position, tool_id))
+                .unwrap_or_else(|| ToolCallKey::Id(tool_id.to_string()))
+        } else {
+            self.tool_calls_keyed_by_position(position)
+                .unwrap_or(ToolCallKey::Position(position))
+        };
+
+        key
+    }
+
+    fn tool_call_key_for_id(&self, tool_id: &str) -> Option<ToolCallKey> {
+        self.tool_calls_by_key
+            .iter()
+            .find_map(|(key, tool_call)| (tool_call.id == tool_id).then(|| key.clone()))
+    }
+
+    fn tool_calls_keyed_by_position(&self, position: usize) -> Option<ToolCallKey> {
+        self.tool_calls_by_key.iter().find_map(|(key, tool_call)| {
+            (tool_call.position == Some(position)).then(|| key.clone())
+        })
+    }
+
+    fn tool_call_key_for_position_and_id(
+        &self,
+        position: usize,
+        tool_id: &str,
+    ) -> Option<ToolCallKey> {
+        self.tool_calls_by_key.iter().find_map(|(key, tool_call)| {
+            (tool_call.position == Some(position)
+                && if tool_call.invalid {
+                    tool_call.id == tool_id
+                } else {
+                    tool_call.id.is_empty() || tool_call.id == tool_id
+                })
+            .then(|| key.clone())
+        })
+    }
+
+    fn tool_call_entry(&mut self, key: ToolCallKey, position: usize) -> &mut RawToolCall {
+        self.tool_calls_by_key.entry(key.clone()).or_default();
+
+        for (entry_key, tool_call) in &mut self.tool_calls_by_key {
+            if entry_key != &key && tool_call.position == Some(position) {
+                tool_call.position = None;
+            }
+        }
+
+        let entry = self
+            .tool_calls_by_key
+            .get_mut(&key)
+            .expect("tool call entry should exist");
+        entry.position = Some(position);
+        entry
     }
 
     pub fn map_stream(
@@ -623,8 +710,31 @@ impl OpenAiEventMapper {
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
-                for tool_call in tool_calls {
-                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+                for (position, tool_call) in tool_calls.iter().enumerate() {
+                    let key = self.tool_call_key(tool_call, position);
+
+                    if let Some(tool_type) = tool_call.tool_type.as_deref()
+                        && !tool_type.is_empty()
+                        && tool_type != "function"
+                    {
+                        let entry = self.tool_call_entry(key, position);
+                        if let Some(tool_id) = tool_call.id.clone()
+                            && !tool_id.is_empty()
+                        {
+                            entry.id = tool_id;
+                        }
+                        entry.invalid = true;
+                        continue;
+                    }
+
+                    let entry = self.tool_call_entry(key, position);
+                    if entry.invalid {
+                        continue;
+                    }
+
+                    if tool_call.tool_type.as_deref() == Some("function") {
+                        entry.is_function = true;
+                    }
 
                     if let Some(tool_id) = tool_call.id.clone()
                         && !tool_id.is_empty()
@@ -644,7 +754,7 @@ impl OpenAiEventMapper {
                         }
                     }
 
-                    if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if entry.is_function && !entry.id.is_empty() && !entry.name.is_empty() {
                         if let Ok(input) = serde_json::from_str::<serde_json::Value>(
                             &fix_streamed_json(&entry.arguments),
                         ) {
@@ -669,8 +779,11 @@ impl OpenAiEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
+                events.extend(self.tool_calls_by_key.drain().filter_map(|(_, tool_call)| {
+                    if tool_call.invalid {
+                        return None;
+                    }
+                    Some(match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -687,7 +800,7 @@ impl OpenAiEventMapper {
                             raw_input: tool_call.arguments.clone().into(),
                             json_parse_error: error.to_string(),
                         }),
-                    }
+                    })
                 }));
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
@@ -708,6 +821,9 @@ struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+    is_function: bool,
+    invalid: bool,
+    position: Option<usize>,
 }
 
 pub struct OpenAiResponseEventMapper {
@@ -1234,7 +1350,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
+        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent,
+        ResponseStreamResult, ToolCallChunk,
     };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
@@ -1258,6 +1375,66 @@ mod tests {
             all_events.extend(mapper.map_event(event));
         }
         all_events.into_iter().filter_map(|e| e.ok()).collect()
+    }
+
+    fn completion_stream_event_from_json(value: serde_json::Value) -> ResponseStreamEvent {
+        match serde_json::from_value::<ResponseStreamResult>(value).unwrap() {
+            ResponseStreamResult::Ok(event) => event,
+            ResponseStreamResult::Err { error } => {
+                panic!("unexpected OpenAI stream error event: {error:?}")
+            }
+        }
+    }
+
+    fn completion_stream_tool_call_delta(tool_calls: serde_json::Value) -> ResponseStreamEvent {
+        completion_stream_event_from_json(json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1762997926,
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": tool_calls
+                }
+            }],
+            "usage": null
+        }))
+    }
+
+    fn completion_stream_tool_calls_finished() -> ResponseStreamEvent {
+        completion_stream_event_from_json(json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1762997926,
+            "choices": [{
+                "index": 0,
+                "delta": null,
+                "finish_reason": "tool_calls"
+            }],
+            "usage": null
+        }))
+    }
+
+    fn completed_tool_uses(
+        events: &[LanguageModelCompletionEvent],
+    ) -> Vec<(String, String, String)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ToolUse(tool_use) if tool_use.is_input_complete => {
+                    Some((
+                        tool_use.id.to_string(),
+                        tool_use.name.to_string(),
+                        tool_use.raw_input.to_string(),
+                    ))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn completed_tool_use(id: &str, name: &str, raw_input: &str) -> (String, String, String) {
+        (id.to_string(), name.to_string(), raw_input.to_string())
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -3208,8 +3385,9 @@ mod tests {
                         role: None,
                         content: None,
                         tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
+                            index: Some(0),
                             id: Some("call_dashscope_test".into()),
+                            tool_type: Some("function".into()),
                             function: Some(FunctionChunk {
                                 name: Some("list_directory".into()),
                                 arguments: Some("".into()),
@@ -3229,8 +3407,9 @@ mod tests {
                         role: None,
                         content: None,
                         tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
+                            index: Some(0),
                             id: Some("".into()),
+                            tool_type: None,
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("{\"path\": \"".into()),
@@ -3249,8 +3428,9 @@ mod tests {
                         role: None,
                         content: None,
                         tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
+                            index: Some(0),
                             id: Some("".into()),
+                            tool_type: None,
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("blog-scraper\"}".into()),
@@ -3435,6 +3615,496 @@ mod tests {
                     encrypted_content: "encrypted-blob".into(),
                 }),
             ]
+        );
+    }
+    #[test]
+    fn stream_maps_single_tool_call_without_index() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "id": "call_XQOsmT9LcJZGfpECAxBfeOdc",
+                "type": "function",
+                "function": {
+                    "name": "edit_file",
+                    "arguments": r#"{"path":"src/main.rs"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "call_XQOsmT9LcJZGfpECAxBfeOdc",
+                "edit_file",
+                r#"{"path":"src/main.rs"}"#
+            )]
+        );
+        assert!(matches!(
+            mapped.last(),
+            Some(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+        ));
+    }
+
+    #[test]
+    fn stream_maps_single_tool_call_with_negative_index() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "index": -1,
+                "id": "tooluse_xxxHQ",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": r#"{"path":"README.md"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "tooluse_xxxHQ",
+                "read_file",
+                r#"{"path":"README.md"}"#
+            )]
+        );
+    }
+
+    #[test]
+    fn stream_maps_tool_call_when_invalid_index_is_repaired() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "index": -1,
+                "id": "tooluse_repaired",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": r#"{"path":"REA"#
+                }
+            }])),
+            completion_stream_tool_call_delta(json!([{
+                "index": 0,
+                "function": {
+                    "arguments": r#"DME.md"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "tooluse_repaired",
+                "read_file",
+                r#"{"path":"README.md"}"#
+            )]
+        );
+    }
+
+    #[test]
+    fn stream_maps_no_index_tool_call_continuation_by_stable_id() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([
+                {
+                    "id": "call_one",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"a"#
+                    }
+                },
+                {
+                    "id": "call_two",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"b"#
+                    }
+                }
+            ])),
+            completion_stream_tool_call_delta(json!([{
+                "id": "call_two",
+                "type": "function",
+                "function": {
+                    "arguments": r#".txt"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        // The continuation shifts to array position 0, so matching only by
+        // chunk position would append it to call_one instead of call_two.
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "call_two",
+                "read_file",
+                r#"{"path":"b.txt"}"#
+            )]
+        );
+    }
+
+    #[test]
+    fn stream_maps_no_index_tool_call_continuation_by_chunk_position() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"a"#
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"b"#
+                    }
+                }
+            ])),
+            completion_stream_tool_call_delta(json!([
+                {
+                    "id": "call_one",
+                    "type": "function",
+                    "function": {
+                        "arguments": r#".txt"}"#
+                    }
+                },
+                {
+                    "id": "call_two",
+                    "type": "function",
+                    "function": {
+                        "arguments": r#".txt"}"#
+                    }
+                }
+            ])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        let mut completed_tool_uses = completed_tool_uses(&mapped);
+        completed_tool_uses.sort();
+
+        assert_eq!(
+            completed_tool_uses,
+            vec![
+                completed_tool_use("call_one", "read_file", r#"{"path":"a.txt"}"#),
+                completed_tool_use("call_two", "read_file", r#"{"path":"b.txt"}"#),
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_does_not_merge_no_index_tool_call_with_new_id_at_same_position() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "id": "call_one",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": r#"{"path":"a.txt"}"#
+                }
+            }])),
+            completion_stream_tool_call_delta(json!([{
+                "id": "call_two",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": r#"{"path":"b.txt"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        let mut completed_tool_uses = completed_tool_uses(&mapped);
+        completed_tool_uses.sort();
+
+        // A different non-empty id at the same array position is a new tool
+        // call, not a continuation of the previous one.
+        assert_eq!(
+            completed_tool_uses,
+            vec![
+                completed_tool_use("call_one", "read_file", r#"{"path":"a.txt"}"#),
+                completed_tool_use("call_two", "read_file", r#"{"path":"b.txt"}"#),
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_prefers_tool_call_index_over_chunk_position() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([
+                {
+                    "index": 1,
+                    "id": "call_index_one",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"one"#
+                    }
+                },
+                {
+                    "index": 0,
+                    "id": "call_index_zero",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"zero"#
+                    }
+                }
+            ])),
+            completion_stream_tool_call_delta(json!([
+                {
+                    "index": 0,
+                    "function": {
+                        "arguments": r#"-index-zero.txt"}"#
+                    }
+                },
+                {
+                    "index": 1,
+                    "function": {
+                        "arguments": r#"-index-one.txt"}"#
+                    }
+                }
+            ])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        let mut completed_tool_uses = completed_tool_uses(&mapped);
+        completed_tool_uses.sort();
+
+        // A valid provider index is authoritative even when array position
+        // disagrees with it.
+        assert_eq!(
+            completed_tool_uses,
+            vec![
+                completed_tool_use(
+                    "call_index_one",
+                    "read_file",
+                    r#"{"path":"one-index-one.txt"}"#
+                ),
+                completed_tool_use(
+                    "call_index_zero",
+                    "read_file",
+                    r#"{"path":"zero-index-zero.txt"}"#,
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_maps_multiple_tool_calls_without_indexes() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([
+                {
+                    "id": "call_one",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"a.txt"}"#
+                    }
+                },
+                {
+                    "id": "call_two",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"b.txt"}"#
+                    }
+                }
+            ])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+        let mut completed_tool_uses = completed_tool_uses(&mapped);
+        completed_tool_uses.sort();
+
+        assert_eq!(
+            completed_tool_uses,
+            vec![
+                completed_tool_use("call_one", "read_file", r#"{"path":"a.txt"}"#),
+                completed_tool_use("call_two", "read_file", r#"{"path":"b.txt"}"#),
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_does_not_complete_tool_use_for_delayed_non_function_tool_call_type() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "index": 0,
+                "id": "call_custom",
+                "function": {
+                    "name": "edit_file",
+                    "arguments": r#"{"path":"src/main.rs"}"#
+                }
+            }])),
+            completion_stream_tool_call_delta(json!([{
+                "index": 0,
+                "type": "custom"
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+
+        assert!(
+            mapped
+                .iter()
+                .all(|event| !matches!(event, LanguageModelCompletionEvent::ToolUse(_))),
+            "delayed non-function type must not emit ToolUse events: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn stream_does_not_rekey_invalid_tool_call_by_id() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "index": 0,
+                "id": "call_custom",
+                "type": "custom"
+            }])),
+            completion_stream_tool_call_delta(json!([
+                {
+                    "id": "call_other",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"README.md"}"#
+                    }
+                },
+                {
+                    "id": "call_custom",
+                    "type": "function",
+                    "function": {
+                        "name": "edit_file",
+                        "arguments": r#"{"path":"src/main.rs"}"#
+                    }
+                }
+            ])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "call_other",
+                "read_file",
+                r#"{"path":"README.md"}"#
+            )],
+            "invalid tool call ids must stay invalid across later chunks: {mapped:?}"
+        );
+    }
+
+    #[test]
+    fn stream_does_not_drop_new_tool_call_after_anonymous_invalid_tool_call() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "type": "custom"
+            }])),
+            completion_stream_tool_call_delta(json!([{
+                "id": "call_valid",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": r#"{"path":"README.md"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "call_valid",
+                "read_file",
+                r#"{"path":"README.md"}"#
+            )]
+        );
+    }
+
+    #[test]
+    fn stream_maps_anonymous_continuation_after_stable_id_shift() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([
+                {
+                    "id": "call_one",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"a"#
+                    }
+                },
+                {
+                    "id": "call_two",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": r#"{"path":"b"#
+                    }
+                }
+            ])),
+            completion_stream_tool_call_delta(json!([{
+                "id": "call_two",
+                "function": {
+                    "arguments": r#".txt"#
+                }
+            }])),
+            completion_stream_tool_call_delta(json!([{
+                "function": {
+                    "arguments": r#""}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+
+        assert_eq!(
+            completed_tool_uses(&mapped),
+            vec![completed_tool_use(
+                "call_two",
+                "read_file",
+                r#"{"path":"b.txt"}"#
+            )]
+        );
+    }
+
+    #[test]
+    fn stream_does_not_emit_tool_use_for_non_function_tool_call_type() {
+        let events = vec![
+            completion_stream_tool_call_delta(json!([{
+                "index": 0,
+                "id": "call_custom",
+                "type": "custom",
+                "function": {
+                    "name": "edit_file",
+                    "arguments": r#"{"path":"src/main.rs"}"#
+                }
+            }])),
+            completion_stream_tool_calls_finished(),
+        ];
+
+        let mapped = map_completion_events(events);
+
+        assert!(
+            mapped
+                .iter()
+                .all(|event| !matches!(event, LanguageModelCompletionEvent::ToolUse(_))),
+            "non-function tool call chunks must not become executable ToolUse events: {mapped:?}"
         );
     }
 }

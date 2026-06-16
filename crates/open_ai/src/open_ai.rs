@@ -399,7 +399,8 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::{Model, ReasoningEffort};
+    use super::{Model, ReasoningEffort, ToolCallChunk};
+    use serde_json::json;
 
     #[test]
     fn gpt_5_1_uses_none_reasoning_by_default() {
@@ -469,6 +470,43 @@ mod tests {
             Model::FivePointThreeCodex.supported_reasoning_efforts(),
             expected_efforts.as_slice()
         );
+    }
+
+    #[test]
+    fn tool_call_chunk_treats_malformed_indexes_as_missing() {
+        let valid_index_chunk = serde_json::from_value::<ToolCallChunk>(json!({
+            "index": 0,
+            "id": "call_valid",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": "{}"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(valid_index_chunk.index, Some(0));
+
+        for index in [
+            json!(null),
+            json!(-1),
+            json!("0"),
+            json!(0.5),
+            json!({ "value": 0 }),
+        ] {
+            let chunk = serde_json::from_value::<ToolCallChunk>(json!({
+                "index": index,
+                "id": "call_malformed",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{}"
+                }
+            }))
+            .unwrap();
+
+            assert_eq!(chunk.index, None);
+        }
     }
 }
 
@@ -675,13 +713,30 @@ pub struct ResponseMessageDelta {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    pub index: usize,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_tool_call_index",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub index: Option<usize>,
     pub id: Option<String>,
-
-    // There is also an optional `type` field that would determine if a
-    // function is there. Sometimes this streams in with the `function` before
-    // it streams in the `type`
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub tool_type: Option<String>,
     pub function: Option<FunctionChunk>,
+}
+
+fn deserialize_optional_tool_call_index<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    let Some(Value::Number(number)) = value else {
+        return Ok(None);
+    };
+
+    Ok(number
+        .as_u64()
+        .and_then(|index| usize::try_from(index).ok()))
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
