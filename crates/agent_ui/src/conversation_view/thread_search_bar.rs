@@ -369,7 +369,10 @@ impl ThreadSearchBar {
                     .read(cx)
                     .entries()
                     .get(entry_ix)
-                    .map(collect_markdowns)
+                    .map(|entry| {
+                        let entry_view_state = self.entry_view_state.read(cx);
+                        collect_markdowns(entry_ix, entry, &entry_view_state, cx)
+                    })
                     .unwrap_or_default();
                 for markdown in markdowns {
                     let source = markdown.read(cx).source().to_string();
@@ -800,16 +803,33 @@ fn nav_button(
         .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
 }
 
-fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
+fn collect_markdowns(
+    entry_ix: usize,
+    entry: &AgentThreadEntry,
+    entry_view_state: &EntryViewState,
+    cx: &App,
+) -> Vec<Entity<Markdown>> {
     let mut out = Vec::new();
     match entry {
         AgentThreadEntry::UserMessage(_) => {}
         AgentThreadEntry::AssistantMessage(message) => {
-            for chunk in &message.chunks {
-                if let AssistantMessageChunk::Message { block } = chunk
-                    && let Some(md) = block.markdown()
-                {
-                    out.push(md.clone());
+            for (chunk_ix, chunk) in message.chunks.iter().enumerate() {
+                match chunk {
+                    AssistantMessageChunk::Message { block } => {
+                        if let Some(md) = block.markdown() {
+                            out.push(md.clone());
+                        }
+                    }
+                    AssistantMessageChunk::Thought { block }
+                        if entry_view_state
+                            .thinking_block_state((entry_ix, chunk_ix), cx)
+                            .0 =>
+                    {
+                        if let Some(md) = block.markdown() {
+                            out.push(md.clone());
+                        }
+                    }
+                    AssistantMessageChunk::Thought { .. } => {}
                 }
             }
         }
@@ -818,6 +838,13 @@ fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
         }
         AgentThreadEntry::CompletedPlan(entries) => {
             out.extend(entries.iter().map(|e| e.content.clone()))
+        }
+        AgentThreadEntry::ContextCompaction(compaction)
+            if entry_view_state.is_compaction_expanded(entry_ix) =>
+        {
+            if let Some(summary) = &compaction.summary {
+                out.push(summary.clone());
+            }
         }
         AgentThreadEntry::ContextCompaction(_) => {}
     }
