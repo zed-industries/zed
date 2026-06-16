@@ -314,6 +314,7 @@
       "alt-tab": "agent::CycleFavoriteModels",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
+      "cmd-alt-y": "agent::AllowAlways",
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-a": "agent::OpenPermissionDropdown",
       "cmd-alt-z": "agent::RejectOnce",

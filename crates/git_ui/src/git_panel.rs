@@ -4133,6 +4133,8 @@ impl GitPanel {
             return;
         };
 
+        let is_push = matches!(action, RemoteAction::Push(_, _));
+
         workspace.update(cx, |workspace, cx| {
             let SuccessMessage { message, style } = remote_output::format_output(&action, info);
             let workspace_weak = cx.weak_entity();
@@ -4140,19 +4142,21 @@ impl GitPanel {
 
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
-                match style {
-                    Toast => this.icon(
-                        Icon::new(IconName::GitBranch)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    ),
-                    ToastWithLog { output } => this
-                        .icon(
-                            Icon::new(IconName::GitBranch)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .action("View Log", move |window, cx| {
+                let this = this.icon(
+                    Icon::new(IconName::GitBranch)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                );
+                match (style, is_push) {
+                    (Toast | ToastWithLog { .. }, true) => {
+                        this.action("Create Pull Request", move |window, cx| {
+                            window
+                                .dispatch_action(Box::new(zed_actions::git::CreatePullRequest), cx);
+                        })
+                    }
+                    (Toast, false) => this,
+                    (ToastWithLog { output }, false) => {
+                        this.action("View Log", move |window, cx| {
                             let output = output.clone();
                             let output =
                                 format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
@@ -4161,14 +4165,8 @@ impl GitPanel {
                                     open_output(operation, workspace, &output, window, cx)
                                 })
                                 .ok();
-                        }),
-                    PushPrLink { text, link } => this
-                        .icon(
-                            Icon::new(IconName::GitBranch)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .action(text, move |_, cx| cx.open_url(&link)),
+                        })
+                    }
                 }
                 .dismiss_button(true)
             });
@@ -5131,15 +5129,36 @@ impl GitPanel {
 
     fn render_history_tab(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().flex_1().size_full().overflow_hidden().map(|this| {
-            if let Some(history) = self.render_commit_history(window, cx) {
-                this.child(history)
-            } else {
+            let has_repo = self.active_repository.is_some();
+            let has_commits = self
+                .commit_history_shas
+                .as_ref()
+                .map_or(false, |shas| !shas.is_empty());
+            let is_loading = self.commit_history_shas.is_none() && has_repo;
+            if is_loading {
                 this.child(
                     h_flex()
                         .flex_1()
                         .justify_center()
                         .child(Label::new("Loading Commit History…").color(Color::Muted)),
                 )
+            } else if !has_repo || !has_commits {
+                this.child(
+                    h_flex()
+                        .flex_1()
+                        .justify_center()
+                        .child(Label::new("No commits yet").color(Color::Muted)),
+                )
+            } else {
+                match self.render_commit_history(window, cx) {
+                    Some(history) => this.child(history),
+                    None => this.child(
+                        h_flex()
+                            .flex_1()
+                            .justify_center()
+                            .child(Label::new("Failed to load commits").color(Color::Muted)),
+                    ),
+                }
             }
         })
     }

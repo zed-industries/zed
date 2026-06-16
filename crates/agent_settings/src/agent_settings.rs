@@ -414,7 +414,12 @@ impl Default for AgentProfileId {
 /// [`compile_sandbox_permissions`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SandboxPermissions {
-    pub allow_network: bool,
+    /// Allow sandboxed commands to reach any host over the network.
+    pub allow_all_hosts: bool,
+    /// Hosts sandboxed commands may always reach, in canonical form (exact
+    /// hostnames or leading-`*.` subdomain wildcards). Parsed/validated where
+    /// consumed (`agent::sandboxing`).
+    pub network_hosts: Vec<String>,
     pub allow_fs_write_all: bool,
     pub allow_unsandboxed: bool,
     pub write_paths: Vec<PathBuf>,
@@ -790,8 +795,14 @@ fn compile_sandbox_permissions(
         }
     }
 
+    let network_hosts = content
+        .network_hosts
+        .map(|hosts| hosts.0)
+        .unwrap_or_default();
+
     SandboxPermissions {
-        allow_network: content.allow_network.unwrap_or(false),
+        allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
+        network_hosts,
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
@@ -1027,7 +1038,8 @@ mod tests {
     #[test]
     fn test_sandbox_permissions_parsing_and_pruning() {
         let json = json!({
-            "allow_network": true,
+            "allow_all_hosts": true,
+            "network_hosts": ["github.com", "*.npmjs.org"],
             "allow_unsandboxed": true,
             "write_paths": [
                 "/tmp/build/cache",
@@ -1039,7 +1051,11 @@ mod tests {
         let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
         let permissions = compile_sandbox_permissions(Some(content));
 
-        assert!(permissions.allow_network);
+        assert!(permissions.allow_all_hosts);
+        assert_eq!(
+            permissions.network_hosts,
+            vec!["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
         assert_eq!(

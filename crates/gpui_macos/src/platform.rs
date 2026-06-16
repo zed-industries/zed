@@ -194,7 +194,14 @@ impl MacPlatform {
         let text_system = Arc::new(crate::MacTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
-        let text_system = Arc::new(gpui::NoopTextSystem::new());
+        let text_system = {
+            if !headless {
+                log::warn!(
+                    "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
+                );
+            }
+            Arc::new(gpui::NoopTextSystem::new())
+        };
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));

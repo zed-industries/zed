@@ -156,7 +156,7 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(!rendered.contains("## Terminal sandbox"));
-        assert!(!rendered.contains("allow_network"));
+        assert!(!rendered.contains("allow_hosts"));
     }
 
     #[test]
@@ -190,7 +190,8 @@ mod tests {
         assert!(rendered.contains("## Terminal sandbox"));
         assert!(rendered.contains("`/tmp/alpha`"));
         assert!(rendered.contains("`/tmp/beta`"));
-        assert!(rendered.contains("allow_network: true"));
+        assert!(rendered.contains("allow_hosts"));
+        assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("fs_write_paths"));
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
