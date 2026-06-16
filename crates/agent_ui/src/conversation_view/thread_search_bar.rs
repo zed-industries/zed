@@ -1,39 +1,3 @@
-//! In-thread search bar for the agent panel.
-//!
-//! This is a small companion to `ThreadView` that lets the user grep the
-//! currently-loaded thread without leaving the agent panel. It deliberately
-//! does NOT use `BufferSearchBar`/`SearchableItem` because the agent panel
-//! is not a workspace `Item`, so the toolbar/`ItemHandle` plumbing those
-//! assume doesn't apply here. Instead it reuses the load-bearing primitives:
-//!
-//! - [`SearchQuery`] for query parsing (regex / case / whole-word toggles).
-//! - [`search::SearchOption::as_button`] for the toggle button visuals — so
-//!   the buttons render identically to the ones in `BufferSearchBar`.
-//! - [`Markdown::set_search_highlights`] / `set_active_search_highlight` for
-//!   inline highlight rendering, exactly as `MarkdownPreviewView` uses them.
-//!
-//! What gets searched: user message text, assistant message chunks
-//! (`AssistantMessageChunk::Message` only), and tool-call labels. Results
-//! are surfaced one match at a time via the next/prev controls.
-//! Activating a match jumps the `ListState` to the entry that owns it
-//! and asks the markdown view to auto-scroll to the source index.
-//!
-//! What is deliberately NOT searched, regardless of UI state:
-//!
-//! - `AssistantMessageChunk::Thought` blocks. The matcher filters these
-//!   out in `collect_markdowns`.
-//! - `ToolCall.content` — terminal command output, file content read by
-//!   tools, diff editors, image previews.
-//!   **Expanding a tool call does NOT make its content searchable**;
-//!   the matcher never walks the content list at all. Trade-off: the
-//!   visible match count stays consistent with what's on screen, but
-//!   users cannot grep tool output through this bar.
-//!
-//! Other out-of-scope items for this initial cut:
-//!
-//! - Searching tool-call raw input/output JSON, which is not a `Markdown`
-//!   entity.
-//! - Cross-thread / historic search.
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,38 +35,23 @@ actions!(
     ]
 );
 
-/// Debounce before re-running the synchronous match scan in response to
-/// query edits or streaming thread updates, so fast typing and incoming
-/// message chunks don't trigger a full re-scan on every event.
-/// `pub(super)` so `conversation_view::tests` can advance the test clock
-/// past it without hard-coding the duration.
+/// Debounce for query edits and streaming thread updates.
 pub(super) const SEARCH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(150);
 
-/// Where a given match lives on screen. Past user messages are rendered
-/// through an `Editor` (the `MessageEditor`'s inner editor), whereas
-/// assistant messages and tool-call labels are rendered through `Markdown`
-/// entities. The two have different highlight APIs, so we tag each match
-/// with the entity it should be painted on.
+/// Search hits can be painted on either markdown or past-message editors.
 #[derive(Clone)]
 enum MatchTarget {
     Markdown {
         markdown: WeakEntity<Markdown>,
-        /// Index of this match within `Markdown`'s highlight list.
         markdown_match_ix: usize,
     },
     Editor {
         editor: WeakEntity<Editor>,
-        /// Anchor range in the editor's `MultiBuffer`, used both for
-        /// `Editor::highlight_background` ranges and for autoscroll.
         anchor_range: Range<Anchor>,
-        /// Index of this match within this editor's range list (passed to
-        /// `highlight_background`'s color closure).
         editor_match_ix: usize,
     },
 }
 
-/// A single match: which entry it belongs to, where it lives, and the
-/// byte offset inside the source string (used to autoscroll markdowns).
 struct ThreadMatch {
     entry_ix: usize,
     target: MatchTarget,
@@ -112,42 +61,21 @@ struct ThreadMatch {
 pub struct ThreadSearchBar {
     pub(super) query_editor: Entity<Editor>,
     options: SearchOptions,
-    /// Flat list of matches in thread order; empty when the query is empty
-    /// or produced no hits.
     matches: Vec<ThreadMatch>,
-    /// Index into `matches` of the currently-active highlight, if any.
     active_match: Option<usize>,
-    /// Set to true if the query is non-empty but failed to parse (e.g. bad
-    /// regex). Used to color the input red, mirroring `BufferSearchBar`.
     query_error: bool,
-    /// Human-readable error from the last failed query (e.g. regex parse
-    /// error). `None` when the query is valid or empty.
     query_error_message: Option<SharedString>,
-    /// The most-recently-used set of markdown entities. We hold weak refs
-    /// so we can clear their highlights when the query changes or the bar
-    /// is dismissed without leaking them.
     highlighted_markdowns: Vec<WeakEntity<Markdown>>,
-    /// Same purpose as `highlighted_markdowns`, but for editor-backed
-    /// matches (past user messages). Highlights here go through
-    /// `Editor::highlight_background(HighlightKey::BufferSearchHighlights, …)`,
-    /// which is what `Editor`'s own `SearchableItem` impl uses.
     highlighted_editors: Vec<WeakEntity<Editor>>,
     thread: Entity<AcpThread>,
     entry_view_state: Entity<EntryViewState>,
     on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)>,
-    /// True while the bar is shown (toggled on). Thread-driven refreshes are
-    /// skipped while hidden so a streaming thread doesn't re-apply highlights
-    /// behind a closed search UI.
     is_active: bool,
-    /// Holds the in-flight debounced re-scan; dropping it cancels a pending
-    /// refresh (e.g. when the bar is hidden).
     _update_matches_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 pub enum ThreadSearchBarEvent {
-    /// Emitted when the user wants to focus the parent thread (e.g. pressed
-    /// Escape). The parent restores focus to its own focus handle.
     Dismissed,
 }
 
@@ -160,12 +88,6 @@ impl Focusable for ThreadSearchBar {
 }
 
 impl ThreadSearchBar {
-    /// Build a new search bar bound to `thread`. `on_activate_match` is
-    /// invoked with the `entry_ix` of the activated match so the thread view
-    /// can scroll its `ListState` to that entry. Intra-entry scrolling is
-    /// handled internally before the callback fires: markdown matches via a
-    /// `Markdown` autoscroll request, editor-backed matches (past user
-    /// messages) by selecting the match so the editor reveals it.
     pub fn new(
         thread: Entity<AcpThread>,
         entry_view_state: Entity<EntryViewState>,
@@ -190,11 +112,6 @@ impl ThreadSearchBar {
                 }
             },
         );
-        // Re-run the search when the thread's content changes (new entries,
-        // edits to existing ones, removals) so matches and highlights stay in
-        // sync with a streaming conversation. Debounced via
-        // `schedule_update_matches` and gated on `is_active` so a hidden bar
-        // doesn't churn (or re-apply highlights) while content streams in.
         let thread_subscription = cx.subscribe_in(
             &thread,
             window,
@@ -233,18 +150,12 @@ impl ThreadSearchBar {
         }
     }
 
-    /// Called by `ThreadView` after the user pressed `agent::ToggleSearch`
-    /// or after a new thread becomes active. Focuses the query input and
-    /// re-runs the existing query (if any) against the new thread state.
     pub fn focus_and_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.is_active = true;
         self.focus_query_and_select_all(window, cx);
         self.update_matches(window, cx);
     }
 
-    /// Focus the query input and select its contents so the next keystroke
-    /// replaces the query. Shared by the open path (`focus_and_refresh`) and
-    /// `search::FocusSearch`.
     fn focus_query_and_select_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         let focus_handle = self.query_editor.focus_handle(cx);
         focus_handle.focus(window, cx);
@@ -253,10 +164,6 @@ impl ThreadSearchBar {
         });
     }
 
-    /// Debounced entry point used by the query-editor and thread
-    /// subscriptions. Coalesces bursts of edits / streaming updates into a
-    /// single synchronous `update_matches` after `SEARCH_UPDATE_DEBOUNCE`.
-    /// Replacing the task drops (cancels) any earlier pending refresh.
     fn schedule_update_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self._update_matches_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(SEARCH_UPDATE_DEBOUNCE).await;
@@ -265,16 +172,11 @@ impl ThreadSearchBar {
         }));
     }
 
-    /// Test-only accessor for the total match count. The `matches` vec
-    /// stores `ThreadMatch` which is private; exposing this scalar keeps
-    /// the type sealed while letting `conversation_view::tests` observe
-    /// the search result.
     #[cfg(test)]
     pub(super) fn match_count(&self) -> usize {
         self.matches.len()
     }
 
-    /// Test-only accessor for the active match index.
     #[cfg(test)]
     pub(super) fn active_match_index(&self) -> Option<usize> {
         self.active_match
@@ -294,9 +196,6 @@ impl ThreadSearchBar {
         self.query_editor.read(cx).text(cx)
     }
 
-    /// Returns the `(query, error_message)` pair. On parse failure the
-    /// query is `None` and the error message describes what went wrong
-    /// (useful for surfacing regex parse errors to the user).
     fn build_query(&self, cx: &App) -> (Option<Arc<SearchQuery>>, Option<SharedString>) {
         let text = self.current_query(cx);
         if text.is_empty() {
@@ -338,7 +237,6 @@ impl ThreadSearchBar {
         let (query, err_msg) = self.build_query(cx);
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
         self.query_error_message = err_msg;
-        // Always clear stale highlights from the previous query.
         for weak in self.highlighted_markdowns.drain(..) {
             if let Some(md) = weak.upgrade() {
                 md.update(cx, |md, cx| md.clear_search_highlights(cx));
@@ -359,16 +257,7 @@ impl ThreadSearchBar {
             return;
         };
 
-        // For each entry, dispatch on type:
-        //
-        // * `UserMessage` is rendered through a `MessageEditor` (an `Editor`),
-        //   not the markdown attached to the entry. Searching the markdown
-        //   would count hits but paint nothing visible. Look up the editor
-        //   from `EntryViewState`, search its buffer text, and paint via
-        //   `Editor::highlight_background` — same path `Editor`'s own
-        //   `SearchableItem` impl uses.
-        // * Everything else (`AssistantMessage`, `ToolCall` label,
-        //   `CompletedPlan`) keeps the markdown highlight path.
+        // Past user messages render through `MessageEditor`, not markdown.
         let entry_count = self.thread.read(cx).entries().len();
         for entry_ix in 0..entry_count {
             let is_user_message = self
@@ -474,12 +363,6 @@ impl ThreadSearchBar {
         let source_index = m.source_range.start;
         let target = m.target.clone();
 
-        // Walk all highlighted markdowns and update which one (if any) has
-        // an active highlight set. We can't store the markdown_id inside
-        // `Markdown` because per-entry markdowns share the same type and
-        // don't know their "place" in our match list; instead we set
-        // active only on the markdown that owns the current match, and
-        // clear it on everything else.
         let (target_markdown_id, target_markdown_match_ix) = match &target {
             MatchTarget::Markdown {
                 markdown,
@@ -501,12 +384,7 @@ impl ThreadSearchBar {
             }
         }
 
-        // For editor-backed matches we have to re-apply `highlight_background`
-        // because the active-vs-inactive distinction lives inside the color
-        // closure (per `Editor::SearchableItem::update_matches`). Compute,
-        // per editor, the ordered range list and which of its matches (if
-        // any) is the active one, then re-paint. This is O(total matches) per
-        // navigation step, which is fine for typical thread match counts.
+        // Editor highlight colors are computed by index, so repaint on navigation.
         let target_editor_id = match &target {
             MatchTarget::Editor { editor, .. } => Some(editor.entity_id()),
             MatchTarget::Markdown { .. } => None,
@@ -557,26 +435,6 @@ impl ThreadSearchBar {
             });
         }
 
-        // Reveal the active match. Cross-entry scrolling is driven by the
-        // list-level `scroll_to(entry_ix)` that `on_activate_match` performs
-        // below (same path `scroll_to_most_recent_user_prompt` uses), which
-        // brings the entry's top to the viewport. For editor-backed matches
-        // (past user messages) we select the match range with `no_scroll` so
-        // the active highlight tracks it; we deliberately do NOT try to scroll
-        // *within* the message editor.
-        //
-        // Known limitation: a match below the fold of a very long user message
-        // is highlighted but the view only scrolls the message's top into
-        // place, so the hit can remain off-screen until the user scrolls.
-        // Past user messages render through an `AutoHeight` `Editor` inside a
-        // virtualized `List`; the editor's own autoscroll request is only
-        // honored by `List::prepaint_items` if that row is painted on the same
-        // frame, and reissuing it after the list scroll (synchronously or via
-        // `on_next_frame`) did not reliably land in practice. Assistant
-        // (markdown) matches don't share this limitation because the markdown
-        // element re-issues `request_autoscroll_to_source_index` every paint
-        // until satisfied. Most user messages are shorter than a viewport, so
-        // this edge case is left unaddressed by design.
         if let MatchTarget::Editor {
             editor,
             anchor_range,
@@ -643,9 +501,6 @@ impl ThreadSearchBar {
         cx.emit(ThreadSearchBarEvent::Dismissed);
     }
 
-    /// Called when the bar is being torn down or hidden. Clears every
-    /// markdown entity we touched so we don't leave stale yellow highlights
-    /// when the user toggles search off.
     pub fn clear_highlights(&mut self, cx: &mut Context<Self>) {
         self.clear_highlights_impl(cx);
         cx.notify();
@@ -700,9 +555,6 @@ impl ThreadSearchBar {
         self.update_matches(window, cx);
     }
 
-    /// Handler for `search::FocusSearch` (bound to Cmd/Ctrl+F inside the bar's
-    /// context). Mirrors `BufferSearchBar`'s behavior: focus the query input
-    /// and select all its text so the next keystroke replaces the query.
     pub(super) fn focus_search(
         &mut self,
         _: &search::FocusSearch,
@@ -719,10 +571,6 @@ impl Render for ThreadSearchBar {
         let theme = cx.theme().colors();
         let has_matches = !self.matches.is_empty();
         let query_empty = self.query_editor.read(cx).text(cx).is_empty();
-        // The query text turns red when the query is non-empty but produces
-        // no matches (or fails to parse as regex). Border stays at the
-        // default color: feedback comes from text + counter, not from a
-        // surrounding box — matches the convention the user prefers.
         let in_error_state = self.query_error || (!query_empty && !has_matches);
         let border_color = theme.border;
 
@@ -730,10 +578,6 @@ impl Render for ThreadSearchBar {
         key_context.add("AcpThreadSearchBar");
 
         let counter_text = self.active_match_text(cx).unwrap_or_default();
-        // Counter stays muted on "no matches" rather than red, mirroring
-        // `BufferSearchBar` / Markdown Preview Search. The red signal comes from
-        // the query text turning red (via `in_error_state`); doubling it on the
-        // counter was too noisy.
         let counter_color = if has_matches {
             Color::Default
         } else {
@@ -741,41 +585,10 @@ impl Render for ThreadSearchBar {
         };
 
         let bar_row = h_flex()
-            // Tie this element to the query editor's focus handle so the
-            // `AcpThreadSearchBar` key context lands in the editor's
-            // dispatch chain when typing in the query. The handlers below
-            // are belt-and-suspenders — `ThreadView` also forwards these
-            // actions from its own (outer) element so they fire reliably
-            // when focus is somewhere else (e.g. the message editor) while
-            // the bar is open.
             .track_focus(&focus_handle)
             .key_context(key_context)
-            // Capture `editor::Newline*` actions before the editor's
-            // bubble-phase handler inserts a newline into the single-line
-            // query buffer. Base keymaps like `keymaps/linux/jetbrains.json`
-            // bind `shift-enter` → `editor::NewlineBelow` at the bare
-            // `Editor` context. In gpui's keymap resolution this beats the
-            // bar's `shift-enter` → `agent::SelectPreviousThreadMatch`
-            // binding under the `AcpThreadSearchBar` context: both
-            // predicates match at the same depth, and the binding-index
-            // tiebreak favors the later-loaded base keymap. An
-            // `AcpThreadSearchBar > Editor` keymap block is NOT enough to
-            // win that tiebreak — see the regression test for the
-            // empirical confirmation. Capturing the action in this phase
-            // is the precedent used by `BufferSearchBar`, `MessageEditor`,
-            // and the inline-assist prompt editor for the same reason.
-            //
-            // The single-line query buffer has no legitimate use for any
-            // newline-class action, so we consume all three variants and
-            // route to `select_prev_match`. JetBrains specifically maps
-            // `shift-enter` to `NewlineBelow`; the other two are covered
-            // defensively in case a future or user keymap routes
-            // `shift-enter` to `Newline` or `NewlineAbove`.
-            //
-            // `cx.stop_propagation()` is required: the capture phase
-            // defaults to PROPAGATE (only the bubble phase auto-consumes).
-            // Without an explicit stop, the editor's bubble-phase handler
-            // still fires and inserts a newline into the buffer.
+            // Some base keymaps route Shift+Enter to `editor::Newline*` before
+            // `AcpThreadSearchBar` bindings win, so capture and consume them.
             .capture_action(
                 cx.listener(|this, _: &editor::actions::NewlineBelow, window, cx| {
                     this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
@@ -875,9 +688,6 @@ impl Render for ThreadSearchBar {
                     )),
             );
 
-        // Stack the bar above an error message row so a bad regex etc.
-        // gets a textual explanation, matching the `MarkdownPreview`
-        // search behavior the user pointed at as the reference UX.
         let error_row = self.query_error_message.clone().map(|msg| {
             div()
                 .w_full()
@@ -958,14 +768,11 @@ fn nav_button(
         .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
 }
 
-/// Collects every `Entity<Markdown>` reachable from a thread entry,
-/// in display order.
 fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
     let mut out = Vec::new();
     match entry {
         AgentThreadEntry::UserMessage(_) => {}
         AgentThreadEntry::AssistantMessage(message) => {
-            // Only search the visible-by-default `Message` chunks.
             for chunk in &message.chunks {
                 if let AssistantMessageChunk::Message { block } = chunk
                     && let Some(md) = block.markdown()

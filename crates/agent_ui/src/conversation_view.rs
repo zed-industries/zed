@@ -6069,15 +6069,6 @@ pub(crate) mod tests {
         });
     }
 
-    /// Build a thread with two user prompts and two assistant responses
-    /// chosen so that the substring `"banana"` appears once in the first
-    /// user message, twice across both assistant responses, and the
-    /// substring `"apple"` appears nowhere. Then open the search bar,
-    /// type each query, and verify the match count.
-    ///
-    /// This indirectly exercises the matcher (`SearchQuery::search_str`
-    /// over every entry's markdown), the active-match state machine, and
-    /// the `ListState` scroll handoff to the entry containing a match.
     #[gpui::test]
     async fn test_thread_search_finds_matches_across_entries(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6123,9 +6114,6 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        // Type a case-insensitive query that matches user msg 1 once and
-        // assistant msg 1 once and assistant msg 2 twice (lowercase
-        // "banana" + uppercase "Banana" both match by default).
         let bar = thread_view
             .read_with(cx, |view, _| view.thread_search_bar.clone())
             .expect("thread_search_bar should be set after toggle_search");
@@ -6133,29 +6121,22 @@ pub(crate) mod tests {
             bar.query_editor.update(cx, |editor, cx| {
                 editor.set_text("banana", window, cx);
             });
-            // The editor-edited event normally triggers `update_matches`
-            // asynchronously; call directly so the test is deterministic.
             bar.update_matches(window, cx);
         });
         cx.run_until_parked();
 
         let (match_count, active_text) =
             bar.read_with(cx, |bar, cx| (bar.match_count(), bar.active_match_text(cx)));
-        // 1 in user-1 ("Can I use banana") + 1 in assistant-1 + 2 in
-        // assistant-2 ("Banana" + "banana") = 4 matches total.
         assert_eq!(
             match_count, 4,
             "expected 4 matches for case-insensitive 'banana'"
         );
         assert_eq!(active_text.as_deref(), Some("1/4"));
 
-        // The first match lives in entry 0 (user message 1); the bar
-        // should have asked the list to scroll there.
         thread_view.read_with(cx, |view, _| {
             assert_eq!(view.list_state.logical_scroll_top().item_ix, 0);
         });
 
-        // Step forward and verify navigation lands on later entries.
         bar.update_in(cx, |bar, window, cx| {
             bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
         });
@@ -6163,7 +6144,6 @@ pub(crate) mod tests {
         let active_text_2 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
         assert_eq!(active_text_2.as_deref(), Some("2/4"));
 
-        // Wrap from last to first using prev from match 1.
         bar.update_in(cx, |bar, window, cx| {
             bar.select_prev_match(
                 &super::thread_search_bar::SelectPreviousThreadMatch,
@@ -6174,7 +6154,6 @@ pub(crate) mod tests {
         let active_text_3 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
         assert_eq!(active_text_3.as_deref(), Some("1/4"));
 
-        // Switch query to something that doesn't match.
         bar.update_in(cx, |bar, window, cx| {
             bar.query_editor.update(cx, |editor, cx| {
                 editor.set_text("apple", window, cx);
@@ -6188,11 +6167,6 @@ pub(crate) mod tests {
         assert_eq!(active_text_apple.as_deref(), Some("0/0"));
     }
 
-    /// Regression test for #4 in review: navigating to a match that lives in
-    /// a *later* user message must move the list scroll target to that entry,
-    /// so the highlighted hit is brought into view (previously the editor's
-    /// own autoscroll was relied upon and didn't survive list virtualization,
-    /// so user-message hits highlighted but never scrolled on screen).
     #[gpui::test]
     async fn test_thread_search_scrolls_to_later_user_message_match(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6208,8 +6182,6 @@ pub(crate) mod tests {
 
         let thread =
             active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
-        // The unique token `papaya` appears only in the SECOND user message,
-        // so its single match lives in a later entry than the first.
         thread
             .update(cx, |thread, cx| thread.send_raw("First question", cx))
             .await
@@ -6225,8 +6197,6 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let thread_view = active_thread(&conversation_view, cx);
-        // Layout: [User0, Assistant1, User2, Assistant3]; the `papaya` match
-        // is in User2 (entry 2).
         let papaya_entry_ix = thread.read_with(cx, |thread, _| {
             thread
                 .entries()
@@ -6258,9 +6228,6 @@ pub(crate) mod tests {
             );
         });
 
-        // The deferred list scroll runs through `cx.defer`; `run_until_parked`
-        // flushes it. The list should now target the user-message entry that
-        // owns the match.
         thread_view.read_with(cx, |view, _| {
             assert_eq!(
                 view.list_state.logical_scroll_top().item_ix,
@@ -6270,9 +6237,6 @@ pub(crate) mod tests {
         });
     }
 
-    /// Verifies that dismissing the search bar clears highlights from
-    /// every markdown entity it touched, so reopening doesn't show
-    /// stale yellow ranges.
     #[gpui::test]
     async fn test_thread_search_dismiss_clears_highlights(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6311,14 +6275,9 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        // After search, at least one markdown has highlights.
         let entries = thread.read_with(cx, |thread, _| thread.entries().len());
         assert!(entries > 0);
 
-        // Clear highlights (the action a real dismiss takes). Toggle path
-        // through `toggle_search` depends on focus state which is not
-        // deterministic in the headless test harness, so we exercise the
-        // underlying state mutation directly.
         bar.update(cx, |bar, cx| bar.clear_highlights(cx));
         cx.run_until_parked();
 
@@ -6328,10 +6287,6 @@ pub(crate) mod tests {
         });
     }
 
-    /// Releasing the search bar while it is still active must clean up the
-    /// highlights stored on thread markdown/editor entities. Otherwise a
-    /// retained thread can render stale search highlights after its view is
-    /// destroyed without an explicit dismiss.
     #[gpui::test]
     async fn test_thread_search_release_clears_markdown_highlights(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6407,9 +6362,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// The bar subscribes to thread updates: with search open and a live
-    /// query, content that streams in *after* the initial scan should be
-    /// picked up (debounced) without the user re-touching the query.
     #[gpui::test]
     async fn test_thread_search_refreshes_on_new_thread_entry(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6453,10 +6405,7 @@ pub(crate) mod tests {
             "expected at least one initial match, got {count_before}",
         );
 
-        // Stream a second exchange containing more occurrences while the bar
-        // stays open. The thread subscription schedules a *debounced* rescan
-        // (`SEARCH_UPDATE_DEBOUNCE`); advance the test clock past the debounce
-        // so the deferred `update_matches` actually runs before we assert.
+        // Advance past the debounced thread-update rescan.
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
             acp::ContentChunk::new("Banana banana: two more banana hits here.".into()),
         )]);
@@ -6477,15 +6426,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Reproduces the double-borrow panic that originally hit on Enter / Ctrl+F
-    /// while the bar was visible: `ThreadView`'s action handler forwards to
-    /// `bar.select_next_match` from inside `ThreadView::update`. The bar then
-    /// synchronously invokes the `on_activate_match` callback that asks
-    /// `ThreadView` to scroll the list state. Before the `cx.defer` wrap in
-    /// `toggle_search`, the inner `view.update(cx, ...)` re-entered `ThreadView`'s
-    /// already-active update and panicked with `cannot update X while it is
-    /// already being updated`. This test drives the exact nesting pattern that
-    /// the action dispatch produces at runtime.
+    /// Regression test for re-entering `ThreadView` during search navigation.
     #[gpui::test]
     async fn test_thread_search_select_next_from_thread_view_update_does_not_panic(
         cx: &mut TestAppContext,
@@ -6534,10 +6475,6 @@ pub(crate) mod tests {
             initial_match_count,
         );
 
-        // Nest the bar update inside a ThreadView update to reproduce the
-        // action-dispatch path. Without the `cx.defer` fix in `toggle_search`'s
-        // `on_activate_match` callback, the synchronous re-entry into
-        // `ThreadView` would panic here.
         thread_view.update_in(cx, |view, window, cx| {
             let bar = view
                 .thread_search_bar
@@ -6557,12 +6494,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Regression test for highlighting search hits inside past user messages.
-    /// The hit must land as a `BufferSearchHighlights` entry on that message's
-    /// inner `Editor` (because past user messages are rendered through
-    /// `MessageEditor`, not through the markdown that the bar otherwise paints).
-    /// Without this, the bar counted the hit but the painted highlight was
-    /// invisible.
+    /// Past user-message hits must be painted on the inner `Editor`.
     #[gpui::test]
     async fn test_thread_search_highlights_user_message_editor(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6576,9 +6508,6 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
-        // The substring `kumquat` only appears in the user message we send;
-        // the assistant reply above contains no occurrences. Any hit must
-        // therefore land on the user-message editor.
         let thread =
             active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
         thread
@@ -6612,9 +6541,6 @@ pub(crate) mod tests {
             "expected exactly one match for 'kumquat' (in the user message)",
         );
 
-        // The first entry is the user message we sent. Its inner `Editor`
-        // must carry `BufferSearchHighlights` because the bar's update
-        // routed the editor-backed match through `highlight_background`.
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             view.entry_view_state
                 .read(cx)
@@ -6631,8 +6557,6 @@ pub(crate) mod tests {
             "user message editor should carry BufferSearchHighlights after the bar's matcher ran",
         );
 
-        // Now clear: highlights should be removed (otherwise dismissing the
-        // bar would leave stale yellow ranges on past user messages).
         bar.update(cx, |bar, cx| bar.clear_highlights(cx));
         cx.run_until_parked();
         let has_highlight_after_clear = user_message_editor.read_with(cx, |editor, _cx| {
@@ -6644,12 +6568,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Verifies that `editor::actions::Cancel` dispatched while the bar is
-    /// visible dismisses the bar instead of propagating up to the workspace.
-    /// At runtime the propagation reached `BufferSearchBar::register`'s
-    /// workspace-wide `Cancel` handler and dismissed an unrelated editor's
-    /// search bar; the fix is a `ThreadView`-level handler that catches
-    /// `editor::actions::Cancel` when the bar is visible.
+    /// `editor::Cancel` should dismiss thread search before reaching workspace handlers.
     #[gpui::test]
     async fn test_thread_search_editor_cancel_dismisses_bar(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6670,8 +6589,6 @@ pub(crate) mod tests {
             "search bar should be visible after toggle_search"
         );
 
-        // Focus the bar's query editor so dispatched actions propagate from
-        // there up the agent panel's focus chain (mirroring the runtime path).
         let bar = thread_view
             .read_with(cx, |view, _| view.thread_search_bar.clone())
             .expect("bar should be set");
@@ -6681,9 +6598,6 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        // Dispatch the same action `Editor::cancel` propagates when there is
-        // nothing to cancel locally (single-line editors always propagate
-        // because the `is_full()` selection-cancel branch never runs).
         conversation_view.update_in(cx, |_, window, cx| {
             window.dispatch_action(editor::actions::Cancel.boxed_clone(), cx);
         });
@@ -6696,49 +6610,14 @@ pub(crate) mod tests {
         );
     }
 
-    /// Regression test for the Shift+Enter bug: pressing Shift+Enter in the
-    /// bar's query editor inserts a literal newline (rendered as a visible
-    /// `\n` glyph in the single-line input) instead of navigating to the
-    /// previous match.
-    ///
-    /// Mechanism: `ThreadSearchBar` binds `shift-enter` under the
-    /// `AcpThreadSearchBar` context, which sits ABOVE the query editor in
-    /// the focus chain. By default that is fine — `default-linux.json` has
-    /// no `Editor`-context `shift-enter` binding to shadow it, so the bar's
-    /// binding wins.
-    ///
-    /// The JetBrains base keymap (`assets/keymaps/linux/jetbrains.json`)
-    /// binds `shift-enter` → `editor::NewlineBelow` at the BARE `Editor`
-    /// context (no mode qualifier). Both predicates match the focus chain
-    /// at the same depth, and gpui's binding-index tiebreak favors the
-    /// later-loaded base keymap, so `editor::NewlineBelow` wins. The query
-    /// editor inserts a newline.
-    ///
-    /// Note: an `AcpThreadSearchBar > Editor` keymap block does NOT win
-    /// either — it also matches at the same depth and still loses the
-    /// tiebreak to a later-loaded base keymap. The fix is a runtime
-    /// `capture_action` on the bar's `bar_row`, which intercepts
-    /// `editor::Newline*` actions in the capture phase (before the
-    /// editor's bubble-phase handler runs) and routes them to
-    /// `select_prev_match`. This is the same pattern `BufferSearchBar`,
-    /// `MessageEditor`, and the inline-assist prompt editor use.
+    /// JetBrains keymaps route Shift+Enter through `editor::NewlineBelow`.
     #[gpui::test]
     async fn test_thread_search_shift_enter_navigates_with_jetbrains_keymap(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
         cx.update(|cx| {
-            // `init_test` does not load any keymap. To reproduce the
-            // shadowing bug we need BOTH:
-            //   * `default-linux.json` so the bar's
-            //     `AcpThreadSearchBar` shift-enter binding exists, and
-            //   * `linux/jetbrains.json` so the conflicting
-            //     `Editor`-context shift-enter binding exists.
-            // `search::init` registers the `search::*` actions referenced
-            // by `default-linux.json` (without it, those bindings would be
-            // silently dropped by `load_asset_allow_partial_failure`; the
-            // shift-enter binding under test would still work, but the
-            // load-time partial failure is noisy in test output).
+            // Load both the default binding and the conflicting base keymap.
             search::init(cx);
 
             let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
@@ -6791,8 +6670,6 @@ pub(crate) mod tests {
             .read_with(cx, |view, _| view.thread_search_bar.clone())
             .expect("thread_search_bar should be set after toggle_search");
 
-        // Populate the query via the API rather than simulating typing —
-        // we are only testing the shift-enter dispatch path, not text input.
         bar.update_in(cx, |bar, window, cx| {
             bar.query_editor.update(cx, |editor, cx| {
                 editor.set_text("banana", window, cx);
@@ -6813,7 +6690,6 @@ pub(crate) mod tests {
             "first match should be active after the bar populates its match list",
         );
 
-        // Focus the query editor so the keystroke is dispatched from there.
         let query_focus = bar.read_with(cx, |bar, cx| bar.query_editor.focus_handle(cx));
         cx.update(|window, cx| {
             window.focus(&query_focus, cx);
@@ -6829,23 +6705,13 @@ pub(crate) mod tests {
         cx.simulate_keystrokes("shift-enter");
         cx.run_until_parked();
 
-        // Assert the editor buffer was not touched. With the bug, JetBrains'
-        // `Editor` shift-enter → `editor::NewlineBelow` binding fires and
-        // inserts a newline (single-line editors render embedded newlines as
-        // the visible escape sequence `\n`).
         let query_text_after = bar.read_with(cx, |bar, cx| bar.query_editor.read(cx).text(cx));
         assert!(
             !query_text_after.contains('\n'),
-            "shift-enter must not insert a newline into the query buffer; \
-             got {:?} — the JetBrains `Editor` shift-enter binding shadowed \
-             `AcpThreadSearchBar`'s. Fix by adding a `capture_action` for \
-             `editor::actions::NewlineBelow` (and the other Newline variants) \
-             on the bar's `bar_row` element, routing to `select_prev_match`.",
+            "shift-enter must not insert a newline into the query buffer; got {:?}",
             query_text_after,
         );
 
-        // And assert navigation actually happened: from match 0, shift-enter
-        // should wrap backward to the last match.
         let active_after = bar.read_with(cx, |bar, _| bar.active_match_index());
         assert_eq!(
             active_after,

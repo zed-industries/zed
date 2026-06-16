@@ -630,11 +630,7 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
-    /// In-thread search bar. `None` until the user first opens it with
-    /// `agent::ToggleSearch`; after that it's kept around (focus toggles
-    /// visibility-by-focus) so query state persists across hides.
     pub(crate) thread_search_bar: Option<Entity<super::thread_search_bar::ThreadSearchBar>>,
-    /// When true, the search bar is shown above the entries.
     pub(crate) thread_search_visible: bool,
 }
 impl Focusable for ThreadView {
@@ -6286,9 +6282,6 @@ impl ThreadView {
         }
     }
 
-    /// Toggle the in-thread search bar. Lazily creates it on first use so
-    /// threads that never get searched don't pay the editor + subscription
-    /// cost.
     pub(crate) fn toggle_search(
         &mut self,
         _: &crate::ToggleSearch,
@@ -6300,19 +6293,11 @@ impl ThreadView {
             let thread = self.thread.clone();
             let view = cx.entity().downgrade();
             let on_activate =
-                std::sync::Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
-                    // Defer the ThreadView update: this callback fires synchronously
-                    // from `ThreadSearchBar::activate_match`, which is itself called
-                    // from inside a `bar.update(...)` initiated by a `ThreadView`
-                    // action handler (e.g. the forwarded `SelectNextThreadMatch`).
-                    // Calling `view.update(cx, ...)` synchronously would re-enter
-                    // `ThreadView`'s update and panic with "cannot update X while
-                    // it is already being updated". `cx.defer` schedules the work
-                    // after the current call stack unwinds.
+                Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
+                    // Avoid re-entering `ThreadView` when search navigation is forwarded
+                    // from a `ThreadView` action handler.
                     let view = view.clone();
                     cx.defer(move |cx| {
-                        // Ignore the result: this only fails if the `ThreadView`
-                        // was dropped, in which case there's nothing to scroll.
                         view.update(cx, |this, cx| {
                             this.list_state.scroll_to(gpui::ListOffset {
                                 item_ix: entry_ix,
@@ -6343,11 +6328,7 @@ impl ThreadView {
             self.thread_search_bar = Some(bar);
         }
 
-        // Smart toggle: pressing Cmd/Ctrl+F when the bar is hidden opens
-        // and focuses it; when it's already open but focus is elsewhere
-        // (e.g. the message editor), re-focus the bar instead of closing
-        // it; only close when the bar is open *and* already focused. The
-        // explicit dismiss path is Esc / the close button.
+        // Re-focus an open bar unless it already owns focus.
         let bar_focused = self
             .thread_search_bar
             .as_ref()
@@ -10629,14 +10610,6 @@ impl Render for ThreadView {
                 }
             });
 
-        // Build the key context dynamically so `AcpThreadSearchBar` is in
-        // the dispatch chain whenever the bar is visible — not only when
-        // focus is in the bar's query editor. Without this, Esc / Cmd+F /
-        // etc. typed from the message editor would fall through to ancestor
-        // handlers (cancel generation, dismiss the workspace's
-        // `BufferSearchBar`). This mirrors `BufferSearchBar`'s
-        // `contribute_context` pattern, which is only available to
-        // toolbar items.
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AcpThread");
         if self.thread_search_visible {
@@ -10651,10 +10624,6 @@ impl Render for ThreadView {
                     this.cancel_generation(cx);
                 }
             }))
-            // Forward search-bar actions from this outer element so they
-            // fire even when focus is in the message editor. The bar itself
-            // also registers these handlers, so both paths reach the same
-            // code regardless of where focus is.
             .on_action(cx.listener(
                 |this, _: &super::thread_search_bar::DismissThreadSearch, window, cx| {
                     if let Some(bar) = this.thread_search_bar.clone() {
@@ -10665,17 +10634,7 @@ impl Render for ThreadView {
                     cx.notify();
                 },
             ))
-            // Catch Esc that the `Editor::cancel` handler propagated up
-            // (when there's nothing to cancel inside the editor itself). The
-            // keymap binds `escape` to `editor::Cancel` at the `Editor` level,
-            // which shadows the `AcpThreadSearchBar` context's `escape ->
-            // agent::DismissThreadSearch` binding because `Editor` is deeper
-            // in the focus chain. Without this handler the propagated Cancel
-            // walks all the way up to the workspace, where `BufferSearchBar`
-            // has registered a global handler that dismisses the active pane's
-            // search bar instead of ours — user-visible as "Esc in the agent
-            // thread search bar dismisses an unrelated editor's search bar".
-            // Mirrors what `BufferSearchBar::register` does for its own pane.
+            // Esc can arrive as `editor::Cancel` from the query editor.
             .on_action(
                 cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
                     if !this.thread_search_visible {
@@ -10704,11 +10663,6 @@ impl Render for ThreadView {
                     }
                 },
             ))
-            // Forward the `search::` actions too so Alt+C / Alt+W / Alt+X (and
-            // Ctrl+F to refocus the bar) fire when the bar is visible but focus
-            // is in the message editor. Without these, the keymap resolves the
-            // binding (because `AcpThreadSearchBar` is contributed here) but the
-            // dispatched action finds no handler on the bubble path.
             .on_action(
                 cx.listener(|this, action: &search::ToggleCaseSensitive, window, cx| {
                     if !this.thread_search_visible {
