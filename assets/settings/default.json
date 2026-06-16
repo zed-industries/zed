@@ -1205,6 +1205,13 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    // The command is sent to the shell as if typed, so it is interpreted by your
+    // configured shell (including on Windows and remote/WSL projects).
+    // Set to "" to disable.
+    //
+    // Example: "terminal_init_command": "claude"
+    "terminal_init_command": "",
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto
