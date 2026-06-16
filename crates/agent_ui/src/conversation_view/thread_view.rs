@@ -7,7 +7,10 @@ use crate::{
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
-use acp_thread::{ContentBlock, PlanEntry, SandboxAuthorizationDetails};
+use acp_thread::{
+    ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
+    SandboxNotAppliedReason,
+};
 use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
@@ -7179,6 +7182,9 @@ impl ThreadView {
                     .child(header)
                     .child(command_element),
             )
+            .when_some(tool_call.sandbox_not_applied.as_ref(), |this, reason| {
+                this.child(self.render_sandbox_not_applied_warning(reason, terminal, cx))
+            })
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
@@ -7224,6 +7230,120 @@ impl ThreadView {
                 ))
             })
             .into_any()
+    }
+
+    /// Render the "ran without sandbox" warning shown on a terminal tool card,
+    /// tailored to *why* the sandbox wasn't applied.
+    fn render_sandbox_not_applied_warning(
+        &self,
+        reason: &SandboxNotAppliedReason,
+        terminal: &Entity<acp_thread::Terminal>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        // (title, optional detail line, whether to offer the settings shortcut)
+        let (title, detail, show_settings_button): (SharedString, Option<SharedString>, bool) =
+            match reason {
+                SandboxNotAppliedReason::DisabledForever => (
+                    "Ran without sandbox".into(),
+                    Some("Unsandboxed execution is enabled in settings.".into()),
+                    true,
+                ),
+                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                    "Couldn't create a sandbox".into(),
+                    Some(error.user_facing_message().into()),
+                    false,
+                ),
+                SandboxNotAppliedReason::DisabledForThisThread => {
+                    // The grant only exists because an earlier command failed to
+                    // create a sandbox; surface that same explanation here.
+                    let detail = self
+                        .find_thread_sandbox_error(cx)
+                        .map(|error| {
+                            SharedString::from(format!(
+                                "Allowed for this thread after the sandbox failed: {}",
+                                error.user_facing_message()
+                            ))
+                        })
+                        .unwrap_or_else(|| {
+                            "Unsandboxed execution is allowed for the rest of this thread.".into()
+                        });
+                    ("Ran without sandbox".into(), Some(detail), false)
+                }
+            };
+
+        h_flex()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .justify_between()
+            .border_t_1()
+            .border_color(cx.theme().status().warning_border)
+            .bg(cx.theme().status().warning_background.opacity(0.5))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1p5()
+                    .items_start()
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::XSmall)
+                            .color(Color::Warning),
+                    )
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
+                            .when_some(detail, |this, detail| {
+                                this.child(
+                                    Label::new(detail)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            }),
+                    ),
+            )
+            .when(show_settings_button, |this| {
+                this.child(
+                    IconButton::new(
+                        SharedString::from(format!(
+                            "open-sandbox-setting-{}",
+                            terminal.entity_id()
+                        )),
+                        IconName::Settings,
+                    )
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Open the unsandboxed execution setting"))
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(
+                            Box::new(zed_actions::OpenSettingsAt {
+                                path: zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH
+                                    .to_string(),
+                                target: None,
+                            }),
+                            cx,
+                        );
+                    }),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// Find the first terminal tool call in the thread whose sandbox couldn't be
+    /// created, so a later "disabled for this thread" warning can reuse the same
+    /// explanation of *why* the sandbox failed.
+    fn find_thread_sandbox_error(&self, cx: &App) -> Option<acp_thread::LinuxWslSandboxError> {
+        self.thread.read(cx).entries().iter().find_map(|entry| {
+            if let AgentThreadEntry::ToolCall(tool_call) = entry
+                && let Some(SandboxNotAppliedReason::ErrorLinuxWsl(error)) =
+                    &tool_call.sandbox_not_applied
+            {
+                return Some(error.clone());
+            }
+            None
+        })
     }
 
     fn is_first_tool_call(
@@ -7389,6 +7509,14 @@ impl ThreadView {
                                     details,
                                     cx,
                                 ))
+                            },
+                        )
+                        .when_some(
+                            tool_call.sandbox_fallback_authorization_details.as_ref(),
+                            |this, details| {
+                                this.child(
+                                    self.render_sandbox_fallback_authorization_details(details, cx),
+                                )
                             },
                         )
                         .when(should_show_raw_input, |this| {
@@ -7796,7 +7924,11 @@ impl ThreadView {
             .command
             .as_deref()
             .filter(|command| !command.is_empty());
-        if details.write_paths.is_empty() && !has_network && command.is_none() {
+        if details.write_paths.is_empty()
+            && !has_network
+            && command.is_none()
+            && details.reason.is_empty()
+        {
             return Empty.into_any_element();
         }
 
@@ -7971,20 +8103,124 @@ impl ThreadView {
             .when(is_open && !paths.is_empty(), |this| {
                 this.child(
                     v_flex()
-                        .id(("sandbox-authorization-paths-list", entry_ix))
-                        .max_h_40()
-                        .overflow_y_scroll()
-                        .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                            self.render_sandbox_authorization_path_row(
-                                entry_ix,
-                                path_ix,
-                                path,
-                                path_ix < paths.len() - 1,
-                                cx,
-                            )
-                        })),
+                        .gap_0p5()
+                        .child(
+                            Label::new("Reason from agent")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        )
+                        .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
                 )
             })
+            .when(!paths.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .id(("sandbox-authorization-details-header", entry_ix))
+                        .p_1()
+                        .justify_between()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new("Write access")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new("•")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Disabled),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "{} {}",
+                                        paths.len(),
+                                        if paths.len() == 1 { "path" } else { "paths" }
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if this
+                                    .collapsed_sandbox_authorization_details
+                                    .remove(&tool_call_id)
+                                {
+                                    cx.notify();
+                                    return;
+                                }
+
+                                this.collapsed_sandbox_authorization_details
+                                    .insert(tool_call_id.clone());
+                                cx.notify();
+                            }
+                        })),
+                )
+                .when(is_open, |this| {
+                    this.child(
+                        v_flex()
+                            .id(("sandbox-authorization-paths-list", entry_ix))
+                            .max_h_40()
+                            .overflow_y_scroll()
+                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                                self.render_sandbox_authorization_path_row(
+                                    entry_ix,
+                                    path_ix,
+                                    path,
+                                    path_ix < paths.len() - 1,
+                                    cx,
+                                )
+                            })),
+                    )
+                })
+            })
+            .into_any_element()
+    }
+
+    fn render_sandbox_fallback_authorization_details(
+        &self,
+        details: &SandboxFallbackAuthorizationDetails,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        // The command itself is shown in the tool-call header (a collapsible
+        // command), so here we only explain *why* the sandbox couldn't be
+        // created — the user needs both to decide whether to run unsandboxed.
+        if details.reason.is_empty() {
+            return Empty.into_any_element();
+        }
+
+        h_flex()
+            .p_1p5()
+            .gap_1p5()
+            .items_start()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::Small),
+            )
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        Label::new("Couldn't create a sandbox")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
+            )
             .into_any_element()
     }
 
@@ -8552,37 +8788,52 @@ impl ThreadView {
                 let option_id = SharedString::from(option.option_id.0.clone());
                 Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| {
-                        let (icon, action) = match option.kind {
-                            acp::PermissionOptionKind::AllowOnce => (
-                                Icon::new(IconName::Check)
+                        // The sandbox-fallback prompt offers a "Retry" option
+                        // that re-attempts creating the sandbox; it isn't an
+                        // allow/deny choice, so give it its own icon and no
+                        // keybinding.
+                        let is_retry = option.option_id.0.as_ref()
+                            == acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID;
+                        let (icon, action) = if is_retry {
+                            (
+                                Icon::new(IconName::RotateCcw)
                                     .size(IconSize::XSmall)
-                                    .color(Color::Success),
-                                Some(&AllowOnce as &dyn Action),
-                            ),
-                            acp::PermissionOptionKind::AllowAlways => (
-                                Icon::new(IconName::CheckDouble)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Success),
-                                if option.option_id.0.as_ref()
-                                    == acp_thread::SandboxPermission::AllowThread.as_id()
-                                {
-                                    None
-                                } else {
-                                    Some(&AllowAlways as &dyn Action)
-                                },
-                            ),
-                            acp::PermissionOptionKind::RejectOnce => (
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Error),
-                                Some(&RejectOnce as &dyn Action),
-                            ),
-                            acp::PermissionOptionKind::RejectAlways | _ => (
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Error),
+                                    .color(Color::Muted),
                                 None,
-                            ),
+                            )
+                        } else {
+                            match option.kind {
+                                acp::PermissionOptionKind::AllowOnce => (
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Success),
+                                    Some(&AllowOnce as &dyn Action),
+                                ),
+                                acp::PermissionOptionKind::AllowAlways => (
+                                    Icon::new(IconName::CheckDouble)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Success),
+                                    if option.option_id.0.as_ref()
+                                        == acp_thread::SandboxPermission::AllowThread.as_id()
+                                    {
+                                        None
+                                    } else {
+                                        Some(&AllowAlways as &dyn Action)
+                                    },
+                                ),
+                                acp::PermissionOptionKind::RejectOnce => (
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Error),
+                                    Some(&RejectOnce as &dyn Action),
+                                ),
+                                acp::PermissionOptionKind::RejectAlways | _ => (
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Error),
+                                    None,
+                                ),
+                            }
                         };
 
                         let this = this.start_icon(icon);

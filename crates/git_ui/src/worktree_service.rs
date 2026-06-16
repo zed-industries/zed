@@ -958,7 +958,25 @@ async fn do_create_worktree(
 
     let fs = cx.update(|_, cx| <dyn Fs>::global(cx))?;
 
+    let creation_pairs: Vec<(Entity<Repository>, PathBuf)> = creation_infos
+        .iter()
+        .map(|(repo, path, _)| (repo.clone(), path.clone()))
+        .collect();
+
     let created_paths = await_and_rollback_on_failure(creation_infos, fs, cx).await?;
+
+    // Record each created worktree so thread archival can later verify that
+    // Zed created it before deleting it from disk. Failures are non-fatal:
+    // the worktree just won't be eligible for automatic archival.
+    for (repo, path) in creation_pairs {
+        crate::created_worktrees::record_created_worktree_for_repo(
+            &repo,
+            &path,
+            remote_connection_options.as_ref(),
+            cx,
+        )
+        .await;
+    }
 
     // `path_remapping` has one entry per source git repo, while `created_paths`
     // has one per *unique* target worktree. When the former is larger, two or

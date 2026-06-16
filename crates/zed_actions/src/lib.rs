@@ -152,6 +152,11 @@ pub struct OpenSettingsAt {
 /// `OpenSettingsAt` path of the agent skills page in the settings UI.
 pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
 
+/// `OpenSettingsAt` path of the "allow unsandboxed terminal commands" setting
+/// in the settings UI.
+pub const AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH: &str =
+    "agent.sandbox_permissions.allow_unsandboxed";
+
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenSettingsAtTarget {
