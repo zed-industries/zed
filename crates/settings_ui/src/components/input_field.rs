@@ -123,10 +123,11 @@ impl RenderOnce for SettingsInputField {
             ..Default::default()
         };
 
-        let first_render_initial_text =
-            window.use_keyed_state((self.id.clone(), "first-render-initial-text"), cx, |_, _| {
-                self.initial_text.clone()
-            });
+        let first_render_initial_text = window.use_keyed_state(
+            (self.id.clone(), "first-render-initial-text"),
+            cx,
+            |_, _| self.initial_text.clone(),
+        );
 
         let editor = window.use_keyed_state((self.id.clone(), "editor"), cx, {
             let initial_text = self.initial_text.clone();
@@ -355,7 +356,7 @@ impl RenderOnce for SettingsInputField {
 /// All work is skipped when accessibility is inactive (no assistive
 /// technology connected), since the results are only observable through the
 /// accessibility tree.
-/// 
+///
 /// Note: much of this may want
 pub(crate) fn text_field_a11y_state(
     state_key: impl Into<ElementId>,
@@ -453,7 +454,10 @@ fn build_a11y_text_runs(
     selection_tail: usize,
     selection_head: usize,
     synthetic_node_id: impl Fn(u64) -> accesskit::NodeId,
-) -> (Vec<(accesskit::NodeId, accesskit::Node)>, accesskit::TextSelection) {
+) -> (
+    Vec<(accesskit::NodeId, accesskit::Node)>,
+    accesskit::TextSelection,
+) {
     let chars: Vec<char> = text.chars().collect();
     let total_chars = chars.len();
     // Build at least one (possibly empty) run so the text pattern remains
@@ -502,8 +506,14 @@ fn build_a11y_text_runs(
         runs.push((synthetic_node_id(chunk_index as u64), node));
     }
 
-    let anchor = a11y_text_position(char_index_for_byte(text, selection_tail), &synthetic_node_id);
-    let focus = a11y_text_position(char_index_for_byte(text, selection_head), &synthetic_node_id);
+    let anchor = a11y_text_position(
+        char_index_for_byte(text, selection_tail),
+        &synthetic_node_id,
+    );
+    let focus = a11y_text_position(
+        char_index_for_byte(text, selection_head),
+        &synthetic_node_id,
+    );
     (runs, accesskit::TextSelection { anchor, focus })
 }
 
@@ -540,14 +550,14 @@ mod tests {
     /// byte widths (1–4 UTF-8 bytes). Lengths reach past one chunk (255 chars).
     fn arbitrary_text() -> impl Strategy<Value = String> {
         let character = gpui::proptest::prop_oneof![
-            gpui::proptest::char::range(' ', '~'),              // ASCII printable
+            gpui::proptest::char::range(' ', '~'), // ASCII printable
             gpui::proptest::char::range('\u{00A1}', '\u{00FF}'), // Latin-1 (accents)
             gpui::proptest::char::range('\u{0100}', '\u{024F}'), // Latin Extended-A/B
             gpui::proptest::char::range('\u{0400}', '\u{04FF}'), // Cyrillic
             gpui::proptest::char::range('\u{0600}', '\u{06FF}'), // Arabic
             gpui::proptest::char::range('\u{4E00}', '\u{9FFF}'), // CJK Unified Ideographs
             gpui::proptest::char::range('\u{1F300}', '\u{1FAFF}'), // emoji & pictographs
-            gpui::proptest::char::any(),                          // anything else
+            gpui::proptest::char::any(),           // anything else
         ];
         gpui::proptest::collection::vec(character, 0..600)
             .prop_map(|chars| chars.into_iter().collect::<String>())

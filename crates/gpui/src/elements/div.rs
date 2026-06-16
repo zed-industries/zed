@@ -2085,7 +2085,8 @@ impl Interactivity {
 
         if self.report_active_descendant_focus && window.a11y.is_active() {
             if let Some(global_id) = global_id {
-                window.a11y
+                window
+                    .a11y
                     .set_active_descendant(global_id.accesskit_node_id());
             }
         }
@@ -2706,12 +2707,12 @@ impl Interactivity {
                     // Record the focus generation at which an enter/space key
                     // down event happened on this element. The next key up
                     // event will be mapped to a click event if both of the
-                    // following are true: 
+                    // following are true:
                     // - no other key events happen in between
                     // - the focus generation is the same (implying focus did not move)
-                    // 
+                    //
                     // This design avoids an ABA problem that happens if you
-                    // store the focus handle that registered the keypress. 
+                    // store the focus handle that registered the keypress.
                     window.on_key_event({
                         let pending_keyboard_down = pending_keyboard_down.clone();
                         move |event: &KeyDownEvent, phase, window, _cx| {
@@ -2729,7 +2730,7 @@ impl Interactivity {
                     // Press enter, space to trigger click, when the element is focused.
                     window.on_key_event({
                         let click_listeners = click_listeners.clone();
-                        let pending_keyboard_down = pending_keyboard_down.clone();
+                        let pending_keyboard_down = pending_keyboard_down;
                         let hitbox = hitbox.clone();
                         move |event: &KeyUpEvent, phase, window, cx| {
                             if phase.bubble() && !window.default_prevented() {
@@ -2745,9 +2746,8 @@ impl Interactivity {
                                 if let Some(button) = keyboard_button
                                     && !stroke.modifiers.modified()
                                 {
-                                    let pending = std::mem::take(
-                                        &mut *pending_keyboard_down.borrow_mut(),
-                                    );
+                                    let pending =
+                                        std::mem::take(&mut *pending_keyboard_down.borrow_mut());
                                     if pending != Some(window.focus_generation) {
                                         return;
                                     }

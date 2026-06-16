@@ -76,7 +76,7 @@
 //! The user is provided a builder-style API using [`A11ySubtreeBuilder`], which
 //! allows them to create push nodes that are children of the current node, as
 //! well as modify the current node itself.
-//! 
+//!
 //! GPUI calls this callback *after* prepainting (and just before popping the
 //! corresponding element), since this step may need prepaint information to be
 //! available. In the future, we may want to add prepaint information more
@@ -192,7 +192,7 @@ impl A11y {
 
     /// Report `node_id` as the currently-focused node, if it is present in the
     /// tree.
-    /// 
+    ///
     /// Must only be called once per frame.
     pub(crate) fn set_focus(&mut self, node_id: NodeId) {
         // A focused node must have been registered as focusable this frame.
@@ -218,9 +218,7 @@ impl A11y {
             if cfg!(debug_assertions) {
                 panic!("set_active_descendant called on the focused node");
             } else {
-                log::warn!(
-                    "a11y: set_active_descendant called on the focused node ({node_id:?})"
-                );
+                log::warn!("a11y: set_active_descendant called on the focused node ({node_id:?})");
             }
             return;
         }
@@ -407,7 +405,7 @@ impl A11yNodeBuilder {
         let Some(focus) = self.focus else {
             return false;
         };
-        
+
         // The current node is on top of the stack; everything below it is an
         // ancestor.
         let ancestor_count = self.ids_stack.len().saturating_sub(1);
@@ -415,7 +413,10 @@ impl A11yNodeBuilder {
     }
 
     pub(crate) fn set_active_descendant(&mut self, id: NodeId) {
-        if self.active_descendant.is_some_and(|existing| existing != id) {
+        if self
+            .active_descendant
+            .is_some_and(|existing| existing != id)
+        {
             if cfg!(debug_assertions) {
                 panic!("active descendant claimed by multiple nodes in one frame");
             } else {
@@ -687,7 +688,10 @@ mod tests {
     // The double-claim guard panics only in debug builds; in release it falls
     // back to last-wins with a warning.
     #[test]
-    #[cfg_attr(debug_assertions, should_panic(expected = "active descendant claimed by multiple nodes"))]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "active descendant claimed by multiple nodes")
+    )]
     fn multiple_active_descendant_claims_panic_in_debug() {
         let mut builder = new_builder();
         builder.set_active_descendant(NodeId(1));
@@ -697,7 +701,10 @@ mod tests {
     // Setting focus twice in one frame means two elements both claimed window
     // focus; that panics in debug and falls back to last-wins in release.
     #[test]
-    #[cfg_attr(debug_assertions, should_panic(expected = "set_focus called more than once"))]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "set_focus called more than once")
+    )]
     fn setting_focus_twice_panics_in_debug() {
         let mut builder = new_builder();
         builder.set_focus(NodeId(1));

@@ -4751,9 +4751,10 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     // it a stable, collision-free element ID within the page.
     SettingsInputField::new(field.json_path.unwrap_or("settings-text-field"))
         .tab_index(0)
-        .when_some(a11y_label_for_json_path(field.json_path), |editor, label| {
-            editor.aria_label(label)
-        })
+        .when_some(
+            a11y_label_for_json_path(field.json_path),
+            |editor, label| editor.aria_label(label),
+        )
         .when_some(initial_text, |editor, text| {
             editor.with_initial_text(text.as_ref().to_string())
         })
@@ -4953,10 +4954,9 @@ fn render_font_picker(
                 "font_family_picker_trigger".into(),
                 current_value.clone(),
             )
-            .when_some(
-                a11y_label_for_json_path(field.json_path),
-                |this, label| this.aria_label(format!("{}: {}", label, current_value.clone())),
-            ),
+            .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+                this.aria_label(format!("{}: {}", label, current_value.clone()))
+            }),
             handle.clone(),
         ))
         .menu(move |window, cx| {
@@ -5008,14 +5008,10 @@ fn render_theme_picker(
     let handle = ui::PopoverMenuHandle::default();
     PopoverMenu::new("theme-picker")
         .trigger(wire_picker_trigger_a11y(
-            render_picker_trigger_button(
-                "theme_picker_trigger".into(),
-                current_value.clone(),
-            )
-            .when_some(
-                a11y_label_for_json_path(field.json_path),
-                |this, label| this.aria_label(format!("{}: {}", label, current_value.clone())),
-            ),
+            render_picker_trigger_button("theme_picker_trigger".into(), current_value.clone())
+                .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+                    this.aria_label(format!("{}: {}", label, current_value.clone()))
+                }),
             handle.clone(),
         ))
         .menu(move |window, cx| {
@@ -5070,14 +5066,10 @@ fn render_icon_theme_picker(
     let handle = ui::PopoverMenuHandle::default();
     PopoverMenu::new("icon-theme-picker")
         .trigger(wire_picker_trigger_a11y(
-            render_picker_trigger_button(
-                "icon_theme_picker_trigger".into(),
-                current_value.clone(),
-            )
-            .when_some(
-                a11y_label_for_json_path(field.json_path),
-                |this, label| this.aria_label(format!("{}: {}", label, current_value.clone())),
-            ),
+            render_picker_trigger_button("icon_theme_picker_trigger".into(), current_value.clone())
+                .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
+                    this.aria_label(format!("{}: {}", label, current_value.clone()))
+                }),
             handle.clone(),
         ))
         .menu(move |window, cx| {
