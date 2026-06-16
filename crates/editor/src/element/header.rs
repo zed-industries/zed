@@ -69,10 +69,20 @@ impl EditorElement {
         let mut rows = Vec::<StickyHeader>::new();
 
         for item in editor.sticky_headers.iter().flatten() {
-            let start_point = item
+            let selection_start = item
+                .selection_range
+                .start
+                .to_point(snapshot.buffer_snapshot());
+            let source_text_start = item
                 .source_range_for_text
                 .start
                 .to_point(snapshot.buffer_snapshot());
+            let start_column = if source_text_start.row == selection_start.row {
+                source_text_start.column
+            } else {
+                0
+            };
+            let start_point = Point::new(selection_start.row, start_column);
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
