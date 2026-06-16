@@ -1392,17 +1392,9 @@ impl GitPanel {
         });
     }
 
-    fn view_file(
-        &mut self,
-        _: &ViewFile,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
-            let entry = self
-                .entries
-                .get(self.selected_entry?)?
-                .status_entry()?;
+            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let project_path = self
                 .active_repository
                 .as_ref()?
@@ -7623,7 +7615,12 @@ mod tests {
         cx: &mut TestAppContext,
         tree: serde_json::Value,
         status_entries: &[(&str, git::status::StatusCode)],
-    ) -> (Entity<Project>, Entity<Workspace>, Entity<GitPanel>, VisualTestContext) {
+    ) -> (
+        Entity<Project>,
+        Entity<Workspace>,
+        Entity<GitPanel>,
+        VisualTestContext,
+    ) {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(path!("/project"), tree).await;
 
@@ -7710,7 +7707,9 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         let entry_index = panel
-            .read_with(&cx, |panel, _| entry_index_for_repo_path(panel, &repo_path("tracked")))
+            .read_with(&cx, |panel, _| {
+                entry_index_for_repo_path(panel, &repo_path("tracked"))
+            })
             .expect("tracked file should exist in the changes list");
 
         panel.update_in(&mut cx, |panel, window, cx| {
@@ -7775,7 +7774,9 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         let entry_index = panel
-            .read_with(&cx, |panel, _| entry_index_for_repo_path(panel, &repo_path("untracked")))
+            .read_with(&cx, |panel, _| {
+                entry_index_for_repo_path(panel, &repo_path("untracked"))
+            })
             .expect("untracked file should exist in the changes list");
 
         panel.update_in(&mut cx, |panel, window, cx| {
