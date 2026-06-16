@@ -14,8 +14,8 @@ use crate::{
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
         open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
-        render_llm_providers_page, render_mcp_servers_page, render_skills_setup_page,
-        render_tool_permissions_setup_page,
+        render_llm_providers_page, render_mcp_servers_page, render_sandbox_settings_page,
+        render_skills_setup_page, render_tool_permissions_setup_page,
     },
 };
 
@@ -7893,6 +7893,18 @@ fn ai_page(cx: &App) -> SettingsPage {
                 render: render_skills_setup_page,
             }),
             SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Sandbox".into(),
+                r#type: Default::default(),
+                json_path: Some(zed_actions::AGENT_SANDBOX_SETTINGS_PATH),
+                description: Some(
+                    "Review and change the elevated terminal sandbox permissions that are always allowed without prompting."
+                        .into(),
+                ),
+                in_json: true,
+                files: USER,
+                render: render_sandbox_settings_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
@@ -7930,33 +7942,6 @@ fn ai_page(cx: &App) -> SettingsPage {
         }
 
         items.extend([
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Allow Unsandboxed Terminal Commands",
-                description: "When enabled, agent terminal commands run without the OS sandbox instead of prompting when the sandbox can't be created.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some(zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH),
-                    pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .sandbox_permissions
-                            .as_ref()?
-                            .allow_unsandboxed
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .sandbox_permissions
-                            .get_or_insert_default()
-                            .allow_unsandboxed = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",

@@ -5419,7 +5419,6 @@ impl ToolCallEventStream {
                 Ok(())
             }
             Some(acp_thread::SandboxPermission::AllowAlways) => {
-                sandbox_grants.borrow_mut().record(request);
                 Self::persist_sandbox_always_permission(request, fs, cx);
                 Ok(())
             }
@@ -7019,7 +7018,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_authorize_sandbox_allow_always_records_current_grant(cx: &mut TestAppContext) {
+    async fn test_authorize_sandbox_allow_always_does_not_cache_thread_grant(
+        cx: &mut TestAppContext,
+    ) {
         crate::tests::init_test(cx);
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
@@ -7095,18 +7096,15 @@ mod tests {
         assert!(send_result.is_ok());
         authorize.await.unwrap();
 
+        // "Allow always" persists to settings only
         let effective = event_stream.effective_sandbox_request(
             &SandboxRequest::default(),
             &agent_settings::SandboxPermissions::default(),
         );
-        assert_eq!(
-            effective.write_paths,
-            vec![
-                PathBuf::from("/tmp/build"),
-                PathBuf::from("/tmp/cache"),
-                PathBuf::from("/tmp/logs"),
-                PathBuf::from("/tmp/secret"),
-            ]
+        assert!(
+            effective.write_paths.is_empty(),
+            "allow always should not record an in-memory thread grant: {:?}",
+            effective.write_paths
         );
     }
 
