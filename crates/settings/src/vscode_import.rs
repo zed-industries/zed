@@ -198,6 +198,7 @@ impl VsCodeSettings {
             language_models: None,
             line_indicator_format: None,
             log: None,
+            markdown: None,
             message_editor: None,
             node: self.node_binary_settings(),
 

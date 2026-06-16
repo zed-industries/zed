@@ -10646,6 +10646,7 @@ dependencies = [
  "mermaid_render",
  "node_runtime",
  "pulldown-cmark 0.13.0",
+ "serde_yaml_ng",
  "settings",
  "stacksafe",
  "sum_tree",
