@@ -115,6 +115,18 @@ impl ZedAiOnboarding {
         )
     }
 
+    fn vip_stamp(cx: &App) -> impl IntoElement {
+        div().absolute().bottom_1().right_1().child(
+            Vector::new(
+                // TODO: Use a different vector for VIP stamps.
+                VectorName::BusinessStamp,
+                rems_from_px(156.),
+                rems_from_px(60.),
+            )
+            .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.8))),
+        )
+    }
+
     fn student_stamp(cx: &App) -> impl IntoElement {
         div().absolute().bottom_1().right_1().child(
             Vector::new(
@@ -332,6 +344,23 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
+    fn render_vip_plan_state(&self, cx: &mut App) -> AnyElement {
+        v_flex()
+            .w_full()
+            .relative()
+            .gap_1()
+            .child(Self::vip_stamp(cx))
+            .child(Headline::new("Welcome to Zed VIP"))
+            .child(
+                Label::new("Here's what you get:")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
+            .child(PlanDefinitions.vip_plan())
+            .children(self.render_dismiss_button())
+            .into_any_element()
+    }
+
     fn render_student_plan_state(&self, cx: &mut App) -> AnyElement {
         v_flex()
             .w_full()
@@ -359,6 +388,7 @@ impl RenderOnce for ZedAiOnboarding {
                 Some(Plan::ZedProTrial) => self.render_trial_state(cx),
                 Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
                 Some(Plan::ZedBusiness) => self.render_business_plan_state(cx),
+                Some(Plan::ZedVip) => self.render_vip_plan_state(cx),
                 Some(Plan::ZedStudent) => self.render_student_plan_state(cx),
             }
         } else {
