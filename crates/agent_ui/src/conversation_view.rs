@@ -6328,6 +6328,85 @@ pub(crate) mod tests {
         });
     }
 
+    /// Releasing the search bar while it is still active must clean up the
+    /// highlights stored on thread markdown/editor entities. Otherwise a
+    /// retained thread can render stale search highlights after its view is
+    /// destroyed without an explicit dismiss.
+    #[gpui::test]
+    async fn test_thread_search_release_clears_markdown_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Mango is a tropical fruit.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Tell me about mango", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let assistant_markdown = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::AssistantMessage(message) => {
+                        message.chunks.iter().find_map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block } => block.markdown().cloned(),
+                            AssistantMessageChunk::Thought { .. } => None,
+                        })
+                    }
+                    _ => None,
+                })
+                .expect("assistant message should have markdown")
+        });
+
+        let entry_view_state = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.entry_view_state.clone());
+        let on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)> = Arc::new(|_, _, _| {});
+        let bar = cx.update(|window, cx| {
+            cx.new(|cx| {
+                super::thread_search_bar::ThreadSearchBar::new(
+                    thread.clone(),
+                    entry_view_state,
+                    on_activate_match,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            assistant_markdown
+                .read_with(cx, |markdown, _| !markdown.search_highlights().is_empty()),
+            "search should have highlighted the assistant markdown before release",
+        );
+
+        drop(bar);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        assert!(
+            assistant_markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()),
+            "releasing the search bar should clear retained markdown highlights",
+        );
+    }
+
     /// The bar subscribes to thread updates: with search open and a live
     /// query, content that streams in *after* the initial scan should be
     /// picked up (debounced) without the user re-touching the query.

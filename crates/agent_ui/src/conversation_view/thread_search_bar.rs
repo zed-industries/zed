@@ -212,6 +212,10 @@ impl ThreadSearchBar {
                 }
             },
         );
+        cx.on_release(|this, cx| {
+            this.clear_highlights_impl(cx);
+        })
+        .detach();
         Self {
             query_editor,
             options: SearchOptions::NONE,
@@ -644,6 +648,11 @@ impl ThreadSearchBar {
     /// markdown entity we touched so we don't leave stale yellow highlights
     /// when the user toggles search off.
     pub fn clear_highlights(&mut self, cx: &mut Context<Self>) {
+        self.clear_highlights_impl(cx);
+        cx.notify();
+    }
+
+    fn clear_highlights_impl(&mut self, cx: &mut App) {
         for weak in self.highlighted_markdowns.drain(..) {
             if let Some(md) = weak.upgrade() {
                 md.update(cx, |md, cx| md.clear_search_highlights(cx));
@@ -658,13 +667,8 @@ impl ThreadSearchBar {
         }
         self.matches.clear();
         self.active_match = None;
-        // `clear_highlights` is the single funnel for hiding the bar (Esc, the
-        // close button, and smart-toggle off all route here). Mark inactive
-        // and drop any pending debounced refresh so a streaming thread doesn't
-        // re-apply highlights behind the now-hidden bar.
         self.is_active = false;
         self._update_matches_task = None;
-        cx.notify();
     }
 
     pub(super) fn toggle_case_sensitive(
