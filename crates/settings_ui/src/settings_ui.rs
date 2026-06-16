@@ -137,11 +137,6 @@ struct SettingField<T: 'static> {
     json_path: Option<&'static str>,
 }
 
-enum SettingsPath {
-    Json(&'static str),    // a.b.c
-    Subpage(&'static str), // a/b/c
-}
-
 impl<T: 'static> Clone for SettingField<T> {
     fn clone(&self) -> Self {
         *self
@@ -993,7 +988,6 @@ enum SettingsPageItem {
     SubPageLink(SubPageLink),
     DynamicItem(DynamicItem),
     ActionLink(ActionLink),
-    NonJson(NonJsonItem),
 }
 
 impl std::fmt::Debug for SettingsPageItem {
@@ -1011,9 +1005,6 @@ impl std::fmt::Debug for SettingsPageItem {
             }
             SettingsPageItem::ActionLink(action_link) => {
                 write!(f, "ActionLink({})", action_link.title)
-            }
-            SettingsPageItem::NonJson(non_json_item) => {
-                write!(f, "NonJson({})", non_json_item.title)
             }
         }
     }
@@ -1305,17 +1296,6 @@ impl SettingsPageItem {
                 )
                 .when(bottom_border, |this| this.child(Divider::horizontal()))
                 .into_any_element(),
-            SettingsPageItem::NonJson(non_json_item) => {
-                let field = render_non_json_item(settings_window, non_json_item, window, cx);
-                let field_with_padding = apply_padding(field);
-
-                v_flex()
-                    .group("setting-item")
-                    .px_8()
-                    .child(field_with_padding)
-                    .when(bottom_border, |this| this.child(Divider::horizontal()))
-                    .into_any_element()
-            }
         }
     }
 }
@@ -1449,34 +1429,6 @@ fn render_settings_item(
         modified_in,
         setting_item.field.json_path(),
         sub_field,
-        cx,
-    )
-}
-
-pub(crate) fn render_non_json_item(
-    settings_window: &SettingsWindow,
-    item: &NonJsonItem,
-    window: &mut Window,
-    cx: &mut Context<'_, SettingsWindow>,
-) -> Stateful<Div> {
-    let control = (item.render_control)(settings_window, window, cx);
-
-    let reset_fn: Option<Box<dyn Fn(&mut Window, &mut App)>> = if (item.can_reset)(cx) {
-        let reset = item.reset;
-        Some(Box::new(move |window, cx| reset(window, cx)))
-    } else {
-        None
-    };
-
-    render_settings_item_layout(
-        settings_window,
-        item.title,
-        item.description,
-        control,
-        reset_fn,
-        None,
-        item.json_path,
-        false,
         cx,
     )
 }
@@ -1645,24 +1597,6 @@ struct ActionLink {
 }
 
 impl PartialEq for ActionLink {
-    fn eq(&self, other: &Self) -> bool {
-        self.title == other.title
-    }
-}
-
-pub(crate) struct NonJsonItem {
-    title: &'static str,
-    description: &'static str,
-    /// A stable path identifier for deep-linking and search, even though this
-    /// setting is not stored in settings.json.
-    json_path: Option<&'static str>,
-    files: FileMask,
-    can_reset: fn(&App) -> bool,
-    reset: fn(&mut Window, &mut App),
-    render_control: fn(&SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement,
-}
-
-impl PartialEq for NonJsonItem {
     fn eq(&self, other: &Self) -> bool {
         self.title == other.title
     }
@@ -2169,8 +2103,7 @@ impl SettingsWindow {
                     | SettingsPageItem::DynamicItem(DynamicItem {
                         discriminant: SettingItem { files, .. },
                         ..
-                    })
-                    | SettingsPageItem::NonJson(NonJsonItem { files, .. }) => {
+                    }) => {
                         if !files.contains(current_file) {
                             page_filter[index] = false;
                         } else {
@@ -2430,28 +2363,6 @@ impl SettingsWindow {
                             &mut fuzzy_match_candidates,
                             key_index,
                             action_link.title.as_ref(),
-                        );
-                    }
-                    SettingsPageItem::NonJson(non_json_item) => {
-                        json_path = non_json_item.json_path;
-                        documents.push(SearchDocument {
-                            id: key_index,
-                            words: split_into_words(&[
-                                page.title,
-                                header_str,
-                                non_json_item.title,
-                                non_json_item.description,
-                            ]),
-                        });
-                        push_candidates(
-                            &mut fuzzy_match_candidates,
-                            key_index,
-                            non_json_item.title,
-                        );
-                        push_candidates(
-                            &mut fuzzy_match_candidates,
-                            key_index,
-                            non_json_item.description,
                         );
                     }
                 }
