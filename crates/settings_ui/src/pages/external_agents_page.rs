@@ -526,12 +526,50 @@ fn render_custom_agent_form_page(
 
     let fields = v_flex()
         .w_full()
-        .max_w(rems(36.))
-        .gap_3()
-        .child(labeled_field("Agent Name", true, &form.name, cx))
-        .child(labeled_field("Command", true, &form.command, cx))
-        .child(labeled_field("Arguments", false, &form.args, cx))
-        .child(render_env_section(&form.env, cx))
+        .gap_4()
+        .child(
+            crate::render_settings_item_layout(
+                settings_window,
+                "Agent Name",
+                "Required. A unique name used to identify this agent.",
+                input_box(&form.name, cx).into_any_element(),
+                None,
+                None,
+                None,
+                false,
+                cx,
+            )
+            .into_any_element(),
+        )
+        .child(
+            crate::render_settings_item_layout(
+                settings_window,
+                "Command",
+                "Required. Path to the executable that launches the agent.",
+                input_box(&form.command, cx).into_any_element(),
+                None,
+                None,
+                None,
+                false,
+                cx,
+            )
+            .into_any_element(),
+        )
+        .child(
+            crate::render_settings_item_layout(
+                settings_window,
+                "Arguments",
+                "Space-separated arguments passed to the command.",
+                input_box(&form.args, cx).into_any_element(),
+                None,
+                None,
+                None,
+                false,
+                cx,
+            )
+            .into_any_element(),
+        )
+        .child(render_env_section(settings_window, &form.env, cx))
         .when_some(error, |this, error| this.child(render_form_error(error)))
         .child(render_form_actions(form, window, cx));
 
@@ -547,19 +585,6 @@ fn render_custom_agent_form_page(
         .into_any_element()
 }
 
-fn field_label(label: &str, required: bool) -> impl IntoElement {
-    h_flex()
-        .gap_0p5()
-        .child(
-            Label::new(label.to_string())
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
-        .when(required, |this| {
-            this.child(Label::new("*").size(LabelSize::Small).color(Color::Error))
-        })
-}
-
 fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors();
     // All form inputs share tab index 0, so tab order follows render (insertion)
@@ -567,8 +592,7 @@ fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
     // routes keyboard focus into the editor when tabbed to.
     let focus_handle = editor.focus_handle(cx).tab_index(0).tab_stop(true);
     h_flex()
-        .w_full()
-        .min_w_0()
+        .min_w_64()
         .py_1()
         .px_2()
         .h_8()
@@ -581,46 +605,39 @@ fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
         .child(editor.clone())
 }
 
-fn labeled_field(
-    label: &str,
-    required: bool,
-    editor: &Entity<Editor>,
-    cx: &App,
+fn render_env_section(
+    settings_window: &SettingsWindow,
+    rows: &[KeyValueRow],
+    cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .gap_1()
-        .child(field_label(label, required))
-        .child(input_box(editor, cx))
-}
-
-fn render_env_section(rows: &[KeyValueRow], cx: &mut Context<SettingsWindow>) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .gap_1()
-        .child(field_label("Environment Variables", false))
+    // The right-hand control column is narrower than a full row, so each
+    // variable stacks its key above its value (with the remove affordance next
+    // to the value) to stay readable.
+    let control = v_flex()
+        .min_w_64()
+        .gap_2()
         .children(rows.iter().enumerate().map(|(ix, row)| {
-            h_flex()
-                .w_full()
-                .gap_1()
-                .items_center()
-                .child(div().flex_1().min_w_0().child(input_box(&row.key, cx)))
-                .child(div().flex_1().min_w_0().child(input_box(&row.value, cx)))
-                .child(
-                    IconButton::new(("custom-agent-env-remove", ix), IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tab_index(0isize)
-                        .tooltip(Tooltip::text("Remove"))
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            if let Some(form) = this.custom_agent_form.as_mut()
-                                && ix < form.env.len()
-                            {
-                                form.env.remove(ix);
-                            }
-                            cx.notify();
-                        })),
-                )
+            v_flex().gap_1().child(input_box(&row.key, cx)).child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(input_box(&row.value, cx))
+                    .child(
+                        IconButton::new(("custom-agent-env-remove", ix), IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tab_index(0isize)
+                            .tooltip(Tooltip::text("Remove"))
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                if let Some(form) = this.custom_agent_form.as_mut()
+                                    && ix < form.env.len()
+                                {
+                                    form.env.remove(ix);
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            )
         }))
         .child(
             Button::new("custom-agent-env-add", "Add")
@@ -644,6 +661,20 @@ fn render_env_section(rows: &[KeyValueRow], cx: &mut Context<SettingsWindow>) ->
                     cx.notify();
                 })),
         )
+        .into_any_element();
+
+    crate::render_settings_item_layout(
+        settings_window,
+        "Environment Variables",
+        "Environment variables provided to the agent process.",
+        control,
+        None,
+        None,
+        None,
+        false,
+        cx,
+    )
+    .into_any_element()
 }
 
 fn render_form_error(error: SharedString) -> impl IntoElement {

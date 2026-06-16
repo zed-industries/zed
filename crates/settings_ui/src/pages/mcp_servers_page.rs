@@ -123,9 +123,9 @@ fn render_server_list(
         .w_full()
         .gap_1()
         .children(itertools::intersperse_with(
-            server_ids.iter().map(|server_id| {
-                render_context_server(server_id, store, cx).into_any_element()
-            }),
+            server_ids
+                .iter()
+                .map(|server_id| render_context_server(server_id, store, cx).into_any_element()),
             || {
                 Divider::horizontal()
                     .color(DividerColor::BorderFaded)
@@ -192,7 +192,10 @@ fn render_context_server(
     // settings (not the resolved runtime configuration) so the form is editable
     // even when the settings contain invalid data (e.g. an unparseable URL) or
     // the server is disabled / not yet started.
-    let server_settings = store.read(cx).settings_for_server(context_server_id).cloned();
+    let server_settings = store
+        .read(cx)
+        .settings_for_server(context_server_id)
+        .cloned();
     let gear_menu = render_gear_menu(
         context_server_id,
         store,
@@ -233,10 +236,7 @@ fn map_server_status(status: &ContextServerStatus) -> AiSettingItemStatus {
     }
 }
 
-fn resolve_extension_display_name(
-    id: &ContextServerId,
-    cx: &App,
-) -> Option<SharedString> {
+fn resolve_extension_display_name(id: &ContextServerId, cx: &App) -> Option<SharedString> {
     ExtensionStore::global(cx)
         .read(cx)
         .installed_extensions()
@@ -631,7 +631,8 @@ fn uninstall_server(
     cx: &mut App,
 ) {
     if provided_by_extension {
-        if let Some((ext_id, manifest)) = resolve_extension_for_context_server(context_server_id, cx)
+        if let Some((ext_id, manifest)) =
+            resolve_extension_for_context_server(context_server_id, cx)
         {
             if extension_only_provides_context_server(&manifest) {
                 ExtensionStore::global(cx)
@@ -795,7 +796,12 @@ impl McpServerForm {
             name: new_input("my-mcp-server", name_initial.as_deref(), window, cx),
             command: new_input("/path/to/server", command_initial.as_deref(), window, cx),
             args: new_input("--flag value", args_initial.as_deref(), window, cx),
-            url: new_input("https://example.com/mcp", url_initial.as_deref(), window, cx),
+            url: new_input(
+                "https://example.com/mcp",
+                url_initial.as_deref(),
+                window,
+                cx,
+            ),
             timeout: new_input("60", timeout_initial.as_deref(), window, cx),
             oauth_client_id: new_input(
                 "Optional OAuth client ID",
@@ -894,32 +900,72 @@ fn render_mcp_server_form_page(
 
     let fields = v_flex()
         .w_full()
-        .max_w(rems(36.))
-        .gap_3()
-        .child(labeled_field("Server Name", true, &form.name, cx))
+        .gap_4()
+        .child(render_form_field(
+            settings_window,
+            "Server Name",
+            "Required. A unique name used to identify this MCP server.",
+            &form.name,
+            cx,
+        ))
         .map(|this| match transport {
             McpTransport::Stdio => this
-                .child(labeled_field("Command", true, &form.command, cx))
-                .child(labeled_field("Arguments", false, &form.args, cx))
+                .child(render_form_field(
+                    settings_window,
+                    "Command",
+                    "Required. Path to the executable that launches the server.",
+                    &form.command,
+                    cx,
+                ))
+                .child(render_form_field(
+                    settings_window,
+                    "Arguments",
+                    "Space-separated arguments passed to the command.",
+                    &form.args,
+                    cx,
+                ))
                 .child(render_kv_section(
+                    settings_window,
                     "Environment Variables",
+                    "Environment variables provided to the server process.",
                     &form.env,
                     McpKvKind::Env,
                     cx,
                 ))
-                .child(labeled_field("Timeout (seconds)", false, &form.timeout, cx)),
+                .child(render_form_field(
+                    settings_window,
+                    "Timeout (seconds)",
+                    "How long to wait for the server to respond before timing out.",
+                    &form.timeout,
+                    cx,
+                )),
             McpTransport::Http => this
-                .child(labeled_field("URL", true, &form.url, cx))
+                .child(render_form_field(
+                    settings_window,
+                    "URL",
+                    "Required. The base URL of the remote MCP server.",
+                    &form.url,
+                    cx,
+                ))
                 .child(render_kv_section(
+                    settings_window,
                     "Headers",
+                    "HTTP headers sent with each request to the server.",
                     &form.headers,
                     McpKvKind::Header,
                     cx,
                 ))
-                .child(labeled_field("Timeout (seconds)", false, &form.timeout, cx))
-                .child(labeled_field(
+                .child(render_form_field(
+                    settings_window,
+                    "Timeout (seconds)",
+                    "How long to wait for the server to respond before timing out.",
+                    &form.timeout,
+                    cx,
+                ))
+                .child(render_form_field(
+                    settings_window,
                     "OAuth Client ID",
-                    false,
+                    "Optional OAuth client ID used to authenticate with the server.",
                     &form.oauth_client_id,
                     cx,
                 )),
@@ -939,19 +985,6 @@ fn render_mcp_server_form_page(
         .into_any_element()
 }
 
-fn field_label(label: &str, required: bool) -> impl IntoElement {
-    h_flex()
-        .gap_0p5()
-        .child(
-            Label::new(label.to_string())
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
-        .when(required, |this| {
-            this.child(Label::new("*").size(LabelSize::Small).color(Color::Error))
-        })
-}
-
 fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors();
     // All form inputs share tab index 0, so tab order follows render (insertion)
@@ -959,8 +992,7 @@ fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
     // routes keyboard focus into the editor when tabbed to.
     let focus_handle = editor.focus_handle(cx).tab_index(0).tab_stop(true);
     h_flex()
-        .w_full()
-        .min_w_0()
+        .min_w_64()
         .py_1()
         .px_2()
         .h_8()
@@ -973,51 +1005,64 @@ fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
         .child(editor.clone())
 }
 
-fn labeled_field(
-    label: &str,
-    required: bool,
+fn render_form_field(
+    settings_window: &SettingsWindow,
+    title: &'static str,
+    description: &'static str,
     editor: &Entity<Editor>,
-    cx: &App,
-) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .gap_1()
-        .child(field_label(label, required))
-        .child(input_box(editor, cx))
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let control = input_box(editor, cx).into_any_element();
+    crate::render_settings_item_layout(
+        settings_window,
+        title,
+        description,
+        control,
+        None,
+        None,
+        None,
+        false,
+        cx,
+    )
+    .into_any_element()
 }
 
 fn render_kv_section(
-    label: &str,
+    settings_window: &SettingsWindow,
+    title: &'static str,
+    description: &'static str,
     rows: &[KeyValueRow],
     kind: McpKvKind,
     cx: &mut Context<SettingsWindow>,
-) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .gap_1()
-        .child(field_label(label, false))
+) -> AnyElement {
+    let control = v_flex()
+        .min_w_64()
+        .gap_2()
         .children(rows.iter().enumerate().map(|(ix, row)| {
-            h_flex()
-                .w_full()
+            v_flex()
                 .gap_1()
-                .items_center()
-                .child(div().flex_1().min_w_0().child(input_box(&row.key, cx)))
-                .child(div().flex_1().min_w_0().child(input_box(&row.value, cx)))
                 .child(
-                    IconButton::new((kind.remove_id(), ix), IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Remove"))
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            if let Some(form) = this.mcp_server_form.as_mut() {
-                                let rows = kind.rows_mut(form);
-                                if ix < rows.len() {
-                                    rows.remove(ix);
-                                }
-                            }
-                            cx.notify();
-                        })),
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(div().flex_1().min_w_0().child(input_box(&row.key, cx)))
+                        .child(
+                            IconButton::new((kind.remove_id(), ix), IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Remove"))
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    if let Some(form) = this.mcp_server_form.as_mut() {
+                                        let rows = kind.rows_mut(form);
+                                        if ix < rows.len() {
+                                            rows.remove(ix);
+                                        }
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
                 )
+                .child(input_box(&row.value, cx))
         }))
         .child(
             Button::new(kind.add_id(), "Add")
@@ -1036,6 +1081,20 @@ fn render_kv_section(
                     cx.notify();
                 })),
         )
+        .into_any_element();
+
+    crate::render_settings_item_layout(
+        settings_window,
+        title,
+        description,
+        control,
+        None,
+        None,
+        None,
+        false,
+        cx,
+    )
+    .into_any_element()
 }
 
 fn render_form_error(error: SharedString) -> impl IntoElement {
@@ -1048,11 +1107,7 @@ fn render_form_error(error: SharedString) -> impl IntoElement {
                 .size(IconSize::Small)
                 .color(Color::Error),
         )
-        .child(
-            Label::new(error)
-                .size(LabelSize::Small)
-                .color(Color::Error),
-        )
+        .child(Label::new(error).size(LabelSize::Small).color(Color::Error))
 }
 
 fn render_form_actions(cx: &mut Context<SettingsWindow>) -> impl IntoElement {
@@ -1123,7 +1178,10 @@ fn save_mcp_server_form(
         {
             settings.project.context_servers.remove(&original_id.0);
         }
-        settings.project.context_servers.insert(id.0.clone(), content);
+        settings
+            .project
+            .context_servers
+            .insert(id.0.clone(), content);
     });
 
     settings_window.mcp_server_form = None;
@@ -1148,7 +1206,14 @@ struct McpServerFormValues {
 fn build_settings_from_form(
     form: &McpServerForm,
     cx: &App,
-) -> Result<(ContextServerId, Option<ContextServerId>, ContextServerSettingsContent), SharedString> {
+) -> Result<
+    (
+        ContextServerId,
+        Option<ContextServerId>,
+        ContextServerSettingsContent,
+    ),
+    SharedString,
+> {
     let values = McpServerFormValues {
         transport: form.transport,
         original_id: form.original_id.clone(),
@@ -1172,7 +1237,14 @@ fn read_kv(rows: &[KeyValueRow], cx: &App) -> Vec<(String, String)> {
 
 fn build_settings_from_values(
     values: &McpServerFormValues,
-) -> Result<(ContextServerId, Option<ContextServerId>, ContextServerSettingsContent), SharedString> {
+) -> Result<
+    (
+        ContextServerId,
+        Option<ContextServerId>,
+        ContextServerSettingsContent,
+    ),
+    SharedString,
+> {
     let name = values.name.trim().to_string();
     if name.is_empty() {
         return Err("Server name is required.".into());
@@ -1230,7 +1302,11 @@ fn build_settings_from_values(
         }
     };
 
-    Ok((ContextServerId(name.into()), values.original_id.clone(), content))
+    Ok((
+        ContextServerId(name.into()),
+        values.original_id.clone(),
+        content,
+    ))
 }
 
 /// Returns a human-readable error when a server's configured settings are
@@ -1352,7 +1428,10 @@ mod tests {
         let mut values = values(McpTransport::Http);
         values.url = "not a url".into();
         let error = build_settings_from_values(&values).unwrap_err();
-        assert!(error.starts_with("Invalid URL"), "unexpected error: {error}");
+        assert!(
+            error.starts_with("Invalid URL"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -1482,7 +1561,11 @@ mod tests {
         // New server taking an existing name collides.
         assert!(name_collides_with_other_server(&id("foo"), None, &existing));
         // New server with a free name is fine.
-        assert!(!name_collides_with_other_server(&id("baz"), None, &existing));
+        assert!(!name_collides_with_other_server(
+            &id("baz"),
+            None,
+            &existing
+        ));
         // Editing a server in place is allowed even though the name "exists".
         assert!(!name_collides_with_other_server(
             &id("foo"),

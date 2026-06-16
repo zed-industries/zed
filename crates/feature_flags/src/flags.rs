@@ -164,10 +164,6 @@ pub struct AgentSettingsUiFeatureFlag;
 impl FeatureFlag for AgentSettingsUiFeatureFlag {
     const NAME: &'static str = "agent-settings-ui";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(AgentSettingsUiFeatureFlag);
 
