@@ -344,7 +344,7 @@ impl QuickActionBar {
                         .child(
                             div()
                                 .overflow_x_hidden()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .whitespace_nowrap()
                                 .child(
                                     Label::new(if let Some(name) = current_kernel_name {
