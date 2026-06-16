@@ -13,8 +13,8 @@ use anyhow::Result;
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels,
-    Point, ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list,
-    point, prelude::*, uniform_list,
+    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
+    uniform_list,
 };
 use head::Head;
 use project::Project;
@@ -237,10 +237,16 @@ impl Shape {
         pos
     }
 
-    /// The top-left corner of the picker in window coordinates.
-    pub(crate) fn origin(&self, window: &Window) -> Point<Pixels> {
-        let pos = self.picker_position_and_size(window);
-        point(pos.left, Self::TOP.as_pixels(window))
+    /// How far the center of the picker has been moved during dragging
+    /// this allows extending it on one side without the picker centering during
+    /// the resize.
+    pub(crate) fn horizontal_offset(&self, window: &Window) -> Pixels {
+        let Shape::Resizing(PositionAndShape { left, right, .. }) = self else {
+            return Pixels::ZERO; // picker should be centered
+        };
+        let center = (*left + *right) / 2.0;
+        let viewport_center = window.viewport_size().width / 2.0;
+        center - viewport_center // shifting the picker by this uncenters it again
     }
 
     /// Sets the picker's width and height from the shape.

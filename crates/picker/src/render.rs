@@ -1,4 +1,4 @@
-use gpui::{MouseButton, anchored, canvas};
+use gpui::canvas;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -9,7 +9,7 @@ use ui::{
 };
 
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape, ViewPortLength,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
     head::Head,
     preview::PreviewLayout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
@@ -55,25 +55,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
             | None => self.render_results(window, cx).into_any_element(),
         };
 
-        // Position relative to the window so shape fully controls placement
-        anchored()
-            .position(self.shape.origin(window))
-            .snap_to_window_with_margin(ViewPortLength(0.05).as_pixels(window))
-            .child(
-                div()
-                    // Below the picker there is a layer that dismisses the
-                    // picker modal on click. Do not propegate clicks to that
-                    // if the clicks are on the picker
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.stop_propagation();
-                    })
-                    .child(content),
-            )
-            .child(self.render_resize(Left, window, cx))
-            .child(self.render_resize(Right(layout), window, cx))
-            .child(self.render_resize(Bottom(layout), window, cx))
-            .child(self.render_resize(LeftCorner(layout), window, cx))
-            .child(self.render_resize(RightCorner(layout), window, cx))
+        // Embedded pickers are not resizable
+        div().relative().child(content).when(self.is_modal, |this| {
+            // While resizing offset the (parent-centered) container
+            this.left(self.shape.horizontal_offset(window))
+                .child(self.render_resize(Left, window, cx))
+                .child(self.render_resize(Right(layout), window, cx))
+                .child(self.render_resize(Bottom(layout), window, cx))
+                .child(self.render_resize(LeftCorner(layout), window, cx))
+                .child(self.render_resize(RightCorner(layout), window, cx))
+        })
     }
 }
 
