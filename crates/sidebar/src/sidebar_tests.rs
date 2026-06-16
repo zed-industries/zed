@@ -1649,7 +1649,7 @@ async fn init_test_project_with_agent_panel(
     worktree_path: &str,
     cx: &mut TestAppContext,
 ) -> Entity<project::Project> {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -1861,7 +1861,7 @@ async fn test_agent_panel_terminal_metadata_remains_visible_after_panel_is_remov
 
 #[gpui::test]
 async fn test_terminal_metadata_is_deduped_across_project_groups(cx: &mut TestAppContext) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -1942,7 +1942,7 @@ async fn test_terminal_metadata_is_deduped_across_project_groups(cx: &mut TestAp
 
 #[gpui::test]
 async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut TestAppContext) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -4637,7 +4637,7 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
 ) {
     use workspace::ProjectGroup;
 
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -5904,7 +5904,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
     // When the active workspace is an absorbed git worktree, cmd-n
     // should activate the draft thread in the panel and the sidebar
     // should surface a placeholder row for the active empty draft.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -6038,7 +6038,7 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
     //      is viewing a real thread is hidden (it's not the active view).
     //   3. When the active workspace switches, the placeholder follows
     //      the new active panel's current view.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -6693,7 +6693,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     // When a worktree workspace is absorbed under the main repo, a
     // running thread in the worktree's agent panel should still show
     // live status (spinner + "(running)") in the sidebar.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -6792,7 +6792,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
 
 #[gpui::test]
 async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAppContext) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -7271,7 +7271,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
 // of how that row came to be in the store.
 #[gpui::test]
 async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut TestAppContext) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -7930,7 +7930,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     //
     // The fix: use next.workspace (ThreadEntryWorkspace::Open) when available,
     // falling back to group_workspace only for Closed workspaces.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -8887,7 +8887,7 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
     // repo with a single-root workspace (e.g. [/project]), linked
     // worktree threads from the shared repo should only appear under
     // the dedicated group [project], not under [other, project].
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -9420,7 +9420,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     //    as the current draft.
     // 2. Archiving the thread the user is looking at falls back to a draft
     //    on the same workspace.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -9595,7 +9595,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
     // When a thread is unarchived into a project group that has no open
     // workspace, the sidebar opens a new workspace and loads the thread.
     // No spurious draft should appear alongside the unarchived thread.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -9691,7 +9691,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
 async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread(
     cx: &mut TestAppContext,
 ) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -9835,7 +9835,7 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
     // When a workspace already exists with an empty draft and a thread
     // is unarchived into it, the draft should be replaced — not kept
     // alongside the loaded thread.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -9905,7 +9905,7 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
 async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_draft(
     cx: &mut TestAppContext,
 ) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -10036,7 +10036,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
 async fn test_unarchive_after_removing_parent_project_group_restores_real_thread(
     cx: &mut TestAppContext,
 ) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -10177,7 +10177,7 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
 
 #[gpui::test]
 async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut TestAppContext) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -10281,7 +10281,7 @@ async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
     // When a thread is archived while the user is in a different workspace,
     // clear_base_view creates a draft on the archived workspace's panel.
     // Switching back to that workspace shows the draft as active_entry.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -10430,7 +10430,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
     // would prevent the worktree from being cleaned up on disk). Instead,
     // archive_thread switches to a sibling thread on the main workspace (or
     // creates a draft there) before archiving the metadata.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -10602,7 +10602,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
     // When a linked worktree thread is the ONLY thread in the project group
     // (no threads on the main repo either), archiving it should leave the
     // group empty with no active entry.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -10725,7 +10725,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
     // When an archived thread belongs to a linked worktree whose main repo is
     // already open, unarchiving should reopen the linked workspace into the
     // same project group and show only the restored real thread row.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -10904,7 +10904,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
     // When a linked worktree thread is archived but the group has other
     // threads (e.g. on the main project), archive_thread should select
     // the nearest sibling.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -11131,7 +11131,7 @@ async fn init_multi_project_test(
     paths: &[&str],
     cx: &mut TestAppContext,
 ) -> (Arc<FakeFs>, Entity<project::Project>) {
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -11418,7 +11418,7 @@ async fn test_linked_worktree_workspace_reachable_after_adding_unrelated_project
     //   AddProject { use_worktree: false }
     // After these three steps, the linked-worktree workspace was not
     // reachable from any sidebar entry.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
@@ -11933,7 +11933,7 @@ async fn test_worktree_add_only_regroups_threads_for_changed_workspace(cx: &mut 
     // adding a worktree to the main workspace should regroup only that
     // workspace and its threads into the new project group. Threads for the
     // linked worktree workspace should remain under the original group.
-    agent_ui::test_support::init_test(cx);
+    cx.update(agent_ui::test_support::init_test);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
@@ -13057,7 +13057,7 @@ mod property_test {
             )));
         });
 
-        agent_ui::test_support::init_test(cx);
+        cx.update(agent_ui::test_support::init_test);
         cx.update(|cx| {
             cx.set_global(db::AppDatabase::test_new());
             cx.set_global(agent_ui::MaxIdleRetainedThreads(1));

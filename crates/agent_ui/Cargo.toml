@@ -13,6 +13,7 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
+bench = ["test-support"]
 test-support = [
     "acp_thread/test-support",
     "eval_utils",

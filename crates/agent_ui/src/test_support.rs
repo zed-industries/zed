@@ -3,7 +3,7 @@ use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    Pixels, Render, Task, TestAppContext, VisualTestContext, Window, div, px,
+    Pixels, Render, Task, VisualTestContext, Window, div, px,
 };
 use project::AgentId;
 use project::Project;
@@ -98,19 +98,17 @@ where
     }
 }
 
-pub fn init_test(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        cx.set_global(acp_thread::StubSessionCounter(
-            std::sync::atomic::AtomicUsize::new(0),
-        ));
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
-        editor::init(cx);
-        release_channel::init("0.0.0".parse().unwrap(), cx);
-        agent_panel::init(cx);
-        crate::terminal_thread_metadata_store::TerminalThreadMetadataStore::init_global(cx);
-    });
+pub fn init_test(cx: &mut App) {
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
+    cx.set_global(acp_thread::StubSessionCounter(
+        std::sync::atomic::AtomicUsize::new(0),
+    ));
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
+    editor::init(cx);
+    release_channel::init("0.0.0".parse().unwrap(), cx);
+    agent_panel::init(cx);
+    crate::terminal_thread_metadata_store::TerminalThreadMetadataStore::init_global(cx);
 }
 
 pub struct TestWorkspaceSidebar {

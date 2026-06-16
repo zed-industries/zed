@@ -11220,7 +11220,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_link_bare_path(cx: &mut gpui::TestAppContext) {
-        crate::test_support::init_test(cx);
+        cx.update(crate::test_support::init_test);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
