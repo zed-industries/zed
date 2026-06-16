@@ -2189,7 +2189,7 @@ impl ProjectPanel {
                     let selection_end = if entry.is_dir() {
                         file_name.len()
                     } else {
-                        let file_stem = entry.path.file_stem().map(|s| s.to_string());
+                        let file_stem = entry.path.file_stem();
                         file_stem.map_or(file_name.len(), |file_stem| file_stem.len())
                     };
                     0..selection_end
