@@ -4108,14 +4108,16 @@ async fn test_linked_worktree_gitfile_event_preserves_repo(
 }
 
 #[gpui::test]
-async fn test_linked_worktree_index_lock_event_does_not_emit_git_repo_update(
+async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    // Regression test: in a linked worktree, git operations like `git status`
-    // can touch the worktree-specific `index.lock` under the main repo's
-    // `.git/worktrees/<name>/`. We intend to ignore those events so they do not
-    // spuriously emit `UpdatedGitRepositories`.
+    // Events for object database writes, hook files, lock files, and the
+    // reflogs of HEAD/branches/remote-tracking branches carry no git state
+    // changes that Zed cares about beyond what the accompanying ref or index
+    // events already convey, so they must not trigger a git metadata rescan.
+    // The stash reflog and ref updates themselves must still trigger one.
+    //
     init_test(cx);
 
     use git::repository::Worktree as GitWorktree;
@@ -4177,17 +4179,64 @@ async fn test_linked_worktree_index_lock_event_does_not_emit_git_repo_update(
         }
     });
 
-    fs.emit_fs_event(
+    let skipped_paths = [
+        // Standard common git dir skipped paths
+        path!("/main_repo/.git/objects/aa/bbccddee"),
+        path!("/main_repo/.git/objects/pack/pack-1234.pack"),
+        path!("/main_repo/.git/hooks/pre-commit"),
+        path!("/main_repo/.git/logs/HEAD"),
+        path!("/main_repo/.git/logs/refs/heads/main"),
+        path!("/main_repo/.git/logs/refs/remotes/origin/main"),
+        path!("/main_repo/.git/logs/refs/tags/v1.0"),
+        path!("/main_repo/.git/rebase-merge/done"),
+        path!("/main_repo/.git/rebase-apply/onto"),
+        path!("/main_repo/.git/sequencer/todo"),
+        path!("/main_repo/.git/index.lock"),
+        path!("/main_repo/.git/refs/heads/main.lock"),
+        path!("/main_repo/.git/COMMIT_EDITMSG"),
+        path!("/main_repo/.git/packed-refs.new"),
+        path!("/main_repo/.git/config.new"),
+        path!("/main_repo/.git/index.new"),
+        path!("/main_repo/.git/index-abc123.tmp"),
+        path!("/main_repo/.git/FETCH_HEAD"),
+        path!("/main_repo/.git/ORIG_HEAD"),
+        path!("/main_repo/.git/BISECT_LOG"),
+        path!("/main_repo/.git/info/refs"),
+        path!("/main_repo/.git/info/refs_lzOf51"),
+        path!("/main_repo/.git/gc.pid"),
+        // Linked-worktree specific skipped paths
         path!("/main_repo/.git/worktrees/feature/index.lock"),
-        Some(PathEventKind::Changed),
-    );
-    cx.run_until_parked();
+    ];
+    for path in skipped_paths {
+        fs.emit_fs_event(path, Some(PathEventKind::Changed));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_update_count.get(),
+            0,
+            "event for {path} should not emit UpdatedGitRepositories"
+        );
+    }
 
-    assert_eq!(
-        repo_update_count.get(),
-        0,
-        "linked-worktree index.lock events should not emit UpdatedGitRepositories"
-    );
+    let rescan_paths = [
+        // Standard common git dir rescan paths
+        path!("/main_repo/.git/logs/refs/stash"),
+        path!("/main_repo/.git/refs/heads/main"),
+        path!("/main_repo/.git/info/exclude"),
+        path!("/main_repo/.git/refs/heads/branch.new"),
+        path!("/main_repo/.git/refs/heads/branch.tmp"),
+        // Linked-worktree worktree-specific rescan paths
+        path!("/main_repo/.git/worktrees/feature/index"),
+        path!("/main_repo/.git/worktrees/feature/HEAD"),
+    ];
+    for path in rescan_paths {
+        let count_before = repo_update_count.get();
+        fs.emit_fs_event(path, Some(PathEventKind::Changed));
+        cx.run_until_parked();
+        assert!(
+            repo_update_count.get() > count_before,
+            "event for {path} should emit UpdatedGitRepositories"
+        );
+    }
 }
 
 #[gpui::test]
