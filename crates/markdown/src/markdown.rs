@@ -110,9 +110,6 @@ pub struct MarkdownStyle {
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
-    /// When true, soft breaks (single newlines within a paragraph) are rendered
-    /// as hard line breaks instead of spaces. This matches the behavior of
-    /// GitHub comments and Obsidian's default mode.
     pub soft_break_as_hard_break: bool,
 }
 
