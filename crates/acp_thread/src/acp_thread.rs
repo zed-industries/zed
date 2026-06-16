@@ -163,7 +163,18 @@ impl SandboxPermission {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
     #[serde(default)]
-    pub network: bool,
+    pub command: Option<String>,
+    /// Specific hosts the command requested network access to, in canonical
+    /// form (`github.com`, `*.npmjs.org`). Empty when no specific hosts were
+    /// requested (see `network_all_hosts`).
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether the command requested access to any host ("arbitrary network
+    /// access"). The `network` alias deserializes the field this replaced —
+    /// a plain bool meaning "network access" — so details persisted by older
+    /// builds still render the network request.
+    #[serde(default, alias = "network")]
+    pub network_all_hosts: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
     #[serde(default)]
@@ -2831,6 +2842,9 @@ impl AcpThread {
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             }
+                            if is_same_turn {
+                                this.mark_pending_entries_as_canceled(cx);
+                            }
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
@@ -2893,7 +2907,9 @@ impl AcpThread {
                     }
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
-
+                        if is_same_turn {
+                            this.mark_pending_entries_as_canceled(cx);
+                        }
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
@@ -3376,7 +3392,7 @@ impl AcpThread {
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let env = env.await;
+                let mut env = env.await;
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3388,8 +3404,14 @@ impl AcpThread {
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
+                // Spawn the network proxy (if the wrap requests network) before
+                // generating the sandbox policy, since the policy must pin the
+                // child to the proxy's loopback port. This also injects the
+                // child's proxy env vars.
+                let (proxy_handle, network_policy) =
+                    setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
                 let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, network_policy)?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -3414,6 +3436,7 @@ impl AcpThread {
                         terminal,
                         language_registry,
                         sandbox_config,
+                        proxy_handle,
                         cx,
                     )
                 }))
@@ -3495,6 +3518,7 @@ impl AcpThread {
                 language_registry,
                 // External terminal providers manage their own sandboxing
                 // (if any). We don't wrap their commands.
+                None,
                 None,
                 cx,
             )
@@ -3686,6 +3710,21 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn sandbox_authorization_details_deserialize_legacy_network_bool() {
+        // Older builds persisted `network: bool`; the `alias` on
+        // `network_all_hosts` must keep those details rendering as a
+        // network request rather than silently dropping it.
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": true })).unwrap();
+        assert!(details.network_all_hosts);
+        assert!(details.network_hosts.is_empty());
+
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": false })).unwrap();
+        assert!(!details.network_all_hosts);
     }
 
     #[gpui::test]

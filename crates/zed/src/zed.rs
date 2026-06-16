@@ -1324,7 +1324,9 @@ fn register_actions(
 
         impl WorkspaceError for DebugError {
             fn primary_message(&self) -> SharedString {
-                SharedString::new_static("This is an error.")
+                SharedString::new_static(
+                    "Error: Prepare rename via rust-analyzer failed: No references found at position",
+                )
             }
 
             fn severity(&self) -> ErrorSeverity {

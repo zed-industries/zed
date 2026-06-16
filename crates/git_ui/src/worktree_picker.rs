@@ -702,15 +702,14 @@ impl WorktreePickerDelegate {
 
     fn remove_worktree_from_window(
         &mut self,
-        ix: usize,
+        worktree_path: &Path,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        let Some(WorktreeEntry::Worktree { worktree, .. }) = self.matches.get(ix) else {
+        if self.deleting_worktree_paths.contains(worktree_path) {
             return;
-        };
-        let Some(workspace_to_remove) =
-            self.workspace_for_open_worktree(&worktree.path, window, cx)
+        }
+        let Some(workspace_to_remove) = self.workspace_for_open_worktree(worktree_path, window, cx)
         else {
             return;
         };
@@ -1314,22 +1313,29 @@ impl PickerDelegate for WorktreePickerDelegate {
                                         })),
                                 );
 
-                            let remove_from_window_button = IconButton::new(
-                                ("remove-worktree-from-window", ix),
-                                IconName::Close,
-                            )
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Worktree from Window"))
-                            .on_click(cx.listener(move |picker, _, window, cx| {
-                                picker.delegate.remove_worktree_from_window(ix, window, cx);
-                            }));
-
                             this.end_slot(
                                 h_flex()
                                     .gap_0p5()
                                     .child(open_in_new_window_button)
                                     .when(can_remove_from_window, |this| {
-                                        this.child(remove_from_window_button)
+                                        let worktree_path = worktree.path.clone();
+                                        this.child(
+                                            IconButton::new(
+                                                ("remove-worktree-from-window", ix),
+                                                IconName::Close,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Remove Worktree from Window"))
+                                            .on_click(
+                                                cx.listener(move |picker, _, window, cx| {
+                                                    picker.delegate.remove_worktree_from_window(
+                                                        &worktree_path,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        )
                                     })
                                     .when(can_delete, |this| this.child(delete_button)),
                             )
@@ -2211,7 +2217,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
         worktree_picker.update(&mut cx, |worktree_picker, cx| {
             worktree_picker.picker.update(cx, |picker, _| {
                 assert!(
@@ -2228,7 +2233,7 @@ mod tests {
             worktree_picker.picker.update(cx, |picker, cx| {
                 picker
                     .delegate
-                    .remove_worktree_from_window(index, window, cx);
+                    .remove_worktree_from_window(&worktree_path, window, cx);
             })
         });
         cx.run_until_parked();

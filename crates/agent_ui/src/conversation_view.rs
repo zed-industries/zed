@@ -133,17 +133,18 @@ pub(crate) enum ThreadError {
         provider: SharedString,
     },
     PromptTooLarge,
-    NoApiKey {
+    NoCredentials {
         provider: SharedString,
     },
     StreamError {
         provider: SharedString,
     },
-    InvalidApiKey {
+    AuthenticationFailed {
         provider: SharedString,
     },
     PermissionDenied {
         provider: SharedString,
+        message: Option<SharedString>,
     },
     RequestFailed,
     MaxOutputTokens,
@@ -180,7 +181,7 @@ impl From<anyhow::Error> for ThreadError {
                 }
                 PromptTooLarge { .. } => Self::PromptTooLarge,
                 PaymentRequired => Self::PaymentRequired,
-                NoApiKey { provider } => Self::NoApiKey {
+                NoApiKey { provider } => Self::NoCredentials {
                     provider: provider.to_string().into(),
                 },
                 StreamEndedUnexpectedly { provider }
@@ -189,11 +190,12 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
-                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                AuthenticationError { provider, .. } => Self::AuthenticationFailed {
                     provider: provider.to_string().into(),
                 },
-                PermissionError { provider, .. } => Self::PermissionDenied {
+                PermissionError { provider, message } => Self::PermissionDenied {
                     provider: provider.to_string().into(),
+                    message: Some(message.clone().into()),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
                 DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
@@ -8808,6 +8810,65 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_move_up_in_empty_editor_restores_last_queued_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        active_thread(&conversation_view, cx).update(cx, |thread, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "first queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "second queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.focus(&editor);
+
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(
+            queue_len, 1,
+            "Up arrow should pull the last queued message out of the queue"
+        );
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "second queued",
+            "Main editor should contain the last queued message"
+        );
+
+        // With a non-empty editor, another MoveUp must not consume the queue.
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 1, "Queue should be untouched");
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "second queued");
     }
 
     #[gpui::test]
