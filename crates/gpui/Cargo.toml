@@ -154,7 +154,7 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
+gpui_platform = { workspace = true, features = ["font-kit"] }
 gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
 proptest = { workspace = true }
@@ -165,10 +165,6 @@ unicode-segmentation = { workspace = true }
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
 reqwest_client = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(target_family = "wasm")'.dev-dependencies]
-wasm-bindgen = { workspace = true }
-gpui_web.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }

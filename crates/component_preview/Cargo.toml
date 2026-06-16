@@ -43,7 +43,7 @@ workspace.workspace = true
 assets.workspace = true
 editor.workspace = true
 env_logger.workspace = true
-gpui_platform = { workspace = true, features = ["screen-capture", "font-kit", "wayland", "x11"] }
+gpui_platform = { workspace = true, features = ["screen-capture", "font-kit"] }
 
 [[example]]
 name = "component_preview"
