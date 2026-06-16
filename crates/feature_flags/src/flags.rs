@@ -35,18 +35,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
-pub struct HandoffFeatureFlag;
-
-impl FeatureFlag for HandoffFeatureFlag {
-    const NAME: &'static str = "handoff";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(HandoffFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -58,18 +46,6 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     }
 }
 register_feature_flag!(DiffReviewFeatureFlag);
-
-pub struct UpdatePlanToolFeatureFlag;
-
-impl FeatureFlag for UpdatePlanToolFeatureFlag {
-    const NAME: &'static str = "update-plan-tool";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(UpdatePlanToolFeatureFlag);
 
 /// Gates the `create_thread` and `list_agents_and_models` tools, which let
 /// the agent spawn independent sibling threads that show up in the agent
@@ -85,18 +61,6 @@ impl FeatureFlag for CreateThreadToolFeatureFlag {
     }
 }
 register_feature_flag!(CreateThreadToolFeatureFlag);
-
-pub struct UpdateTitleToolFeatureFlag;
-
-impl FeatureFlag for UpdateTitleToolFeatureFlag {
-    const NAME: &'static str = "update-title-tool";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(UpdateTitleToolFeatureFlag);
 
 pub struct LspToolFeatureFlag;
 

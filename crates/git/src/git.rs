@@ -48,6 +48,8 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Opens the selected file in the editor without a diff view.
+        ViewFile,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
@@ -107,6 +109,8 @@ actions!(
         ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Adds a file to the repository's .git/info/exclude.
+        AddToGitInfoExclude,
         /// Copies the current branch name to the clipboard.
         CopyBranchName,
     ]
