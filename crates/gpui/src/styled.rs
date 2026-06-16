@@ -7,7 +7,7 @@ use crate::{
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
-    overflow_style_methods, padding_style_methods, position_style_methods,
+    outline_style_methods, overflow_style_methods, padding_style_methods, position_style_methods,
     visibility_style_methods,
 };
 const ELLIPSIS: SharedString = SharedString::new_static("…");
@@ -31,6 +31,7 @@ pub trait Styled: Sized {
     gpui_macros::overflow_style_methods!();
     gpui_macros::cursor_style_methods!();
     gpui_macros::border_style_methods!();
+    gpui_macros::outline_style_methods!();
     gpui_macros::box_shadow_style_methods!();
 
     /// Sets the display type of the element to `block`.
@@ -499,6 +500,12 @@ pub trait Styled: Sized {
     /// Sets the border style of the element.
     fn border_dashed(mut self) -> Self {
         self.style().border_style = Some(BorderStyle::Dashed);
+        self
+    }
+
+    /// Sets the outline style of the element to dashed.
+    fn outline_dashed(mut self) -> Self {
+        self.style().outline_style = Some(BorderStyle::Dashed);
         self
     }
 

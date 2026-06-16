@@ -142,6 +142,12 @@ pub fn border_style_methods(input: TokenStream) -> TokenStream {
     styles::border_style_methods(input)
 }
 
+/// Generates methods for outline styles.
+#[proc_macro]
+pub fn outline_style_methods(input: TokenStream) -> TokenStream {
+    styles::outline_style_methods(input)
+}
+
 /// Generates methods for box shadow styles.
 #[proc_macro]
 pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
