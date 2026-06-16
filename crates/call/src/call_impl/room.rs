@@ -1773,14 +1773,26 @@ impl Room {
     }
 }
 
+/// The number of times we attempt to establish the LiveKit connection before
+/// giving up. Retries cover transient failures (e.g. a network blip); a
+/// genuinely bad token won't be fixed by retrying, so the bound keeps us from
+/// hammering LiveKit indefinitely.
+const LIVEKIT_CONNECT_ATTEMPTS: usize = 5;
+
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
     cx: &mut Context<Room>,
 ) -> Option<Task<()>> {
-    let mut connection_info = livekit_connection_info?;
+    let connection_info = livekit_connection_info?;
     Some(cx.spawn(async move |this, cx| {
+        // Retry the LiveKit connection with backoff, but deliberately do NOT
+        // ask collab for a fresh token here: a refreshed token is only needed
+        // when the collab connection itself is re-established, which is handled
+        // separately in `maintain_connection` via `ensure_livekit_connection`.
+        // Coupling this loop to `rejoin` previously turned an isolated LiveKit
+        // failure into a channel-wide `RejoinRoom` storm.
         let mut backoff = Duration::from_secs(1);
-        loop {
+        for attempt in 1..=LIVEKIT_CONNECT_ATTEMPTS {
             match livekit::Room::connect(
                 connection_info.server_url.clone(),
                 connection_info.token.clone(),
@@ -1839,40 +1851,21 @@ fn spawn_room_connection(
                     return;
                 }
                 Err(error) => {
-                    log::error!("failed to connect to LiveKit room: {error:#}");
+                    log::error!(
+                        "failed to connect to LiveKit room (attempt {attempt}/{LIVEKIT_CONNECT_ATTEMPTS}): {error:#}"
+                    );
                 }
             }
 
-            cx.background_executor().timer(backoff).await;
-            backoff = (backoff * 2).min(Duration::from_secs(30));
-
-            // The token we were given may no longer be valid: LiveKit revokes
-            // it when this user's stale connection is cleaned up around the
-            // time the token is issued (e.g. when rejoining a channel right
-            // after a crash). Rejoin the room to obtain fresh connection info
-            // before trying again.
-            let Ok(rejoin) = this.update(cx, |this, cx| this.rejoin(cx)) else {
-                return;
-            };
-            match rejoin.await {
-                Ok(Some(new_connection_info)) => {
-                    log::info!(
-                        "refreshed LiveKit connection info (token changed: {})",
-                        new_connection_info.token != connection_info.token
-                    );
-                    connection_info = new_connection_info;
-                }
-                Ok(None) => {
-                    log::warn!(
-                        "server returned no fresh LiveKit connection info; \
-                         retrying with the existing token"
-                    );
-                }
-                Err(error) => {
-                    log::error!("failed to refresh LiveKit connection info: {error:#}");
-                }
+            if attempt < LIVEKIT_CONNECT_ATTEMPTS {
+                cx.background_executor().timer(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(10));
             }
         }
+
+        log::error!(
+            "giving up on LiveKit room connection after {LIVEKIT_CONNECT_ATTEMPTS} attempts"
+        );
     }))
 }
 
