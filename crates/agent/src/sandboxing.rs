@@ -126,6 +126,12 @@ pub(crate) struct ThreadSandboxGrants {
     network_hosts: Vec<HostPattern>,
     allow_fs_write_all: bool,
     unsandboxed: bool,
+    /// Whether the user approved running commands *without* a sandbox for the
+    /// rest of the thread when the OS sandbox could not be created (the
+    /// fallback prompt's "Allow for this thread"). Distinct from
+    /// `unsandboxed`, which records a model-requested escape; this is a
+    /// user-acknowledged degradation because the sandbox is unavailable.
+    sandbox_fallback: bool,
     /// Canonicalized paths granted write access for the thread. Each covers its
     /// whole subtree; redundant children are pruned on insert.
     write_paths: Vec<PathBuf>,
@@ -190,6 +196,21 @@ impl ThreadSandboxGrants {
                 })
             }
         }
+    }
+
+    /// Whether the user allowed running commands unsandboxed for the rest of
+    /// the thread (the fallback prompt's "Allow for this thread"). Distinct
+    /// from the persistent `allow_unsandboxed` setting.
+    pub fn fallback_granted_for_thread(&self) -> bool {
+        self.sandbox_fallback
+    }
+
+    /// Record that the user approved running commands unsandboxed for the rest
+    /// of the thread when the sandbox can't be created. Only Linux can fail to
+    /// create a sandbox, so this is Linux-only.
+    #[cfg(target_os = "linux")]
+    pub fn record_fallback(&mut self) {
+        self.sandbox_fallback = true;
     }
 
     /// Record everything in `request` as granted for the rest of the thread,
@@ -329,6 +350,19 @@ mod tests {
 
     fn effective(grants: &ThreadSandboxGrants, request: &SandboxRequest) -> SandboxRequest {
         grants.effective_with_persistent(request, &SandboxPermissions::default())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fallback_granted_for_thread_tracks_record_fallback() {
+        let mut grants = ThreadSandboxGrants::default();
+        assert!(!grants.fallback_granted_for_thread());
+
+        // The thread-scoped fallback grant is independent of the
+        // model-requested `unsandboxed` grant.
+        grants.record_fallback();
+        assert!(grants.fallback_granted_for_thread());
+        assert!(!covers(&grants, &unsandboxed_request()));
     }
 
     #[test]

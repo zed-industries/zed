@@ -2438,6 +2438,7 @@ fn run_tool_permissions_visual_tests(
                 "Terminal",
                 "Configure Tool Rules",
                 None,
+                true,
                 settings_ui::pages::render_terminal_tool_config,
                 window,
                 cx,
