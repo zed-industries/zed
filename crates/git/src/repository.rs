@@ -24,6 +24,7 @@ use std::sync::atomic::AtomicBool;
 
 use std::process::{ExitStatus, Output};
 use std::str::FromStr;
+use std::time::SystemTime;
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf},
@@ -73,6 +74,17 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     } else {
         None
     }
+}
+
+fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
+    let dot_git_path = worktree_path.join(".git");
+    let git_file = std::fs::read_to_string(&dot_git_path)
+        .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+    let git_dir = git_file
+        .strip_prefix("gitdir:")
+        .context("worktree .git file missing gitdir pointer")?
+        .trim();
+    Ok(worktree_path.join(git_dir))
 }
 
 fn normalize_git_metadata_path(path: PathBuf) -> Result<PathBuf> {
@@ -844,6 +856,24 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
+
+    /// Returns the creation time of a linked worktree's git metadata
+    /// directory (`.git/worktrees/<name>/`), resolved via the worktree's
+    /// `.git` file.
+    ///
+    /// The metadata directory is created by `git worktree add` and removed
+    /// by `git worktree remove`, so its creation time identifies a
+    /// particular incarnation of the worktree: if the worktree is removed
+    /// and recreated at the same path, the creation time changes.
+    ///
+    /// Returns `Ok(None)` when the worktree directory does not exist at
+    /// all, and an error when the directory exists but the time cannot be
+    /// determined (e.g. on filesystems without birthtime support); callers
+    /// should fail safe in the error case.
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>>;
 
     fn create_worktree(
         &self,
@@ -1917,6 +1947,34 @@ impl GitRepository for RealGitRepository {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
                 }
+            })
+            .boxed()
+    }
+
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>> {
+        self.executor
+            .spawn(async move {
+                match std::fs::metadata(&worktree_path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(None);
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("failed to stat {}", worktree_path.display())
+                        });
+                    }
+                    Ok(_) => {}
+                }
+                let git_dir = linked_worktree_git_dir(&worktree_path)?;
+                let metadata = std::fs::metadata(&git_dir)
+                    .with_context(|| format!("failed to stat {}", git_dir.display()))?;
+                let created_at = metadata.created().with_context(|| {
+                    format!("creation time unavailable for {}", git_dir.display())
+                })?;
+                Ok(Some(created_at))
             })
             .boxed()
     }
@@ -4907,6 +4965,24 @@ mod tests {
             new_worktree.path.canonicalize().unwrap(),
             worktree_path.canonicalize().unwrap(),
         );
+
+        // The new worktree's git metadata directory should report a creation
+        // time, resolved via the worktree's `.git` file.
+        let created_at = repo
+            .worktree_created_at(worktree_path.clone())
+            .await
+            .unwrap();
+        assert!(
+            created_at.is_some(),
+            "creation time should be available for a freshly created worktree"
+        );
+
+        // A path with no worktree at all reports `None`.
+        let missing = repo
+            .worktree_created_at(worktrees_dir.join("does-not-exist"))
+            .await
+            .unwrap();
+        assert_eq!(missing, None);
     }
 
     #[gpui::test]
