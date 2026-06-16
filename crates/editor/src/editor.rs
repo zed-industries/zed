@@ -1493,9 +1493,24 @@ impl Default for RowHighlightOptions {
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
-    color: Hsla,
+    color: RowHighlightColor,
     options: RowHighlightOptions,
     type_id: TypeId,
+}
+
+enum RowHighlightColor {
+    Fixed(Hsla),
+    #[allow(dead_code)]
+    Themed(fn(&App) -> Hsla),
+}
+
+impl RowHighlightColor {
+    fn resolve(&self, cx: &App) -> Hsla {
+        match self {
+            RowHighlightColor::Fixed(color) => *color,
+            RowHighlightColor::Themed(function) => function(cx),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -8656,7 +8671,7 @@ impl Editor {
                     }
                     merged = true;
                     prev_highlight.index = index;
-                    prev_highlight.color = color;
+                    prev_highlight.color = RowHighlightColor::Fixed(color);
                     prev_highlight.options = options;
                 }
             }
@@ -8667,7 +8682,7 @@ impl Editor {
                     RowHighlight {
                         range,
                         index,
-                        color,
+                        color: RowHighlightColor::Fixed(color),
                         options,
                         type_id: TypeId::of::<T>(),
                     },
@@ -8736,12 +8751,15 @@ impl Editor {
     }
 
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
-    pub fn highlighted_rows<T: 'static>(&self) -> impl '_ + Iterator<Item = (Range<Anchor>, Hsla)> {
+    pub fn highlighted_rows<'a, T: 'static>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
             .map_or(&[] as &[_], |vec| vec.as_slice())
             .iter()
-            .map(|highlight| (highlight.range.clone(), highlight.color))
+            .map(|highlight| (highlight.range.clone(), highlight.color.resolve(cx)))
     }
 
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
@@ -8778,7 +8796,7 @@ impl Editor {
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
                                     border: None,
-                                    background: highlight.color.into(),
+                                    background: highlight.color.resolve(cx).into(),
                                     type_id: Some(highlight.type_id),
                                 },
                             );

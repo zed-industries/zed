@@ -1600,7 +1600,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     main_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1616,8 +1616,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         assert_eq!(point.row, 1);
     });
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1675,7 +1675,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     second_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1691,8 +1691,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         assert_eq!(point.row, 2);
     });
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1714,8 +1714,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     cx.run_until_parked();
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1723,8 +1723,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1741,8 +1741,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     shutdown_session.await.unwrap();
 
-    main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    main_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1750,8 +1750,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 
-    second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+    second_editor.update(cx, |editor, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>(cx).collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1880,9 +1880,9 @@ async fn test_active_debug_line_color_follows_theme_change(
             .editor_debugger_active_line_background
     });
     let captured_color = editor
-        .update(cx, |editor, _| {
+        .update(cx, |editor, cx| {
             editor
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .next()
                 .map(|(_, color)| color)
         })
@@ -1911,9 +1911,9 @@ async fn test_active_debug_line_color_follows_theme_change(
     cx.run_until_parked();
 
     let color_after_theme_change = editor
-        .update(cx, |editor, _| {
+        .update(cx, |editor, cx| {
             editor
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .next()
                 .map(|(_, color)| color)
         })
@@ -2243,7 +2243,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2263,7 +2263,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_b_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2337,7 +2337,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_b_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2357,7 +2357,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
@@ -2471,7 +2471,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
             let active_debug_lines: Vec<_> = pane_c_editor
                 .read(cx)
-                .highlighted_rows::<ActiveDebugLine>()
+                .highlighted_rows::<ActiveDebugLine>(cx)
                 .collect();
 
             assert_eq!(
@@ -2491,7 +2491,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
                     if let Some(editor) = item.to_any_view().downcast::<Editor>().ok() {
                         total_active_debug_lines += editor
                             .read(cx)
-                            .highlighted_rows::<ActiveDebugLine>()
+                            .highlighted_rows::<ActiveDebugLine>(cx)
                             .count();
                     }
                 }
