@@ -5242,6 +5242,7 @@ impl ToolCallEventStream {
     pub(crate) fn authorize_sandbox(
         &self,
         title: impl Into<String>,
+        command: Option<String>,
         request: SandboxRequest,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -5250,8 +5251,17 @@ impl ToolCallEventStream {
         }
 
         let title = title.into();
+        let (network_hosts, network_all_hosts) = match &request.network {
+            crate::sandboxing::NetworkRequest::None => (Vec::new(), false),
+            crate::sandboxing::NetworkRequest::AnyHost => (Vec::new(), true),
+            crate::sandboxing::NetworkRequest::Hosts(hosts) => {
+                (hosts.iter().map(|host| host.to_string()).collect(), false)
+            }
+        };
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
-            network: request.network,
+            command,
+            network_hosts,
+            network_all_hosts,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
@@ -5416,8 +5426,34 @@ impl ToolCallEventStream {
         cx.update(|cx| {
             update_settings_file(fs, cx, move |settings, _| {
                 let agent = settings.agent.get_or_insert_default();
-                if request.network {
-                    agent.allow_sandbox_network();
+                match &request.network {
+                    crate::sandboxing::NetworkRequest::None => {}
+                    crate::sandboxing::NetworkRequest::AnyHost => {
+                        agent.allow_sandbox_all_hosts();
+                    }
+                    crate::sandboxing::NetworkRequest::Hosts(hosts) => {
+                        // Rebuild the persisted list with subsumption pruning
+                        // so granting `*.github.com` retires a previously
+                        // persisted `api.github.com` instead of accumulating
+                        // redundant entries. Unparsable hand-edited entries
+                        // are preserved untouched.
+                        let mut patterns = Vec::new();
+                        let mut unparsable = Vec::new();
+                        for raw in agent.sandbox_network_hosts() {
+                            match http_proxy::HostPattern::parse(raw) {
+                                Ok(pattern) => {
+                                    crate::sandboxing::insert_host_pattern(&mut patterns, pattern)
+                                }
+                                Err(_) => unparsable.push(raw.clone()),
+                            }
+                        }
+                        for host in hosts {
+                            crate::sandboxing::insert_host_pattern(&mut patterns, host.clone());
+                        }
+                        let mut host_strings = unparsable;
+                        host_strings.extend(patterns.iter().map(|pattern| pattern.to_string()));
+                        agent.set_sandbox_network_hosts(host_strings);
+                    }
                 }
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
@@ -6810,7 +6846,7 @@ mod tests {
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
-            network: false,
+            network: crate::sandboxing::NetworkRequest::None,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -6822,13 +6858,14 @@ mod tests {
         };
 
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+            event_stream.authorize_sandbox("Allow write access?", None, request.clone(), cx)
         });
         let authorization = receiver.expect_authorization().await;
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("sandbox authorization should include request details");
-        assert_eq!(details.network, request.network);
+        assert!(details.network_hosts.is_empty());
+        assert!(!details.network_all_hosts);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
