@@ -1,113 +1,213 @@
-//! Linux sandbox integration built on Bubblewrap (`bwrap`) for the
-//! filesystem and seccomp for the network.
+//! Linux sandbox integration built on Bubblewrap (`bwrap`) for both the
+//! filesystem and the network.
 //!
 //! `bwrap` is an unprivileged container launcher: it sets up mount, user,
 //! pid, and other namespaces, bind-mounts the host filesystem (read-only by
 //! default, read-write for an explicit set of directories), then `exec`s the
-//! wrapped command inside that view. Unlike Landlock, its capabilities don't
-//! scale with the kernel ABI — any kernel with unprivileged user namespaces
-//! (~3.8+) gives the same filesystem isolation — at the cost of needing a
-//! `bwrap` binary present and usable.
-//!
-//! `bwrap` only restricts the filesystem; it does not, on its own, give us
-//! fine-grained network control. We deliberately keep the host network
-//! namespace (so local `AF_UNIX` IPC keeps working) and instead deny outbound
-//! IP networking with a seccomp filter that blocks creation of `AF_INET` /
-//! `AF_INET6` sockets. Gating at socket *creation* is the only reliable point:
-//! `connect`/`sendto` operate on an already-open fd whose address family is
-//! kernel state seccomp can't inspect, and blocking them unconditionally would
-//! also break the `AF_UNIX` sockets we want to allow.
+//! wrapped command inside that view. Network access can be wholly
+//! enabled/disabled using `--unshare-net`. More granular access will require
+//! seccomp.
 //!
 //! ## The launcher
 //!
-//! The PTY layer Zed spawns terminal commands through only lets us control the
-//! program, argv, and env of the child — not its file descriptors and not a
-//! `pre_exec` hook. seccomp must therefore be installed by a process we fully
-//! control *between* the spawn and the command, so we re-exec this very binary
-//! as a launcher: [`wrap_invocation`] encodes the network policy and the full
-//! command to run, and [`run_launcher_if_invoked`] (called early in `main`)
-//! recognizes the marker, installs the seccomp filter, and `exec`s the wrapped
-//! command. Doing this in the freshly re-exec'd, single-threaded process also
-//! sidesteps the fork-in-a-threaded-program hazards of a `pre_exec` hook.
+//! We fork/exec the running zed binary because:
+//! - previously we used landlock, which can only restrict the *current
+//!   process*, so we need a subprocess running our code to restrict.
+//! - seccomp is similar, and while we don't have that yet, we will in the
+//!   future, so we keep the machinery for now.
 //!
-//! The launcher payload is intentionally generic: "install seccomp per the
-//! encoded network policy, then `exec` everything after the first `--`." It
-//! doesn't know about `bwrap` specifically — [`apply_sandbox_wrap`] assembles
-//! the full `bwrap` command line and hands it over as the command to exec.
-//! That keeps the launcher reusable as the network policy grows to need, for
-//! example, a network namespace plus an egress proxy.
+//! This approach also avoids `pre_exec`, which is scary.
 //!
-//! [`apply_sandbox_wrap`]: ../../acp_thread/terminal/fn.apply_sandbox_wrap.html
+//! ## Status reporting
+//!
+//! There are three possible error cases relating to sandboxing:
+//! - there is no `bwrap` on the path
+//! - there is a `bwrap` on the path, but it's a setuid binary (which we reject
+//!   for security reasons)
+//! - there is a `bwrap` on the path, but it fails to create the sandbox (see
+//!   [`probe_bwrap`]).
+//!
+//! If one of these happens, we report it back to the parent over a `SOCK_DGRAM`
+//! and then *abort*: the launcher never runs the command unsandboxed on its own.
+//! What to do about a failure is the caller's decision — the agent currently
+//! fails open (re-runs the command without a sandbox and tells the model so via
+//! [`check_can_create_sandbox`]), while the NixOS tests fail closed (treat it as
+//! a hard error). There's no UI for the agent's fallback yet; that's coming
+//! soon.
 
 use std::ffi::OsString;
+use std::os::linux::net::SocketAddrExt as _;
 use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::net::{SocketAddr, UnixDatagram};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow, bail, ensure};
-use seccompiler::{
-    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
-    SeccompRule,
-};
+use anyhow::{Context as _, Result, anyhow, bail};
 
 use crate::SandboxPermissions;
 
-/// The network policy enforced for a sandboxed command.
+/// The outcome a sandbox launcher reports back to the process that spawned it.
 ///
-/// Kept as a small enum rather than a bool so richer policies (for example,
-/// routing egress through a proxy that allows only certain hosts) can be added
-/// as new variants without changing the launcher's encoding shape.
+/// Only [`Success`](LauncherStatus::Success) means the command actually ran
+/// fully sandboxed; every other variant means the launcher could not enforce
+/// the sandbox and ran the command without one (with the reason reported here).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NetworkPolicy {
-    /// Outbound IP networking is allowed; no seccomp filter is installed.
-    Allowed,
-    /// Outbound IP networking is denied (`AF_UNIX` IPC still works).
-    Denied,
+pub enum LauncherStatus {
+    /// The sandbox was fully enforced: `bwrap` filesystem and (when requested)
+    /// network isolation.
+    Success,
+    /// No usable `bwrap` binary was found on `PATH` (or bundled).
+    BwrapNotFound,
+    /// The only `bwrap` found is setuid-root, which we refuse to execute.
+    SetuidRejected,
+    /// `bwrap` is present but failed to set up the sandbox with our arguments
+    /// (typically because unprivileged user namespaces are disabled).
+    SandboxProbeFailed,
 }
 
-impl NetworkPolicy {
-    fn from_permissions(permissions: SandboxPermissions) -> Self {
-        if permissions.allow_network {
-            NetworkPolicy::Allowed
-        } else {
-            NetworkPolicy::Denied
+impl LauncherStatus {
+    fn to_byte(self) -> u8 {
+        match self {
+            LauncherStatus::Success => 0,
+            LauncherStatus::BwrapNotFound => 1,
+            LauncherStatus::SetuidRejected => 2,
+            LauncherStatus::SandboxProbeFailed => 3,
+        }
+    }
+
+    fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(LauncherStatus::Success),
+            1 => Some(LauncherStatus::BwrapNotFound),
+            2 => Some(LauncherStatus::SetuidRejected),
+            3 => Some(LauncherStatus::SandboxProbeFailed),
+            _ => None,
+        }
+    }
+
+    /// Whether the command ran fully sandboxed.
+    pub fn is_success(self) -> bool {
+        matches!(self, LauncherStatus::Success)
+    }
+
+    /// A human-readable explanation suitable for a `log::warn` on a non-success
+    /// outcome.
+    pub fn describe(self) -> &'static str {
+        match self {
+            LauncherStatus::Success => "the sandbox was created",
+            LauncherStatus::BwrapNotFound => "no usable `bwrap` binary was found on PATH",
+            LauncherStatus::SetuidRejected => {
+                "the only available `bwrap` is setuid-root, which Zed refuses to run"
+            }
+            LauncherStatus::SandboxProbeFailed => {
+                "`bwrap` is present but failed to create a sandbox (unprivileged user \
+                 namespaces may be disabled)"
+            }
         }
     }
 }
 
-/// Locate a usable, non-setuid `bwrap` binary, preferring one on `PATH` and
-/// falling back to a binary bundled with the application.
+/// A one-shot datagram socket the spawning process binds so a launcher can
+/// report its [`LauncherStatus`] back.
 ///
-/// The result is cached: the answer can't change while the process runs, and
-/// the lookup includes filesystem `stat`s we'd rather not repeat per command.
-///
-/// This does not probe that the binary actually *enforces* a sandbox — see
-/// [`is_available`] for that.
-pub fn locate_bwrap() -> Option<PathBuf> {
-    static LOCATED: OnceLock<Option<PathBuf>> = OnceLock::new();
-    LOCATED
-        .get_or_init(|| {
-            candidate_bwrap_paths()
-                .into_iter()
-                .find(|candidate| candidate.is_file() && !is_setuid_root(candidate))
-        })
-        .clone()
+/// Uses a Linux *abstract* `AF_UNIX` address (no filesystem entry to create,
+/// permission, or clean up). A connectionless `SOCK_DGRAM` socket is all we
+/// need here: the launcher sends exactly one datagram and the parent receives
+/// it once. Because the socket is bound before the launcher is spawned, the
+/// kernel queues the datagram even if it arrives before [`recv`](Self::recv)
+/// is called.
+pub struct StatusChannel {
+    socket: UnixDatagram,
+    name: String,
 }
 
-/// Whether a usable `bwrap` binary is present *and* actually enforces a
-/// sandbox on this system, cached for the life of the process.
+impl StatusChannel {
+    /// Bind a fresh status channel with a unique abstract address.
+    pub fn bind() -> Result<Self> {
+        let name = unique_socket_name();
+        let address = SocketAddr::from_abstract_name(name.as_bytes())
+            .context("failed to build abstract socket address")?;
+        let socket =
+            UnixDatagram::bind_addr(&address).context("failed to bind sandbox status socket")?;
+        Ok(Self { socket, name })
+    }
+
+    /// The abstract address to hand to the launcher (see [`wrap_invocation`]).
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Wait up to `timeout` for the launcher's one-shot status datagram.
+    ///
+    /// Returns `None` if nothing arrived in time, or the launcher exited /
+    /// `exec`ed without reporting (in which case the sandbox state is unknown).
+    pub fn recv(self, timeout: Duration) -> Option<LauncherStatus> {
+        self.socket.set_read_timeout(Some(timeout)).ok()?;
+        let mut byte = [0u8; 1];
+        let count = self.socket.recv(&mut byte).ok()?;
+        if count == 0 {
+            return None;
+        }
+        LauncherStatus::from_byte(byte[0])
+    }
+}
+
+/// A process-unique abstract socket name. The pid plus a monotonically
+/// increasing counter and the current time make collisions between concurrent
+/// launches (and between Zed instances) effectively impossible.
+fn unique_socket_name() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!(
+        "zed-sandbox-status-{}-{}-{}",
+        std::process::id(),
+        nanos,
+        counter
+    )
+}
+
+/// Where a `bwrap` lookup ended up.
+enum BwrapLocation {
+    /// A usable, non-setuid `bwrap` binary.
+    Found(PathBuf),
+    /// `bwrap` exists but every candidate is setuid-root (which we won't run).
+    OnlySetuid,
+    /// No `bwrap` binary was found at all.
+    NotFound,
+}
+
+/// Locate a usable `bwrap` binary, preferring one on `PATH` and falling back to
+/// a binary bundled with the application.
 ///
-/// Presence isn't enough: unprivileged user namespaces can be disabled by the
-/// kernel or by an AppArmor/sysctl policy, in which case `bwrap` exists but
-/// fails to set up its namespaces. We confirm with a real smoke test
-/// ([`probe_bwrap`]) rather than trusting distro or version detection. When
-/// this returns `false`, callers should run the command unsandboxed (with a
-/// visible warning) instead of failing.
-pub fn is_available() -> bool {
-    static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| locate_bwrap().is_some_and(|bwrap| probe_bwrap(&bwrap)))
+/// We refuse setuid-root binaries (see [`is_setuid_root`]); if the only
+/// candidates are setuid we report [`BwrapLocation::OnlySetuid`] separately
+/// from "not found" so the user gets an accurate explanation.
+///
+/// This runs once per launcher process, so it is intentionally not cached.
+fn locate_bwrap() -> BwrapLocation {
+    let mut saw_setuid = false;
+    for candidate in candidate_bwrap_paths() {
+        if !candidate.is_file() {
+            continue;
+        }
+        if is_setuid_root(&candidate) {
+            saw_setuid = true;
+            continue;
+        }
+        return BwrapLocation::Found(candidate);
+    }
+    if saw_setuid {
+        BwrapLocation::OnlySetuid
+    } else {
+        BwrapLocation::NotFound
+    }
 }
 
 /// `bwrap` candidates in priority order: a system binary on `PATH` first, then
@@ -141,12 +241,13 @@ fn bundled_bwrap_path() -> Option<PathBuf> {
 
 /// Whether `path` is a setuid-root binary.
 ///
-/// We refuse to use (or even probe) such a binary: with our `NO_NEW_PRIVS` +
-/// seccomp design a setuid `bwrap` buys no functionality, and *running* one
-/// would mean executing root-privileged setup with argv partly derived from
-/// model-influenced input — a privilege-escalation surface. Rejecting it keeps
-/// the whole pipeline unprivileged and means a planted setuid binary earlier
-/// on `PATH` can't trick us into executing it.
+/// We refuse to use (or even probe) such a binary: our sandbox is built
+/// entirely on unprivileged user namespaces, so a setuid `bwrap` buys no
+/// functionality, and *running* one would mean executing root-privileged setup
+/// with argv partly derived from model-influenced input — a
+/// privilege-escalation surface. Rejecting it keeps the whole pipeline
+/// unprivileged and means a planted setuid binary earlier on `PATH` can't trick
+/// us into executing it.
 fn is_setuid_root(path: &Path) -> bool {
     match std::fs::metadata(path) {
         Ok(metadata) => (metadata.mode() & libc::S_ISUID != 0) && metadata.uid() == 0,
@@ -154,24 +255,22 @@ fn is_setuid_root(path: &Path) -> bool {
     }
 }
 
-/// Run a minimal `bwrap` invocation and report whether it succeeded, i.e.
-/// whether this environment can actually set up an unprivileged sandbox.
+/// Run `bwrap <args> -- true` and report whether it succeeded, i.e. whether
+/// this environment can actually set up the sandbox we're about to use.
+///
+/// Probing with the *exact* argument list we'll `exec` (rather than a minimal
+/// canned one) means we catch failures specific to this command's policy —
+/// e.g. a writable bind that can't be mounted — not just whether user
+/// namespaces work at all.
 #[allow(
     clippy::disallowed_methods,
-    reason = "a one-time, cached probe that must block briefly to read the child's exit status"
+    reason = "the launcher is a short-lived, single-threaded process that must block on the probe child"
 )]
-fn probe_bwrap(bwrap: &Path) -> bool {
+fn probe_bwrap(bwrap: &Path, bwrap_args: &[String]) -> bool {
     Command::new(bwrap)
-        .args([
-            "--unshare-user",
-            "--ro-bind",
-            "/",
-            "/",
-            "--dev",
-            "/dev",
-            "--",
-            "true",
-        ])
+        .args(bwrap_args)
+        .arg("--")
+        .arg("true")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -188,8 +287,9 @@ fn probe_bwrap(bwrap: &Path) -> bool {
 /// that hardcode `/tmp` have somewhere to write without touching the host's
 /// `/tmp`), then binds each writable directory read-write on top. When
 /// `permissions.allow_fs_write` is set the root is bound read-write instead
-/// and these overlays/binds are omitted. The network namespace is
-/// deliberately left shared — network restriction is handled by seccomp.
+/// and these overlays/binds are omitted. When `permissions.allow_network` is
+/// false the command is placed in its own network namespace (`--unshare-net`),
+/// leaving it with only loopback and no route out.
 ///
 /// `writable_directories` should be the project's worktree paths (plus any
 /// user-approved paths), *not* the command's working directory, which is
@@ -246,6 +346,12 @@ pub fn build_bwrap_args(
         args.push(flag.to_string());
     }
 
+    // Deny network by giving the command its own network namespace (loopback
+    // only, no route out). `bwrap` brings up `lo` inside it.
+    if !permissions.allow_network {
+        args.push("--unshare-net".to_string());
+    }
+
     if let Some(cwd) = cwd {
         args.push("--chdir".to_string());
         args.push(cwd.to_string_lossy().into_owned());
@@ -278,47 +384,59 @@ fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
 /// collide with a real argument.
 pub const SANDBOX_LAUNCHER_FLAG: &str = "--zed-linux-sandbox-exec";
 
-/// Separator between the launcher's own arguments and the command to `exec`.
-const ARG_SEPARATOR: &str = "--";
-
-/// A decoded launcher invocation: the network policy plus the command to run.
+/// A decoded launcher invocation: the raw sandbox policy plus the command to
+/// run. The launcher itself turns this into a `bwrap` command line.
 struct LauncherInvocation {
-    network_policy: NetworkPolicy,
-    /// The full argv to `exec` (typically `bwrap`, its arguments, `--`, and
-    /// then the wrapped program and its arguments).
-    command: Vec<OsString>,
+    /// Abstract address of the [`StatusChannel`] to report back on, if any.
+    status_socket: Option<String>,
+    permissions: SandboxPermissions,
+    cwd: Option<PathBuf>,
+    writable_dirs: Vec<PathBuf>,
+    program: OsString,
+    args: Vec<OsString>,
 }
 
 /// Build a self-exec launcher invocation.
 ///
 /// Returns `(launcher_program, launcher_args)`, where running
 /// `launcher_program` with `launcher_args` re-execs this binary as the
-/// launcher. `command` is the full argv to run inside the sandbox; the caller
-/// assembles it (e.g. `[bwrap, bwrap_args.., --, program, args..]`).
+/// launcher. The launcher locates `bwrap`, assembles the sandbox command line,
+/// and reports its outcome on the [`StatusChannel`] named by
+/// `status_socket_name` (when given).
 ///
-/// The encoding is positional — `[FLAG, network_policy, --, command..]` — with
-/// each element its own argv entry, so paths and arguments containing spaces
-/// round-trip without escaping.
+/// The encoding is positional, one value per argv entry, so paths and
+/// arguments containing spaces round-trip without escaping:
+/// `[FLAG, socket, allow_network, allow_fs_write, cwd, N, writable_1.., program, args..]`.
 pub fn wrap_invocation(
     launcher_program: &str,
-    network_policy: NetworkPolicy,
-    command: &[String],
+    status_socket_name: Option<&str>,
+    permissions: SandboxPermissions,
+    writable_dirs: &[&Path],
+    cwd: Option<&Path>,
+    program: &str,
+    args: &[String],
 ) -> (String, Vec<String>) {
-    let mut launcher_args = Vec::with_capacity(command.len() + 3);
+    let mut launcher_args = Vec::with_capacity(writable_dirs.len() + args.len() + 7);
     launcher_args.push(SANDBOX_LAUNCHER_FLAG.to_string());
-    launcher_args.push(encode_network_policy(network_policy));
-    launcher_args.push(ARG_SEPARATOR.to_string());
-    launcher_args.extend(command.iter().cloned());
+    launcher_args.push(status_socket_name.unwrap_or("").to_string());
+    launcher_args.push(encode_bool(permissions.allow_network));
+    launcher_args.push(encode_bool(permissions.allow_fs_write));
+    launcher_args.push(
+        cwd.map(|cwd| cwd.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    );
+    launcher_args.push(writable_dirs.len().to_string());
+    for directory in writable_dirs {
+        launcher_args.push(directory.to_string_lossy().into_owned());
+    }
+    launcher_args.push(program.to_string());
+    launcher_args.extend(args.iter().cloned());
     (launcher_program.to_string(), launcher_args)
 }
 
 /// If this process was re-executed as a sandbox launcher (its first argument
-/// is [`SANDBOX_LAUNCHER_FLAG`]), install the encoded seccomp policy and
-/// `exec` the wrapped command.
-///
-/// On success this never returns — `exec` replaces the process image. On any
-/// failure it prints the error and exits non-zero rather than running the
-/// command unsandboxed. If the marker is absent it returns immediately.
+/// is [`SANDBOX_LAUNCHER_FLAG`]), set up the sandbox and `exec` the wrapped
+/// command. This never returns when the marker is present.
 ///
 /// Call this at the very top of `main`, before any argument parsing: the
 /// wrapped command's own arguments are appended verbatim and would otherwise
@@ -327,127 +445,123 @@ pub fn run_launcher_if_invoked() {
     let Some(invocation) = parse_launcher_args(std::env::args_os()) else {
         return;
     };
-
-    match run_launcher(invocation) {
+    let invocation = match invocation {
+        Ok(invocation) => invocation,
         Err(error) => {
-            eprintln!("zed: failed to apply sandbox: {error:#}");
+            eprintln!("zed: malformed sandbox launcher invocation: {error:#}");
             std::process::exit(127);
         }
-    }
-}
-
-/// `exec` replaces the process fully, so control flow never returns from
-/// [`run_launcher`] except in the error case.
-enum Uninhabited {}
-
-/// Install the seccomp policy described by `invocation`, then `exec` the
-/// wrapped command. Returns only on error (`exec` is in-process, so the filter
-/// applies to the replacing image and its descendants).
-fn run_launcher(invocation: Result<LauncherInvocation>) -> Result<Uninhabited> {
-    let invocation = invocation?;
-    install_seccomp(invocation.network_policy)?;
-    let (program, args) = invocation
-        .command
-        .split_first()
-        .context("launcher invocation has no command to exec")?;
-    let error = Command::new(program).args(args).exec();
-    Err(error).with_context(|| {
-        format!(
-            "failed to exec sandboxed command: {}",
-            program.to_string_lossy()
-        )
-    })
-}
-
-/// Install the seccomp filter for `policy` on the calling thread.
-///
-/// `NetworkPolicy::Allowed` installs nothing. `NetworkPolicy::Denied` sets
-/// `PR_SET_NO_NEW_PRIVS` (required to load a filter unprivileged) and applies
-/// the network-denial BPF program. The filter survives `exec`, so it covers
-/// `bwrap` and the wrapped command; it must be installed from the launcher's
-/// single thread so it protects the whole resulting process.
-fn install_seccomp(policy: NetworkPolicy) -> Result<()> {
-    match policy {
-        NetworkPolicy::Allowed => Ok(()),
-        NetworkPolicy::Denied => {
-            set_no_new_privs()?;
-            let program = network_seccomp_program()?;
-            seccompiler::apply_filter(&program).context("failed to apply seccomp filter")?;
-            Ok(())
-        }
-    }
-}
-
-fn set_no_new_privs() -> Result<()> {
-    // SAFETY: `prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)` only sets a process
-    // flag; the trailing arguments are ignored for this option.
-    let result = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error()).context("failed to set PR_SET_NO_NEW_PRIVS");
-    }
-    Ok(())
-}
-
-/// Compile a seccomp program that denies outbound IP networking.
-///
-/// The default action is `Allow`; matched syscalls return `EPERM`. We deny
-/// creating `AF_INET`/`AF_INET6` sockets (via `socket`/`socketpair`), which
-/// makes IP `connect`/`sendto` impossible while leaving `AF_UNIX` (and other
-/// families like `AF_NETLINK`) untouched. We also deny `ptrace`,
-/// `process_vm_readv`/`writev`, and the `io_uring_*` syscalls, which could
-/// otherwise be used to perform network operations or tamper with another
-/// process to bypass the filter.
-fn network_seccomp_program() -> Result<BpfProgram> {
-    let deny_inet = |syscall: i64| -> Result<(i64, Vec<SeccompRule>)> {
-        let rules = vec![
-            inet_family_rule(libc::AF_INET)?,
-            inet_family_rule(libc::AF_INET6)?,
-        ];
-        Ok((syscall, rules))
     };
-
-    let mut rules: std::collections::BTreeMap<i64, Vec<SeccompRule>> = [
-        deny_inet(libc::SYS_socket)?,
-        deny_inet(libc::SYS_socketpair)?,
-    ]
-    .into_iter()
-    .collect();
-
-    // An empty rule vector matches the syscall unconditionally.
-    for syscall in [
-        libc::SYS_ptrace,
-        libc::SYS_process_vm_readv,
-        libc::SYS_process_vm_writev,
-        libc::SYS_io_uring_setup,
-        libc::SYS_io_uring_enter,
-        libc::SYS_io_uring_register,
-    ] {
-        rules.insert(syscall, Vec::new());
-    }
-
-    let filter = SeccompFilter::new(
-        rules,
-        SeccompAction::Allow,
-        SeccompAction::Errno(libc::EPERM as u32),
-        std::env::consts::ARCH
-            .try_into()
-            .map_err(|error| anyhow!("unsupported seccomp target architecture: {error:?}"))?,
-    )
-    .context("failed to build seccomp filter")?;
-
-    filter
-        .try_into()
-        .context("failed to compile seccomp filter")
+    run_launcher(invocation);
 }
 
-/// A rule matching a `socket`/`socketpair` call whose address family (argument
-/// 0) equals `family`.
-fn inet_family_rule(family: libc::c_int) -> Result<SeccompRule> {
-    SeccompRule::new(vec![
-        SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, family as u64)
-            .context("failed to build seccomp condition")?,
-    ])
-    .context("failed to build seccomp rule")
+/// Exit code the launcher uses when it could not create the sandbox. Distinct
+/// from a normal command's exit codes so the failure is unambiguous in logs;
+/// the authoritative signal to the parent is the [`LauncherStatus`] datagram.
+const SANDBOX_SETUP_FAILED_EXIT_CODE: i32 = 126;
+
+/// Set up the sandbox and `exec` the command. Never returns.
+///
+/// If the sandbox cannot be created for any reason, this reports the reason to
+/// the parent and **aborts** — it never runs the command unsandboxed. Falling
+/// back to an unsandboxed run is a policy decision that belongs to the caller
+/// (see [`check_can_create_sandbox`]), not to the sandbox itself.
+fn run_launcher(invocation: LauncherInvocation) -> ! {
+    let socket = invocation.status_socket.clone();
+    let writable: Vec<&Path> = invocation
+        .writable_dirs
+        .iter()
+        .map(PathBuf::as_path)
+        .collect();
+
+    let (bwrap, bwrap_args) =
+        match prepare_sandbox(&writable, invocation.permissions, invocation.cwd.as_deref()) {
+            Ok(prepared) => prepared,
+            Err(status) => {
+                report_status(socket.as_deref(), status);
+                eprintln!(
+                    "zed: could not create sandbox: {}; aborting",
+                    status.describe()
+                );
+                std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+            }
+        };
+
+    // Everything is in place: report success, then `exec` the sandboxed command.
+    // A failure of the final `exec` is fail-closed (a hard error, never a silent
+    // unsandboxed run).
+    report_status(socket.as_deref(), LauncherStatus::Success);
+    let error = Command::new(&bwrap)
+        .args(&bwrap_args)
+        .arg("--")
+        .arg(&invocation.program)
+        .args(&invocation.args)
+        .exec();
+    eprintln!(
+        "zed: failed to exec sandboxed command via bwrap: {error}; refusing to run unsandboxed"
+    );
+    std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+}
+
+/// Locate a usable `bwrap` and verify it can actually create a sandbox with the
+/// exact arguments implied by the policy (by running `bwrap <args> -- true`).
+///
+/// Returns the `bwrap` path and the assembled argument list on success, or the
+/// reason it can't on failure. Shared by the launcher (which then `exec`s) and
+/// by [`check_can_create_sandbox`] (which the parent uses to decide whether to
+/// fall back to an unsandboxed run).
+fn prepare_sandbox(
+    writable_dirs: &[&Path],
+    permissions: SandboxPermissions,
+    cwd: Option<&Path>,
+) -> Result<(PathBuf, Vec<String>), LauncherStatus> {
+    let bwrap = match locate_bwrap() {
+        BwrapLocation::Found(path) => path,
+        BwrapLocation::OnlySetuid => return Err(LauncherStatus::SetuidRejected),
+        BwrapLocation::NotFound => return Err(LauncherStatus::BwrapNotFound),
+    };
+    let bwrap_args = build_bwrap_args(writable_dirs, permissions, cwd);
+    if !probe_bwrap(&bwrap, &bwrap_args) {
+        return Err(LauncherStatus::SandboxProbeFailed);
+    }
+    Ok((bwrap, bwrap_args))
+}
+
+/// Check whether an OS sandbox can be created for this policy, returning the
+/// reason it can't (as a [`LauncherStatus`]) on failure.
+///
+/// This runs the same locate + probe the launcher does, so a caller can decide
+/// *before* spawning whether to run sandboxed, fall back to an unsandboxed run
+/// (fail-open), or refuse (fail-closed). The launcher still performs its own
+/// check and aborts on failure, so this is purely advisory — the sandbox is
+/// never silently skipped on the strength of this result alone.
+pub fn check_can_create_sandbox(
+    writable_dirs: &[&Path],
+    permissions: SandboxPermissions,
+    cwd: Option<&Path>,
+) -> std::result::Result<(), LauncherStatus> {
+    prepare_sandbox(writable_dirs, permissions, cwd).map(|_| ())
+}
+
+/// Send a one-shot `status` datagram to the status channel (if one was given).
+///
+/// Best-effort: if the parent has gone away or the send fails there is nothing
+/// useful to do, and we must never block the command on a diagnostic channel.
+/// This runs in the launcher (host network namespace) before `exec`, so it is
+/// unaffected by the command's own `--unshare-net` isolation.
+fn report_status(socket_name: Option<&str>, status: LauncherStatus) {
+    let Some(name) = socket_name else {
+        return;
+    };
+    let Ok(address) = SocketAddr::from_abstract_name(name.as_bytes()) else {
+        return;
+    };
+    let Ok(socket) = UnixDatagram::unbound() else {
+        return;
+    };
+    // Ignore send errors: the report is advisory and the parent may have
+    // already stopped listening.
+    let _ = socket.send_to_addr(&[status.to_byte()], &address);
 }
 
 /// Decode launcher arguments produced by [`wrap_invocation`].
@@ -468,39 +582,62 @@ fn parse_launcher_args(
 }
 
 fn decode_launcher_args(mut args: impl Iterator<Item = OsString>) -> Result<LauncherInvocation> {
-    let network_policy = decode_network_policy(&args.next().context("missing network policy")?)?;
-    let separator = args.next().context("missing argument separator")?;
-    ensure!(
-        separator.to_str() == Some(ARG_SEPARATOR),
-        "expected `{ARG_SEPARATOR}` separator in launcher args, got {separator:?}"
-    );
-    let command: Vec<OsString> = args.collect();
-    ensure!(!command.is_empty(), "launcher invocation has no command");
+    let status_socket = {
+        let value = args.next().context("missing status socket argument")?;
+        let value = value
+            .into_string()
+            .map_err(|_| anyhow!("status socket name is not valid UTF-8"))?;
+        if value.is_empty() { None } else { Some(value) }
+    };
+    let allow_network = decode_bool(&args.next().context("missing allow_network flag")?)?;
+    let allow_fs_write = decode_bool(&args.next().context("missing allow_fs_write flag")?)?;
+    let cwd = {
+        let value = args.next().context("missing cwd argument")?;
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    };
+    let count = args
+        .next()
+        .context("missing writable directory count")?
+        .to_str()
+        .context("writable directory count is not valid UTF-8")?
+        .parse::<usize>()
+        .context("invalid writable directory count")?;
+    let mut writable_dirs = Vec::with_capacity(count);
+    for _ in 0..count {
+        writable_dirs.push(PathBuf::from(
+            args.next().context("missing writable directory")?,
+        ));
+    }
+    let program = args.next().context("missing program to run")?;
+    let args: Vec<OsString> = args.collect();
+
     Ok(LauncherInvocation {
-        network_policy,
-        command,
+        status_socket,
+        permissions: SandboxPermissions {
+            allow_network,
+            allow_fs_write,
+        },
+        cwd,
+        writable_dirs,
+        program,
+        args,
     })
 }
 
-fn encode_network_policy(policy: NetworkPolicy) -> String {
-    match policy {
-        NetworkPolicy::Allowed => "allow",
-        NetworkPolicy::Denied => "deny",
-    }
-    .to_string()
+fn encode_bool(value: bool) -> String {
+    if value { "1" } else { "0" }.to_string()
 }
 
-fn decode_network_policy(value: &OsString) -> Result<NetworkPolicy> {
+fn decode_bool(value: &OsString) -> Result<bool> {
     match value.to_str() {
-        Some("allow") => Ok(NetworkPolicy::Allowed),
-        Some("deny") => Ok(NetworkPolicy::Denied),
-        other => bail!("invalid network policy in launcher args: {other:?}"),
+        Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        other => bail!("invalid boolean launcher argument: {other:?}"),
     }
-}
-
-/// Convenience: build the network policy for a set of permissions.
-pub fn network_policy_for(permissions: SandboxPermissions) -> NetworkPolicy {
-    NetworkPolicy::from_permissions(permissions)
 }
 
 #[cfg(test)]
@@ -515,18 +652,16 @@ mod tests {
     }
 
     #[test]
-    fn test_network_policy_from_permissions() {
-        assert_eq!(
-            network_policy_for(SandboxPermissions::default()),
-            NetworkPolicy::Denied
-        );
-        assert_eq!(
-            network_policy_for(SandboxPermissions {
-                allow_network: true,
-                allow_fs_write: false,
-            }),
-            NetworkPolicy::Allowed
-        );
+    fn test_launcher_status_byte_round_trip() {
+        for status in [
+            LauncherStatus::Success,
+            LauncherStatus::BwrapNotFound,
+            LauncherStatus::SetuidRejected,
+            LauncherStatus::SandboxProbeFailed,
+        ] {
+            assert_eq!(LauncherStatus::from_byte(status.to_byte()), Some(status));
+        }
+        assert_eq!(LauncherStatus::from_byte(200), None);
     }
 
     #[test]
@@ -554,8 +689,8 @@ mod tests {
             Some(writable.path()),
         );
 
-        // Root is read-only, the writable dir is bound read-write, and the net
-        // namespace is left shared (no `--unshare-net`).
+        // Root is read-only, the writable dir is bound read-write, and (since
+        // network is denied by default) the command gets its own net namespace.
         assert!(windows_contains(&args, &["--ro-bind", "/", "/"]));
         let writable_path = writable.path().canonicalize().unwrap();
         let writable_str = writable_path.to_string_lossy().into_owned();
@@ -565,7 +700,23 @@ mod tests {
         ));
         assert!(windows_contains(&args, &["--tmpfs", "/tmp"]));
         assert!(args.iter().any(|arg| arg == "--chdir"));
-        assert!(!args.iter().any(|arg| arg == "--unshare-net"));
+        assert!(args.iter().any(|arg| arg == "--unshare-net"));
+    }
+
+    #[test]
+    fn test_build_bwrap_args_network_namespace_follows_permission() {
+        let denied = build_bwrap_args(&[], SandboxPermissions::default(), None);
+        assert!(denied.iter().any(|arg| arg == "--unshare-net"));
+
+        let allowed = build_bwrap_args(
+            &[],
+            SandboxPermissions {
+                allow_network: true,
+                allow_fs_write: false,
+            },
+            None,
+        );
+        assert!(!allowed.iter().any(|arg| arg == "--unshare-net"));
     }
 
     #[test]
@@ -584,41 +735,64 @@ mod tests {
 
     #[test]
     fn test_launcher_args_round_trip() {
-        let command = vec![
-            "/usr/bin/bwrap".to_string(),
-            "--ro-bind".to_string(),
-            "/".to_string(),
-            "/".to_string(),
-            "--".to_string(),
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "echo hi there".to_string(),
-        ];
-        let (launcher, args) = wrap_invocation("/path/to/zed", NetworkPolicy::Denied, &command);
+        let writable = PathBuf::from("/home/user/project dir");
+        let cwd = PathBuf::from("/home/user/project dir/sub");
+        let program = "/bin/sh".to_string();
+        let args = vec!["-c".to_string(), "echo hi there".to_string()];
+        let permissions = SandboxPermissions {
+            allow_network: false,
+            allow_fs_write: false,
+        };
+
+        let (launcher, launcher_args) = wrap_invocation(
+            "/path/to/zed",
+            Some("zed-sandbox-status-abc"),
+            permissions,
+            &[writable.as_path()],
+            Some(cwd.as_path()),
+            &program,
+            &args,
+        );
         assert_eq!(launcher, "/path/to/zed");
 
-        let raw = launcher_argv(launcher, args);
-        let decoded = parse_launcher_args(raw)
+        let decoded = parse_launcher_args(launcher_argv(launcher, launcher_args))
             .expect("should be recognized as a launcher invocation")
             .expect("should decode successfully");
 
-        assert_eq!(decoded.network_policy, NetworkPolicy::Denied);
         assert_eq!(
-            decoded.command,
-            command.into_iter().map(OsString::from).collect::<Vec<_>>()
+            decoded.status_socket.as_deref(),
+            Some("zed-sandbox-status-abc")
+        );
+        assert_eq!(decoded.permissions, permissions);
+        assert_eq!(decoded.cwd.as_deref(), Some(cwd.as_path()));
+        assert_eq!(decoded.writable_dirs, vec![writable]);
+        assert_eq!(decoded.program, OsString::from(program));
+        assert_eq!(
+            decoded.args,
+            args.into_iter().map(OsString::from).collect::<Vec<_>>()
         );
     }
 
     #[test]
-    fn test_launcher_args_round_trip_allow_network() {
-        let command = vec!["/bin/true".to_string()];
-        let (launcher, args) = wrap_invocation("/path/to/zed", NetworkPolicy::Allowed, &command);
+    fn test_launcher_args_round_trip_minimal() {
+        let program = "/bin/true".to_string();
+        let permissions = SandboxPermissions {
+            allow_network: true,
+            allow_fs_write: true,
+        };
+        let (launcher, launcher_args) =
+            wrap_invocation("/path/to/zed", None, permissions, &[], None, &program, &[]);
 
-        let raw = launcher_argv(launcher, args);
-        let decoded = parse_launcher_args(raw).unwrap().unwrap();
+        let decoded = parse_launcher_args(launcher_argv(launcher, launcher_args))
+            .unwrap()
+            .unwrap();
 
-        assert_eq!(decoded.network_policy, NetworkPolicy::Allowed);
-        assert_eq!(decoded.command, vec![OsString::from("/bin/true")]);
+        assert_eq!(decoded.status_socket, None);
+        assert_eq!(decoded.permissions, permissions);
+        assert_eq!(decoded.cwd, None);
+        assert!(decoded.writable_dirs.is_empty());
+        assert_eq!(decoded.program, OsString::from("/bin/true"));
+        assert!(decoded.args.is_empty());
     }
 
     #[test]
@@ -631,11 +805,23 @@ mod tests {
     }
 
     #[test]
-    fn test_network_seccomp_program_compiles() {
-        // Compiling exercises arch detection and rule assembly without needing
-        // to actually install the filter (which would restrict the test
-        // process).
-        assert!(!network_seccomp_program().unwrap().is_empty());
+    fn test_status_channel_round_trip() {
+        // The launcher side (`report_status`) and parent side
+        // (`StatusChannel::recv`) agree over a real abstract socket.
+        let channel = StatusChannel::bind().unwrap();
+        let name = channel.name().to_string();
+        let reader = std::thread::spawn(move || channel.recv(Duration::from_secs(5)));
+        report_status(Some(&name), LauncherStatus::SandboxProbeFailed);
+        assert_eq!(
+            reader.join().unwrap(),
+            Some(LauncherStatus::SandboxProbeFailed)
+        );
+    }
+
+    #[test]
+    fn test_status_channel_times_out_without_report() {
+        let channel = StatusChannel::bind().unwrap();
+        assert_eq!(channel.recv(Duration::from_millis(50)), None);
     }
 
     /// Whether `args` contains `needle` as a contiguous run.

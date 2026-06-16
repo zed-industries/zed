@@ -251,10 +251,10 @@ impl Reporter {
 
     fn process_foreground(&mut self, task_stats: &[gpui::ThreadTaskStatistics]) {
         let foreground_thread = self.foreground_thread;
-        let foreground = task_stats
-            .iter()
-            .find(|t| t.thread_id == foreground_thread)
-            .expect("main thread should be in all statistics");
+        let Some(foreground) = task_stats.iter().find(|t| t.thread_id == foreground_thread) else {
+            // during startup foreground thread might not have statistics yet
+            return;
+        };
 
         for hang in foreground
             .stats

@@ -7,7 +7,9 @@
 //!
 //! macOS has an integration ([`macos_seatbelt`]) wrapping Apple's Seatbelt
 //! / `sandbox-exec` framework, and Linux has one ([`linux_bubblewrap`]) built
-//! on Bubblewrap (`bwrap`) for the filesystem and seccomp for the network.
+//! on Bubblewrap (`bwrap`) for both the filesystem and the network. Windows
+//! routes commands through WSL and runs them under Bubblewrap there (see
+//! [`windows_wsl`]).
 
 #[cfg(target_os = "linux")]
 pub mod linux_bubblewrap;
@@ -32,18 +34,20 @@ pub mod windows_wsl;
 /// it.
 pub const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
 
-/// Per-command relaxations of the default sandbox.
+/// Per-command relaxations of the default Bubblewrap (Linux) sandbox.
 ///
 /// All-false is the default, fully-sandboxed run. Setting any field
 /// requires user approval before the command is launched.
 ///
-/// This is the platform-independent request. Each OS integration maps it
-/// onto its own mechanism and may enforce it with different granularity
-/// (for example, on Linux network restriction is enforced by seccomp and
-/// filesystem restriction by Bubblewrap, whereas macOS uses Seatbelt for
-/// both). Some baseline operations remain denied
-/// regardless of these flags; the only way to lift those is to skip the
-/// sandbox entirely, which these integrations deliberately don't expose.
+/// Network access is a plain on/off toggle here because Bubblewrap can only
+/// enforce it wholesale (an `--unshare-net` namespace, loopback only). macOS
+/// can additionally confine egress to an allowlist via Seatbelt and the
+/// in-process proxy, so it uses its own richer
+/// [`macos_seatbelt::SandboxPermissions`] instead of this type. Windows reuses
+/// this type, mapping it onto Bubblewrap inside WSL. Some baseline operations
+/// remain denied regardless of these flags; the only way to lift those is to
+/// skip the sandbox entirely, which these integrations deliberately don't
+/// expose.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SandboxPermissions {
     /// Allow network access for the command.
@@ -57,7 +61,7 @@ pub struct SandboxPermissions {
 /// On Linux, the terminal integration sandboxes commands by re-executing
 /// this binary as a launcher (see
 /// [`linux_bubblewrap::run_launcher_if_invoked`]); when that marker is present
-/// this installs the seccomp policy and `exec`s the wrapped command, never
+/// this sets up the `bwrap` sandbox and `exec`s the wrapped command, never
 /// returning. On every other platform, and for normal launches, it returns
 /// immediately.
 ///

@@ -6,7 +6,7 @@ use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
-use remote::RemoteClient;
+use remote::{Interactive, RemoteClient};
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
@@ -558,6 +558,7 @@ impl Project {
                             &env,
                             None,
                             None,
+                            Interactive::Yes,
                         )?;
                         let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
@@ -631,6 +632,7 @@ fn create_remote_shell(
         &env,
         working_directory.map(|path| path.display().to_string()),
         None,
+        Interactive::Yes,
     )?;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);

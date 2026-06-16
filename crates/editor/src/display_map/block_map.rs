@@ -773,6 +773,8 @@ impl BlockMap {
 
         edits = self.deferred_edits.take().compose(edits);
 
+        let max_point = wrap_snapshot.max_point();
+
         // Handle changing the last excerpt if it is empty.
         if buffer.trailing_excerpt_update_count()
             != self
@@ -781,7 +783,6 @@ impl BlockMap {
                 .buffer_snapshot()
                 .trailing_excerpt_update_count()
         {
-            let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
             let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
@@ -829,7 +830,7 @@ impl BlockMap {
                     let mut my_start = wrap_snapshot.make_wrap_point(my_start, Bias::Left);
                     let mut my_end = wrap_snapshot.make_wrap_point(my_end, Bias::Left);
                     // TODO(split-diff) should use trailing_excerpt_update_count for the second case
-                    if my_end.column() > 0 || my_end == wrap_snapshot.max_point() {
+                    if my_end.column() > 0 || my_end == max_point {
                         *my_end.row_mut() += 1;
                         *my_end.column_mut() = 0;
                     }
@@ -837,7 +838,7 @@ impl BlockMap {
                     // Empty edits won't survive Patch::compose, but we still need to make sure
                     // we recompute spacers when we get them.
                     if my_start.row() == my_end.row() {
-                        if my_end.row() <= wrap_snapshot.max_point().row() {
+                        if my_end.row() <= max_point.row() {
                             *my_end.row_mut() += 1;
                             *my_end.column_mut() = 0;
                         } else if my_start.row() > WrapRow(0) {
@@ -1006,7 +1007,7 @@ impl BlockMap {
                 };
 
             let end_bound;
-            let end_block_ix = if new_end > wrap_snapshot.max_point().row() {
+            let end_block_ix = if new_end > max_point.row() {
                 end_bound = Bound::Unbounded;
                 self.custom_blocks.len()
             } else {
@@ -1775,8 +1776,12 @@ impl BlockMapWriter<'_> {
 
             let start = block.placement.start().to_point(&buffer);
             let end = block.placement.end().to_point(&buffer);
-            let start_wrap_row = wrap_snapshot.make_wrap_point(start, Bias::Left).row();
-            let end_wrap_row = wrap_snapshot.make_wrap_point(end, Bias::Left).row();
+            let start_wrap_row = wrap_snapshot
+                .make_wrap_point(Point::new(start.row, 0), Bias::Left)
+                .row();
+            let end_wrap_row = wrap_snapshot
+                .make_wrap_point(Point::new(end.row, 0), Bias::Left)
+                .row();
 
             let (start_row, end_row) = {
                 previous_wrap_row_range.take_if(|range| {
@@ -1927,8 +1932,12 @@ impl BlockMapWriter<'_> {
                 let end = block.placement.end().to_point(buffer);
                 if last_block_buffer_row != Some(end.row) {
                     last_block_buffer_row = Some(end.row);
-                    let start_wrap_row = wrap_snapshot.make_wrap_point(start, Bias::Left).row();
-                    let end_wrap_row = wrap_snapshot.make_wrap_point(end, Bias::Left).row();
+                    let start_wrap_row = wrap_snapshot
+                        .make_wrap_point(Point::new(start.row, 0), Bias::Left)
+                        .row();
+                    let end_wrap_row = wrap_snapshot
+                        .make_wrap_point(Point::new(end.row, 0), Bias::Left)
+                        .row();
                     let (start_row, end_row) = {
                         previous_wrap_row_range.take_if(|range| {
                             !range.contains(&start_wrap_row) || !range.contains(&end_wrap_row)
@@ -3303,6 +3312,41 @@ mod tests {
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
         );
+    }
+
+    #[gpui::test]
+    fn test_insert_and_remove_block_anchored_past_soft_wrap(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "one two three\nfour\nfive";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(90.)), cx)
+        });
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        let block_id = writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 12))),
+            render: Arc::new(|_| div().into_any()),
+            height: Some(2),
+            priority: 0,
+        }])[0];
+
+        let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
+        assert_eq!(snapshot.text(), "\n\none two \nthree\nfour\nfive");
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        writer.remove(HashSet::from_iter([block_id]));
+
+        let snapshot = block_map.read(wraps_snapshot, Default::default(), None);
+        assert_eq!(snapshot.text(), "one two \nthree\nfour\nfive");
     }
 
     #[gpui::test]

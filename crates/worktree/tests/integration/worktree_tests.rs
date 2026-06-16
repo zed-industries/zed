@@ -477,6 +477,82 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_renaming_subdir_under_symlinked_root_keeps_children(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/target",
+        json!({
+            "file1.txt": "",
+            "file2.log": "",
+            "subdir-a": {
+                "config.ini": "",
+            },
+            "subdir-b": {
+                "nested": {
+                    "note.md": "",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.create_symlink("/link".as_ref(), "/target".into())
+        .await
+        .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/link"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.rename(
+        Path::new("/link/subdir-a"),
+        Path::new("/link/subdir-aa"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("subdir-a")).is_none()
+                && tree
+                    .entry_for_path(rel_path("subdir-aa/config.ini"))
+                    .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("file1.txt"),
+                rel_path("file2.log"),
+                rel_path("subdir-aa"),
+                rel_path("subdir-aa/config.ini"),
+                rel_path("subdir-b"),
+                rel_path("subdir-b/nested"),
+                rel_path("subdir-b/nested/note.md"),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -1246,6 +1322,41 @@ async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
             vec![rel_path(""), rel_path("new.txt")]
         );
     });
+}
+
+#[gpui::test]
+async fn test_root_rescan_does_not_miss_event_before_readding_root_watcher(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.create_file_before_next_watch_add("/root", "/root/created-before-root-readd.txt");
+    fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("created-before-root-readd.txt"))
+                .is_some()
+        })
+    })
+    .await;
 }
 
 #[gpui::test]
@@ -3997,14 +4108,16 @@ async fn test_linked_worktree_gitfile_event_preserves_repo(
 }
 
 #[gpui::test]
-async fn test_linked_worktree_index_lock_event_does_not_emit_git_repo_update(
+async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    // Regression test: in a linked worktree, git operations like `git status`
-    // can touch the worktree-specific `index.lock` under the main repo's
-    // `.git/worktrees/<name>/`. We intend to ignore those events so they do not
-    // spuriously emit `UpdatedGitRepositories`.
+    // Events for object database writes, hook files, lock files, and the
+    // reflogs of HEAD/branches/remote-tracking branches carry no git state
+    // changes that Zed cares about beyond what the accompanying ref or index
+    // events already convey, so they must not trigger a git metadata rescan.
+    // The stash reflog and ref updates themselves must still trigger one.
+    //
     init_test(cx);
 
     use git::repository::Worktree as GitWorktree;
@@ -4066,17 +4179,64 @@ async fn test_linked_worktree_index_lock_event_does_not_emit_git_repo_update(
         }
     });
 
-    fs.emit_fs_event(
+    let skipped_paths = [
+        // Standard common git dir skipped paths
+        path!("/main_repo/.git/objects/aa/bbccddee"),
+        path!("/main_repo/.git/objects/pack/pack-1234.pack"),
+        path!("/main_repo/.git/hooks/pre-commit"),
+        path!("/main_repo/.git/logs/HEAD"),
+        path!("/main_repo/.git/logs/refs/heads/main"),
+        path!("/main_repo/.git/logs/refs/remotes/origin/main"),
+        path!("/main_repo/.git/logs/refs/tags/v1.0"),
+        path!("/main_repo/.git/rebase-merge/done"),
+        path!("/main_repo/.git/rebase-apply/onto"),
+        path!("/main_repo/.git/sequencer/todo"),
+        path!("/main_repo/.git/index.lock"),
+        path!("/main_repo/.git/refs/heads/main.lock"),
+        path!("/main_repo/.git/COMMIT_EDITMSG"),
+        path!("/main_repo/.git/packed-refs.new"),
+        path!("/main_repo/.git/config.new"),
+        path!("/main_repo/.git/index.new"),
+        path!("/main_repo/.git/index-abc123.tmp"),
+        path!("/main_repo/.git/FETCH_HEAD"),
+        path!("/main_repo/.git/ORIG_HEAD"),
+        path!("/main_repo/.git/BISECT_LOG"),
+        path!("/main_repo/.git/info/refs"),
+        path!("/main_repo/.git/info/refs_lzOf51"),
+        path!("/main_repo/.git/gc.pid"),
+        // Linked-worktree specific skipped paths
         path!("/main_repo/.git/worktrees/feature/index.lock"),
-        Some(PathEventKind::Changed),
-    );
-    cx.run_until_parked();
+    ];
+    for path in skipped_paths {
+        fs.emit_fs_event(path, Some(PathEventKind::Changed));
+        cx.run_until_parked();
+        assert_eq!(
+            repo_update_count.get(),
+            0,
+            "event for {path} should not emit UpdatedGitRepositories"
+        );
+    }
 
-    assert_eq!(
-        repo_update_count.get(),
-        0,
-        "linked-worktree index.lock events should not emit UpdatedGitRepositories"
-    );
+    let rescan_paths = [
+        // Standard common git dir rescan paths
+        path!("/main_repo/.git/logs/refs/stash"),
+        path!("/main_repo/.git/refs/heads/main"),
+        path!("/main_repo/.git/info/exclude"),
+        path!("/main_repo/.git/refs/heads/branch.new"),
+        path!("/main_repo/.git/refs/heads/branch.tmp"),
+        // Linked-worktree worktree-specific rescan paths
+        path!("/main_repo/.git/worktrees/feature/index"),
+        path!("/main_repo/.git/worktrees/feature/HEAD"),
+    ];
+    for path in rescan_paths {
+        let count_before = repo_update_count.get();
+        fs.emit_fs_event(path, Some(PathEventKind::Changed));
+        cx.run_until_parked();
+        assert!(
+            repo_update_count.get() > count_before,
+            "event for {path} should emit UpdatedGitRepositories"
+        );
+    }
 }
 
 #[gpui::test]

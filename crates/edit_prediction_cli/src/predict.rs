@@ -9,7 +9,7 @@ use crate::{
     parse_output::parse_prediction_output,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
     progress::{ExampleProgress, InfoStyle, Progress, Step, StepProgress},
-    retrieve_context::run_context_retrieval,
+    retrieve_context::{ContextRetrievalType, run_context_retrieval},
 };
 use anyhow::Context as _;
 use cloud_llm_client::predict_edits_v3::{RawCompletionRequest, RawCompletionResponse};
@@ -68,7 +68,15 @@ pub async fn run_prediction(
     if let PredictionProvider::Teacher(backend, _)
     | PredictionProvider::TeacherNonBatching(backend, _) = provider
     {
-        run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
+        run_context_retrieval(
+            example,
+            app_state.clone(),
+            example_progress,
+            vec![ContextRetrievalType::Lsp],
+            false,
+            cx.clone(),
+        )
+        .await?;
         run_format_prompt(
             example,
             &FormatPromptArgs { provider },
@@ -111,7 +119,15 @@ pub async fn run_prediction(
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
-    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
+    run_context_retrieval(
+        example,
+        app_state.clone(),
+        example_progress,
+        vec![ContextRetrievalType::Lsp],
+        false,
+        cx.clone(),
+    )
+    .await?;
 
     let step_progress = example_progress.start(Step::Predict);
 

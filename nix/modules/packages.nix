@@ -23,8 +23,6 @@
           inherit pkgs inputs;
         };
       }
-      // import ../tests/sandboxing {
-        inherit pkgs inputs;
-      };
+      // import ../tests/sandboxing { inherit pkgs inputs; };
     };
 }

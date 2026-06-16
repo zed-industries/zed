@@ -21,6 +21,7 @@ impl UpdateVersion {
                 if this.status.is_updated() {
                     this.dismissed = false;
                 }
+                cx.notify();
             })
             .detach();
             Self {

@@ -21,7 +21,7 @@ enum CliCommand {
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
     /// Publishes GPUI and its dependencies to crates.io.
     PublishGpui(tasks::publish_gpui::PublishGpuiArgs),
-    /// Runs the Linux Landlock sandboxing NixOS VM tests.
+    /// Runs the Linux Bubblewrap sandboxing NixOS VM tests.
     SandboxTests(tasks::sandbox_tests::SandboxTestsArgs),
     /// Downloads the pinned `webrtc-sys` release and configures `LK_CUSTOM_WEBRTC`.
     SetupWebrtc(tasks::setup_webrtc::SetupWebrtcArgs),
