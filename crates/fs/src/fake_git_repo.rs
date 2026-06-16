@@ -264,14 +264,14 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
-        async {
+        self.with_state_async(false, move |state| {
+            let sha = state.refs.get(&commit).cloned().unwrap_or(commit);
             Ok(CommitDetails {
-                sha: commit.into(),
+                sha: sha.into(),
                 message: "initial commit".into(),
                 ..Default::default()
             })
-        }
-        .boxed()
+        })
     }
 
     fn reset(

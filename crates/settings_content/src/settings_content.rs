@@ -13,7 +13,7 @@ mod theme;
 mod title_bar;
 mod workspace;
 
-pub use action::{ActionName, ActionWithArguments};
+pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
