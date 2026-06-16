@@ -1610,7 +1610,7 @@
       "cmd-m": "notebook::AddCodeBlock",
       "cmd-shift-m": "notebook::AddMarkdownBlock",
       "cmd-shift-r": "notebook::RestartKernel",
-      "cmd-c": "notebook::InterruptKernel",
+      "ctrl-c": "notebook::InterruptKernel",
     },
   },
   {
@@ -1633,7 +1633,7 @@
       "cmd-m": "notebook::AddCodeBlock",
       "cmd-shift-m": "notebook::AddMarkdownBlock",
       "cmd-shift-r": "notebook::RestartKernel",
-      "cmd-c": "notebook::InterruptKernel",
+      "ctrl-c": "notebook::InterruptKernel",
       "escape": "notebook::EnterCommandMode",
     },
   },
