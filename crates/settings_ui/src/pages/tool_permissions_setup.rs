@@ -288,6 +288,7 @@ fn render_tool_list_item(
                         tool_name,
                         "Tool Permissions",
                         None,
+                        true,
                         render_fn,
                         window,
                         cx,

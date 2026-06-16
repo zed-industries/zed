@@ -68,6 +68,8 @@ use project::{
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
 use settings::SettingsStore;
+#[cfg(target_os = "linux")]
+use settings::{LocalSettingsKind, LocalSettingsPath};
 #[cfg(not(windows))]
 use std::os;
 use std::{
@@ -11172,6 +11174,102 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[cfg(target_os = "linux")]
+#[gpui::test(retries = 5)]
+async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec!["foo".to_string()]);
+            });
+        });
+    });
+
+    let root = TempTree::new(json!({
+        "project": {
+            "a.txt": "a",
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let repo = git_init(&work_dir);
+    git_add("a.txt", &repo);
+    git_commit("Initial commit", &repo);
+    git_branch("other-branch", &repo);
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [work_dir.as_path()],
+        cx,
+    )
+    .await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let branch = repository.read_with(cx, |repository, _| {
+        repository
+            .snapshot()
+            .branch
+            .as_ref()
+            .map(|branch| branch.ref_name.to_string())
+    });
+    assert_eq!(branch.as_deref(), Some("refs/heads/main"));
+
+    let worktree_id = tree.read_with(cx, |tree, _| tree.id());
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_local_settings(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "file_scan_exclusions": ["**/.git"] }"#),
+                cx,
+            )
+            .unwrap();
+    });
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        assert!(tree.read(cx).entry_for_path(rel_path(".git")).is_none());
+    });
+
+    git_checkout("other-branch", &repo);
+
+    let mut events = cx.events::<RepositoryEvent, _>(&repository);
+    let timeout = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(5)));
+    futures::pin_mut!(timeout);
+    loop {
+        let branch = repository.read_with(cx, |repository, _| {
+            repository
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| branch.ref_name.to_string())
+        });
+        if branch.as_deref() == Some("refs/heads/other-branch") {
+            break;
+        }
+
+        futures::select_biased! {
+            _ = events.next() => {}
+            _ = timeout => panic!("timed out waiting for repository HEAD update after .git was excluded"),
+        }
+    }
+}
+
 #[gpui::test]
 #[ignore]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
@@ -13516,7 +13614,7 @@ fn git_reset(offset: usize, work_dir: &Path) {
     );
 }
 
-#[cfg(any())]
+#[cfg(target_os = "linux")]
 #[allow(clippy::disallowed_methods)]
 #[track_caller]
 fn git_branch(name: &str, work_dir: &Path) {
@@ -13531,7 +13629,7 @@ fn git_branch(name: &str, work_dir: &Path) {
     );
 }
 
-#[cfg(any())]
+#[cfg(target_os = "linux")]
 #[allow(clippy::disallowed_methods)]
 #[track_caller]
 fn git_checkout(name: &str, work_dir: &Path) {
