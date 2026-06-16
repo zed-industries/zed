@@ -1,5 +1,0 @@
-# Handlebars partials are not supported by Prettier.
-*.hbs
-
-# Automatically generated
-theme/c15t@*.js
