@@ -6865,7 +6865,8 @@ mod tests {
 
         let authorize = cx.update(|cx| {
             event_stream.authorize_sandbox(
-                "Allow write access?", None,
+                "Allow write access?",
+                None,
                 request.clone(),
                 "needs to write build artifacts".to_string(),
                 cx,

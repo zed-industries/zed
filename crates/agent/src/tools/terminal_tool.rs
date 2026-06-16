@@ -449,10 +449,9 @@ async fn run_terminal_tool(
         };
         let title = sandbox_approval_title(&request);
         let command = Some(input.command.clone());
-        let approve =
-            cx.update(|cx| {
-                event_stream.authorize_sandbox(title, command, request.clone(), reason.to_string(), cx)
-            });
+        let approve = cx.update(|cx| {
+            event_stream.authorize_sandbox(title, command, request.clone(), reason.to_string(), cx)
+        });
         if let Err(error) = approve.await {
             if want_unsandboxed {
                 return Ok(format!(
@@ -649,9 +648,9 @@ fn network_request_to_sandbox_network_access(
         NetworkRequest::Hosts(hosts) => {
             #[cfg(target_os = "macos")]
             {
-                acp_thread::SandboxNetworkAccess::Restricted(
-                    http_proxy::Allowlist::from_patterns(hosts.iter().cloned()),
-                )
+                acp_thread::SandboxNetworkAccess::Restricted(http_proxy::Allowlist::from_patterns(
+                    hosts.iter().cloned(),
+                ))
             }
             // Only macOS (Seatbelt plus the loopback proxy) can confine egress
             // to an allowlist; other sandboxes can only toggle the network
