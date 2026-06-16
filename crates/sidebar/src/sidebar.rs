@@ -2542,7 +2542,7 @@ impl Sidebar {
             .and_then(|mw| mw.read(cx).workspaces_for_project_group(key, cx))
             .unwrap_or_default();
 
-        if open_workspaces.len() <= 1 {
+        if open_workspaces.is_empty() {
             let key = key.clone();
             return button
                 .tooltip(move |_, cx| {
@@ -2737,10 +2737,10 @@ impl Sidebar {
         .into_any_element()
     }
 
-    // Warms `worktree_default_branches` for every multi-workspace project group.
-    // The git query runs off the menu path so the submenu can read the result
-    // synchronously when it opens. Worktrees of a repository share the same
-    // default branch, so any workspace in the group yields the same answer.
+    // Warms `worktree_default_branches` for every project group with at least one
+    // open workspace. The git query runs off the menu path so the submenu can read
+    // the result synchronously when it opens. Worktrees of a repository share the
+    // same default branch, so any workspace in the group yields the same answer.
     fn prefetch_worktree_default_branches(&mut self, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
@@ -2758,12 +2758,9 @@ impl Sidebar {
             if self.worktree_default_branches.contains_key(&key) {
                 continue;
             }
-            // The worktree submenu is only reachable when a group has more than
-            // one open workspace, so there's no point querying single ones.
             let Some(base) = multi_workspace
                 .read(cx)
                 .workspaces_for_project_group(&key, cx)
-                .filter(|workspaces| workspaces.len() > 1)
                 .and_then(|workspaces| workspaces.first().cloned())
             else {
                 continue;
