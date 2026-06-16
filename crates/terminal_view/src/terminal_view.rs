@@ -505,37 +505,38 @@ impl TerminalView {
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
             .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
+        let is_embedded = matches!(self.mode, TerminalMode::Embedded { .. });
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
-                .action("New Terminal", Box::new(NewTerminal::default()))
-                .action(
-                    "New Center Terminal",
-                    Box::new(NewCenterTerminal::default()),
-                )
-                .separator()
+                .when(!is_embedded, |menu| {
+                    menu.action("New Terminal", Box::new(NewTerminal::default()))
+                        .action(
+                            "New Center Terminal",
+                            Box::new(NewCenterTerminal::default()),
+                        )
+                        .separator()
+                })
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .action("Paste Text", Box::new(PasteText))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
-                .when(
-                    assistant_enabled && !matches!(self.mode, TerminalMode::Embedded { .. }),
-                    |menu| {
-                        menu.separator()
-                            .action("Inline Assist", Box::new(InlineAssist::default()))
-                            .when(has_selection, |menu| {
-                                menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
-                            })
-                    },
-                )
-                .separator()
-                .action(
-                    "Close Terminal Tab",
-                    Box::new(CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: true,
-                    }),
-                )
+                .when(assistant_enabled && !is_embedded, |menu| {
+                    menu.separator()
+                        .action("Inline Assist", Box::new(InlineAssist::default()))
+                        .when(has_selection, |menu| {
+                            menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                        })
+                })
+                .when(!is_embedded, |menu| {
+                    menu.separator().action(
+                        "Close Terminal Tab",
+                        Box::new(CloseActiveItem {
+                            save_intent: None,
+                            close_pinned: true,
+                        }),
+                    )
+                })
         });
 
         window.focus(&context_menu.focus_handle(cx), cx);
@@ -2132,7 +2133,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext, point, px};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2206,6 +2207,27 @@ mod tests {
             let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
             assert_eq!(input_log, vec![b"foo".to_vec()]);
         });
+    }
+
+    #[gpui::test]
+    async fn embedded_terminal_context_menu_omits_tab_management_actions(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (_pane, _terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.set_embedded_mode(Some(1000), cx);
+                terminal_view.deploy_context_menu(point(px(0.), px(0.)), false, window, cx);
+            });
+            let _ = window.draw(cx);
+        });
+
+        assert!(cx.debug_bounds("MENU_ITEM-Copy").is_some());
+        assert!(cx.debug_bounds("MENU_ITEM-New Terminal").is_none());
+        assert!(cx.debug_bounds("MENU_ITEM-New Center Terminal").is_none());
+        assert!(cx.debug_bounds("MENU_ITEM-Close Terminal Tab").is_none());
     }
 
     #[gpui::test]
