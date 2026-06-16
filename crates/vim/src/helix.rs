@@ -506,7 +506,6 @@ impl Vim {
             }
             Motion::StartOfDocument => {
                 // gg lands at column 0. With a count, goes to that line at col 0;
-                // start_of_document/go_to_line preserve the cursor column, so we pass col 0.
                 self.update_editor(cx, |_, editor, cx| {
                     let text_layout_details = editor.text_layout_details(window, cx);
                     editor.change_selections(Default::default(), window, cx, |s| {
@@ -4058,7 +4057,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_start_of_document(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_start_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
@@ -4111,7 +4110,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_end_of_document(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_end_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
