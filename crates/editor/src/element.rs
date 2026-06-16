@@ -5693,12 +5693,10 @@ impl EditorElement {
             return;
         };
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
-        let suppress_horizontal_scrollbar =
-            self.editor.read(cx).suppress_horizontal_scrollbar_paint();
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
-            let suppressed = axis == ScrollbarAxis::Horizontal && suppress_horizontal_scrollbar;
+            let suppressed = axis == ScrollbarAxis::Horizontal && self.split_side.is_some();
 
             if scrollbars_layout.visible && !suppressed {
                 window.paint_layer(hitbox.bounds, |window| {
@@ -9246,7 +9244,6 @@ impl Element for EditorElement {
                         editor.last_right_margin = right_margin;
                         editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
                         editor.last_horizontal_scrollbar_layout = horizontal_scrollbar_layout;
-                        editor.suppress_horizontal_scrollbar_paint = false;
                     });
 
                     EditorLayout {

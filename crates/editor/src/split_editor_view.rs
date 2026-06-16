@@ -396,17 +396,6 @@ impl SplitBufferHeadersElement {
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let scroll_position = snapshot.scroll_position();
 
-        // When dealing with a split editor, the [`SplitBufferHeadersElement`]
-        // is the one responsible for painting the horizontal scrollbars for
-        // each editor, so we need to suppress the pain on the editor itself.
-        self.lhs_editor.update(cx, |editor, _| {
-            editor.set_suppress_horizontal_scrollbar_paint(true);
-        });
-
-        self.rhs_editor.update(cx, |editor, _| {
-            editor.set_suppress_horizontal_scrollbar_paint(true);
-        });
-
         // Compute right margin to avoid overlapping the scrollbar
         let content_bounds = self.content_bounds(bounds, cx);
         let available_width = (content_bounds.size.width

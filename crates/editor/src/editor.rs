@@ -1110,13 +1110,7 @@ pub struct Editor {
     /// laid out.
     /// Snapshotted so `SplitBufferHeadersElement` can paint the split pane's
     /// horizontal scrollbars itself, above the buffer headers.
-    /// much space to reserve for buffer headers.
     last_horizontal_scrollbar_layout: Option<ScrollbarLayout>,
-    /// When set, `EditorElement` lays out and keeps the horizontal scrollbar
-    /// interactive but skips painting it. Set by `SplitBufferHeadersElement`,
-    /// which repains it on top of the buffer headers so they show through the
-    /// translucent scrollbar.
-    suppress_horizontal_scrollbar_paint: bool,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
@@ -2290,7 +2284,6 @@ impl Editor {
             last_right_margin: Pixels::ZERO,
             last_horizontal_scrollbar_visible: false,
             last_horizontal_scrollbar_layout: None,
-            suppress_horizontal_scrollbar_paint: false,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -2712,16 +2705,6 @@ impl Editor {
     #[allow(dead_code)]
     pub(crate) fn last_horizontal_scrollbar_layout(&self) -> Option<&ScrollbarLayout> {
         self.last_horizontal_scrollbar_layout.as_ref()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn suppress_horizontal_scrollbar_paint(&self) -> bool {
-        self.suppress_horizontal_scrollbar_paint
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn set_suppress_horizontal_scrollbar_paint(&mut self, suppress: bool) {
-        self.suppress_horizontal_scrollbar_paint = suppress;
     }
 
     pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {
