@@ -89,7 +89,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
-            available_tools: vec!["echo".into(), "update_plan".into(), "update_title".into()],
+            available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
@@ -100,8 +100,6 @@ mod tests {
         assert!(rendered.contains("You are the Zed coding agent"));
         assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("## Fixing Diagnostics"));
-        assert!(rendered.contains("## Planning"));
-        assert!(rendered.contains("## Session Title"));
         assert!(rendered.contains("test-model"));
     }
 
@@ -158,7 +156,7 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(!rendered.contains("## Terminal sandbox"));
-        assert!(!rendered.contains("allow_network"));
+        assert!(!rendered.contains("allow_hosts"));
     }
 
     #[test]
@@ -192,7 +190,8 @@ mod tests {
         assert!(rendered.contains("## Terminal sandbox"));
         assert!(rendered.contains("`/tmp/alpha`"));
         assert!(rendered.contains("`/tmp/beta`"));
-        assert!(rendered.contains("allow_network: true"));
+        assert!(rendered.contains("allow_hosts"));
+        assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("fs_write_paths"));
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));

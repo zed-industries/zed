@@ -463,6 +463,14 @@ impl LanguageModel for AnthropicModel {
         self.model.supports_speed
     }
 
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self.model.id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX) {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
         self.model
             .supported_effort_levels
@@ -531,7 +539,7 @@ impl LanguageModel for AnthropicModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new().map_stream(response))
+            Ok(AnthropicEventMapper::new(PROVIDER_NAME).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }

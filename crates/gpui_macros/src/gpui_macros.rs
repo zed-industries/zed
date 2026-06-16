@@ -191,6 +191,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 }
 
 /// `#[gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
+///
+/// The benchmark crate must add `criterion` and `gpui_platform` (with its
+/// `test-support` feature) to its dev-dependencies and enable gpui's `bench`
+/// feature, since the generated code references all three.
 #[proc_macro_attribute]
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     bench::bench(args, function)

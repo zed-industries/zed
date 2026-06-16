@@ -934,7 +934,7 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
     });
 
     project_a.update(cx_a, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
     });
 
     let restarted_server = fake_language_servers.next().await.unwrap();

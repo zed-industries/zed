@@ -184,6 +184,9 @@ impl Editor {
             .range_to_buffer_ranges(visible_range)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer_snapshot, buffer_offset_range, excerpt_range)| {
+                (buffer_snapshot.clone(), buffer_offset_range, excerpt_range)
+            })
             .collect()
     }
 
@@ -591,6 +594,7 @@ impl Editor {
                 match_start: None,
                 snippet_deduplication_key: None,
                 icon_path: None,
+                icon_color: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
                     word_range,
@@ -1344,6 +1348,7 @@ fn snippet_completions(
                         filter_range: 0..matching_prefix.len(),
                     },
                     icon_path: None,
+                    icon_color: None,
                     documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                         single_line: snippet.name.clone().into(),
                         plain_text: snippet
