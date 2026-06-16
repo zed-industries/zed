@@ -15,18 +15,19 @@ pub mod linux_bubblewrap;
 #[cfg(target_os = "macos")]
 pub mod macos_seatbelt;
 
-/// Per-command relaxations of the default sandbox.
+/// Per-command relaxations of the default Bubblewrap (Linux) sandbox.
 ///
 /// All-false is the default, fully-sandboxed run. Setting any field
 /// requires user approval before the command is launched.
 ///
-/// This is the platform-independent request. Each OS integration maps it
-/// onto its own mechanism and may enforce it with different granularity
-/// (for example, on Linux both restrictions are enforced by Bubblewrap —
-/// network via a `--unshare-net` namespace — whereas macOS uses Seatbelt for
-/// both). Some baseline operations remain denied
-/// regardless of these flags; the only way to lift those is to skip the
-/// sandbox entirely, which these integrations deliberately don't expose.
+/// Network access is a plain on/off toggle here because Bubblewrap can only
+/// enforce it wholesale (an `--unshare-net` namespace, loopback only). macOS
+/// can additionally confine egress to an allowlist via Seatbelt and the
+/// in-process proxy, so it uses its own richer
+/// [`macos_seatbelt::SandboxPermissions`] instead of this type. Some baseline
+/// operations remain denied regardless of these flags; the only way to lift
+/// those is to skip the sandbox entirely, which these integrations
+/// deliberately don't expose.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SandboxPermissions {
     /// Allow network access for the command.
