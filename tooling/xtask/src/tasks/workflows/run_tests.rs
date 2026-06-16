@@ -547,7 +547,7 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
     };
     let mut job = release_job(&[])
         .runs_on(runner)
-        .when(harden && platform != Platform::Windows, |this| {
+        .when(harden && platform == Platform::Linux, |this| {
             this.add_step(steps::harden_runner())
         })
         .add_step(steps::checkout_repo())
@@ -608,7 +608,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
                         ),
                 )
             })
-            .when(harden && platform != Platform::Windows, |this| {
+            .when(harden && platform == Platform::Linux, |this| {
                 this.add_step(steps::harden_runner())
             })
             .add_step(steps::checkout_repo())
@@ -651,7 +651,6 @@ fn build_visual_tests_binary() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(runners::MAC_DEFAULT)
-            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Mac))
             .add_step(steps::cache_rust_dependencies_namespace())
