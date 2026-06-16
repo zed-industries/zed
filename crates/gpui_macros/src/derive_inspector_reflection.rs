@@ -273,6 +273,11 @@ fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> 
             let expanded = crate::styles::border_style_methods(TokenStream::from(tokens));
             parse_expanded_items(expanded)
         }
+        "gpui_macros::outline_style_methods" | "outline_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::outline_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
         "gpui_macros::box_shadow_style_methods" | "box_shadow_style_methods" => {
             let tokens = macro_item.mac.tokens.clone();
             let expanded = crate::styles::box_shadow_style_methods(TokenStream::from(tokens));
