@@ -1,7 +1,0 @@
-[serve]
-addresses = ["127.0.0.1"]
-port = 8080
-open = true
-
-# Headers required for WebGPU / SharedArrayBuffer support.
-headers = { "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }
