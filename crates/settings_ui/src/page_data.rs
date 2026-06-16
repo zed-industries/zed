@@ -8039,6 +8039,7 @@ fn ai_page() -> SettingsPage {
                     display_confirm_button: true,
                     display_clear_button: true,
                     confirm_on_focus_out: true,
+                    treat_missing_text_as_empty: true,
                     ..Default::default()
                 })),
                 files: USER,
