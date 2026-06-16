@@ -30,9 +30,9 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext, ListOffset,
-    ListState, ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription,
-    Task, TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
+    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
     linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
@@ -6401,8 +6401,18 @@ pub(crate) mod tests {
 
         let count_before = bar.read_with(cx, |bar, _| bar.match_count());
         assert!(
-            count_before >= 1,
-            "expected at least one initial match, got {count_before}",
+            count_before >= 2,
+            "expected at least two initial matches, got {count_before}",
+        );
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(1),
+            "setup precondition: second match should be active before the refresh",
         );
 
         // Advance past the debounced thread-update rescan.
@@ -6418,11 +6428,17 @@ pub(crate) mod tests {
             .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
         cx.run_until_parked();
 
-        let count_after = bar.read_with(cx, |bar, _| bar.match_count());
+        let (count_after, active_after) =
+            bar.read_with(cx, |bar, _| (bar.match_count(), bar.active_match_index()));
         assert!(
             count_after > count_before,
             "thread subscription should refresh matches after new content \
              streamed in: before={count_before}, after={count_after}",
+        );
+        assert_eq!(
+            active_after,
+            Some(1),
+            "refreshing matches should preserve the active result when it still exists",
         );
     }
 

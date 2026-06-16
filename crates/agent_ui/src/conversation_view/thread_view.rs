@@ -10610,14 +10610,8 @@ impl Render for ThreadView {
                 }
             });
 
-        let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("AcpThread");
-        if self.thread_search_visible {
-            key_context.add("AcpThreadSearchBar");
-        }
-
         v_flex()
-            .key_context(key_context)
+            .key_context("AcpThread")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.parent_session_id.is_none() {

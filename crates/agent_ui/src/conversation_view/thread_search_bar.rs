@@ -58,6 +58,49 @@ struct ThreadMatch {
     source_range: Range<usize>,
 }
 
+struct MatchPosition {
+    entry_ix: usize,
+    target: MatchPositionTarget,
+    source_range: Range<usize>,
+}
+
+enum MatchPositionTarget {
+    Markdown(EntityId),
+    Editor(EntityId),
+}
+
+impl MatchPosition {
+    fn new(m: &ThreadMatch) -> Self {
+        Self {
+            entry_ix: m.entry_ix,
+            target: match &m.target {
+                MatchTarget::Markdown { markdown, .. } => {
+                    MatchPositionTarget::Markdown(markdown.entity_id())
+                }
+                MatchTarget::Editor { editor, .. } => {
+                    MatchPositionTarget::Editor(editor.entity_id())
+                }
+            },
+            source_range: m.source_range.clone(),
+        }
+    }
+
+    fn matches(&self, m: &ThreadMatch) -> bool {
+        self.entry_ix == m.entry_ix
+            && self.source_range == m.source_range
+            && match (&self.target, &m.target) {
+                (
+                    MatchPositionTarget::Markdown(entity_id),
+                    MatchTarget::Markdown { markdown, .. },
+                ) => *entity_id == markdown.entity_id(),
+                (MatchPositionTarget::Editor(entity_id), MatchTarget::Editor { editor, .. }) => {
+                    *entity_id == editor.entity_id()
+                }
+                _ => false,
+            }
+    }
+}
+
 pub struct ThreadSearchBar {
     pub(super) query_editor: Entity<Editor>,
     options: SearchOptions,
@@ -234,6 +277,11 @@ impl ThreadSearchBar {
     }
 
     pub(super) fn update_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let previous_active_match_ix = self.active_match;
+        let previous_active_match = previous_active_match_ix
+            .and_then(|ix| self.matches.get(ix))
+            .map(MatchPosition::new);
+
         let (query, err_msg) = self.build_query(cx);
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
         self.query_error_message = err_msg;
@@ -349,7 +397,11 @@ impl ThreadSearchBar {
         }
 
         if !self.matches.is_empty() {
-            self.activate_match(0, window, cx);
+            let active_match_ix = previous_active_match
+                .and_then(|position| self.matches.iter().position(|m| position.matches(m)))
+                .or_else(|| previous_active_match_ix.filter(|ix| *ix < self.matches.len()))
+                .unwrap_or(0);
+            self.activate_match(active_match_ix, window, cx);
         } else {
             cx.notify();
         }
@@ -587,26 +639,6 @@ impl Render for ThreadSearchBar {
         let bar_row = h_flex()
             .track_focus(&focus_handle)
             .key_context(key_context)
-            // Some base keymaps route Shift+Enter to `editor::Newline*` before
-            // `AcpThreadSearchBar` bindings win, so capture and consume them.
-            .capture_action(
-                cx.listener(|this, _: &editor::actions::NewlineBelow, window, cx| {
-                    this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
-                    cx.stop_propagation();
-                }),
-            )
-            .capture_action(
-                cx.listener(|this, _: &editor::actions::Newline, window, cx| {
-                    this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
-                    cx.stop_propagation();
-                }),
-            )
-            .capture_action(
-                cx.listener(|this, _: &editor::actions::NewlineAbove, window, cx| {
-                    this.select_prev_match(&SelectPreviousThreadMatch, window, cx);
-                    cx.stop_propagation();
-                }),
-            )
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
