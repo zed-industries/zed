@@ -17,7 +17,7 @@ mod render;
 use delegate::{Delegate, matches_to_multibuffer};
 use util::ResultExt as _;
 
-use crate::ProjectSearchView;
+use crate::{ProjectSearchView, text_finder::delegate::PopulateProjectSearch};
 
 actions!(text_finder, [ToProjectSearch,]);
 
@@ -93,14 +93,6 @@ impl TextFinder {
             let search_stream = connected_task.unwrap_or(gpui::Task::ready(None)).await;
             let matches =
                 picker.update(cx, |picker, _| std::mem::take(&mut picker.delegate.matches));
-            matches_to_multibuffer(&project_search_view, &matches, cx).await;
-
-            if let Some(stream) = search_stream {
-                project_search_view.update(cx, |view, cx| {
-                    view.entity
-                        .update(cx, |search, cx| search.hook_up_ongoing_seach(stream, cx));
-                });
-            }
 
             project_search_view
                 .update_in(cx, |view, window, cx| {
@@ -112,7 +104,7 @@ impl TextFinder {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.add_item_to_active_pane(
-                        Box::new(project_search_view),
+                        Box::new(project_search_view.clone()),
                         None,
                         true, // focus item
                         window,
@@ -120,6 +112,19 @@ impl TextFinder {
                     );
                 })
                 .log_err();
+
+            if let PopulateProjectSearch::SupersededByNewSearch =
+                matches_to_multibuffer(&project_search_view, &matches, cx).await
+            {
+                return;
+            }
+
+            if let Some(stream) = search_stream {
+                project_search_view.update(cx, |view, cx| {
+                    view.entity
+                        .update(cx, |search, cx| search.hook_up_ongoing_seach(stream, cx));
+                });
+            }
         })
         .detach();
     }

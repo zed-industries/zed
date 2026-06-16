@@ -242,7 +242,7 @@ pub struct ProjectSearch {
     pub match_ranges: Vec<Range<Anchor>>,
     pub(crate) active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
-    search_id: usize,
+    pub(crate) search_id: usize,
     no_results: Option<bool>,
     limit_reached: bool,
     search_history_cursor: SearchHistoryCursor,
@@ -476,6 +476,7 @@ async fn consume_search_stream(
     project_search_turning_into_text_finder: Arc<AtomicBool>,
     cx: &mut AsyncApp,
 ) -> Option<SearchResults<SearchResult>> {
+    // Note: is cancel safe
     let mut matches = pin!(search_results.rx.clone().ready_chunks(1024));
 
     let mut limit_reached = false;

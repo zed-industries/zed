@@ -140,45 +140,57 @@ fn multibuffer_ranges_to_search_matches<'a>(
     })
 }
 
-async fn plunder_multibuffer(
-    project_search_view: &Entity<ProjectSearchView>,
-    cx: &AsyncApp,
-) -> Vec<SearchMatch> {
+/// Stream the matches already sitting in the project search's multibuffer into
+/// the picker, a chunk at a time. Inverse of [`matches_to_multibuffer`].
+async fn stream_plunder_to_picker(
+    project_search_view: Entity<ProjectSearchView>,
+    cancel_flag: Arc<AtomicBool>,
+    picker: gpui::WeakEntity<Picker<Delegate>>,
+    cx: &mut AsyncApp,
+) {
     let chunk_size = 1000;
     let mut n_read = 0;
-    let mut matches = Vec::new();
 
     loop {
-        let res = project_search_view.read_with(cx, |view, cx| {
-            let ps = view.entity.read(cx);
-            let multi_buffer = ps.excerpts.read(cx);
-            let snapshot = multi_buffer.snapshot(cx);
-
-            let chunk = if n_read + chunk_size < ps.match_ranges.len() {
-                &ps.match_ranges[n_read..n_read + chunk_size]
-            } else if n_read < ps.match_ranges.len() {
-                &ps.match_ranges[n_read..]
-            } else {
-                return ControlFlow::Break(());
-            };
-            matches.extend(multibuffer_ranges_to_search_matches(
-                chunk,
-                multi_buffer,
-                snapshot,
-                cx,
-            ));
-            n_read += chunk_size; // the above filters so we can not just set this to matches.len()
-            return ControlFlow::Continue(());
-        });
-
-        if res.is_break() {
-            break;
+        if cancel_flag.load(Ordering::SeqCst) {
+            return; // user cancelled or changed the query
         }
 
-        // Critical or the seach tranformation will hold the background thread for too long
+        let res = picker.update(cx, |picker, cx| {
+            let new_matches: Vec<SearchMatch> = {
+                let ps = project_search_view.read(cx).entity.read(cx);
+                let len = ps.match_ranges.len();
+                if n_read >= len {
+                    return ControlFlow::Break(());
+                }
+                let end = (n_read + chunk_size).min(len);
+                let chunk = &ps.match_ranges[n_read..end];
+                let multi_buffer = ps.excerpts.read(cx);
+                let snapshot = multi_buffer.snapshot(cx);
+                let matches =
+                    multibuffer_ranges_to_search_matches(chunk, multi_buffer, snapshot, cx)
+                        .collect();
+                n_read = end;
+                matches
+            };
+
+            let delegate = &mut picker.delegate;
+            delegate
+                .unique_files
+                .extend(new_matches.iter().map(|m| m.path.clone()));
+            delegate.matches.extend(new_matches);
+            cx.notify();
+            ControlFlow::Continue(())
+        });
+
+        match res {
+            Ok(ControlFlow::Continue(())) => {}
+            Ok(ControlFlow::Break(())) | Err(_) => break,
+        }
+
+        // Critical or the search transformation will hold the background thread for too long
         yield_now().await;
     }
-    matches
 }
 
 pub(crate) enum InProgressSearch {
@@ -222,24 +234,29 @@ impl Delegate {
         picker: gpui::WeakEntity<Picker<Delegate>>,
         cx: &App,
     ) {
-        // let (signal_done, match_updating_done) = futures::channel::oneshot::channel();
-        // let search_task =
-        if let Some(results_stream) = self.in_progress_search.take_disconnected() {
-            let cancel_flag = Arc::clone(&self.cancel_flag);
-            let text_finder_turning_into_project_search =
-                Arc::clone(&self.text_finder_turning_into_project_search);
-            self.in_progress_search = InProgressSearch::Connected(cx.spawn(async move |cx| {
-                stream_results_to_picker(
+        let cancel_flag = Arc::clone(&self.cancel_flag);
+        let text_finder_turning_into_project_search =
+            Arc::clone(&self.text_finder_turning_into_project_search);
+        let project_search_view = self.project_search_view.clone();
+        let ongoing = self.in_progress_search.take_disconnected();
+
+        self.in_progress_search = InProgressSearch::Connected(cx.spawn(async move |cx| {
+            stream_plunder_to_picker(project_search_view, cancel_flag.clone(), picker.clone(), cx)
+                .await;
+
+            if let Some(results_stream) = ongoing {
+                return stream_results_to_picker(
                     cancel_flag,
                     text_finder_turning_into_project_search,
                     picker,
                     results_stream,
+                    ImportedMatches::Yes,
                     cx,
                 )
-                .await
-                // signal_done.send(); // TODO!(yara) do we need to signal completion here?
-            }));
-        }
+                .await;
+            }
+            None
+        }));
     }
 
     pub fn new_from_project_search(
@@ -248,7 +265,6 @@ impl Delegate {
     ) -> Task<Delegate> {
         cx.spawn(async move |cx| {
             let ongoing = get_ongoing_search(&project_search, cx).await;
-            let results_already_yielded = plunder_multibuffer(&project_search, cx).await;
 
             let in_progress_search = if let Some(results_stream) = ongoing {
                 InProgressSearch::Disconnected(results_stream)
@@ -256,21 +272,23 @@ impl Delegate {
                 InProgressSearch::None
             };
 
-            let (search_options, active_query) = cx.read_entity(&project_search, |ps, cx| {
-                (ps.search_options, ps.entity.read(cx).active_query.clone())
-            });
-            // Note, potentially slow for huge inputs yielding to too long yield times
-            // if you see that chunk this and insert yield_nows
-            let unique_files = results_already_yielded
-                .iter()
-                .map(|m| m.path.clone())
-                .collect();
+            let (search_options, active_query, has_existing_matches) =
+                cx.read_entity(&project_search, |ps, cx| {
+                    let entity = ps.entity.read(cx);
+                    (
+                        ps.search_options,
+                        entity.active_query.clone(),
+                        !entity.match_ranges.is_empty(),
+                    )
+                });
 
-            let imported_from_project_search = !results_already_yielded.is_empty();
+            let imported_from_project_search =
+                has_existing_matches || !matches!(in_progress_search, InProgressSearch::None);
+
             let this = cx.update(move |cx| Self {
                 project_search_view: project_search,
                 focus_handle: cx.focus_handle(),
-                matches: results_already_yielded,
+                matches: Vec::new(),
                 selected_index: 0,
                 cancel_flag: Arc::new(AtomicBool::new(false)),
                 text_finder_turning_into_project_search: Arc::new(AtomicBool::new(false)),
@@ -280,7 +298,7 @@ impl Delegate {
                 active_query,
                 imported_from_project_search,
                 in_progress_search,
-                unique_files,
+                unique_files: HashSet::default(),
                 preview_layout_is_horizontal: false,
             });
 
@@ -312,13 +330,18 @@ impl Delegate {
     }
 }
 
+pub(crate) enum PopulateProjectSearch {
+    Completed,
+    SupersededByNewSearch,
+}
+
 /// Convert the picker's list of matches into multibuffer. Inverse of
-/// [`plunder_multibuffer`]
+/// [`plunder_multibuffer`].
 pub(crate) async fn matches_to_multibuffer(
     project_search_view: &Entity<ProjectSearchView>,
     matches: &[SearchMatch],
     cx: &mut AsyncApp,
-) {
+) -> PopulateProjectSearch {
     let mut buffer_order_in_text_finder: Vec<EntityId> = Vec::new();
     let mut by_buffer: HashMap<_, (_, Vec<_>)> = HashMap::default();
 
@@ -336,15 +359,28 @@ pub(crate) async fn matches_to_multibuffer(
     let excerpts =
         project_search_view.read_with(cx, |view, cx| view.entity.read(cx).excerpts.clone());
     excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
-    project_search_view.update(cx, |view, cx| {
-        view.entity
-            .update(cx, |search, _| search.match_ranges.clear())
+
+    // Every await point is a place where the user could type a search
+    // query in which case we gotta abort. Store the search id so we
+    // can check if that happened.
+    let search_id = project_search_view.update(cx, |view, cx| {
+        view.entity.update(cx, |search, _| {
+            search.match_ranges.clear();
+            search.search_id
+        })
     });
 
     let context_lines = cx.update(|cx| multibuffer_context_lines(cx));
 
+    let still_current = |cx: &mut AsyncApp| {
+        project_search_view.update(cx, |view, cx| view.entity.read(cx).search_id == search_id)
+    };
+
     let mut excerpts_added = 0;
     for buffer_id in buffer_order_in_text_finder {
+        if !still_current(cx) {
+            return PopulateProjectSearch::SupersededByNewSearch;
+        }
         let (buffer, ranges) = by_buffer.remove(&buffer_id).expect("just put them in");
         excerpts_added += ranges.len();
         let new_ranges = excerpts
@@ -358,9 +394,15 @@ pub(crate) async fn matches_to_multibuffer(
                 )
             })
             .await;
+
+        if !still_current(cx) {
+            return PopulateProjectSearch::SupersededByNewSearch;
+        }
         project_search_view.update(cx, |view, cx| {
-            view.entity
-                .update(cx, |search, _| search.match_ranges.extend(new_ranges));
+            view.entity.update(cx, |search, cx| {
+                search.match_ranges.extend(new_ranges);
+                cx.notify();
+            })
         });
 
         // Adding items to the multibuffer can take time. Be sure to not hold
@@ -370,6 +412,7 @@ pub(crate) async fn matches_to_multibuffer(
             excerpts_added = 0;
         }
     }
+    PopulateProjectSearch::Completed
 }
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
@@ -464,6 +507,7 @@ impl PickerDelegate for Delegate {
                     text_finder_turning_into_project_search,
                     picker,
                     search_results,
+                    ImportedMatches::No,
                     cx,
                 )
                 .await;
@@ -653,11 +697,17 @@ impl PickerDelegate for Delegate {
     }
 }
 
+enum ImportedMatches {
+    No,
+    Yes,
+}
+
 async fn stream_results_to_picker(
     cancel_flag: Arc<AtomicBool>,
     text_finder_turning_into_project_search: Arc<AtomicBool>,
     picker: gpui::WeakEntity<Picker<Delegate>>,
     search_results: SearchResults<SearchResult>,
+    imported_matches: ImportedMatches,
     cx: &mut AsyncApp,
 ) -> Option<SearchResults<SearchResult>> {
     let mut results_stream = std::pin::pin!(
@@ -667,7 +717,7 @@ async fn stream_results_to_picker(
             .ready_chunks(SEARCH_RESULTS_BATCH_SIZE)
     );
 
-    let mut is_first_batch = true;
+    let mut clear_existing = matches!(imported_matches, ImportedMatches::No);
     while let Some(results) = results_stream.next().await {
         if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
             break;
@@ -692,11 +742,11 @@ async fn stream_results_to_picker(
             .update(cx, |picker, cx| {
                 let delegate = &mut picker.delegate;
 
-                if is_first_batch {
+                if clear_existing {
                     delegate.matches.clear();
                     delegate.unique_files.clear();
                     delegate.selected_index = 0;
-                    is_first_batch = false;
+                    clear_existing = false;
                 }
 
                 delegate
@@ -721,7 +771,6 @@ async fn stream_results_to_picker(
         // processed before taking out the search result stream. The cancel flag
         // just needs to stop the search.
         if text_finder_turning_into_project_search.load(Ordering::Relaxed) {
-            text_finder_turning_into_project_search.store(false, Ordering::Relaxed);
             return Some(search_results);
         }
 
