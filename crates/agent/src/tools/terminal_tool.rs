@@ -524,25 +524,26 @@ async fn run_terminal_tool(
             // the user reflects the *current* environment (e.g. it can change
             // from "no bwrap" to "bwrap is setuid" after they install one).
             #[cfg(target_os = "linux")]
-            let mut retries = 0usize;
-            loop {
-                let probe_wrap = wrap.clone();
-                let probe_cwd = working_dir.clone();
-                let error = match cx
-                    .background_executor()
-                    .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
-                    .await
-                {
-                    Ok(()) => break Some(wrap),
-                    Err(error) => error,
-                };
+            {
+                let mut retries = 0usize;
+                loop {
+                    let probe_wrap = wrap.clone();
+                    let probe_cwd = working_dir.clone();
+                    let error = match cx
+                        .background_executor()
+                        .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                        .await
+                    {
+                        Ok(()) => break Some(wrap),
+                        Err(error) => error,
+                    };
 
-                // Distinct from the intentional skips above (settings / thread
-                // grant): the sandbox was requested but couldn't be created.
-                log::warn!("Failed to create a sandbox for an agent terminal command: {error:?}");
+                    // Distinct from the intentional skips above (settings / thread
+                    // grant): the sandbox was requested but couldn't be created.
+                    log::warn!(
+                        "Failed to create a sandbox for an agent terminal command: {error:?}"
+                    );
 
-                #[cfg(target_os = "linux")]
-                {
                     let decision = cx
                         .update(|cx| {
                             event_stream.authorize_sandbox_fallback(
@@ -572,12 +573,25 @@ async fn run_terminal_tool(
                         }
                     }
                 }
-                #[cfg(not(target_os = "linux"))]
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let probe_wrap = wrap.clone();
+                let probe_cwd = working_dir.clone();
+                match cx
+                    .background_executor()
+                    .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                    .await
                 {
-                    // The probe can't fail off Linux; keep failing open just in
-                    // case a future platform's probe ever does.
-                    let _ = error;
-                    break None;
+                    Ok(()) => Some(wrap),
+                    Err(error) => {
+                        // The probe can't fail off Linux; keep failing open just
+                        // in case a future platform's probe ever does.
+                        log::warn!(
+                            "Failed to create a sandbox for an agent terminal command: {error:?}"
+                        );
+                        None
+                    }
                 }
             }
         }
@@ -625,9 +639,9 @@ async fn run_terminal_tool(
         .map_err(|e| e.to_string())?;
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    let fields = acp::ToolCallUpdateFields::new().content(vec![
-        acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
-    ]);
+    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
+        acp::Terminal::new(terminal_id),
+    )]);
     if let Some(reason) = &sandbox_not_applied {
         event_stream.update_fields_with_meta(
             fields,

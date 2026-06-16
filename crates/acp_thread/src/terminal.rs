@@ -152,9 +152,7 @@ impl SandboxWrap {
                 .map_err(|status| match status {
                     LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
                     LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
-                    LauncherStatus::SandboxProbeFailed => {
-                        LinuxWslSandboxError::SandboxProbeFailed
-                    }
+                    LauncherStatus::SandboxProbeFailed => LinuxWslSandboxError::SandboxProbeFailed,
                     // `Success` never appears in the `Err` arm; map defensively.
                     LauncherStatus::Success => {
                         LinuxWslSandboxError::Other(status.describe().to_string())
