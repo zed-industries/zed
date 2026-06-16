@@ -139,12 +139,10 @@ impl FeatureFlagAppExt for App {
     where
         F: FnMut(OnFlagsReady, &mut App) + 'static,
     {
-        callback(
-            OnFlagsReady {
-                is_staff: !*ZED_DISABLE_STAFF,
-            },
-            self,
-        );
+        let is_staff = !*ZED_DISABLE_STAFF;
+        self.defer(move |cx| {
+            callback(OnFlagsReady { is_staff }, cx);
+        });
         self.observe_global::<FeatureFlagStore>(move |_| {})
     }
     fn observe_flag<T: FeatureFlag, F>(&mut self, mut callback: F) -> Subscription

@@ -1,14 +1,3 @@
-# macOS-only workspace
-
-This repository is a fork of Zed targeting **macOS only**. Non-macOS platform crate directories have been deleted. However, `#[cfg()]` gates in shared Rust source files (`gpui/src/`, `gpui_platform/src/`) are **intentionally preserved** — they are harmless dead code on macOS and maintaining them keeps merge compatibility with upstream.
-
-## Rules for pruning non-macOS code
-
-1. **Delete crate directories only** — remove `gpui_linux/`, `gpui_windows/`, `gpui_web/`, `gpui_wgpu/` and their references in `Cargo.toml` workspace members, path entries, and unused workspace dependencies.
-2. **Do NOT remove `#[cfg()]` gates from shared Rust source files** — these are dead code on macOS but prevent merge conflicts with upstream. The compiler discards them.
-3. **Clean up Cargo.toml references** — if a per-crate `Cargo.toml` references a deleted crate (e.g., `gpui_web.workspace = true`), remove the reference and any feature flags that depend on it. But leave platform-specific features like `wayland = ["bitflags"]` in `crates/gpui/Cargo.toml` — they are harmless stubs.
-4. **Keep workspace deps referenced by remaining crates** — even if behind `cfg(windows)` or `cfg(linux)`. E.g., 18 crates still reference `windows.workspace = true` — the workspace dep must stay. Only remove workspace deps that are exclusively referenced by deleted crates.
-
 # Rust coding guidelines
 
 * Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
