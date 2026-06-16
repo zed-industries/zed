@@ -753,9 +753,78 @@ pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
 /// same simulated home directory. Each test should use its own `FakeFs`
 /// instance to keep skill setups from leaking across tests.
 pub fn global_skills_dir() -> PathBuf {
-    paths::home_dir()
+    global_skills_home_dir()
         .join(AGENTS_DIR_NAME)
         .join(SKILLS_DIR_NAME)
+}
+
+fn global_skills_home_dir() -> PathBuf {
+    let environment_home_dir = std::env::var_os("HOME").map(PathBuf::from);
+    normalize_home_dir_for_global_skills(paths::home_dir(), environment_home_dir.as_deref())
+}
+
+fn normalize_home_dir_for_global_skills(
+    home_dir: &Path,
+    environment_home_dir: Option<&Path>,
+) -> PathBuf {
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(wsl_home_dir) =
+            wsl_home_dir_for_windows_home_dir(home_dir, environment_home_dir)
+        {
+            return wsl_home_dir;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    let _ = environment_home_dir;
+
+    home_dir.to_path_buf()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wsl_home_dir_for_windows_home_dir(
+    home_dir: &Path,
+    environment_home_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if !looks_like_windows_absolute_path(home_dir) {
+        return None;
+    }
+
+    if let Some(environment_home_dir) = environment_home_dir
+        && environment_home_dir.is_absolute()
+        && !looks_like_windows_absolute_path(environment_home_dir)
+    {
+        return Some(environment_home_dir.to_path_buf());
+    }
+
+    windows_home_username(home_dir).map(|username| PathBuf::from("/home").join(username))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn looks_like_windows_absolute_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_home_username(home_dir: &Path) -> Option<String> {
+    let home_dir = home_dir.to_string_lossy();
+    let home_dir = home_dir.strip_prefix(r"\\?\").unwrap_or(&home_dir);
+    let normalized = home_dir.replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    let marker = ":/users/";
+    let users_start = lower.find(marker)? + marker.len();
+    let username = normalized[users_start..]
+        .split('/')
+        .next()
+        .filter(|username| !username.is_empty())?;
+    Some(username.to_string())
 }
 
 /// Project-local skills live at this path relative to a worktree root,
@@ -883,6 +952,38 @@ mod tests {
         }
         .precedence();
         assert_eq!(project, other_project);
+    }
+
+    #[test]
+    fn normalize_home_dir_for_global_skills_keeps_unix_home() {
+        assert_eq!(
+            normalize_home_dir_for_global_skills(Path::new("/home/marti"), None),
+            PathBuf::from("/home/marti")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn normalize_home_dir_for_global_skills_uses_unix_home_when_windows_home_leaks_into_wsl() {
+        assert_eq!(
+            normalize_home_dir_for_global_skills(
+                Path::new(r"C:\Users\marti"),
+                Some(Path::new("/home/marti")),
+            ),
+            PathBuf::from("/home/marti")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn normalize_home_dir_for_global_skills_derives_wsl_home_when_env_home_is_also_windows() {
+        assert_eq!(
+            normalize_home_dir_for_global_skills(
+                Path::new(r"C:\Users\marti"),
+                Some(Path::new(r"C:\Users\marti")),
+            ),
+            PathBuf::from("/home/marti")
+        );
     }
 
     #[test]
