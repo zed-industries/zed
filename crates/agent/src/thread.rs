@@ -5583,29 +5583,28 @@ impl ToolCallEventStream {
         let sandbox_grants = self.sandbox_grants.clone();
         cx.spawn(async move |cx| {
             let (response_tx, response_rx) = oneshot::channel();
-            if let Err(error) =
-                stream
-                    .0
-                    .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
-                        ToolCallAuthorization {
-                                // Deliberately leave the tool-call title untouched so
-                                // the card keeps showing the *command* (not the
-                                // failure reason): it's critical the user can see what
-                                // they're approving to run unsandboxed. The reason is
-                                // surfaced separately by the fallback details / warning.
-                                tool_call: acp::ToolCallUpdate::new(
-                                    tool_use_id.to_string(),
-                                    acp::ToolCallUpdateFields::new(),
-                                )
-                                .meta(acp_thread::meta_with_sandbox_fallback_authorization(
-                                    details,
-                                )),
-                            options,
-                            response: response_tx,
-                            context: None,
-                            kind: acp_thread::AuthorizationKind::ActionChoice,
-                        },
-                    )))
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        // Deliberately leave the tool-call title untouched so
+                        // the card keeps showing the *command* (not the
+                        // failure reason): it's critical the user can see what
+                        // they're approving to run unsandboxed. The reason is
+                        // surfaced separately by the fallback details / warning.
+                        tool_call: acp::ToolCallUpdate::new(
+                            tool_use_id.to_string(),
+                            acp::ToolCallUpdateFields::new(),
+                        )
+                        .meta(
+                            acp_thread::meta_with_sandbox_fallback_authorization(details),
+                        ),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::ActionChoice,
+                    },
+                )))
             {
                 log::error!("Failed to send sandbox fallback authorization: {error}");
                 return Err(anyhow!(
@@ -7169,7 +7168,12 @@ mod tests {
         async fn retry_label(cx: &mut TestAppContext, retries: usize) -> String {
             let (event_stream, mut receiver) = ToolCallEventStream::test();
             let authorize = cx.update(|cx| {
-                event_stream.authorize_sandbox_fallback(None, "probe failed".to_string(), retries, cx)
+                event_stream.authorize_sandbox_fallback(
+                    None,
+                    "probe failed".to_string(),
+                    retries,
+                    cx,
+                )
             });
             let authorization = receiver.expect_authorization().await;
             let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {

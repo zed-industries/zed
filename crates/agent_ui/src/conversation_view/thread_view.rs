@@ -7294,11 +7294,7 @@ impl ThreadView {
                         v_flex()
                             .min_w_0()
                             .gap_0p5()
-                            .child(
-                                Label::new(title)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
+                            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
                             .when_some(detail, |this, detail| {
                                 this.child(
                                     Label::new(detail)
@@ -7323,7 +7319,8 @@ impl ThreadView {
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(
                             Box::new(zed_actions::OpenSettingsAt {
-                                path: zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH.to_string(),
+                                path: zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH
+                                    .to_string(),
                                 target: None,
                             }),
                             cx,
@@ -8806,36 +8803,36 @@ impl ThreadView {
                             )
                         } else {
                             match option.kind {
-                            acp::PermissionOptionKind::AllowOnce => (
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Success),
-                                Some(&AllowOnce as &dyn Action),
-                            ),
-                            acp::PermissionOptionKind::AllowAlways => (
-                                Icon::new(IconName::CheckDouble)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Success),
-                                if option.option_id.0.as_ref()
-                                    == acp_thread::SandboxPermission::AllowThread.as_id()
-                                {
-                                    None
-                                } else {
-                                    Some(&AllowAlways as &dyn Action)
-                                },
-                            ),
-                            acp::PermissionOptionKind::RejectOnce => (
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Error),
-                                Some(&RejectOnce as &dyn Action),
-                            ),
-                            acp::PermissionOptionKind::RejectAlways | _ => (
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Error),
-                                None,
-                            ),
+                                acp::PermissionOptionKind::AllowOnce => (
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Success),
+                                    Some(&AllowOnce as &dyn Action),
+                                ),
+                                acp::PermissionOptionKind::AllowAlways => (
+                                    Icon::new(IconName::CheckDouble)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Success),
+                                    if option.option_id.0.as_ref()
+                                        == acp_thread::SandboxPermission::AllowThread.as_id()
+                                    {
+                                        None
+                                    } else {
+                                        Some(&AllowAlways as &dyn Action)
+                                    },
+                                ),
+                                acp::PermissionOptionKind::RejectOnce => (
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Error),
+                                    Some(&RejectOnce as &dyn Action),
+                                ),
+                                acp::PermissionOptionKind::RejectAlways | _ => (
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Error),
+                                    None,
+                                ),
                             }
                         };
 

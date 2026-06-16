@@ -625,9 +625,9 @@ async fn run_terminal_tool(
         .map_err(|e| e.to_string())?;
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    let fields = acp::ToolCallUpdateFields::new().content(vec![
-        acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
-    ]);
+    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
+        acp::Terminal::new(terminal_id),
+    )]);
     if let Some(reason) = &sandbox_not_applied {
         event_stream.update_fields_with_meta(
             fields,
