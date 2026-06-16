@@ -23,8 +23,7 @@
 //! - `AssistantMessageChunk::Thought` blocks. The matcher filters these
 //!   out in `collect_markdowns`.
 //! - `ToolCall.content` — terminal command output, file content read by
-//!   tools, diff editors, image previews. `collect_tool_call_markdowns`
-//!   pushes only the tool-call label and ignores the content vector.
+//!   tools, diff editors, image previews.
 //!   **Expanding a tool call does NOT make its content searchable**;
 //!   the matcher never walks the content list at all. Trade-off: the
 //!   visible match count stays consistent with what's on screen, but
@@ -39,7 +38,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acp_thread::{AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk, ToolCall};
+use acp_thread::{AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessageChunk};
 use collections::HashMap;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, HighlightKey, SelectionEffects};
 use gpui::{
@@ -960,28 +959,13 @@ fn nav_button(
 }
 
 /// Collects every `Entity<Markdown>` reachable from a thread entry,
-/// in display order. Used by the search bar to enumerate searchable
-/// content. Returns an empty Vec for `CompletedPlan` entries (plan
-/// entries contain markdown, but they're attached to other entries and
-/// already covered there); not searching them avoids double-counting.
+/// in display order.
 fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
     let mut out = Vec::new();
     match entry {
-        AgentThreadEntry::UserMessage(_) => {
-            // User messages render through `MessageEditor`'s inner `Editor`,
-            // not through `Markdown`. `ThreadSearchBar::update_matches` handles
-            // them via `EntryViewState`-driven editor lookup + a separate
-            // `Editor::highlight_background` paint path; we deliberately skip
-            // them here so we don't double-count or paint invisible markdown
-            // highlights.
-        }
+        AgentThreadEntry::UserMessage(_) => {}
         AgentThreadEntry::AssistantMessage(message) => {
-            // Only search the visible-by-default `Message` chunks. `Thought`
-            // chunks are collapsed behind a "Thinking" disclosure by
-            // default, and surfacing matches inside them produces invisible
-            // navigation jumps (the user is scrolled to an entry that
-            // appears to contain no match) — same failure mode as searching
-            // collapsed tool-call content.
+            // Only search the visible-by-default `Message` chunks.
             for chunk in &message.chunks {
                 if let AssistantMessageChunk::Message { block } = chunk
                     && let Some(md) = block.markdown()
@@ -991,10 +975,11 @@ fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
             }
         }
         AgentThreadEntry::ToolCall(tool_call) => {
-            collect_tool_call_markdowns(tool_call, &mut out);
+            out.push(tool_call.label.clone());
         }
-        AgentThreadEntry::CompletedPlan(_) => {}
-        // No searchable markdown content — it's a non-textual marker entry.
+        AgentThreadEntry::CompletedPlan(entries) => {
+            out.extend(entries.iter().map(|e| e.content.clone()))
+        }
         AgentThreadEntry::ContextCompaction(_) => {}
     }
     out
