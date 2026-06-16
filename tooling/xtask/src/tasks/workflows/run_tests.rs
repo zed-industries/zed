@@ -58,9 +58,11 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(clippy(Platform::Mac, None, true)),
-        should_run_tests
-            .and_not_in_merge_queue()
-            .then(clippy(Platform::Mac, Some(Arch::X86_64), true)),
+        should_run_tests.and_not_in_merge_queue().then(clippy(
+            Platform::Mac,
+            Some(Arch::X86_64),
+            true,
+        )),
         should_run_tests
             .and_not_in_merge_queue()
             .then(run_platform_tests(Platform::Windows)),
@@ -808,9 +810,7 @@ pub(crate) fn check_scripts(harden: bool) -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
-            .when(harden, |this| {
-                this.add_step(steps::harden_runner())
-            })
+            .when(harden, |this| this.add_step(steps::harden_runner()))
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
