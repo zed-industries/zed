@@ -1,4 +1,6 @@
 use agent_client_protocol::schema as acp;
+#[cfg(target_os = "linux")]
+use anyhow::Context as _;
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
@@ -22,10 +24,9 @@ use util::get_default_system_shell_preferring_bash;
 /// Request to run a terminal command inside an OS-level sandbox.
 ///
 /// Passed to [`super::AcpThread::create_terminal`]. The actual sandboxing
-/// mechanism is platform-specific (today: macOS Seatbelt; nothing on other
-/// platforms — the wrap is silently a no-op there), so callers describe the
-/// *intent* with plain data here rather than constructing platform-specific
-/// types directly.
+/// mechanism is platform-specific (macOS Seatbelt; Linux Bubblewrap; a no-op
+/// on other platforms), so callers describe the *intent* with plain data here
+/// rather than constructing platform-specific types directly.
 ///
 /// Default is the fully-sandboxed run (no network, project-only writes).
 /// Setting `network` / `allow_fs_write` requests a relaxation; the caller is
@@ -75,6 +76,41 @@ impl SandboxNetworkAccess {
     }
 }
 
+impl SandboxWrap {
+    /// Whether the OS sandbox for this request can actually be created right now,
+    /// returning a short human-readable reason when it can't.
+    ///
+    /// The sandbox implementation never runs a command unsandboxed on its own —
+    /// it aborts if it can't create the sandbox. This lets a caller decide, up
+    /// front, whether to run sandboxed, fall back to an unsandboxed run
+    /// (fail-open), or refuse (fail-closed). It runs a brief probe subprocess on
+    /// Linux, so call it off the main thread. On platforms whose sandbox can't
+    /// fail to set up this way it always returns `Ok`.
+    pub fn can_create_sandbox(&self, cwd: Option<&std::path::Path>) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        {
+            let writable: Vec<&std::path::Path> = self
+                .writable_paths
+                .iter()
+                .chain(self.extra_write_paths.iter())
+                .map(|path| path.as_path())
+                .collect();
+            let allow_network = !matches!(self.network, SandboxNetworkAccess::None);
+            let permissions = sandbox::SandboxPermissions {
+                allow_network,
+                allow_fs_write: self.allow_fs_write,
+            };
+            sandbox::linux_bubblewrap::check_can_create_sandbox(&writable, permissions, cwd)
+                .map_err(|status| status.describe().to_string())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = cwd;
+            Ok(())
+        }
+    }
+}
+
 /// Opaque RAII handle the sandbox implementation hands back to keep its
 /// per-command resources (e.g. an on-disk Seatbelt config file) alive for
 /// the duration of the spawned command. `Terminal` holds it in a field
@@ -93,21 +129,31 @@ pub(crate) enum NetworkPolicy {
 }
 
 /// Apply a [`SandboxWrap`] to a `(program, args)` pair, substituting the
-/// platform's sandbox-launcher invocation in place of the original. The
-/// returned `SandboxConfigHandle` (when `Some`) must be kept alive for the
-/// duration of the spawned command — dropping it deletes any on-disk
-/// config the launcher reads at startup.
+/// platform's sandboxed invocation in place of the original. The returned
+/// `SandboxConfigHandle` (when `Some`) must be kept alive for the duration
+/// of the spawned command — dropping it deletes any on-disk config the
+/// launcher reads at startup.
 ///
 /// `network_policy` is the decision resolved by [`setup_network_proxy`].
 /// Unrestricted network access must be requested explicitly via
 /// [`SandboxNetworkAccess::All`].
 ///
-/// On non-macOS hosts this is a no-op: the inputs pass through unchanged
-/// and the returned handle is `None`. (We don't yet have a sandbox
-/// integration for other platforms.)
+/// There is a dedicated code path per platform:
+/// * macOS wraps the command with `sandbox-exec` and a Seatbelt config file
+///   (returned as the handle).
+/// * Linux re-execs this binary as a launcher that locates `bwrap` and `exec`s
+///   it for filesystem and network isolation (see
+///   [`sandbox::linux_bubblewrap`]); no handle is needed. The launcher reports
+///   back over a status channel whether it could enforce the sandbox, and when
+///   it can't (no usable `bwrap`, user namespaces disabled, …) it runs the
+///   command unsandboxed and the parent logs a warning rather than failing.
+/// * Windows and all other platforms pass the command through unchanged —
+///   we have no sandbox integration there, so the command runs with the
+///   agent's ambient permissions.
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
+    cwd: Option<&std::path::Path>,
     sandbox_wrap: Option<SandboxWrap>,
     network_policy: NetworkPolicy,
 ) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
@@ -119,6 +165,7 @@ pub(crate) fn apply_sandbox_wrap(
     {
         use sandbox::macos_seatbelt::NetworkAccess;
 
+        let _ = cwd;
         let writable: Vec<&std::path::Path> = sandbox_wrap
             .writable_paths
             .iter()
@@ -142,16 +189,105 @@ pub(crate) fn apply_sandbox_wrap(
             Some(Box::new(config_file) as SandboxConfigHandle),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        // No sandbox integration available; ignore the wrap request and
-        // let the command run with the agent's ambient permissions.
+        use sandbox::linux_bubblewrap::{self, LauncherStatus, StatusChannel};
+        use std::time::Duration;
+
+        let writable: Vec<_> = sandbox_wrap
+            .writable_paths
+            .iter()
+            .chain(sandbox_wrap.extra_write_paths.iter())
+            .map(|p| p.as_path())
+            .collect();
+        let allow_network = match network_policy {
+            NetworkPolicy::Denied => false,
+            NetworkPolicy::Unrestricted => true,
+            NetworkPolicy::Proxied(port) => {
+                // Bubblewrap can only toggle network access wholesale, so it
+                // can't confine egress to the proxy's loopback port.
+                // `setup_network_proxy` never resolves to `Proxied` on Linux;
+                // deny network rather than silently widening access.
+                log::debug!(
+                    "[sandbox/network] ignoring proxy port {port}; bubblewrap can't confine to a loopback port"
+                );
+                false
+            }
+        };
+        let permissions = sandbox::SandboxPermissions {
+            allow_network,
+            allow_fs_write: sandbox_wrap.allow_fs_write,
+        };
+
+        let launcher = std::env::current_exe()
+            .context("failed to resolve current executable for sandbox launcher")?;
+        let launcher = launcher.to_str().with_context(|| {
+            format!(
+                "current executable path contains invalid UTF-8: {}",
+                launcher.display()
+            )
+        })?;
+
+        // Bind a status channel the launcher reports back on, so we can warn
+        // when it couldn't actually enforce the sandbox. All the sandbox logic
+        // (locating bwrap, probing it) lives in the launcher; the parent only
+        // assembles the invocation and listens.
+        let channel = StatusChannel::bind().context("failed to set up sandbox status channel")?;
+        let (new_program, new_args) = linux_bubblewrap::wrap_invocation(
+            launcher,
+            Some(channel.name()),
+            permissions,
+            &writable,
+            cwd,
+            &program,
+            &args,
+        );
+
+        // Read the launcher's report in the background, purely for diagnostics.
+        // Callers are expected to check `SandboxWrap::can_create_sandbox` before
+        // reaching here, so the launcher should almost always succeed; a failure
+        // status means the launcher aborted (it never runs a command
+        // unsandboxed), so the command did not run.
+        const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
+        let status_thread = std::thread::Builder::new()
+            .name("zed-sandbox-status".into())
+            .spawn(move || match channel.recv(STATUS_TIMEOUT) {
+                Some(LauncherStatus::Success) => {}
+                Some(status) => log::warn!(
+                    "sandbox could not be created ({}); the command was aborted",
+                    status.describe()
+                ),
+                None => log::warn!("could not determine terminal command sandbox status"),
+            })
+            .context("failed to spawn sandbox status thread")?;
+        // The thread is self-contained and bounded by STATUS_TIMEOUT; let it run
+        // to completion on its own rather than joining here.
+        drop(status_thread);
+
+        // The sandbox applies in-process via the re-exec'd launcher, so
+        // there's no on-disk resource to keep alive.
+        Ok((new_program, new_args, None))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // No sandbox integration on Windows; run with ambient permissions.
         if let NetworkPolicy::Proxied(port) = network_policy {
             log::debug!(
                 "[sandbox/network] ignoring proxy port {port} because this platform has no sandbox integration"
             );
         }
-        let _sandbox_wrap = sandbox_wrap;
+        let _ = (sandbox_wrap, cwd);
+        Ok((program, args, None))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        // No sandbox integration available; run with ambient permissions.
+        if let NetworkPolicy::Proxied(port) = network_policy {
+            log::debug!(
+                "[sandbox/network] ignoring proxy port {port} because this platform has no sandbox integration"
+            );
+        }
+        let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
 }

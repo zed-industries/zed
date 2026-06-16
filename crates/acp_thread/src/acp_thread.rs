@@ -181,6 +181,10 @@ pub struct SandboxAuthorizationDetails {
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<PathBuf>,
+    /// The agent-provided justification for requesting these permissions,
+    /// shown to the user (attributed to the agent) in the approval prompt.
+    #[serde(default)]
+    pub reason: String,
 }
 
 pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
@@ -3410,8 +3414,13 @@ impl AcpThread {
                 // child's proxy env vars.
                 let (proxy_handle, network_policy) =
                     setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, network_policy)?;
+                let (task_command, task_args, sandbox_config) = apply_sandbox_wrap(
+                    task_command,
+                    task_args,
+                    cwd.as_deref(),
+                    sandbox_wrap,
+                    network_policy,
+                )?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
