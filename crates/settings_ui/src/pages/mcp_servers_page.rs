@@ -190,7 +190,7 @@ fn render_context_server(
 
     // Build gear menu. Pre-fill "Configure Server" from the raw configured
     // settings (not the resolved runtime configuration) so the form is editable
-    // even when the settings contain invalid data (e.g. an unparseable URL) or
+    // even when the settings contain invalid data (e.g. an unparsable URL) or
     // the server is disabled / not yet started.
     let server_settings = store
         .read(cx)
