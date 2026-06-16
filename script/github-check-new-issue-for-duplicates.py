@@ -180,7 +180,7 @@ def call_claude(api_key, system, user_content, max_tokens=1024):
             "content-type": "application/json",
         },
         json={
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "max_tokens": max_tokens,
             "temperature": 0.0,
             "system": system,
