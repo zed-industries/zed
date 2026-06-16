@@ -14,7 +14,7 @@ path = "src/git_ui.rs"
 
 [features]
 test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
-call = ["dep:call"]
+
 
 [dependencies]
 agent_settings.workspace = true
@@ -22,7 +22,6 @@ anyhow.workspace = true
 askpass.workspace = true
 async-channel.workspace = true
 buffer_diff.workspace = true
-call = { workspace = true, optional = true }
 collections.workspace = true
 component.workspace = true
 db.workspace = true
