@@ -59,6 +59,7 @@ collections.workspace = true
 image.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
 gpui_wgpu = { workspace = true, optional = true, features = ["font-kit"] }
 http_client.workspace = true
 itertools.workspace = true
@@ -72,7 +73,6 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 url.workspace = true
-util.workspace = true
 uuid.workspace = true
 
 # Always used
