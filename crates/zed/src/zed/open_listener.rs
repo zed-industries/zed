@@ -627,7 +627,7 @@ pub async fn handle_cli_connection(
                             open_behavior = cli::OpenBehavior::ExistingWindow;
                         }
                         Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_behavior = cli::OpenBehavior::AlwaysNew;
+                            open_behavior = cli::OpenBehavior::PreferNewWindow;
                         }
                         None => {}
                     }
@@ -794,6 +794,7 @@ pub(crate) fn open_options_for_behavior(
             cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
                 workspace::WorkspaceMatching::None
             }
+            cli::OpenBehavior::PreferNewWindow => workspace::WorkspaceMatching::MatchSubpaths,
             cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
             _ => workspace::WorkspaceMatching::MatchExact,
         },
@@ -809,7 +810,7 @@ pub(crate) fn open_options_for_behavior(
 fn open_behavior_for_default_setting(cx: &App) -> cli::OpenBehavior {
     match workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior {
         settings::CliDefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
-        settings::CliDefaultOpenBehavior::NewWindow => cli::OpenBehavior::AlwaysNew,
+        settings::CliDefaultOpenBehavior::NewWindow => cli::OpenBehavior::PreferNewWindow,
     }
 }
 
@@ -826,7 +827,13 @@ async fn open_workspaces(
     cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
+    if paths.is_empty()
+        && diff_paths.is_empty()
+        && !matches!(
+            open_behavior,
+            cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::PreferNewWindow
+        )
+    {
         return restore_or_create_workspace(app_state, cx).await;
     }
 
@@ -2559,7 +2566,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_e2e_new_window_setting_always_opens_new_window(cx: &mut TestAppContext) {
+    async fn test_e2e_new_window_setting_opens_project_root_in_new_window(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
         app_state
@@ -2607,6 +2614,84 @@ mod tests {
             "no prompt should be shown when setting already configured"
         );
         assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_new_window_setting_focuses_existing_window_for_subpaths(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "file.txt": "content",
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                paths::config_dir(),
+                json!({
+                    "settings.json": r#"{"cli_default_open_behavior": "new_window"}"#
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state.clone(),
+            make_cli_open_request(
+                vec![path!("/project/src").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project/file.txt").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 1);
     }
 
     #[gpui::test]

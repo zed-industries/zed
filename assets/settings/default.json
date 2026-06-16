@@ -146,7 +146,7 @@
   // May take 2 values:
   //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Always open paths in a new window
+  //  2. Open paths in a new window, unless they are subpaths of an existing project
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
