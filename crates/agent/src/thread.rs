@@ -5035,7 +5035,9 @@ impl ToolCallEventStream {
     /// thread-scoped sandbox grants. This mirrors how a real [`Thread`] builds a
     /// distinct event stream per tool call while sharing one set of grants, so
     /// tests can exercise sequences of tool calls within the same conversation.
-    #[cfg(test)]
+    // Only the macOS-gated terminal sandbox regression test uses this, so match
+    // its `cfg` to avoid a dead-code error on other platforms.
+    #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn test_with_grants(
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
     ) -> (Self, ToolCallEventStreamReceiver) {
