@@ -7,7 +7,7 @@ use crate::{
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
 use gpui::{Pixels, WindowTextSystem};
-use language::{CharClassifier, Point};
+use language::{CharClassifier, CharKind, Point};
 use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
@@ -522,6 +522,69 @@ fn is_subword_boundary_end(left: char, right: char, classifier: &CharClassifier)
         || left != '_' && right == '_'
         || left == '_' && right != '_'
         || left.is_lowercase() && right.is_uppercase()
+}
+
+/// Returns the byte range of the subword surrounding `pos` in the buffer.
+///
+/// A subword is a run of word characters bounded by camelCase transitions,
+/// underscore transitions, or regular word boundaries. For example in
+/// `camelCaseVar`, the subwords are `camel`, `Case`, and `Var`.
+///
+/// Returns an empty range (`pos..pos`) when the position is not inside a word.
+pub fn surrounding_subword(
+    buffer: &MultiBufferSnapshot,
+    pos: MultiBufferOffset,
+) -> Range<MultiBufferOffset> {
+    let classifier = buffer.char_classifier_at(pos);
+
+    let mut prev_chars = buffer.reversed_chars_at(pos).peekable();
+    let mut next_chars = buffer.chars_at(pos).peekable();
+
+    let word_kind = std::cmp::max(
+        prev_chars.peek().copied().map(|c| classifier.kind(c)),
+        next_chars.peek().copied().map(|c| classifier.kind(c)),
+    );
+
+    if word_kind != Some(CharKind::Word) {
+        return pos..pos;
+    }
+
+    // Walk backward: stop at subword boundaries or non-word characters.
+    // `right_of_start` tracks the char immediately to the right of `start`.
+    let mut start = pos;
+    let mut right_of_start = next_chars.peek().copied();
+    for left_char in buffer.reversed_chars_at(pos) {
+        if classifier.kind(left_char) != CharKind::Word || left_char == '\n' {
+            break;
+        }
+        if let Some(rc) = right_of_start {
+            if is_subword_start(left_char, rc, &classifier) {
+                break;
+            }
+        }
+        start -= left_char.len_utf8();
+        right_of_start = Some(left_char);
+    }
+
+    // Walk forward: stop at subword boundaries or non-word characters.
+    // `prev_char` starts as None so we don't stop on a boundary that is
+    // behind the cursor (e.g. the `l→C` boundary when cursor is at `C`).
+    let mut end = pos;
+    let mut prev_char: Option<char> = None;
+    for curr_char in buffer.chars_at(pos) {
+        if classifier.kind(curr_char) != CharKind::Word || curr_char == '\n' {
+            break;
+        }
+        if let Some(pc) = prev_char {
+            if is_subword_end(pc, curr_char, &classifier) {
+                break;
+            }
+        }
+        end += curr_char.len_utf8();
+        prev_char = Some(curr_char);
+    }
+
+    start..end
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
