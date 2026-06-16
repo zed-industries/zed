@@ -579,12 +579,6 @@ pub struct ThreadView {
     pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
-    pub expanded_thinking_blocks: HashSet<(usize, usize)>,
-    auto_expanded_thinking_block: Option<(usize, usize)>,
-    user_toggled_thinking_blocks: HashSet<(usize, usize)>,
-    /// Tracks which context compaction entries (by entry index) have their
-    /// summary expanded.
-    expanded_compactions: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -966,10 +960,6 @@ impl ThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
-            expanded_thinking_blocks: HashSet::default(),
-            auto_expanded_thinking_block: None,
-            user_toggled_thinking_blocks: HashSet::default(),
-            expanded_compactions: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -3665,7 +3655,10 @@ impl ThreadView {
     ) -> AnyElement {
         let is_compacting = compaction.is_in_progress();
         let summary = compaction.summary.clone();
-        let is_expanded = self.expanded_compactions.contains(&entry_ix);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_compaction_expanded(entry_ix);
 
         let id = format!("context-compaction-{entry_ix}");
         let header_label = match compaction.status {
@@ -3699,8 +3692,8 @@ impl ThreadView {
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(
-                            move |this, _event: &ClickEvent, _window, cx| {
-                                this.toggle_compaction_expansion(entry_ix, cx);
+                            move |this, _event: &ClickEvent, window, cx| {
+                                this.toggle_compaction_expansion(entry_ix, window, cx);
                             },
                         ))
                     }),
@@ -3745,8 +3738,14 @@ impl ThreadView {
                                         .full_width()
                                         .on_click(
                                             cx.listener(
-                                                move |this, _event: &ClickEvent, _window, cx| {
-                                                    this.expanded_compactions.remove(&entry_ix);
+                                                move |this, _event: &ClickEvent, window, cx| {
+                                                    this.entry_view_state.update(
+                                                        cx,
+                                                        |state, _cx| {
+                                                            state.collapse_compaction(entry_ix);
+                                                        },
+                                                    );
+                                                    this.refresh_thread_search(window, cx);
                                                     cx.notify();
                                                 },
                                             ),
@@ -3758,10 +3757,16 @@ impl ThreadView {
             .into_any()
     }
 
-    fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
-        if !self.expanded_compactions.remove(&entry_ix) {
-            self.expanded_compactions.insert(entry_ix);
-        }
+    fn toggle_compaction_expansion(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, _cx| {
+            state.toggle_compaction_expansion(entry_ix);
+        });
+        self.refresh_thread_search(window, cx);
         cx.notify();
     }
 
@@ -6283,6 +6288,15 @@ impl ThreadView {
         }
     }
 
+    fn refresh_thread_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.thread_search_visible {
+            return;
+        }
+        if let Some(bar) = self.thread_search_bar.clone() {
+            bar.update(cx, |bar, cx| bar.update_matches(window, cx));
+        }
+    }
+
     pub(crate) fn toggle_search(
         &mut self,
         _: &crate::ToggleSearch,
@@ -6292,11 +6306,12 @@ impl ThreadView {
         if self.thread_search_bar.is_none() {
             let thread = self.thread.clone();
             let view = cx.entity().downgrade();
+            let view_for_activation = view.clone();
             let on_activate =
                 Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
                     // Avoid re-entering `ThreadView` when search navigation is forwarded
                     // from a `ThreadView` action handler.
-                    let view = view.clone();
+                    let view = view_for_activation.clone();
                     cx.defer(move |cx| {
                         view.update(cx, |this, cx| {
                             this.list_state.scroll_to(gpui::ListOffset {
@@ -6494,104 +6509,35 @@ impl ThreadView {
     }
 
     pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-
-        if !matches!(
-            thinking_display,
-            ThinkingBlockDisplay::Auto | ThinkingBlockDisplay::Preview
-        ) {
-            return;
-        }
-
-        let key = {
-            let thread = self.thread.read(cx);
+        let thread = self.thread.clone();
+        let changed = self.entry_view_state.update(cx, |state, cx| {
+            let thread = thread.read(cx);
             if thread.status() != ThreadStatus::Generating {
-                return;
+                return false;
             }
-            let entries = thread.entries();
-            let last_ix = entries.len().saturating_sub(1);
-            match entries.get(last_ix) {
-                Some(AgentThreadEntry::AssistantMessage(msg)) => match msg.chunks.last() {
-                    Some(AssistantMessageChunk::Thought { .. }) => {
-                        Some((last_ix, msg.chunks.len() - 1))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        };
-
-        if let Some(key) = key {
-            if self.auto_expanded_thinking_block != Some(key) {
-                self.auto_expanded_thinking_block = Some(key);
-                self.expanded_thinking_blocks.insert(key);
-                cx.notify();
-            }
-        } else if self.auto_expanded_thinking_block.is_some() {
-            if thinking_display == ThinkingBlockDisplay::Auto {
-                if let Some(key) = self.auto_expanded_thinking_block {
-                    if !self.user_toggled_thinking_blocks.contains(&key) {
-                        self.expanded_thinking_blocks.remove(&key);
-                    }
-                }
-            }
-            self.auto_expanded_thinking_block = None;
+            state.auto_expand_streaming_thought(thread, cx)
+        });
+        if changed {
             cx.notify();
         }
     }
 
-    pub(crate) fn clear_auto_expand_tracking(&mut self) {
-        self.auto_expanded_thinking_block = None;
+    pub(crate) fn clear_auto_expand_tracking(&mut self, cx: &mut Context<Self>) {
+        self.entry_view_state.update(cx, |state, _cx| {
+            state.clear_auto_expand_tracking();
+        });
     }
 
-    fn toggle_thinking_block_expansion(&mut self, key: (usize, usize), cx: &mut Context<Self>) {
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-
-        match thinking_display {
-            ThinkingBlockDisplay::Auto => {
-                let is_open = self.expanded_thinking_blocks.contains(&key)
-                    || self.user_toggled_thinking_blocks.contains(&key);
-
-                if is_open {
-                    self.expanded_thinking_blocks.remove(&key);
-                    self.user_toggled_thinking_blocks.remove(&key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::Preview => {
-                let is_user_expanded = self.user_toggled_thinking_blocks.contains(&key);
-                let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
-
-                if is_user_expanded {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                    self.expanded_thinking_blocks.remove(&key);
-                } else if is_in_expanded_set {
-                    self.user_toggled_thinking_blocks.insert(key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::AlwaysExpanded => {
-                if self.user_toggled_thinking_blocks.contains(&key) {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                } else {
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::AlwaysCollapsed => {
-                if self.user_toggled_thinking_blocks.contains(&key) {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                    self.expanded_thinking_blocks.remove(&key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-        }
-
+    fn toggle_thinking_block_expansion(
+        &mut self,
+        key: (usize, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, cx| {
+            state.toggle_thinking_block_expansion(key, cx);
+        });
+        self.refresh_thread_search(window, cx);
         cx.notify();
     }
 
@@ -6608,29 +6554,10 @@ impl ThreadView {
 
         let key = (entry_ix, chunk_ix);
 
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-        let is_user_toggled = self.user_toggled_thinking_blocks.contains(&key);
-        let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
-
-        let (is_open, is_constrained) = match thinking_display {
-            ThinkingBlockDisplay::Auto => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                (is_open, false)
-            }
-            ThinkingBlockDisplay::Preview => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                let is_constrained = is_in_expanded_set && !is_user_toggled;
-                (is_open, is_constrained)
-            }
-            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled, false),
-            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled, false),
-        };
-
-        let should_auto_scroll = self.auto_expanded_thinking_block == Some(key);
-
-        let scroll_handle = self
-            .entry_view_state
-            .read(cx)
+        let entry_view_state = self.entry_view_state.read(cx);
+        let (is_open, is_constrained) = entry_view_state.thinking_block_state(key, cx);
+        let should_auto_scroll = entry_view_state.is_auto_expanded_thinking_block(key);
+        let scroll_handle = entry_view_state
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
 
@@ -6674,14 +6601,12 @@ impl ThreadView {
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
                             .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(
-                                move |this, _event: &ClickEvent, _window, cx| {
-                                    this.toggle_thinking_block_expansion(key, cx);
-                                },
-                            )),
+                            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                                this.toggle_thinking_block_expansion(key, window, cx);
+                            })),
                     )
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        this.toggle_thinking_block_expansion(key, cx);
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                        this.toggle_thinking_block_expansion(key, window, cx);
                     })),
             )
             .when(is_open, |this| {
@@ -10658,38 +10583,42 @@ impl Render for ThreadView {
                 },
             ))
             .on_action(
-                cx.listener(|this, action: &search::ToggleCaseSensitive, window, cx| {
+                cx.listener(|this, _: &search::ToggleCaseSensitive, window, cx| {
                     if !this.thread_search_visible {
                         cx.propagate();
                         return;
                     }
                     if let Some(bar) = this.thread_search_bar.clone() {
-                        bar.update(cx, |bar, cx| bar.toggle_case_sensitive(action, window, cx));
+                        bar.update(cx, |bar, cx| {
+                            bar.toggle_case_sensitive(&search::ToggleCaseSensitive, window, cx)
+                        });
                     }
                 }),
             )
             .on_action(
-                cx.listener(|this, action: &search::ToggleWholeWord, window, cx| {
+                cx.listener(|this, _: &search::ToggleWholeWord, window, cx| {
                     if !this.thread_search_visible {
                         cx.propagate();
                         return;
                     }
                     if let Some(bar) = this.thread_search_bar.clone() {
-                        bar.update(cx, |bar, cx| bar.toggle_whole_word(action, window, cx));
+                        bar.update(cx, |bar, cx| {
+                            bar.toggle_whole_word(&search::ToggleWholeWord, window, cx)
+                        });
                     }
                 }),
             )
-            .on_action(
-                cx.listener(|this, action: &search::ToggleRegex, window, cx| {
-                    if !this.thread_search_visible {
-                        cx.propagate();
-                        return;
-                    }
-                    if let Some(bar) = this.thread_search_bar.clone() {
-                        bar.update(cx, |bar, cx| bar.toggle_regex(action, window, cx));
-                    }
-                }),
-            )
+            .on_action(cx.listener(|this, _: &search::ToggleRegex, window, cx| {
+                if !this.thread_search_visible {
+                    cx.propagate();
+                    return;
+                }
+                if let Some(bar) = this.thread_search_bar.clone() {
+                    bar.update(cx, |bar, cx| {
+                        bar.toggle_regex(&search::ToggleRegex, window, cx)
+                    });
+                }
+            }))
             .on_action(
                 cx.listener(|this, action: &search::FocusSearch, window, cx| {
                     if !this.thread_search_visible {

@@ -47,7 +47,7 @@ use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
 use lru::LruCache;
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1592,7 +1592,7 @@ impl ConversationView {
                     active.update(cx, |active, cx| {
                         if !is_generating {
                             active.thread_retry_status.take();
-                            active.clear_auto_expand_tracking();
+                            active.clear_auto_expand_tracking(cx);
                             if active.list_state.is_following_tail() {
                                 active.list_state.scroll_to_end();
                             }
@@ -6165,6 +6165,86 @@ pub(crate) mod tests {
             bar.read_with(cx, |bar, cx| (bar.match_count(), bar.active_match_text(cx)));
         assert_eq!(match_count_apple, 0);
         assert_eq!(active_text_apple.as_deref(), Some("0/0"));
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_includes_expanded_thinking_blocks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                "Hidden papaya reasoning.".into(),
+            )),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                "Final answer without that fruit.".into(),
+            )),
+        ]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Think this through", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let (assistant_entry_ix, thought_chunk_ix) = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .enumerate()
+                .find_map(|(entry_ix, entry)| match entry {
+                    AgentThreadEntry::AssistantMessage(message) => message
+                        .chunks
+                        .iter()
+                        .position(|chunk| matches!(chunk, AssistantMessageChunk::Thought { .. }))
+                        .map(|chunk_ix| (entry_ix, chunk_ix)),
+                    _ => None,
+                })
+                .expect("assistant thought chunk should exist")
+        });
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "collapsed thinking content should not be searched",
+        );
+
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, cx| {
+                state.toggle_thinking_block_expansion((assistant_entry_ix, thought_chunk_ix), cx);
+            });
+        });
+        bar.update_in(cx, |bar, window, cx| {
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            1,
+            "expanded thinking content should be searchable",
+        );
     }
 
     #[gpui::test]

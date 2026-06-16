@@ -1,9 +1,10 @@
 use std::ops::Range;
 
-use acp_thread::{AcpThread, AgentThreadEntry};
+use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk};
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
-use collections::HashMap;
+use agent_settings::AgentSettings;
+use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
@@ -12,7 +13,7 @@ use gpui::{
 use language::language_settings::SoftWrap;
 use project::{AgentId, Project, project_settings::DiagnosticSeverity};
 use rope::Point;
-use settings::Settings as _;
+use settings::{Settings as _, ThinkingBlockDisplay};
 use terminal_view::TerminalView;
 use theme_settings::ThemeSettings;
 use ui::{Context, TextSize};
@@ -27,6 +28,10 @@ pub struct EntryViewState {
     entries: Vec<Entry>,
     session_capabilities: SharedSessionCapabilities,
     agent_id: AgentId,
+    expanded_thinking_blocks: HashSet<(usize, usize)>,
+    auto_expanded_thinking_block: Option<(usize, usize)>,
+    user_toggled_thinking_blocks: HashSet<(usize, usize)>,
+    expanded_compactions: HashSet<usize>,
 }
 
 impl EntryViewState {
@@ -44,6 +49,139 @@ impl EntryViewState {
             entries: Vec::new(),
             session_capabilities,
             agent_id,
+            expanded_thinking_blocks: HashSet::default(),
+            auto_expanded_thinking_block: None,
+            user_toggled_thinking_blocks: HashSet::default(),
+            expanded_compactions: HashSet::default(),
+        }
+    }
+
+    pub(crate) fn is_compaction_expanded(&self, entry_ix: usize) -> bool {
+        self.expanded_compactions.contains(&entry_ix)
+    }
+
+    pub(crate) fn collapse_compaction(&mut self, entry_ix: usize) {
+        self.expanded_compactions.remove(&entry_ix);
+    }
+
+    pub(crate) fn toggle_compaction_expansion(&mut self, entry_ix: usize) {
+        if !self.expanded_compactions.remove(&entry_ix) {
+            self.expanded_compactions.insert(entry_ix);
+        }
+    }
+
+    pub(crate) fn clear_auto_expand_tracking(&mut self) {
+        self.auto_expanded_thinking_block = None;
+    }
+
+    pub(crate) fn is_auto_expanded_thinking_block(&self, key: (usize, usize)) -> bool {
+        self.auto_expanded_thinking_block == Some(key)
+    }
+
+    pub(crate) fn auto_expand_streaming_thought(&mut self, thread: &AcpThread, cx: &App) -> bool {
+        let thinking_display = AgentSettings::get_global(cx).thinking_display;
+
+        if !matches!(
+            thinking_display,
+            ThinkingBlockDisplay::Auto | ThinkingBlockDisplay::Preview
+        ) {
+            return false;
+        }
+
+        let last_ix = thread.entries().len().saturating_sub(1);
+        let key = match thread.entries().get(last_ix) {
+            Some(AgentThreadEntry::AssistantMessage(message)) => match message.chunks.last() {
+                Some(AssistantMessageChunk::Thought { .. }) => {
+                    Some((last_ix, message.chunks.len() - 1))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        if let Some(key) = key {
+            if self.auto_expanded_thinking_block != Some(key) {
+                self.auto_expanded_thinking_block = Some(key);
+                self.expanded_thinking_blocks.insert(key);
+                return true;
+            }
+        } else if self.auto_expanded_thinking_block.is_some() {
+            if thinking_display == ThinkingBlockDisplay::Auto
+                && let Some(key) = self.auto_expanded_thinking_block
+                && !self.user_toggled_thinking_blocks.contains(&key)
+            {
+                self.expanded_thinking_blocks.remove(&key);
+            }
+            self.auto_expanded_thinking_block = None;
+            return true;
+        }
+
+        false
+    }
+
+    pub(crate) fn toggle_thinking_block_expansion(&mut self, key: (usize, usize), cx: &App) {
+        match AgentSettings::get_global(cx).thinking_display {
+            ThinkingBlockDisplay::Auto => {
+                let is_open = self.expanded_thinking_blocks.contains(&key)
+                    || self.user_toggled_thinking_blocks.contains(&key);
+
+                if is_open {
+                    self.expanded_thinking_blocks.remove(&key);
+                    self.user_toggled_thinking_blocks.remove(&key);
+                } else {
+                    self.expanded_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+            ThinkingBlockDisplay::Preview => {
+                let is_user_expanded = self.user_toggled_thinking_blocks.contains(&key);
+                let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
+
+                if is_user_expanded {
+                    self.user_toggled_thinking_blocks.remove(&key);
+                    self.expanded_thinking_blocks.remove(&key);
+                } else if is_in_expanded_set {
+                    self.user_toggled_thinking_blocks.insert(key);
+                } else {
+                    self.expanded_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+            ThinkingBlockDisplay::AlwaysExpanded => {
+                if self.user_toggled_thinking_blocks.contains(&key) {
+                    self.user_toggled_thinking_blocks.remove(&key);
+                } else {
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+            ThinkingBlockDisplay::AlwaysCollapsed => {
+                if self.user_toggled_thinking_blocks.contains(&key) {
+                    self.user_toggled_thinking_blocks.remove(&key);
+                    self.expanded_thinking_blocks.remove(&key);
+                } else {
+                    self.expanded_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn thinking_block_state(&self, key: (usize, usize), cx: &App) -> (bool, bool) {
+        let is_user_toggled = self.user_toggled_thinking_blocks.contains(&key);
+        let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
+
+        match AgentSettings::get_global(cx).thinking_display {
+            ThinkingBlockDisplay::Auto => {
+                let is_open = is_user_toggled || is_in_expanded_set;
+                (is_open, false)
+            }
+            ThinkingBlockDisplay::Preview => {
+                let is_open = is_user_toggled || is_in_expanded_set;
+                let is_constrained = is_in_expanded_set && !is_user_toggled;
+                (is_open, is_constrained)
+            }
+            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled, false),
+            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled, false),
         }
     }
 
