@@ -578,6 +578,7 @@ pub struct ThreadView {
     pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
+    collapsed_sandbox_network_details: HashSet<acp::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
@@ -963,6 +964,7 @@ impl ThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
+            collapsed_sandbox_network_details: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
@@ -7789,8 +7791,134 @@ impl ThreadView {
         details: &SandboxAuthorizationDetails,
         cx: &Context<Self>,
     ) -> AnyElement {
-        if details.write_paths.is_empty() {
+        let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
+        let command = details
+            .command
+            .as_deref()
+            .filter(|command| !command.is_empty());
+        if details.write_paths.is_empty()
+            && !has_network
+            && command.is_none()
+            && details.reason.is_empty()
+        {
             return Empty.into_any_element();
+        }
+
+        let network_section = has_network.then(|| {
+            let summary = if details.network_all_hosts {
+                "any host".to_string()
+            } else {
+                format!(
+                    "{} {}",
+                    details.network_hosts.len(),
+                    if details.network_hosts.len() == 1 {
+                        "host"
+                    } else {
+                        "hosts"
+                    }
+                )
+            };
+            let has_host_list = !details.network_all_hosts && !details.network_hosts.is_empty();
+            let is_open = !self
+                .collapsed_sandbox_network_details
+                .contains(tool_call_id);
+            let mut hosts = details.network_hosts.clone();
+            hosts.sort();
+
+            v_flex()
+                .child(
+                    h_flex()
+                        .id(("sandbox-network-details-header", entry_ix))
+                        .p_1()
+                        .justify_between()
+                        .when(has_host_list, |this| {
+                            this.cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener({
+                                    let tool_call_id = tool_call_id.clone();
+                                    move |this, _event, _window, cx| {
+                                        if this
+                                            .collapsed_sandbox_network_details
+                                            .remove(&tool_call_id)
+                                        {
+                                            cx.notify();
+                                            return;
+                                        }
+
+                                        this.collapsed_sandbox_network_details
+                                            .insert(tool_call_id.clone());
+                                        cx.notify();
+                                    }
+                                }))
+                        })
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new("Network access")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new("•")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Disabled),
+                                )
+                                .child(
+                                    Label::new(summary)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .when(has_host_list, |this| {
+                            this.child(
+                                Disclosure::new(("sandbox-network-details", entry_ix), is_open)
+                                    .opened_icon(IconName::ChevronUp)
+                                    .closed_icon(IconName::ChevronDown),
+                            )
+                        }),
+                )
+                .when(has_host_list && is_open, |this| {
+                    this.child(
+                        v_flex()
+                            .id(("sandbox-network-hosts-list", entry_ix))
+                            .max_h_40()
+                            .overflow_y_scroll()
+                            .children(hosts.iter().enumerate().map(|(host_ix, host)| {
+                                h_flex()
+                                    .min_w_0()
+                                    .p_1p5()
+                                    .gap_2()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .when(host_ix < hosts.len() - 1, |this| {
+                                        this.border_b_1().border_color(cx.theme().colors().border)
+                                    })
+                                    .child(
+                                        Icon::new(IconName::Public)
+                                            .color(Color::Muted)
+                                            .size(IconSize::Small),
+                                    )
+                                    .child(
+                                        Label::new(host.clone())
+                                            .size(LabelSize::XSmall)
+                                            .buffer_font(cx),
+                                    )
+                            })),
+                    )
+                })
+        });
+
+        if details.write_paths.is_empty() {
+            return v_flex()
+                .border_t_1()
+                .border_color(self.tool_card_border_color(cx))
+                .when_some(command, |this, command| {
+                    this.child(Self::render_sandbox_authorization_command(
+                        entry_ix, command, cx,
+                    ))
+                })
+                .children(network_section)
+                .into_any_element();
         }
 
         let is_open = !self
@@ -7802,6 +7930,12 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
+            .when_some(command, |this, command| {
+                this.child(Self::render_sandbox_authorization_command(
+                    entry_ix, command, cx,
+                ))
+            })
+            .children(network_section)
             .child(
                 h_flex()
                     .id(("sandbox-authorization-details-header", entry_ix))
@@ -7810,27 +7944,11 @@ impl ThreadView {
                     .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Write access")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                Label::new("•")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
-                            .child(
-                                Label::new(format!(
-                                    "{} {}",
-                                    paths.len(),
-                                    if paths.len() == 1 { "path" } else { "paths" }
-                                ))
+                        h_flex().gap_1().child(
+                            Label::new("Write access")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
-                            ),
+                        ),
                     )
                     .child(
                         Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
@@ -7854,24 +7972,134 @@ impl ThreadView {
                         }
                     })),
             )
-            .when(is_open, |this| {
+            .when(is_open && !paths.is_empty(), |this| {
                 this.child(
                     v_flex()
-                        .id(("sandbox-authorization-paths-list", entry_ix))
-                        .max_h_40()
-                        .overflow_y_scroll()
-                        .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                            self.render_sandbox_authorization_path_row(
-                                entry_ix,
-                                path_ix,
-                                path,
-                                path_ix < paths.len() - 1,
-                                cx,
-                            )
-                        })),
+                        .gap_0p5()
+                        .child(
+                            Label::new("Reason from agent")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx),
+                        )
+                        .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
                 )
             })
+            .when(!paths.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .id(("sandbox-authorization-details-header", entry_ix))
+                        .p_1()
+                        .justify_between()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new("Write access")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new("•")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Disabled),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "{} {}",
+                                        paths.len(),
+                                        if paths.len() == 1 { "path" } else { "paths" }
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown),
+                        )
+                        .on_click(cx.listener({
+                            let tool_call_id = tool_call_id.clone();
+                            move |this, _event, _window, cx| {
+                                if this
+                                    .collapsed_sandbox_authorization_details
+                                    .remove(&tool_call_id)
+                                {
+                                    cx.notify();
+                                    return;
+                                }
+
+                                this.collapsed_sandbox_authorization_details
+                                    .insert(tool_call_id.clone());
+                                cx.notify();
+                            }
+                        })),
+                )
+                .when(is_open, |this| {
+                    this.child(
+                        v_flex()
+                            .id(("sandbox-authorization-paths-list", entry_ix))
+                            .max_h_40()
+                            .overflow_y_scroll()
+                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                                self.render_sandbox_authorization_path_row(
+                                    entry_ix,
+                                    path_ix,
+                                    path,
+                                    path_ix < paths.len() - 1,
+                                    cx,
+                                )
+                            })),
+                    )
+                })
+            })
             .into_any_element()
+    }
+
+    fn render_sandbox_authorization_command(entry_ix: usize, command: &str, cx: &App) -> Div {
+        let group = SharedString::from(format!("sandbox-authorization-command-{entry_ix}"));
+        let command = SharedString::from(command.to_string());
+
+        v_flex()
+            .group(group.clone())
+            .relative()
+            .p_1p5()
+            .gap_1()
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                Label::new("Command")
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(
+                div()
+                    .id(("sandbox-authorization-command-scroll", entry_ix))
+                    .flex()
+                    .flex_1()
+                    .w_full()
+                    .min_w_0()
+                    .overflow_x_scroll()
+                    .whitespace_nowrap()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .p_1()
+                    .child(
+                        Label::new(command.clone())
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall),
+                    ),
+            )
+            .child(
+                div().absolute().top_1().right_1().child(
+                    CopyButton::new("copy-sandbox-authorization-command", command)
+                        .tooltip_label("Copy Command")
+                        .visible_on_hover(group),
+                ),
+            )
     }
 
     fn render_sandbox_authorization_path_row(

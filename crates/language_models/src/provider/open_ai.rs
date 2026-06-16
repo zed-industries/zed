@@ -476,6 +476,10 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.supports_priority()
     }
 
+    fn supports_server_side_compaction(&self) -> bool {
+        self.model.supports_compaction()
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         supported_thinking_effort_levels(&self.model)
     }

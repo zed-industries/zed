@@ -1367,6 +1367,9 @@ impl Thread {
         &self.id
     }
 
+    // Only used by Seatbelt-style sandboxes; Linux relies on bwrap's tmpfs
+    // `/tmp` and never needs a per-thread temp directory.
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn sandboxed_terminal_temp_dir(
         &mut self,
         cx: &mut Context<Self>,
@@ -2914,7 +2917,8 @@ impl Thread {
                 | LanguageModelCompletionEvent::ReasoningDetails(_)
                 | LanguageModelCompletionEvent::ToolUse(_)
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                | LanguageModelCompletionEvent::StartMessage { .. } => {}
+                | LanguageModelCompletionEvent::StartMessage { .. }
+                | LanguageModelCompletionEvent::Compaction(_) => {}
             }
         }
 
@@ -3116,7 +3120,7 @@ impl Thread {
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
-            Started | Queued { .. } => {}
+            Started | Queued { .. } | Compaction(_) => {}
         }
 
         Ok(None)
@@ -3707,6 +3711,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
+            compact_at_tokens: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -3905,6 +3910,7 @@ impl Thread {
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing: crate::sandboxing::sandboxing_enabled(cx),
+            is_linux: cfg!(target_os = "linux"),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -4325,7 +4331,8 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
-            | MessageContent::ToolUse(_) => 0,
+            | MessageContent::ToolUse(_)
+            | MessageContent::Compaction(_) => 0,
         })
         .sum()
 }
@@ -4361,7 +4368,8 @@ fn truncate_user_message_to_byte_budget(
             MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
-            | MessageContent::ToolUse(_) => {}
+            | MessageContent::ToolUse(_)
+            | MessageContent::Compaction(_) => {}
         }
     }
 
@@ -5242,7 +5250,9 @@ impl ToolCallEventStream {
     pub(crate) fn authorize_sandbox(
         &self,
         title: impl Into<String>,
+        command: Option<String>,
         request: SandboxRequest,
+        reason: String,
         cx: &mut App,
     ) -> Task<Result<()>> {
         if Self::sandbox_request_covered_by_grants(&request, &self.sandbox_grants, cx) {
@@ -5250,11 +5260,21 @@ impl ToolCallEventStream {
         }
 
         let title = title.into();
+        let (network_hosts, network_all_hosts) = match &request.network {
+            crate::sandboxing::NetworkRequest::None => (Vec::new(), false),
+            crate::sandboxing::NetworkRequest::AnyHost => (Vec::new(), true),
+            crate::sandboxing::NetworkRequest::Hosts(hosts) => {
+                (hosts.iter().map(|host| host.to_string()).collect(), false)
+            }
+        };
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
-            network: request.network,
+            command,
+            network_hosts,
+            network_all_hosts,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
+            reason,
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
@@ -5416,8 +5436,34 @@ impl ToolCallEventStream {
         cx.update(|cx| {
             update_settings_file(fs, cx, move |settings, _| {
                 let agent = settings.agent.get_or_insert_default();
-                if request.network {
-                    agent.allow_sandbox_network();
+                match &request.network {
+                    crate::sandboxing::NetworkRequest::None => {}
+                    crate::sandboxing::NetworkRequest::AnyHost => {
+                        agent.allow_sandbox_all_hosts();
+                    }
+                    crate::sandboxing::NetworkRequest::Hosts(hosts) => {
+                        // Rebuild the persisted list with subsumption pruning
+                        // so granting `*.github.com` retires a previously
+                        // persisted `api.github.com` instead of accumulating
+                        // redundant entries. Unparsable hand-edited entries
+                        // are preserved untouched.
+                        let mut patterns = Vec::new();
+                        let mut unparsable = Vec::new();
+                        for raw in agent.sandbox_network_hosts() {
+                            match http_proxy::HostPattern::parse(raw) {
+                                Ok(pattern) => {
+                                    crate::sandboxing::insert_host_pattern(&mut patterns, pattern)
+                                }
+                                Err(_) => unparsable.push(raw.clone()),
+                            }
+                        }
+                        for host in hosts {
+                            crate::sandboxing::insert_host_pattern(&mut patterns, host.clone());
+                        }
+                        let mut host_strings = unparsable;
+                        host_strings.extend(patterns.iter().map(|pattern| pattern.to_string()));
+                        agent.set_sandbox_network_hosts(host_strings);
+                    }
                 }
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
@@ -6810,7 +6856,7 @@ mod tests {
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
-            network: false,
+            network: crate::sandboxing::NetworkRequest::None,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -6822,13 +6868,20 @@ mod tests {
         };
 
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox("Allow write access?", request.clone(), cx)
+            event_stream.authorize_sandbox(
+                "Allow write access?",
+                None,
+                request.clone(),
+                "needs to write build artifacts".to_string(),
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("sandbox authorization should include request details");
-        assert_eq!(details.network, request.network);
+        assert!(details.network_hosts.is_empty());
+        assert!(!details.network_all_hosts);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
