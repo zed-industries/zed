@@ -82,6 +82,11 @@ struct EditorState {
     _subscription: Subscription,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum MarkdownPreviewEvent {
+    SourceFileHandleChanged,
+}
+
 impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
@@ -355,6 +360,12 @@ impl MarkdownPreviewView {
                     | EditorEvent::DirtyChanged
                     | EditorEvent::BuffersEdited { .. } => {
                         this.update_markdown_from_active_editor(true, false, window, cx);
+                    }
+                    EditorEvent::FileHandleChanged => {
+                        this.base_directory =
+                            Self::get_folder_for_active_editor(editor.read(cx), cx);
+                        this.update_markdown_from_active_editor(false, false, window, cx);
+                        cx.emit(MarkdownPreviewEvent::SourceFileHandleChanged);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
                         let (selection_start, editor_is_focused) =
@@ -942,11 +953,11 @@ impl Focusable for MarkdownPreviewView {
     }
 }
 
-impl EventEmitter<()> for MarkdownPreviewView {}
+impl EventEmitter<MarkdownPreviewEvent> for MarkdownPreviewView {}
 impl EventEmitter<SearchEvent> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
-    type Event = ();
+    type Event = MarkdownPreviewEvent;
 
     fn act_as_type<'a>(
         &'a self,
@@ -1059,7 +1070,14 @@ impl Item for MarkdownPreviewView {
         Task::ready(Ok(()))
     }
 
-    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
+        match event {
+            MarkdownPreviewEvent::SourceFileHandleChanged => {
+                f(workspace::item::ItemEvent::UpdateTab);
+                f(workspace::item::ItemEvent::UpdateBreadcrumbs);
+            }
+        }
+    }
 
     fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
         ItemBufferKind::Singleton
@@ -1352,8 +1370,8 @@ impl SerializableItem for MarkdownPreviewView {
         }))
     }
 
-    fn should_serialize(&self, _event: &Self::Event) -> bool {
-        false
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(event, MarkdownPreviewEvent::SourceFileHandleChanged)
     }
 }
 
@@ -1421,9 +1439,14 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::time::Duration;
     use util::path;
+    use util::rel_path::rel_path;
     use util::test::TempTree;
-    use workspace::{AppState, MultiWorkspace, SaveIntent, Workspace, open_paths};
+    use workspace::item::SerializableItem;
+    use workspace::{
+        AppState, ItemId, MultiWorkspace, SaveIntent, Workspace, WorkspaceId, open_paths,
+    };
 
     use super::MarkdownPreviewView;
 
@@ -1622,6 +1645,136 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn preview_serialized_path_updates_when_source_file_is_renamed(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "todo.md": "![image](image.png)\n",
+                    "subdir": {},
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let open_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let worktree_id = workspace
+                        .project()
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .unwrap()
+                        .read(cx)
+                        .id();
+                    workspace.open_path((worktree_id, rel_path("todo.md")), None, true, window, cx)
+                })
+            })
+            .unwrap();
+        open_task.await.unwrap();
+        cx.run_until_parked();
+
+        let (preview, project, workspace_id) = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.set_random_database_id();
+                    let workspace_id = workspace.database_id().unwrap();
+                    let project = workspace.project().clone();
+                    let editor: Entity<Editor> = workspace
+                        .active_item(cx)
+                        .and_then(|item| item.act_as::<Editor>(cx))
+                        .unwrap();
+                    let preview =
+                        MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    (preview, project, workspace_id)
+                })
+            })
+            .unwrap();
+        let workspace_serialization_tasks = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .unwrap();
+        for task in workspace_serialization_tasks {
+            task.await;
+        }
+
+        let serialize_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    preview
+                        .update(cx, |preview, cx| {
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, window, cx)
+                        })
+                        .unwrap()
+                })
+            })
+            .unwrap();
+        serialize_task.await.unwrap();
+
+        assert_eq!(
+            saved_preview_path(cx, preview.entity_id().as_u64(), workspace_id),
+            PathBuf::from(path!("/dir/todo.md"))
+        );
+
+        let (entry_id, worktree_id, destination_path) = preview.read_with(cx, |preview, cx| {
+            let editor = &preview.active_editor.as_ref().unwrap().editor;
+            let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+            let buffer = buffer.read(cx);
+            let file = buffer.file().unwrap();
+            let worktree_id = file.worktree_id(cx);
+            let source_path = file.path();
+            let mut destination_path = source_path.to_rel_path_buf();
+            destination_path.pop();
+            destination_path.push(rel_path("subdir/renamed.md"));
+            let worktree = project.read(cx).worktree_for_id(worktree_id, cx).unwrap();
+            let entry_id = worktree.read(cx).entry_for_path(source_path).unwrap().id;
+            (
+                entry_id,
+                worktree_id,
+                destination_path.as_rel_path().into_arc(),
+            )
+        });
+        project
+            .update(cx, |project, cx| {
+                project.rename_entry(entry_id, (worktree_id, destination_path).into(), cx)
+            })
+            .await
+            .unwrap();
+        wait_for_preview_serialization(cx).await;
+
+        assert_eq!(
+            preview.read_with(cx, |preview, _| preview.base_directory.clone()),
+            Some(PathBuf::from(path!("/dir/subdir")))
+        );
+        assert_eq!(
+            saved_preview_path(cx, preview.entity_id().as_u64(), workspace_id),
+            PathBuf::from(path!("/dir/subdir/renamed.md"))
+        );
+    }
+
+    #[gpui::test]
     async fn default_preview_stays_bound_to_invoking_editor_across_splits(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
@@ -1713,6 +1866,26 @@ mod tests {
             editor::init(cx);
             crate::init(cx);
             state
+        })
+    }
+
+    async fn wait_for_preview_serialization(cx: &mut TestAppContext) {
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+    }
+
+    fn saved_preview_path(
+        cx: &mut TestAppContext,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+    ) -> PathBuf {
+        cx.update(|cx| {
+            super::persistence::MarkdownPreviewDb::global(cx)
+                .get_preview(item_id, workspace_id)
+                .unwrap()
+                .unwrap()
+                .0
         })
     }
 
