@@ -1413,7 +1413,14 @@ impl Editor {
         for hunk in self.diff_hunks_in_ranges(ranges, snapshot) {
             match hunk.status().secondary {
                 DiffHunkSecondaryStatus::HasSecondaryHunk => return true,
-                DiffHunkSecondaryStatus::NoSecondaryHunk => continue,
+                // We are unstaging this hunk, so it is (becoming) unstaged and there
+                // are lines that can be staged. This must agree with
+                // `DiffHunkStatus::has_secondary_hunk`, which the whole-hunk staging
+                // path uses to decide direction; otherwise a toggle here picks the
+                // wrong direction and the unstage reconstruction wipes the hunk.
+                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => return true,
+                DiffHunkSecondaryStatus::NoSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => continue,
                 DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
                     let (staged_addition_lines, staged_deletion_lines) =
                         match (&hunk.staged_addition_lines, &hunk.staged_deletion_lines) {
@@ -1431,9 +1438,7 @@ impl Editor {
                         };
                     let hunk_start = hunk.row_range.start.0;
                     let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
-                        .saturating_sub(
-                            hunk.buffer_range_point.end.row - hunk.buffer_range_point.start.row,
-                        );
+                        .saturating_sub(hunk.added_row_count());
                     for range in ranges {
                         let range_point = range.to_point(snapshot);
                         let sel_start = range_point.start.row;
@@ -1455,7 +1460,6 @@ impl Editor {
                         }
                     }
                 }
-                _ => {}
             }
         }
         false
@@ -1483,8 +1487,8 @@ impl Editor {
                 let hunk_start = hunk.row_range.start.0;
                 let hunk_end = hunk.row_range.end.0;
 
-                let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
-                    - (hunk.buffer_range_point.end.row - hunk.buffer_range_point.start.row);
+                let visible_deletion_lines =
+                    (hunk.row_range.end.0 - hunk.row_range.start.0).saturating_sub(hunk.added_row_count());
 
                 let intersect_start = sel_start.max(hunk_start);
                 let intersect_end = sel_end.min(hunk_start + visible_deletion_lines);
@@ -2920,7 +2924,6 @@ pub(super) fn render_diff_hunk_controls(
     let alpha = if status.is_pending() { 0.66 } else { 1.0 };
     let make_click_handler = {
         let editor = editor.clone();
-        let hunk_range = hunk_range.clone();
         move |_event: &ClickEvent, _window: &mut Window, cx: &mut App| {
             editor.update(cx, |editor, cx| {
                 editor.stage_or_unstage_diff_hunks(

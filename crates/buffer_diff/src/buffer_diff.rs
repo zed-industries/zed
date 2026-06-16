@@ -1011,18 +1011,37 @@ impl BufferDiffSnapshot {
                 old_pending_hunks.next();
             }
 
-            if (stage && secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
-                || (!stage && secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
-            {
+            // Skip hunks that are already in (or transitioning toward) the requested
+            // state. `RemovalPending` means "we are staging" and `AdditionPending`
+            // means "we are unstaging"; treating them like `NoSecondaryHunk`/
+            // `HasSecondaryHunk` here keeps a repeated stage/unstage a no-op. Without
+            // this, unstaging an already-unstaged (pending) hunk falls through and the
+            // `vec![!stage; n]` baseline below marks every deletion line as staged,
+            // wiping the hunk's region from the index.
+            let already_staged = stage
+                && matches!(
+                    secondary_status,
+                    DiffHunkSecondaryStatus::NoSecondaryHunk
+                        | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                );
+            let already_unstaged = !stage
+                && matches!(
+                    secondary_status,
+                    DiffHunkSecondaryStatus::HasSecondaryHunk
+                        | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                );
+            if already_staged || already_unstaged {
                 continue;
             }
 
             let addition_lines = staged_addition_lines.get_or_insert_with(|| {
-                let row_count = buffer_range
-                    .end
-                    .to_point(buffer)
-                    .row
-                    .saturating_sub(buffer_range.start.to_point(buffer).row);
+                let start = buffer_range.start.to_point(buffer);
+                let end = buffer_range.end.to_point(buffer);
+                // The final added line may have no trailing newline (e.g. the last
+                // line of the file), in which case it ends mid-row and `end.row -
+                // start.row` undercounts it; add that trailing partial row back.
+                let row_count = end.row.saturating_sub(start.row)
+                    + if end.column > 0 { 1 } else { 0 };
                 vec![!stage; row_count as usize]
             });
             for i in addition_rows {
@@ -1033,11 +1052,21 @@ impl BufferDiffSnapshot {
                 }
             }
             let deletion_lines = staged_deletion_lines.get_or_insert_with(|| {
-                let lines = head_text
+                let mut lines = head_text
                     .slice(diff_base_byte_range.clone())
                     .summary()
                     .lines
                     .row as usize;
+                // `lines` counts newlines, so a deleted final line with no trailing
+                // newline (e.g. the last line of the base) is not counted; add it back.
+                if !diff_base_byte_range.is_empty()
+                    && head_text
+                        .reversed_chars_at(diff_base_byte_range.end)
+                        .next()
+                        != Some('\n')
+                {
+                    lines += 1;
+                }
                 vec![!stage; lines]
             });
             for i in deletion_rows {
@@ -1190,42 +1219,42 @@ impl BufferDiffSnapshot {
             let old_text = head_text
                 .chunks_in_range(diff_base_byte_range.clone())
                 .collect::<String>();
-            let mut replacement_text = if let Some(staged_lines) = staged_deletion_lines {
-                let kept: Vec<_> = old_text
-                    .split("\n")
+            // Split with `split_inclusive` so each kept line keeps its own trailing
+            // newline. This preserves whether the final line ended with a newline (it
+            // doesn't for the last line of a file without a trailing newline), instead
+            // of unconditionally appending one and corrupting the staged text.
+            let deletion_part = if let Some(staged_lines) = staged_deletion_lines.as_ref() {
+                old_text
+                    .split_inclusive('\n')
                     .zip(staged_lines)
-                    .filter_map(|(buffer_line, staged_line)| {
-                        (!staged_line).then(|| buffer_line.to_string())
-                    })
-                    .collect();
-                if kept.is_empty() {
-                    String::new()
-                } else {
-                    kept.join("\n") + "\n"
-                }
+                    .filter_map(|(line, staged)| (!staged).then_some(line))
+                    .collect::<String>()
             } else {
                 old_text
             };
             let new_text = buffer
                 .text_for_range(buffer_offset_range)
                 .collect::<String>();
-            let new_text = if let Some(staged_lines) = staged_addition_lines {
-                let kept: Vec<_> = new_text
-                    .split("\n")
+            let addition_part = if let Some(staged_lines) = staged_addition_lines.as_ref() {
+                new_text
+                    .split_inclusive('\n')
                     .zip(staged_lines)
-                    .filter_map(|(buffer_line, staged_line)| {
-                        staged_line.then(|| buffer_line.to_string())
-                    })
-                    .collect();
-                if kept.is_empty() {
-                    String::new()
-                } else {
-                    kept.join("\n") + "\n"
-                }
+                    .filter_map(|(line, staged)| staged.then_some(line))
+                    .collect::<String>()
             } else {
                 new_text
             };
-            replacement_text.push_str(&new_text);
+            // Kept deletion lines come before the added lines. If the last kept
+            // deletion line lost its newline (it was the final line of the base) but
+            // additions follow it, reinsert the separating newline.
+            let mut replacement_text = deletion_part;
+            if !replacement_text.is_empty()
+                && !replacement_text.ends_with('\n')
+                && !addition_part.is_empty()
+            {
+                replacement_text.push('\n');
+            }
+            replacement_text.push_str(&addition_part);
             edits.push((index_byte_range, replacement_text));
         }
         drop(pending_hunks_iter);
@@ -1320,6 +1349,25 @@ impl BufferDiffSnapshot {
                     end_anchor = buffer.anchor_before(end_point);
                 }
 
+                // The normalization above is skipped when the hunk ends at `max_point`
+                // (a final line with no trailing newline), leaving `end_point`/`end_base`
+                // mid-row. Compute normalized end rows for the buffer (added) and base
+                // (deleted) sides so row counting and secondary-hunk comparisons stay
+                // consistent with the secondary ranges, which are always normalized below.
+                // Without this, a final modified line is misclassified as partially staged.
+                let end_row = if end_point.column > 0 {
+                    end_point.row + 1
+                } else {
+                    end_point.row
+                };
+                let end_base_row = if end_base > start_base
+                    && self.base_text.reversed_chars_at(end_base).next() != Some('\n')
+                {
+                    end_base_row + 1
+                } else {
+                    end_base_row
+                };
+
                 let mut secondary_status = DiffHunkSecondaryStatus::NoSecondaryHunk;
 
                 let mut has_pending = false;
@@ -1370,7 +1418,7 @@ impl BufferDiffSnapshot {
                             && secondary_hunk.diff_base_byte_range.is_empty()
                         {
                             // ignore
-                        } else if secondary_range == (start_point..end_point)
+                        } else if secondary_range == (start_point..Point::new(end_row, 0))
                             && secondary_hunk.diff_base_byte_range.len() == end_base - start_base
                         {
                             secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
@@ -1379,7 +1427,7 @@ impl BufferDiffSnapshot {
                         }
                     }
                     if secondary_status == DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk {
-                        let added_rows = end_point.row.saturating_sub(start_point.row) as usize;
+                        let added_rows = end_row.saturating_sub(start_point.row) as usize;
                         let removed_rows = end_base_row.saturating_sub(start_base_row) as usize;
 
                         let mut new_staged_addition_lines = vec![true; added_rows];
@@ -1390,19 +1438,19 @@ impl BufferDiffSnapshot {
                                 secondary_addition_range.end.row += 1;
                                 secondary_addition_range.end.column = 0;
                             }
-                            if secondary_addition_range.start.row >= end_point.row {
+                            if secondary_addition_range.start.row >= end_row {
                                 break;
                             }
                             let overlap_start =
                                 secondary_addition_range.start.row.max(start_point.row);
-                            let overlap_end = secondary_addition_range.end.row.min(end_point.row);
+                            let overlap_end = secondary_addition_range.end.row.min(end_row);
                             for row in overlap_start..overlap_end {
                                 let idx = (row - start_point.row) as usize;
                                 if let Some(line) = new_staged_addition_lines.get_mut(idx) {
                                     *line = false;
                                 }
                             }
-                            if secondary_addition_range.end.row > end_point.row {
+                            if secondary_addition_range.end.row > end_row {
                                 break;
                             }
                             secondary_cursor.next();
@@ -1411,16 +1459,26 @@ impl BufferDiffSnapshot {
                         let mut new_staged_deletion_lines = vec![false; removed_rows];
                         if let Some(secondary) = secondary {
                             let edits = head_to_index_edits.get_or_insert_with(|| {
-                                let head_text = if self.base_text_exists {
+                                let mut head_text = if self.base_text_exists {
                                     self.base_text.text()
                                 } else {
                                     String::new()
                                 };
-                                let index_text = if secondary.base_text_exists {
+                                let mut index_text = if secondary.base_text_exists {
                                     secondary.base_text.text()
                                 } else {
                                     String::new()
                                 };
+                                // Normalize trailing newlines. Otherwise a final line
+                                // without one is reported as a modification of itself when
+                                // the other side appends a line after it, which would
+                                // mismark an unchanged deleted line as staged.
+                                if !head_text.is_empty() && !head_text.ends_with('\n') {
+                                    head_text.push('\n');
+                                }
+                                if !index_text.is_empty() && !index_text.ends_with('\n') {
+                                    index_text.push('\n');
+                                }
                                 line_diff(&head_text, &index_text)
                             });
                             for (head_rows, _) in edits.iter() {
@@ -3136,6 +3194,78 @@ mod tests {
         }
     }
 
+    // Regression test: unstaging selected lines of a hunk that is already in the
+    // "we are unstaging" (`SecondaryHunkAdditionPending`) state must not corrupt the
+    // index. Previously the skip-when-already-in-target-state check only matched
+    // `HasSecondaryHunk`, so a pending-unstaged hunk fell through and the
+    // `vec![!stage; n]` baseline marked every deletion line as staged, wiping the
+    // hunk's region from the index (the symptom: a staged diff that deleted the old
+    // lines without adding the new one).
+    #[gpui::test]
+    async fn test_unstage_lines_on_pending_unstaged_hunk_is_noop(cx: &mut TestAppContext) {
+        let head_text = "ctx0\nD1\nD2\nD3\nctx1\n".to_string();
+        // Index starts equal to the buffer: the hunk is fully staged.
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "ctx0\nA\nctx1\n".to_string(),
+        );
+        let index_text = "ctx0\nA\nctx1\n".to_string();
+
+        let unstaged_diff =
+            cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(&head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        let full_range = buffer.anchor_before(0)..buffer.anchor_after(buffer.len());
+
+        // Unstage the whole hunk. This leaves it in the `AdditionPending` state with
+        // the index restored to HEAD.
+        uncommitted_diff.update(cx, |diff, cx| {
+            let hunks = diff
+                .snapshot(cx)
+                .hunks_intersecting_range(full_range.clone(), &buffer)
+                .collect::<Vec<_>>();
+            assert_eq!(hunks.len(), 1);
+            assert_eq!(
+                hunks[0].secondary_status,
+                DiffHunkSecondaryStatus::NoSecondaryHunk
+            );
+            diff.stage_or_unstage_hunks(false, &hunks, &buffer, true, cx);
+        });
+
+        let hunk = uncommitted_diff.update(cx, |diff, cx| {
+            let hunks = diff
+                .snapshot(cx)
+                .hunks_intersecting_range(full_range.clone(), &buffer)
+                .collect::<Vec<_>>();
+            assert_eq!(hunks.len(), 1);
+            assert_eq!(
+                hunks[0].secondary_status,
+                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending,
+                "whole-hunk unstage should leave the hunk pending unstage"
+            );
+            hunks[0].clone()
+        });
+
+        // Now unstage just the added line of the already-pending-unstaged hunk. This
+        // must be a no-op (the hunk is already unstaged), not a wipe.
+        let new_index = uncommitted_diff.update(cx, |diff, cx| {
+            let hunks_with_rows = vec![(hunk, vec![0u32], Vec::<u32>::new())];
+            diff.stage_or_unstage_lines(false, &hunks_with_rows, &buffer, true, cx)
+        });
+        if let Some(new_index) = new_index {
+            assert_eq!(
+                new_index.to_string(),
+                index_text,
+                "unstaging an already-unstaged hunk must not change the index"
+            );
+        }
+    }
+
     #[gpui::test]
     async fn test_stage_all_with_nested_hunks(cx: &mut TestAppContext) {
         // This test reproduces a crash where staging all hunks would cause an underflow
@@ -3245,6 +3375,126 @@ mod tests {
         uncommitted_diff.update(cx, |diff, cx| {
             diff.stage_or_unstage_all_hunks(true, &buffer, true, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_partial_stage_single_hunk_leaves_other_hunks_unstaged(
+        cx: &mut TestAppContext,
+    ) {
+        // Staging selected lines in one hunk must not touch unrelated hunks
+        // elsewhere in the file. Reconstruction rebuilds the whole index from
+        // HEAD + pending hunks, so a regression here re-materializes unrelated
+        // changes into the index ("stages completely unrelated lines").
+        let head_text = "ctx0\nA_orig\nctx1\nctx2\nB_orig\nctx3\nctx4\nC_orig\nctx5\n";
+        // Index equals HEAD: nothing staged, three independent unstaged hunks.
+        let index_text = head_text.to_string();
+        let buffer_text = "ctx0\nA_mod\nctx1\nctx2\nB_mod\nctx3\nctx4\nC_mod\nctx5\n";
+
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.to_string(),
+        );
+
+        let unstaged_diff =
+            cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        // Grab the middle hunk (the one covering `B_mod` on row 4).
+        let middle_hunk = uncommitted_diff.update(cx, |diff, cx| {
+            let hunks = diff
+                .snapshot(cx)
+                .hunks_intersecting_range(
+                    Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                    &buffer,
+                )
+                .collect::<Vec<_>>();
+            assert_eq!(hunks.len(), 3, "expected three independent hunks");
+            hunks[1].clone()
+        });
+
+        // Stage the middle hunk's modification (its added line and the paired
+        // deleted line).
+        let new_index = uncommitted_diff
+            .update(cx, |diff, cx| {
+                let hunks_with_rows = vec![(middle_hunk, vec![0u32], vec![0u32])];
+                diff.stage_or_unstage_lines(true, &hunks_with_rows, &buffer, true, cx)
+            })
+            .expect("staging should produce a new index");
+
+        assert_eq!(
+            new_index.to_string(),
+            "ctx0\nA_orig\nctx1\nctx2\nB_mod\nctx3\nctx4\nC_orig\nctx5\n",
+            "only the middle hunk should be staged; A and C must stay at HEAD"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sequential_partial_stage_accumulates_without_spurious_lines(
+        cx: &mut TestAppContext,
+    ) {
+        // Two partial-stages in a row, without the index recalc that would
+        // normally clear `pending_hunks` between them. The reconstruction must
+        // bake in only the two staged hunks, never re-materializing unrelated
+        // regions from lingering pending state.
+        let head_text = "ctx0\nA_orig\nctx1\nctx2\nB_orig\nctx3\nctx4\nC_orig\nctx5\n";
+        let index_text = head_text.to_string();
+        let buffer_text = "ctx0\nA_mod\nctx1\nctx2\nB_mod\nctx3\nctx4\nC_mod\nctx5\n";
+
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.to_string(),
+        );
+
+        let unstaged_diff =
+            cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        let full_range = Anchor::min_max_range_for_buffer(buffer.remote_id());
+
+        // Stage the middle hunk (B).
+        let after_b = uncommitted_diff
+            .update(cx, |diff, cx| {
+                let hunks = diff
+                    .snapshot(cx)
+                    .hunks_intersecting_range(full_range.clone(), &buffer)
+                    .collect::<Vec<_>>();
+                let hunks_with_rows = vec![(hunks[1].clone(), vec![0u32], vec![0u32])];
+                diff.stage_or_unstage_lines(true, &hunks_with_rows, &buffer, true, cx)
+            })
+            .expect("staging B should produce a new index");
+        assert_eq!(
+            after_b.to_string(),
+            "ctx0\nA_orig\nctx1\nctx2\nB_mod\nctx3\nctx4\nC_orig\nctx5\n",
+        );
+
+        // Without recalculating the secondary diff, stage the first hunk (A).
+        // The pending hunk for B still lingers; staging A must keep B staged
+        // and leave C at HEAD.
+        let after_a = uncommitted_diff
+            .update(cx, |diff, cx| {
+                let hunks = diff
+                    .snapshot(cx)
+                    .hunks_intersecting_range(full_range.clone(), &buffer)
+                    .collect::<Vec<_>>();
+                let hunks_with_rows = vec![(hunks[0].clone(), vec![0u32], vec![0u32])];
+                diff.stage_or_unstage_lines(true, &hunks_with_rows, &buffer, true, cx)
+            })
+            .expect("staging A should produce a new index");
+        assert_eq!(
+            after_a.to_string(),
+            "ctx0\nA_mod\nctx1\nctx2\nB_mod\nctx3\nctx4\nC_orig\nctx5\n",
+            "A and B staged, C still at HEAD; no spurious lines",
+        );
     }
 
     #[gpui::test]
