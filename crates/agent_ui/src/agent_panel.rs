@@ -2073,7 +2073,10 @@ impl AgentPanel {
         // mode (same convention as the activation-script writes in
         // `TerminalBuilder::new`).
         input.push(b'\x0d');
-        terminal.update(cx, |terminal, _| terminal.input(input));
+        // `write_init_command`, not `input`: the latter sets `keyboard_input_sent`,
+        // which would auto-close the terminal (hiding the error) if the shell
+        // fails to spawn after we've written the command.
+        terminal.update(cx, |terminal, _| terminal.write_init_command(input));
     }
 
     fn insert_terminal(
@@ -7456,6 +7459,12 @@ mod tests {
         });
         let input_log = terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
         assert_eq!(input_log, vec![b" claude --resume \r".to_vec()]);
+        assert!(
+            !terminal.read_with(&cx, |terminal, _| terminal.keyboard_input_sent()),
+            "writing the init command must not mark the terminal as having received \
+             user keyboard input, otherwise a shell that fails to spawn would be \
+             auto-closed before the user can see the error"
+        );
 
         panel
             .update_in(&mut cx, |panel, window, cx| {
@@ -7475,6 +7484,75 @@ mod tests {
         assert!(
             input_log.is_empty(),
             "activating an already-restored terminal should not re-run the init command, got {input_log:?}"
+        );
+    }
+
+    /// Exercises the real `spawn_terminal` path with a genuine shell PTY (not the
+    /// display-only test terminal, where `write_to_pty` is a no-op) to verify the
+    /// init command is actually delivered to the shell and executed.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_spawn_terminal_runs_init_command_in_real_shell(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.executor().allow_parking();
+        cx.update(|_, cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            // The output (`init_ran_42`) is distinct from the command text
+            // (`init_ran_$((6*7))`), which the PTY also echoes back. Finding the
+            // output therefore proves the shell actually executed the command
+            // rather than merely echoing the keystrokes.
+            settings.terminal_init_command = Some("echo init_ran_$((6*7))".to_string());
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let terminal_id = TerminalId::new();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.spawn_terminal(
+                terminal_id,
+                // No working directory: the FakeFs project path doesn't exist on
+                // the real filesystem the shell process runs against.
+                None,
+                None,
+                None,
+                None,
+                true,
+                true,
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        });
+
+        // The shell spawns on a background thread and produces output
+        // asynchronously, so poll (with a deadline) rather than using a fixed
+        // sleep, matching the real-PTY test in `acp_thread`.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let terminal = loop {
+            let terminal = panel.read_with(&cx, |panel, cx| {
+                panel
+                    .terminals
+                    .get(&terminal_id)
+                    .map(|terminal| terminal.view.read(cx).terminal().clone())
+            });
+            if let Some(terminal) = &terminal
+                && terminal
+                    .read_with(&cx, |terminal, _| terminal.get_content())
+                    .contains("init_ran_42")
+            {
+                break terminal.clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "init command output never appeared in the terminal"
+            );
+            cx.executor().timer(Duration::from_millis(50)).await;
+        };
+
+        assert!(
+            !terminal.read_with(&cx, |terminal, _| terminal.keyboard_input_sent()),
+            "writing the init command must not mark the terminal as having received \
+             user keyboard input"
         );
     }
 
