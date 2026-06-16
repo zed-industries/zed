@@ -613,9 +613,6 @@ impl EditorActionId {
     }
 }
 
-// type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
-// type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
-
 type BackgroundHighlight = (
     Arc<dyn Fn(&usize, &Theme) -> Hsla + Send + Sync>,
     Arc<[Range<Anchor>]>,
@@ -1499,8 +1496,8 @@ struct RowHighlight {
 }
 
 enum RowHighlightColor {
-    Fixed(Hsla),
     #[allow(dead_code)]
+    Fixed(Hsla),
     Themed(fn(&App) -> Hsla),
 }
 
@@ -6232,7 +6229,7 @@ impl Editor {
 
             self.go_to_line::<ActiveDebugLine>(
                 multibuffer_anchor,
-                Some(cx.theme().colors().editor_debugger_active_line_background),
+                |cx| cx.theme().colors().editor_debugger_active_line_background,
                 window,
                 cx,
             );
@@ -8639,7 +8636,7 @@ impl Editor {
     pub fn highlight_rows<T: 'static>(
         &mut self,
         range: Range<Anchor>,
-        color: Hsla,
+        color: fn(&App) -> Hsla,
         options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
@@ -8671,7 +8668,7 @@ impl Editor {
                     }
                     merged = true;
                     prev_highlight.index = index;
-                    prev_highlight.color = RowHighlightColor::Fixed(color);
+                    prev_highlight.color = RowHighlightColor::Themed(color);
                     prev_highlight.options = options;
                 }
             }
@@ -8682,7 +8679,7 @@ impl Editor {
                     RowHighlight {
                         range,
                         index,
-                        color: RowHighlightColor::Fixed(color),
+                        color: RowHighlightColor::Themed(color),
                         options,
                         type_id: TypeId::of::<T>(),
                     },
@@ -9726,7 +9723,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn theme_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn theme_changed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if !self.mode.is_full() {
             return;
         }
@@ -9740,10 +9737,6 @@ impl Editor {
         self.invalidate_semantic_tokens(None);
         self.refresh_semantic_tokens(None, None, cx);
         self.refresh_outline_symbols_at_cursor(cx);
-
-        // The active debug line highlight stores a concrete color snapshot, so re-apply it
-        // to pick up the new theme's `editor_debugger_active_line_background` (issue #58736).
-        self.go_to_active_debug_line(window, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
