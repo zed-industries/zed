@@ -226,7 +226,7 @@ impl EditorPreview {
             });
 
             editor.clear_row_highlights::<SearchMatchLineHighlight>();
-            editor.clear_background_highlights(HighlightKey::QuickSearchView, cx);
+            editor.clear_background_highlights(HighlightKey::PickerPreview, cx);
 
             let Some(highlight) = highlight else {
                 return;
@@ -245,7 +245,7 @@ impl EditorPreview {
                 );
 
                 editor.highlight_background(
-                    HighlightKey::QuickSearchView,
+                    HighlightKey::PickerPreview,
                     &[start_anchor..end_anchor],
                     |_, theme| theme.colors().search_match_background,
                     cx,
@@ -264,63 +264,4 @@ impl EditorPreview {
             );
         });
     }
-
-    // fn update(&mut self, update: Match, window: &mut Window, cx: &mut impl AppContext) {
-    //     let Ok(update) = update.downcast::<Update>() else {
-    //         return;
-    //     };
-    //     self.current_path = cx.read_entity(&update.buffer, |buffer, _| {
-    //         buffer.file().map(|file| file.path()).map(Arc::clone)
-    //     });
-
-    //     let buffer = update.buffer;
-    //     let range = update.range;
-    //     let anchor_range = update.anchor_range;
-
-    //     self.preview_editor.update(cx, |editor, cx| {
-    //         let multi_buffer = editor.buffer().clone();
-    //         let max_point = buffer.read(cx).max_point();
-
-    //         multi_buffer.update(cx, |multi_buffer, cx| {
-    //             multi_buffer.clear(cx);
-    //             multi_buffer.set_excerpts_for_buffer(
-    //                 buffer.clone(),
-    //                 [rope::Point::new(0, 0)..max_point],
-    //                 0,
-    //                 cx,
-    //             );
-    //         });
-
-    //         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-    //         if let (Some(start_anchor), Some(end_anchor)) = (
-    //             multi_buffer_snapshot.anchor_in_excerpt(anchor_range.start),
-    //             multi_buffer_snapshot.anchor_in_excerpt(anchor_range.end),
-    //         ) {
-    //             editor.highlight_rows::<SearchMatchLineHighlight>(
-    //                 start_anchor..start_anchor,
-    //                 cx.theme().colors().editor_active_line_background,
-    //                 RowHighlightOptions::default(),
-    //                 cx,
-    //             );
-
-    //             editor.highlight_background(
-    //                 HighlightKey::QuickSearchView,
-    //                 &[start_anchor..end_anchor],
-    //                 |_, theme| theme.colors().search_match_background,
-    //                 cx,
-    //             );
-    //         }
-
-    //         let start = multi_buffer::MultiBufferOffset(range.start);
-    //         let end = multi_buffer::MultiBufferOffset(range.end);
-    //         editor.change_selections(
-    //             SelectionEffects::scroll(Autoscroll::center()),
-    //             window,
-    //             cx,
-    //             |s| {
-    //                 s.select_ranges([start..end]);
-    //             },
-    //         );
-    //     });
-    // }
 }

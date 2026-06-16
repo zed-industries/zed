@@ -753,21 +753,6 @@ impl<D: PickerDelegate> Picker<D> {
                 self.scroll_to_item_index(ix);
             }
         }
-
-        // How do we specialize set_selected_index for Pickers with a preview?
-        // - every picker should get a preview
-        // - just add it with a default impl?
-
-        // let Some(selected_match) = self.matches.get(self.selected_index) else {
-        //     self.preview_editor.update(cx, |editor, cx| {
-        //         editor.buffer().update(cx, |multi_buffer, cx| {
-        //             if !multi_buffer.read(cx).is_empty() {
-        //                 multi_buffer.clear(cx);
-        //             }
-        //         });
-        //     });
-        //     return;
-        // };
     }
 
     pub fn select_next(

@@ -360,18 +360,6 @@ pub mod text_finder {
     );
 }
 
-pub mod quick_search {
-    use gpui::actions;
-
-    actions!(
-        quick_search,
-        [
-            /// Opens the Quick Search popup.
-            Toggle,
-        ]
-    );
-}
-
 pub mod project_panel {
     use gpui::actions;
 
