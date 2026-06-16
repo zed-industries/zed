@@ -1538,10 +1538,6 @@ impl Focusable for TerminalPanel {
 }
 
 impl Panel for TerminalPanel {
-    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.focus_handle(cx)
-    }
-
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         TerminalSettings::get_global(cx).dock.into()
     }

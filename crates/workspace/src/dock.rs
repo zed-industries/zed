@@ -36,7 +36,9 @@ pub use proto::PanelId;
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;
-    fn activation_focus_handle(&self, cx: &App) -> FocusHandle;
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus_handle(cx)
+    }
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
@@ -1479,10 +1481,6 @@ pub mod test {
     }
 
     impl Panel for TestPanel {
-        fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
-            self.focus_handle(cx)
-        }
-
         fn persistent_name() -> &'static str {
             "TestPanel"
         }

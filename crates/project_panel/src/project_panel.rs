@@ -7311,10 +7311,6 @@ impl EventEmitter<Event> for ProjectPanel {}
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
 impl Panel for ProjectPanel {
-    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.focus_handle(cx)
-    }
-
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             DockSide::Left => DockPosition::Left,
