@@ -1,4 +1,5 @@
 use super::{Client, UserStore};
+use anyhow::anyhow;
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::websocket_protocol::MessageToClient;
 use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
@@ -106,6 +107,9 @@ impl RefreshLlmTokenListener {
             .current_organization()
             .map(|organization| organization.id.clone());
         cx.spawn(async move |this, cx| {
+            let organization_id =
+                organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+
             match mode {
                 TokenRefreshMode::Refresh => {
                     client

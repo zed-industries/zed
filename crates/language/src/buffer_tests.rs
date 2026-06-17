@@ -850,23 +850,26 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    // Without space, we only match on names
+    // Single-atom queries (no whitespace): all matched chars must land in the leaf,
+    // so items whose ancestor path coincidentally contains the query chars don't
+    // show up unless the leaf itself matches.
     assert_eq!(
         search(&outline, "oon", cx).await,
         &[
-            ("mod module", vec![]),                    // included as the parent of a match
-            ("enum LoginState", vec![]),               // included as the parent of a match
-            ("LoggingOn", vec![1, 7, 8]),              // matches
-            ("impl Drop for Person", vec![7, 18, 19]), // matches in two disjoint names
+            ("mod module", vec![]),                     // parent context for LoggingOn
+            ("enum LoginState", vec![]),                // parent context for LoggingOn
+            ("LoggingOn", vec![1, 7, 8]),               // all three chars in leaf
+            ("impl Eq for Person", vec![9, 16, 17]),    // o-o-n in "for Person"
+            ("impl Drop for Person", vec![11, 18, 19]), // o-o-n in "for Person"
         ]
     );
 
+    // Multi-atom queries: rows whose match lives entirely in an ancestor
+    // are kept as context (empty positions, score zeroed) so descendants
+    // of a matched container surface alongside it.
     assert_eq!(
         search(&outline, "dp p", cx).await,
-        &[
-            ("impl Drop for Person", vec![5, 8, 9, 14]),
-            ("fn drop", vec![]),
-        ]
+        &[("impl Drop for Person", vec![5, 14]), ("fn drop", vec![]),]
     );
     assert_eq!(
         search(&outline, "dpn", cx).await,
@@ -875,8 +878,8 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(&outline, "impl ", cx).await,
         &[
-            ("impl Eq for Person", vec![0, 1, 2, 3, 4]),
-            ("impl Drop for Person", vec![0, 1, 2, 3, 4]),
+            ("impl Eq for Person", vec![0, 1, 2, 3]),
+            ("impl Drop for Person", vec![0, 1, 2, 3]),
             ("fn drop", vec![]),
         ]
     );
@@ -891,12 +894,16 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         query: &'a str,
         cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
-        let matches = cx
+        let entries = cx
             .update(|cx| outline.search(query, cx.background_executor().clone()))
             .await;
-        matches
+        entries
             .into_iter()
-            .map(|mat| (outline.items[mat.candidate_id].text.as_str(), mat.positions))
+            .map(|entry| {
+                let candidate_id = entry.candidate_id();
+                let positions = entry.into_match().map(|m| m.positions).unwrap_or_default();
+                (outline.items[candidate_id].text.as_str(), positions)
+            })
             .collect::<Vec<_>>()
     }
 }
@@ -971,6 +978,35 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_outline_selection_range_for_multiline_c_signature(cx: &mut gpui::TestAppContext) {
+    let text = indoc! {"
+        void
+        evdev_post_scroll(struct evdev_device *device,
+                  usec_t time,
+                  enum libinput_pointer_axis_source source,
+                  const struct normalized_coords *delta)
+        {
+            return;
+        }
+    "};
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
+
+    let item = outline
+        .items
+        .iter()
+        .find(|item| item.text.contains("evdev_post_scroll"))
+        .unwrap()
+        .to_point(&snapshot);
+
+    assert_eq!(item.source_range_for_text.start, Point::new(0, 0));
+    assert_eq!(item.selection_range.start, Point::new(1, 0));
+    assert_eq!(item.text, "void evdev_post_scroll( )");
+}
+
+#[gpui::test]
 fn test_outline_annotations(cx: &mut App) {
     // Add this new test case
     let text = r#"
@@ -999,7 +1035,7 @@ fn test_outline_annotations(cx: &mut App) {
             .items
             .into_iter()
             .map(|item| (
-                item.text,
+                item.text.to_string(),
                 item.depth,
                 item.annotation_range
                     .map(|range| { buffer.read(cx).text_for_range(range).collect::<String>() })
@@ -1099,7 +1135,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|item| {
                 (
-                    item.text,
+                    item.text.to_string(),
                     item.range.start.to_point(snapshot)..item.range.end.to_point(snapshot),
                 )
             })
@@ -4042,6 +4078,20 @@ fn javascript_lang() -> Language {
     .unwrap()
 }
 
+fn c_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
+        .unwrap(),
+    )
+}
+
 pub fn markdown_inline_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -4182,6 +4232,51 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
                     byte_idx, chunk_text, byte as char, is_tab, has_bit
                 );
             }
+        }
+    }
+}
+
+#[gpui::test]
+fn test_formatted_chunks(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+    let buffer = cx.new(|cx| Buffer::local("use std::cmp::Eq;", cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+
+        // Verify chars bitmap
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        assert_eq!(char_indices.len() as u32, chars_bitmap.count_ones());
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
         }
     }
 }

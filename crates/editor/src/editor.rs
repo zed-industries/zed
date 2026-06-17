@@ -534,13 +534,15 @@ pub struct EditorStyle {
 
 impl Default for EditorStyle {
     fn default() -> Self {
+        static NONE_SYNTAX: std::sync::LazyLock<Arc<SyntaxTheme>> =
+            std::sync::LazyLock::new(|| Arc::new(SyntaxTheme::default()));
         Self {
             background: Hsla::default(),
             border: Hsla::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
             scrollbar_width: Pixels::default(),
-            syntax: Default::default(),
+            syntax: NONE_SYNTAX.clone(),
             // HACK: Status colors don't have a real default.
             // We should look into removing the status colors from the editor
             // style and retrieve them directly from the theme.
@@ -610,9 +612,6 @@ impl EditorActionId {
         Self(answer)
     }
 }
-
-// type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
-// type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (
     Arc<dyn Fn(&usize, &Theme) -> Hsla + Send + Sync>,
@@ -1094,6 +1093,16 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     last_position_map: Option<Rc<PositionMap>>,
+    /// The right margin (vertical scrollbar + minimap width) the editor was
+    /// last laid out with, updated on every prepaint.
+    /// Used later in the frame by `SplitBufferHeadersElement` to shrink the
+    /// width available to buffer headers.
+    last_right_margin: Pixels,
+    /// Whether the horizontal scrollbar was laid out as visible during the last
+    /// prepaint.
+    /// Used by `SplitBufferHeadersElement` to clip buffer headers so they don't
+    /// paint over the scrollbar.
+    last_horizontal_scrollbar_visible: bool,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
@@ -1122,6 +1131,10 @@ pub struct Editor {
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
+    /// Whether to render all diff hunks with the "unstaged" appearance,
+    /// regardless of whether they have a secondary hunk. Used by views whose
+    /// diffs aren't related to the git index (e.g. agent diffs).
+    render_diff_hunks_as_unstaged: bool,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1477,7 +1490,7 @@ impl Default for RowHighlightOptions {
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
-    color: Hsla,
+    color: fn(&App) -> Hsla,
     options: RowHighlightOptions,
     type_id: TypeId,
 }
@@ -1777,6 +1790,8 @@ impl Editor {
                         depth: outline_item.depth,
                         range: multi_buffer
                             .buffer_anchor_range_to_anchor_range(outline_item.range)?,
+                        selection_range: multi_buffer
+                            .buffer_anchor_range_to_anchor_range(outline_item.selection_range)?,
                         source_range_for_text: multi_buffer.buffer_anchor_range_to_anchor_range(
                             outline_item.source_range_for_text,
                         )?,
@@ -2258,6 +2273,8 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
             last_position_map: None,
+            last_right_margin: Pixels::ZERO,
+            last_horizontal_scrollbar_visible: false,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -2348,6 +2365,7 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             temporary_diff_override: false,
+            render_diff_hunks_as_unstaged: false,
             minimap: None,
             change_list: ChangeList::new(),
             mode,
@@ -2665,6 +2683,14 @@ impl Editor {
 
     pub fn last_bounds(&self) -> Option<&Bounds<Pixels>> {
         self.last_bounds.as_ref()
+    }
+
+    pub(crate) fn last_right_margin(&self) -> Pixels {
+        self.last_right_margin
+    }
+
+    pub(crate) fn last_horizontal_scrollbar_visible(&self) -> bool {
+        self.last_horizontal_scrollbar_visible
     }
 
     pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {
@@ -4016,7 +4042,7 @@ impl Editor {
         anchor: Anchor,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<ui::ContextMenu> {
+    ) -> Entity<ContextMenu> {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
 
@@ -4073,37 +4099,50 @@ impl Editor {
 
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
-            BreakpointState::Enabled => Some("Disable"),
-            BreakpointState::Disabled => Some("Enable"),
-        });
+        let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
+            breakpoint.as_ref().map(|bp| match bp.1.state {
+                BreakpointState::Enabled => {
+                    ("Disable", crate::actions::DisableBreakpoint.boxed_clone())
+                }
+                BreakpointState::Disabled => {
+                    ("Enable", crate::actions::EnableBreakpoint.boxed_clone())
+                }
+            });
 
         let (anchor, breakpoint) =
             breakpoint.unwrap_or_else(|| (anchor, Arc::new(Breakpoint::new_standard())));
 
-        ui::ContextMenu::build(window, cx, |menu, _, _cx| {
+        ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
-                    this.entry("Run to Cursor", None, move |window, cx| {
-                        weak_editor
-                            .update(cx, |editor, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::no_scroll(),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges([Point::new(row, 0)..Point::new(row, 0)]),
-                                );
-                            })
-                            .ok();
+                    this.entry(
+                        "Run to Cursor",
+                        Some(RunToCursor.boxed_clone()),
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll(),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_ranges(
+                                                [Point::new(row, 0)..Point::new(row, 0)],
+                                            )
+                                        },
+                                    );
+                                })
+                                .ok();
 
-                        window.dispatch_action(Box::new(RunToCursor), cx);
-                    })
+                            window.dispatch_action(Box::new(RunToCursor), cx);
+                        },
+                    )
                     .separator()
                 })
-                .when_some(toggle_state_msg, |this, msg| {
-                    this.entry(msg, None, {
+                .when_some(toggle_state_entry, |this, (msg, action)| {
+                    this.entry(msg, Some(action), {
                         let weak_editor = weak_editor.clone();
                         let breakpoint = breakpoint.clone();
                         move |_window, cx| {
@@ -4120,39 +4159,47 @@ impl Editor {
                         }
                     })
                 })
-                .entry(set_breakpoint_msg, None, {
-                    let weak_editor = weak_editor.clone();
-                    let breakpoint = breakpoint.clone();
-                    move |_window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.edit_breakpoint_at_anchor(
-                                    anchor,
-                                    breakpoint.as_ref().clone(),
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .entry(log_breakpoint_msg, None, {
-                    let breakpoint = breakpoint.clone();
-                    let weak_editor = weak_editor.clone();
-                    move |window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.add_edit_breakpoint_block(
-                                    anchor,
-                                    breakpoint.as_ref(),
-                                    BreakpointPromptEditAction::Log,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
+                .entry(
+                    set_breakpoint_msg,
+                    Some(crate::actions::ToggleBreakpoint.boxed_clone()),
+                    {
+                        let weak_editor = weak_editor.clone();
+                        let breakpoint = breakpoint.clone();
+                        move |_window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.edit_breakpoint_at_anchor(
+                                        anchor,
+                                        breakpoint.as_ref().clone(),
+                                        BreakpointEditAction::Toggle,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    },
+                )
+                .entry(
+                    log_breakpoint_msg,
+                    Some(crate::actions::EditLogBreakpoint.boxed_clone()),
+                    {
+                        let breakpoint = breakpoint.clone();
+                        let weak_editor = weak_editor.clone();
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.add_edit_breakpoint_block(
+                                        anchor,
+                                        breakpoint.as_ref(),
+                                        BreakpointPromptEditAction::Log,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    },
+                )
                 .entry(condition_breakpoint_msg, None, {
                     let breakpoint = breakpoint.clone();
                     let weak_editor = weak_editor.clone();
@@ -6184,7 +6231,7 @@ impl Editor {
 
             self.go_to_line::<ActiveDebugLine>(
                 multibuffer_anchor,
-                Some(cx.theme().colors().editor_debugger_active_line_background),
+                |cx| cx.theme().colors().editor_debugger_active_line_background,
                 window,
                 cx,
             );
@@ -7806,7 +7853,6 @@ impl Editor {
 
         self.selections
             .disjoint_anchor_ranges()
-            .filter(|range| range.start != range.end)
             .flat_map(|range| [range.start, range.end])
             .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
             .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
@@ -8592,7 +8638,7 @@ impl Editor {
     pub fn highlight_rows<T: 'static>(
         &mut self,
         range: Range<Anchor>,
-        color: Hsla,
+        color: fn(&App) -> Hsla,
         options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
@@ -8704,12 +8750,15 @@ impl Editor {
     }
 
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
-    pub fn highlighted_rows<T: 'static>(&self) -> impl '_ + Iterator<Item = (Range<Anchor>, Hsla)> {
+    pub fn highlighted_rows<'a, T: 'static>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
             .map_or(&[] as &[_], |vec| vec.as_slice())
             .iter()
-            .map(|highlight| (highlight.range.clone(), highlight.color))
+            .map(|highlight| (highlight.range.clone(), (highlight.color)(cx)))
     }
 
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
@@ -8746,7 +8795,7 @@ impl Editor {
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
                                     border: None,
-                                    background: highlight.color.into(),
+                                    background: (highlight.color)(cx).into(),
                                     type_id: Some(highlight.type_id),
                                 },
                             );
@@ -10709,7 +10758,7 @@ impl Editor {
         };
 
         breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
-            text: symbol.text.clone().into(),
+            text: symbol.text.clone(),
             highlights: symbol.highlight_ranges.clone(),
         }));
         Some(breadcrumbs)
@@ -11367,7 +11416,7 @@ impl EditorSnapshot {
                 self.git_blame_gutter_max_author_length
                     .map(|max_author_length| {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                        const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+                        const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
                         /// The number of characters to dedicate to gaps and margins.
                         const SPACING_WIDTH: usize = 4;

@@ -24,7 +24,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -33,7 +33,7 @@ use gpui::{
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
     ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
     TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
-    linear_color_stop, linear_gradient, list, point, pulsating_between,
+    linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -123,6 +123,7 @@ enum ThreadFeedback {
 #[derive(Debug)]
 pub(crate) enum ThreadError {
     PaymentRequired,
+    DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
     RateLimitExceeded {
@@ -132,17 +133,18 @@ pub(crate) enum ThreadError {
         provider: SharedString,
     },
     PromptTooLarge,
-    NoApiKey {
+    NoCredentials {
         provider: SharedString,
     },
     StreamError {
         provider: SharedString,
     },
-    InvalidApiKey {
+    AuthenticationFailed {
         provider: SharedString,
     },
     PermissionDenied {
         provider: SharedString,
+        message: Option<SharedString>,
     },
     RequestFailed,
     MaxOutputTokens,
@@ -162,8 +164,6 @@ impl From<anyhow::Error> for ThreadError {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if error.is::<language_model::PaymentRequiredError>() {
-            Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
@@ -180,7 +180,8 @@ impl From<anyhow::Error> for ThreadError {
                     }
                 }
                 PromptTooLarge { .. } => Self::PromptTooLarge,
-                NoApiKey { provider } => Self::NoApiKey {
+                PaymentRequired => Self::PaymentRequired,
+                NoApiKey { provider } => Self::NoCredentials {
                     provider: provider.to_string().into(),
                 },
                 StreamEndedUnexpectedly { provider }
@@ -189,13 +190,15 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
-                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                AuthenticationError { provider, .. } => Self::AuthenticationFailed {
                     provider: provider.to_string().into(),
                 },
-                PermissionError { provider, .. } => Self::PermissionDenied {
+                PermissionError { provider, message } => Self::PermissionDenied {
                     provider: provider.to_string().into(),
+                    message: Some(message.clone().into()),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
+                DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
                 BadRequestFormat { provider, .. }
                 | HttpResponseError { provider, .. }
                 | ApiEndpointNotFound { provider } => Self::ApiError {
@@ -1540,6 +1543,7 @@ impl ConversationView {
                     });
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1553,6 +1557,7 @@ impl ConversationView {
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -3425,7 +3430,7 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, size};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -3442,6 +3447,21 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_data_retention_error_maps_from_provider_error() {
+        // The agent wraps the provider error in a fresh `anyhow::Error`, so
+        // the mapping must downcast to `LanguageModelCompletionError` rather
+        // than matching on the anyhow error directly.
+        let provider_error = LanguageModelCompletionError::DataRetentionConsentRequired {
+            model_name: "Claude Fable 5".to_string(),
+        };
+        let error = ThreadError::from(anyhow!(provider_error));
+        assert!(
+            matches!(error, ThreadError::DataRetentionConsentRequired),
+            "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
+        );
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -5607,6 +5627,9 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            // Use an isolated DB so parallel tests can't overwrite each
+            // other's global keys (e.g. the last-created entry kind).
+            cx.set_global(db::AppDatabase::test_new());
             ThreadMetadataStore::init_global(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
@@ -5808,6 +5831,178 @@ pub(crate) mod tests {
                     assert!(entry_view_state.entry(2).is_none());
                     assert!(entry_view_state.entry(3).is_none());
                 });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_regenerate_keeps_pending_subagent_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "file.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store.clone()),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        // First turn: a subagent tool call. Subagent edits never appear as
+        // diffs in the parent thread's entries; they are only forwarded to the
+        // parent's action log through the linked-log mechanism.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("spawn1", "Subagent task")
+                .kind(acp::ToolKind::Other)
+                .status(acp::ToolCallStatus::Completed)
+                .meta(acp_thread::meta_with_tool_name("spawn_agent")),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Use a subagent", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Simulate the subagent editing a file: edits performed through a
+        // child action log are forwarded to the parent thread's action log,
+        // just like `Thread::new_subagent` wires it up.
+        let parent_action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+        let subagent_action_log = cx.update(|_, cx| {
+            cx.new(|_| {
+                ActionLog::new(project.clone()).with_linked_action_log(parent_action_log.clone())
+            })
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path("file.txt", cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        cx.update(|_, cx| {
+            subagent_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text("edited by subagent", cx);
+            });
+            subagent_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        parent_action_log.read_with(cx, |log, cx| {
+            assert_eq!(
+                log.changed_buffers(cx).count(),
+                1,
+                "the subagent edit should be pending review in the parent's action log"
+            );
+        });
+
+        // Second turn: a plain follow-up.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Follow-up", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let follow_up_ix = thread.read_with(cx, |thread, cx| {
+            thread
+                .entries()
+                .iter()
+                .position(|entry| entry.to_markdown(cx) == "## User\n\nFollow-up\n\n")
+                .unwrap()
+        });
+
+        // Edit and regenerate the follow-up message.
+        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .entry_view_state
+                .read(cx)
+                .entry(follow_up_ix)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited follow-up", window, cx);
+        });
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("New response".into()),
+        )]);
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.regenerate(follow_up_ix, user_message_editor.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // The thread should have been rewound and the edited message resent.
+        thread.read_with(cx, |thread, cx| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert_eq!(
+                entries[2].to_markdown(cx),
+                "## User\n\nEdited follow-up\n\n"
+            );
+        });
+
+        // The subagent's edits predate the regenerated prompt, so they must be
+        // auto-kept rather than rejected by the rewind.
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.text(),
+                "edited by subagent",
+                "pending subagent edits should be kept when regenerating a later prompt"
+            );
+        });
+        parent_action_log.read_with(cx, |log, cx| {
+            assert_eq!(
+                log.changed_buffers(cx).count(),
+                0,
+                "the subagent edit should have been auto-kept"
+            );
         });
     }
 
@@ -8618,6 +8813,65 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_move_up_in_empty_editor_restores_last_queued_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        active_thread(&conversation_view, cx).update(cx, |thread, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "first queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "second queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.focus(&editor);
+
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(
+            queue_len, 1,
+            "Up arrow should pull the last queued message out of the queue"
+        );
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "second queued",
+            "Main editor should contain the last queued message"
+        );
+
+        // With a non-empty editor, another MoveUp must not consume the queue.
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 1, "Queue should be untouched");
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "second queued");
     }
 
     #[gpui::test]
