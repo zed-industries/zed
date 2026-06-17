@@ -257,7 +257,7 @@ impl RenderOnce for ModelSelectorTooltip {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .justify_between()
-                        .child(Label::new("Cycle Favorited Models"))
+                        .child(Label::new("Cycle Favorite Models"))
                         .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
                 )
             })

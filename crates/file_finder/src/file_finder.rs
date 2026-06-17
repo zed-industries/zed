@@ -12,8 +12,8 @@ use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    Action, AnyElement, App, Context, DismissEvent, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use language::{BufferSnapshot, Point};
@@ -336,10 +336,7 @@ impl FileFinder {
                             path: Arc::clone(&path.project.path),
                         }
                     }
-                    Match::Search(m) => ProjectPath {
-                        worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                        path: m.0.path.clone(),
-                    },
+                    Match::Search(m) => project_path_for_search_match(&delegate.project, &m.0, cx),
                     Match::CreateNew(p) => p.clone(),
                     Match::Channel { .. } => return,
                 };
@@ -581,20 +578,7 @@ impl Matches {
             return;
         };
 
-        let worktree_name_by_id = if should_hide_root_in_entry_path(&worktree_store, cx) {
-            None
-        } else {
-            Some(
-                worktree_store
-                    .read(cx)
-                    .worktrees()
-                    .map(|worktree| {
-                        let snapshot = worktree.read(cx).snapshot();
-                        (snapshot.id(), snapshot.root_name().into())
-                    })
-                    .collect(),
-            )
-        };
+        let worktree_name_by_id = worktree_names_for_history_matching(&worktree_store, cx);
         let new_history_matches = matching_history_items(
             history_items,
             currently_opened,
@@ -768,20 +752,30 @@ fn matching_history_items<'a>(
                 }
             })
             .filter_map(|path_match| {
-                candidates_paths
-                    .remove_entry(&ProjectPath {
-                        worktree_id: WorktreeId::from_usize(path_match.worktree_id),
-                        path: Arc::clone(&path_match.path),
-                    })
-                    .map(|(project_path, found_path)| {
-                        (
-                            project_path.clone(),
-                            Match::History {
-                                path: found_path.clone(),
-                                panel_match: Some(ProjectPanelOrdMatch(path_match)),
-                            },
-                        )
-                    })
+                let worktree_id = WorktreeId::from_usize(path_match.worktree_id);
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: Arc::clone(&path_match.path),
+                };
+                // For single-file worktrees, fuzzy_nucleo moves the worktree root name
+                // into path_match.path (root_is_file handling), so the stored key of ""
+                // won't match. Fall back to an empty-path lookup for those entries.
+                let (_, found_path) =
+                    candidates_paths.remove_entry(&project_path).or_else(|| {
+                        candidates_paths.remove_entry(&ProjectPath {
+                            worktree_id,
+                            path: RelPath::empty_arc(),
+                        })
+                    })?;
+                // Key with path_match.path so the deduplication check in push_new_matches
+                // (which also uses path_match.path) correctly suppresses the search duplicate.
+                Some((
+                    project_path,
+                    Match::History {
+                        path: found_path.clone(),
+                        panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                    },
+                ))
             }),
         );
     }
@@ -796,6 +790,46 @@ fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &A
         .nth(1)
         .is_some();
     ProjectPanelSettings::get_global(cx).hide_root && !multiple_worktrees
+}
+
+fn worktree_names_for_history_matching(
+    worktree_store: &Entity<WorktreeStore>,
+    cx: &App,
+) -> Option<HashMap<WorktreeId, Arc<RelPath>>> {
+    let hide_root = should_hide_root_in_entry_path(worktree_store, cx);
+    let names = worktree_store
+        .read(cx)
+        .worktrees()
+        .filter_map(|worktree| {
+            let worktree = worktree.read(cx);
+            if hide_root && !worktree.is_single_file() {
+                None
+            } else {
+                Some((worktree.id(), worktree.root_name().into()))
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    if names.is_empty() { None } else { Some(names) }
+}
+
+fn project_path_for_search_match(
+    project: &Entity<Project>,
+    path_match: &PathMatch,
+    cx: &App,
+) -> ProjectPath {
+    let worktree_id = WorktreeId::from_usize(path_match.worktree_id);
+    let path = if project
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)
+        .is_some_and(|worktree| worktree.read(cx).is_single_file())
+    {
+        RelPath::empty_arc()
+    } else {
+        path_match.path.clone()
+    };
+
+    ProjectPath { worktree_id, path }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1262,7 +1296,7 @@ impl FileFinderDelegate {
                     vec![],
                 ),
                 Match::CreateNew(project_path) => (
-                    format!("Create file: {}", project_path.path.display(path_style)),
+                    format!("Create File: {}", project_path.path.display(path_style)),
                     vec![],
                     String::from(""),
                     vec![],
@@ -1423,7 +1457,7 @@ impl FileFinderDelegate {
                             positions: Vec::new(),
                             worktree_id: worktree.read(cx).id().to_usize(),
                             path: relative_path,
-                            path_prefix: RelPath::empty().into(),
+                            path_prefix: RelPath::empty_arc(),
                             is_dir: false, // File finder doesn't support directories
                             distance_to_relative_ancestor: usize::MAX,
                         }));
@@ -1574,15 +1608,11 @@ impl FileFinderDelegate {
                         )
                     }
                 }
-                Match::Search(path_match) => split_or_open(
-                    workspace,
-                    ProjectPath {
-                        worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
-                        path: path_match.0.path.clone(),
-                    },
-                    window,
-                    cx,
-                ),
+                Match::Search(path_match) => {
+                    let project_path =
+                        project_path_for_search_match(workspace.project(), &path_match.0, cx);
+                    split_or_open(workspace, project_path, window, cx)
+                }
                 Match::Channel { .. } => unreachable!("handled above"),
             }
         });
@@ -1817,11 +1847,11 @@ impl PickerDelegate for FileFinderDelegate {
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
-            Match::CreateNew(_) => Icon::new(IconName::Plus)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-                .into_any_element(),
+            Match::CreateNew(_) => Empty.into_any_element(),
         };
+
+        let is_create_new = matches!(path_match, Match::CreateNew(_));
+
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx);
 
         let file_icon = match path_match {
@@ -1840,17 +1870,24 @@ impl PickerDelegate for FileFinderDelegate {
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .start_slot::<Icon>(file_icon)
-                .end_slot::<AnyElement>(end_icon)
                 .inset(true)
                 .toggle_state(selected)
+                .map(|this| {
+                    if is_create_new {
+                        this.start_slot(Icon::new(IconName::Plus).size(IconSize::Small))
+                    } else {
+                        this.start_slot::<Icon>(file_icon)
+                    }
+                })
                 .child(
                     h_flex()
-                        .gap_2()
-                        .py_px()
-                        .child(file_name_label)
-                        .child(full_path_label),
-                ),
+                        .w_full()
+                        .min_w_0()
+                        .gap_1p5()
+                        .child(file_name_label.truncate_middle())
+                        .child(full_path_label.truncate_start()),
+                )
+                .end_slot::<AnyElement>(end_icon),
         )
     }
 

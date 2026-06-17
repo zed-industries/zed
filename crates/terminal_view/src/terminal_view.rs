@@ -14,7 +14,6 @@ use gpui::{
     Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
     WeakEntity, actions, anchored, deferred, div,
 };
-use itertools::Itertools;
 use menu;
 use persistence::TerminalDb;
 use project::{Project, ProjectEntryId, search::SearchQuery};
@@ -927,7 +926,10 @@ impl TerminalView {
     }
 
     pub fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
-        let mut text = paths.iter().map(|path| format!(" {path:?}")).join("");
+        let mut text = paths
+            .iter()
+            .map(|path| format!(" {path:?}"))
+            .collect::<String>();
         text.push(' ');
         window.focus(&self.focus_handle(cx), cx);
         self.terminal.update(cx, |terminal, _| {
@@ -2659,7 +2661,7 @@ mod tests {
         let entry = cx
             .update(|cx| {
                 wt.update(cx, |wt, cx| {
-                    wt.create_entry(RelPath::empty().into(), is_dir, None, cx)
+                    wt.create_entry(RelPath::empty_arc(), is_dir, None, cx)
                 })
             })
             .await
