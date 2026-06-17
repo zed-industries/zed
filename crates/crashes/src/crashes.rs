@@ -60,7 +60,8 @@ where
 }
 
 /// Spawn the crash-handler subprocess, connect the IPC client, and run the
-/// keepalive ping loop. Called on a background executor by [`init`].
+/// keepalive ping loop. This is the future returned by [`init`], so it runs on
+/// whichever executor the caller polls it with.
 async fn connect_and_keepalive<F, C, S, P>(
     crash_init: InitCrashHandler,
     socket_path: P,
