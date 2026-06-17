@@ -1548,6 +1548,11 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
 
+    #[inline(always)]
+    pub fn has_collapsed_content(&self) -> bool {
+        self.fold_snapshot().has_folds() || self.block_snapshot.has_replacement_blocks()
+    }
+
     pub fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot

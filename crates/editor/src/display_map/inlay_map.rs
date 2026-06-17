@@ -82,6 +82,12 @@ struct TransformSummary {
     output: MBTextSummary,
 }
 
+impl TransformSummary {
+    fn has_inlays(&self) -> bool {
+        self.input.len != self.output.len
+    }
+}
+
 impl sum_tree::ContextLessSummary for TransformSummary {
     fn zero() -> Self {
         Default::default()
@@ -593,6 +599,29 @@ impl InlayMap {
 
             snapshot.buffer = buffer_snapshot;
             (snapshot.clone(), Vec::new())
+        } else if self.inlays.is_empty() && !snapshot.transforms.summary().has_inlays() {
+            // Fast path: without inlays, the InlayMap is a passthrough, so rebuild a single
+            // isomorphic transform and forward buffer edits as inlay edits verbatim.
+            let mut new_transforms = SumTree::default();
+            push_isomorphic(&mut new_transforms, buffer_snapshot.text_summary());
+            if new_transforms.is_empty() {
+                new_transforms.push(Transform::Isomorphic(Default::default()), ());
+            }
+
+            let mut inlay_edits = Patch::default();
+            for buffer_edit in &buffer_edits {
+                inlay_edits.push(Edit {
+                    old: InlayOffset(buffer_edit.old.start)..InlayOffset(buffer_edit.old.end),
+                    new: InlayOffset(buffer_edit.new.start)..InlayOffset(buffer_edit.new.end),
+                });
+            }
+
+            snapshot.transforms = new_transforms;
+            snapshot.version += 1;
+            snapshot.buffer = buffer_snapshot;
+            snapshot.check_invariants();
+
+            (snapshot.clone(), inlay_edits.into_inner())
         } else {
             let mut inlay_edits = Patch::default();
             let mut new_transforms = SumTree::default();
