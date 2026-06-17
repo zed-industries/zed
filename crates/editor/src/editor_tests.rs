@@ -38133,9 +38133,7 @@ fn test_gutter_context_menu_git_blame_toggle(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
 
-    // The default gutter context menu has six selectable entries in order:
-    // Set Breakpoint, Set Log Breakpoint, Set Condition Breakpoint,
-    // Set Hit Condition Breakpoint, Column Git Blame, Add Bookmark.
+    // ..., Column Git Blame, ....
     let select_column_git_blame =
         |menu: &mut ContextMenu, window: &mut Window, cx: &mut Context<ContextMenu>| {
             menu.select_first(&menu::SelectFirst, window, cx);
