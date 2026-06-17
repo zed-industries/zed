@@ -206,9 +206,10 @@ impl ThreadSandboxGrants {
     }
 
     /// Record that the user approved running commands unsandboxed for the rest
-    /// of the thread when the sandbox can't be created. Only Linux can fail to
-    /// create a sandbox, so this is Linux-only.
-    #[cfg(target_os = "linux")]
+    /// of the thread when the sandbox can't be created. Only the Bubblewrap
+    /// sandboxes (Linux directly, Windows via WSL) can fail to create a
+    /// sandbox, so this is gated to those platforms.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn record_fallback(&mut self) {
         self.sandbox_fallback = true;
     }
@@ -352,7 +353,7 @@ mod tests {
         grants.effective_with_persistent(request, &SandboxPermissions::default())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn fallback_granted_for_thread_tracks_record_fallback() {
         let mut grants = ThreadSandboxGrants::default();
