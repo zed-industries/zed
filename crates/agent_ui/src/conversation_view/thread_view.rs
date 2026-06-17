@@ -7315,12 +7315,11 @@ impl ThreadView {
                     )
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text("Open the unsandboxed execution setting"))
+                    .tooltip(Tooltip::text("Open the sandbox permission settings"))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(
                             Box::new(zed_actions::OpenSettingsAt {
-                                path: zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH
-                                    .to_string(),
+                                path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
                                 target: None,
                             }),
                             cx,

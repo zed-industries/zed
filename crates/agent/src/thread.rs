@@ -5034,6 +5034,30 @@ impl ToolCallEventStream {
         (stream, receiver)
     }
 
+    /// Like [`Self::test`], but the returned stream shares the provided
+    /// thread-scoped sandbox grants. This mirrors how a real [`Thread`] builds a
+    /// distinct event stream per tool call while sharing one set of grants, so
+    /// tests can exercise sequences of tool calls within the same conversation.
+    // Only the macOS-gated terminal sandbox regression test uses this, so match
+    // its `cfg` to avoid a dead-code error on other platforms.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn test_with_grants(
+        sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    ) -> (Self, ToolCallEventStreamReceiver) {
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
+        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
+
+        let stream = ToolCallEventStream::new(
+            "test_id".into(),
+            ThreadEventStream(events_tx),
+            None,
+            cancellation_rx,
+            sandbox_grants,
+        );
+
+        (stream, ToolCallEventStreamReceiver(events_rx))
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_with_cancellation() -> (Self, ToolCallEventStreamReceiver, watch::Sender<bool>) {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
@@ -5422,7 +5446,6 @@ impl ToolCallEventStream {
                 Ok(())
             }
             Some(acp_thread::SandboxPermission::AllowAlways) => {
-                sandbox_grants.borrow_mut().record(request);
                 Self::persist_sandbox_always_permission(request, fs, cx);
                 Ok(())
             }
@@ -7086,7 +7109,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_authorize_sandbox_allow_always_records_current_grant(cx: &mut TestAppContext) {
+    async fn test_authorize_sandbox_allow_always_does_not_cache_thread_grant(
+        cx: &mut TestAppContext,
+    ) {
         crate::tests::init_test(cx);
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
@@ -7162,18 +7187,15 @@ mod tests {
         assert!(send_result.is_ok());
         authorize.await.unwrap();
 
+        // "Allow always" persists to settings only
         let effective = event_stream.effective_sandbox_request(
             &SandboxRequest::default(),
             &agent_settings::SandboxPermissions::default(),
         );
-        assert_eq!(
-            effective.write_paths,
-            vec![
-                PathBuf::from("/tmp/build"),
-                PathBuf::from("/tmp/cache"),
-                PathBuf::from("/tmp/logs"),
-                PathBuf::from("/tmp/secret"),
-            ]
+        assert!(
+            effective.write_paths.is_empty(),
+            "allow always should not record an in-memory thread grant: {:?}",
+            effective.write_paths
         );
     }
 
