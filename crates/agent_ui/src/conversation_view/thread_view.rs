@@ -8057,7 +8057,7 @@ impl ThreadView {
                 )
                 .child(
                     Label::new(
-                        "Allows reading and writing .git directories, which may include repositories outside this project.",
+                        "Allows reading and writing .git directories, which may include repositories outside this project, and exposes the inherited SSH agent for commit signing.",
                     )
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),

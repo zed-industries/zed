@@ -217,9 +217,14 @@ fn generate_seatbelt_config(
         .iter()
         .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
         .collect();
+    // Use `canonicalize_allowing_missing_leaf` rather than a plain
+    // `canonicalize` so a not-yet-created `.git` (before `git init`) still
+    // resolves through its existing parent and matches the canonicalized
+    // writable worktree above; otherwise the deny rule would miss the real path
+    // on a symlinked root (`/tmp` -> `/private/tmp`).
     let canonical_protected_paths: Vec<PathBuf> = protected_paths
         .iter()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        .map(|path| crate::canonicalize_allowing_missing_leaf(path))
         .collect();
     // Unlike file paths, Unix socket literals are emitted verbatim: it isn't
     // guaranteed whether Seatbelt resolves symlinks before matching a
@@ -260,10 +265,13 @@ fn generate_seatbelt_config(
 ; TTY path isn't known here and may lack the `com.apple.sandbox.pty` extension.
 ; Allow ioctls on slave TTYs so interactive shells and signing prompts can
 ; manipulate terminal state. Seatbelt can't filter by ioctl request number, so
-; this can't exclude input-injection ioctls (e.g. TIOCSTI) specifically; the
-; residual risk is bounded by the kernel only honoring TTY operations for
-; devices owned by the same user, and the regex is anchored so it matches only
-; `/dev/ttysNNN` device nodes.
+; this can't exclude input-injection ioctls (e.g. TIOCSTI) specifically. The
+; residual risk is bounded by the kernel, not by this profile: XNU's TIOCSTI
+; handler (bsd/kern/tty.c) rejects a non-root caller unless the target TTY is
+; the caller's own controlling terminal (EACCES otherwise). Each agent command
+; runs in its own dedicated PTY, so the only TTY it can inject into is that
+; throwaway PTY, not the user's interactive terminal. The regex is also anchored
+; so it matches only `/dev/ttysNNN` device nodes.
 (allow file-ioctl
     (regex #"^/dev/ttys[0-9]+$"))
 "#
@@ -350,6 +358,12 @@ fn generate_seatbelt_config(
 ; Allow local IPC to inherited Unix domain sockets. Seatbelt models this as
 ; network-outbound, but this does not permit IP networking or sending packets
 ; to other machines.
+;
+; `system-socket` only governs the `socket()` syscall (creating an AF_UNIX
+; socket), which is harmless on its own. The capability that matters,
+; `connect()`, stays gated by the per-path `network-outbound (remote
+; unix-socket ...)` rules below, so `(deny default)` still blocks connecting to
+; any socket not explicitly allow-listed.
 (allow system-socket
     (socket-domain AF_UNIX))
 "#,

@@ -356,9 +356,10 @@ pub fn build_bwrap_args(
     // overlay; the security goal — keeping the real path unreadable and
     // unwritable — is the same.
     for protected_path in protected_paths {
-        let canonical = protected_path
-            .canonicalize()
-            .unwrap_or_else(|_| protected_path.to_path_buf());
+        // Resolve through an existing parent when the leaf is missing so a
+        // not-yet-created `.git` (before `git init`) overlays the same real path
+        // the writable bind above uses, even on a symlinked root.
+        let canonical = crate::canonicalize_allowing_missing_leaf(protected_path);
         let destination = canonical.to_string_lossy().into_owned();
         match std::fs::symlink_metadata(&canonical) {
             Ok(metadata) if metadata.is_dir() => {
