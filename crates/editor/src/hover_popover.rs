@@ -739,6 +739,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .mt(rems(1.))
             .mb_0(),
         table_columns_min_size: true,
+        soft_break_as_hard_break: true,
         ..Default::default()
     }
 }
