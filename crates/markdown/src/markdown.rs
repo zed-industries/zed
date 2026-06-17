@@ -16,6 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
+use smallvec::SmallVec;
 use theme_settings::ThemeSettings;
 use util::maybe;
 
@@ -3656,12 +3657,12 @@ impl RenderedText {
         all_bounds
     }
 
-    fn wrapped_line_segments(line: &RenderedLine) -> Vec<WrappedLineSegment> {
+    fn wrapped_line_segments(line: &RenderedLine) -> SmallVec<[WrappedLineSegment; 1]> {
         let layout = &line.layout;
         let line_height = layout.line_height();
         let mut row_top = layout.bounds().top();
         let mut wrapped_line_start = 0;
-        let mut segments = Vec::new();
+        let mut segments = SmallVec::new();
 
         for wrapped_line in layout.line_layouts() {
             let wrapped_line_end = wrapped_line_start + wrapped_line.len();
