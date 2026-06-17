@@ -1102,9 +1102,10 @@ pub struct Editor {
     /// width available to buffer headers.
     last_right_margin: Pixels,
     /// Whether the horizontal scrollbar was laid out as visible during the last
-    /// prepaint.
-    /// Used by `SplitBufferHeadersElement` to clip buffer headers so they don't
-    /// paint over the scrollbar.
+    /// prepaint. Unlike `last_horizontal_scrollbar_layout` (set whenever there
+    /// is horizontal overflow), this accounts for auto-hide. Used by
+    /// `SplitBufferHeadersElement` to gate repainting the hoisted horizontal
+    /// scrollbar over the buffer headers.
     last_horizontal_scrollbar_visible: bool,
     /// The horizontal scrollbar's layout from the last prepaint, if one was
     /// laid out.
@@ -2702,7 +2703,6 @@ impl Editor {
         self.last_horizontal_scrollbar_visible
     }
 
-    #[allow(dead_code)]
     pub(crate) fn last_horizontal_scrollbar_layout(&self) -> Option<&ScrollbarLayout> {
         self.last_horizontal_scrollbar_layout.as_ref()
     }

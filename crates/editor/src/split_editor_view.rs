@@ -356,26 +356,16 @@ impl Element for SplitBufferHeadersElement {
             });
         });
 
-        let visible = self.lhs_editor.read(cx).last_horizontal_scrollbar_visible();
-        let any_scrollbar_dragged = self.lhs_editor.read(cx).scroll_manager.scrollbars_visible();
-        let layout = self.lhs_editor.read(cx).last_horizontal_scrollbar_layout();
+        for editor in [&self.lhs_editor, &self.rhs_editor] {
+            let visible = editor.read(cx).last_horizontal_scrollbar_visible();
+            let layout = editor.read(cx).last_horizontal_scrollbar_layout();
+            let any_scrollbar_dragged = editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
-        if let Some(layout) = layout
-            && visible
-        {
-            layout.paint_track(Axis::Horizontal, window, cx);
-            layout.paint_thumb(Axis::Horizontal, any_scrollbar_dragged, window, cx);
-        }
-
-        let visible = self.rhs_editor.read(cx).last_horizontal_scrollbar_visible();
-        let any_scrollbar_dragged = self.rhs_editor.read(cx).scroll_manager.scrollbars_visible();
-        let layout = self.rhs_editor.read(cx).last_horizontal_scrollbar_layout();
-
-        if let Some(layout) = layout
-            && visible
-        {
-            layout.paint_track(Axis::Horizontal, window, cx);
-            layout.paint_thumb(Axis::Horizontal, any_scrollbar_dragged, window, cx);
+            if let Some(layout) = layout
+                && visible
+            {
+                layout.paint_track_and_thumb(Axis::Horizontal, any_scrollbar_dragged, window, cx);
+            }
         }
     }
 }

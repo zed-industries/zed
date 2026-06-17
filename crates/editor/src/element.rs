@@ -9959,6 +9959,19 @@ impl ScrollbarLayout {
             }
         }
     }
+
+    pub(crate) fn paint_track_and_thumb(
+        &self,
+        axis: ScrollbarAxis,
+        any_scrollbar_dragged: bool,
+        window: &mut Window,
+        cx: &App,
+    ) {
+        window.paint_layer(self.hitbox.bounds, |window| {
+            self.paint_track(axis, window, cx);
+            self.paint_thumb(axis, any_scrollbar_dragged, window, cx);
+        })
+    }
 }
 
 struct MinimapLayout {
