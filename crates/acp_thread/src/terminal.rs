@@ -155,21 +155,37 @@ impl SandboxWrap {
                 .chain(self.extra_write_paths.iter())
                 .map(|path| path.as_path())
                 .collect();
+            let protected: Vec<&std::path::Path> = self
+                .protected_paths
+                .iter()
+                .map(|path| path.as_path())
+                .collect();
+            let allowed_unix_sockets: Vec<&std::path::Path> = self
+                .allowed_unix_socket_paths
+                .iter()
+                .map(|path| path.as_path())
+                .collect();
             let allow_network = !matches!(self.network, SandboxNetworkAccess::None);
             let permissions = sandbox::SandboxPermissions {
                 allow_network,
                 allow_fs_write: self.allow_fs_write,
             };
-            sandbox::linux_bubblewrap::check_can_create_sandbox(&writable, permissions, cwd)
-                .map_err(|status| match status {
-                    LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
-                    LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
-                    LauncherStatus::SandboxProbeFailed => LinuxWslSandboxError::SandboxProbeFailed,
-                    // `Success` never appears in the `Err` arm; map defensively.
-                    LauncherStatus::Success => {
-                        LinuxWslSandboxError::Other(status.describe().to_string())
-                    }
-                })
+            sandbox::linux_bubblewrap::check_can_create_sandbox(
+                &writable,
+                &protected,
+                &allowed_unix_sockets,
+                permissions,
+                cwd,
+            )
+            .map_err(|status| match status {
+                LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
+                LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
+                LauncherStatus::SandboxProbeFailed => LinuxWslSandboxError::SandboxProbeFailed,
+                // `Success` never appears in the `Err` arm; map defensively.
+                LauncherStatus::Success => {
+                    LinuxWslSandboxError::Other(status.describe().to_string())
+                }
+            })
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -306,6 +322,16 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
+        let protected: Vec<&std::path::Path> = sandbox_wrap
+            .protected_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
+        let allowed_unix_sockets: Vec<&std::path::Path> = sandbox_wrap
+            .allowed_unix_socket_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
         let allow_network = match network_policy {
             NetworkPolicy::Denied => false,
             NetworkPolicy::Unrestricted => true,
@@ -344,6 +370,8 @@ pub(crate) fn apply_sandbox_wrap(
             Some(channel.name()),
             permissions,
             &writable,
+            &protected,
+            &allowed_unix_sockets,
             cwd,
             &program,
             &args,
