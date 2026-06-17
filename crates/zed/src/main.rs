@@ -85,6 +85,15 @@ use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+fn build_application() -> Application {
+    let platform = gpui_platform::current_platform(false);
+    if std::env::var("ZED_EXPERIMENTAL_A11Y").as_deref() == Ok("1") {
+        Application::with_platform(platform)
+    } else {
+        Application::new_inaccessible(platform)
+    }
+}
+
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     let message = "Zed failed to launch";
     let error_details = errors
@@ -113,7 +122,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::with_platform(gpui_platform::current_platform(false))
+    build_application()
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
@@ -193,6 +202,13 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
 
+    // If this process was re-executed as a sandbox launcher (Linux
+    // bwrap/seccomp), install the seccomp policy and exec the wrapped command
+    // without returning. Must run before argument parsing: the wrapped
+    // command's args are appended verbatim and would otherwise be
+    // misinterpreted as Zed's own arguments.
+    sandbox::run_sandbox_launcher_if_invoked();
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -233,17 +249,6 @@ fn main() {
             process::exit(1);
         }
         return;
-    }
-
-    // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
-    if let Some(socket) = &args.nc {
-        match nc::main(socket) {
-            Ok(()) => return,
-            Err(err) => {
-                eprintln!("Error: {}", err);
-                process::exit(1);
-            }
-        }
     }
 
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
@@ -338,8 +343,7 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let app =
-        Application::with_platform(gpui_platform::current_platform(false)).with_assets(Assets);
+    let app = build_application().with_assets(Assets);
 
     let app_db = db::AppDatabase::new();
     let system_id = app.background_executor().spawn(system_id());
@@ -770,7 +774,6 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
-        git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         csv_preview::init(cx);
@@ -1149,6 +1152,21 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            OpenRequestKind::InstallSkill { content } => {
+                cx.spawn(async move |cx| {
+                    let multi_workspace =
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+
+                    multi_workspace.update(cx, |_multi_workspace, _window, cx| {
+                        settings_ui::open_skill_creator(
+                            settings_ui::pages::SkillCreatorOpenMode::Install { content },
+                            Some(multi_workspace),
+                            cx,
+                        );
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
             OpenRequestKind::DockMenuAction { index } => {
                 cx.perform_dock_menu_action(index);
             }
@@ -1222,7 +1240,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     workspace.update(cx, |_, window, cx| match setting_path {
                         None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
                         Some(setting_path) => window.dispatch_action(
-                            Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
+                            Box::new(zed_actions::OpenSettingsAt {
+                                path: setting_path,
+                                target: None,
+                            }),
                             cx,
                         ),
                     })
@@ -1800,11 +1821,6 @@ struct Args {
     /// clipboard`
     #[arg(long)]
     system_specs: bool,
-
-    /// Used for the MCP Server, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
-    #[arg(long, hide = true)]
-    nc: Option<String>,
 
     /// Used for recording minidumps on crashes by having Zed run a separate
     /// process communicating over a socket.

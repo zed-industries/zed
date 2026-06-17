@@ -1,0 +1,36 @@
+[package]
+name = "sandbox"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/sandbox.rs"
+
+[features]
+# Builds `bwrap_test_helper`, the behavior helper driven by the NixOS sandbox
+# VM tests in `nix/tests/sandboxing`. Off by default so normal builds don't
+# produce the test binary.
+nixos-test = []
+
+# Behavior test helper for the Linux Bubblewrap sandbox. Only built when the
+# `nixos-test` feature is enabled (and only meaningful on Linux).
+[[bin]]
+name = "bwrap_test_helper"
+path = "src/bwrap_test_helper.rs"
+required-features = ["nixos-test"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+anyhow.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+anyhow.workspace = true
+tempfile.workspace = true

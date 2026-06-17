@@ -23,7 +23,7 @@ use ui::{App, BorrowAppContext, IntoElement, px};
 use util::test::{generate_marked_text, marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }

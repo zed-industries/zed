@@ -794,24 +794,30 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let privileged = dev_container.privileged.unwrap_or(false)
             || self.features.iter().any(|f| f.privileged());
 
-        let mut entrypoint_script_lines = vec![
-            "echo Container started".to_string(),
-            "trap \"exit 0\" 15".to_string(),
-        ];
+        let entrypoint_script = if dev_container.override_command == Some(false) {
+            None
+        } else {
+            let mut entrypoint_script_lines = vec![
+                "echo Container started".to_string(),
+                "trap \"exit 0\" 15".to_string(),
+            ];
 
-        for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
-            entrypoint_script_lines.push(entrypoint.clone());
-        }
-        entrypoint_script_lines.append(&mut vec![
-            "exec \"$@\"".to_string(),
-            "while sleep 1 & wait $!; do :; done".to_string(),
-        ]);
+            for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
+                entrypoint_script_lines.push(entrypoint.clone());
+            }
+            entrypoint_script_lines.append(&mut vec![
+                "exec \"$@\"".to_string(),
+                "while sleep 1 & wait $!; do :; done".to_string(),
+            ]);
+
+            Some(entrypoint_script_lines.join("\n").trim().to_string())
+        };
 
         Ok(DockerBuildResources {
             image: base_image,
             additional_mounts: mounts,
             privileged,
-            entrypoint_script: entrypoint_script_lines.join("\n").trim().to_string(),
+            entrypoint_script,
         })
     }
 
@@ -1052,7 +1058,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
             let project_name = self.project_name().await?;
             self.docker_client
-                .docker_compose_build(&docker_compose_resources.files, &project_name)
+                .docker_compose_build(
+                    &docker_compose_resources.files,
+                    &project_name,
+                    dev_container.run_services.as_ref(),
+                )
                 .await?;
             (
                 self.docker_client
@@ -1145,7 +1155,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
                 let project_name = self.project_name().await?;
                 self.docker_client
-                    .docker_compose_build(&docker_compose_resources.files, &project_name)
+                    .docker_compose_build(
+                        &docker_compose_resources.files,
+                        &project_name,
+                        dev_container.run_services.as_ref(),
+                    )
                     .await?;
 
                 (
@@ -1255,13 +1269,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             })
             .collect();
 
-        let mut main_service = DockerComposeService {
-            entrypoint: Some(vec![
+        let entrypoint = resources.entrypoint_script.map(|script| {
+            vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                resources.entrypoint_script,
+                script,
                 "-".to_string(),
-            ]),
+            ]
+        });
+
+        let mut main_service = DockerComposeService {
+            entrypoint,
             cap_add: Some(vec!["SYS_PTRACE".to_string()]),
             security_opt: Some(vec!["seccomp=unconfined".to_string()]),
             labels: Some(runtime_labels),
@@ -1523,6 +1541,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let updated_image_tag = features_build_info.image_tag.clone();
 
         let mut command = Command::new(self.docker_client.docker_cli());
+        // Without a usable BuildKit, force the classic builder: the build's
+        // `FROM $BASE_IMAGE` references the locally-built features image, which
+        // only resolves from the daemon's image store under the classic builder.
+        if !self.docker_client.supports_compose_buildkit()
+            && self.docker_client.docker_cli() != "podman"
+        {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
         command.args(["build"]);
         command.args(["-f", &dockerfile_path.display().to_string()]);
         command.args(["-t", &updated_image_tag]);
@@ -1626,6 +1652,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             })?;
 
         let mut command = Command::new(self.docker_client.docker_cli());
+        // This path runs only when BuildKit is unavailable, so force the classic
+        // builder: the feature content image is consumed by a later multi-stage
+        // `FROM`, which requires it to live in the daemon's image store.
+        if self.docker_client.docker_cli() != "podman" {
+            command.env("DOCKER_BUILDKIT", "0");
+        }
         command.args([
             "build",
             "-t",
@@ -1775,6 +1807,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
+        if let Some(run_services) = self.dev_container().run_services.as_ref() {
+            command.args(run_services);
+        }
 
         let output = self
             .command_runner
@@ -1977,13 +2012,16 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.arg(app_port);
         }
 
-        command.arg("--entrypoint");
-        command.arg("/bin/sh");
-        command.arg(&build_resources.image.id);
-        command.arg("-c");
-
-        command.arg(build_resources.entrypoint_script);
-        command.arg("-");
+        if let Some(entrypoint_script) = build_resources.entrypoint_script {
+            command.arg("--entrypoint");
+            command.arg("/bin/sh");
+            command.arg(&build_resources.image.id);
+            command.arg("-c");
+            command.arg(entrypoint_script);
+            command.arg("-");
+        } else {
+            command.arg(&build_resources.image.id);
+        }
 
         Ok(command)
     }
@@ -2277,10 +2315,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let mut parsed_line = line.to_string();
             // Replace from devcontainer args first, since they take precedence
             for (key, value) in &devcontainer_args {
-                parsed_line = parsed_line.replace(&format!("${{{key}}}"), value)
+                parsed_line = expand_dockerfile_var(parsed_line, key, value);
             }
             for (key, value) in &inline_args {
-                parsed_line = parsed_line.replace(&format!("${{{key}}}"), value);
+                parsed_line = expand_dockerfile_var(parsed_line, key, value);
             }
             if let Some(arg_directives) = parsed_line.strip_prefix("ARG ") {
                 let trimmed = arg_directives.trim();
@@ -2351,9 +2389,9 @@ pub(crate) async fn read_devcontainer_configuration(
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman").await
+        Docker::new("podman", context.use_buildkit).await
     } else {
-        Docker::new("docker").await
+        Docker::new("docker", context.use_buildkit).await
     };
     let mut dev_container = DevContainerManifest::new(
         context,
@@ -2375,9 +2413,9 @@ pub(crate) async fn spawn_dev_container(
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman").await
+        Docker::new("podman", context.use_buildkit).await
     } else {
-        Docker::new("docker").await
+        Docker::new("docker", context.use_buildkit).await
     };
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
@@ -2409,13 +2447,37 @@ struct DockerBuildResources {
     image: DockerInspect,
     additional_mounts: Vec<MountDefinition>,
     privileged: bool,
-    entrypoint_script: String,
+    entrypoint_script: Option<String>,
 }
 
 #[derive(Debug)]
 enum DevContainerBuildResources {
     DockerCompose(DockerComposeResources),
     Docker(DockerBuildResources),
+}
+
+/// Replaces occurrences of `${KEY}` and `$KEY` in `line` with `value`.
+/// Bare `$KEY` is only replaced when the character immediately after the key
+/// is not a word character (`[A-Za-z0-9_]`), so `$RUBY_VERSION2` is not
+/// partially consumed when expanding `$RUBY_VERSION`.
+fn expand_dockerfile_var(mut line: String, key: &str, value: &str) -> String {
+    line = line.replace(&format!("${{{key}}}"), value);
+    let pattern = format!("${key}");
+    let mut result = String::with_capacity(line.len());
+    let mut remaining = line.as_str();
+    while let Some(pos) = remaining.find(pattern.as_str()) {
+        result.push_str(&remaining[..pos]);
+        let after = &remaining[pos + pattern.len()..];
+        if after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+            result.push('$');
+            remaining = &remaining[pos + 1..];
+        } else {
+            result.push_str(value);
+            remaining = after;
+        }
+    }
+    result.push_str(remaining);
+    result
 }
 
 fn find_primary_service(
@@ -3014,6 +3076,7 @@ mod test {
         let context = DevContainerContext {
             project_directory: SanitizedPath::cast_arc(project_path),
             use_podman: false,
+            use_buildkit: None,
             fs: fs.clone(),
             http_client: http_client.clone(),
             environment: project_environment.downgrade(),
@@ -3166,7 +3229,7 @@ mod test {
             },
             additional_mounts: vec![],
             privileged: false,
-            entrypoint_script: "echo Container started\n    trap \"exit 0\" 15\n    exec \"$@\"\n    while sleep 1 & wait $!; do :; done".to_string(),
+            entrypoint_script: Some("echo Container started\n    trap \"exit 0\" 15\n    exec \"$@\"\n    while sleep 1 & wait $!; do :; done".to_string()),
         };
         let docker_run_command = devcontainer_manifest.create_docker_run_command(build_resources);
 
@@ -3210,6 +3273,56 @@ mod test {
                 OsStr::new("-"),
             ]
         )
+    }
+
+    #[gpui::test]
+    async fn should_not_override_entrypoint_when_override_command_is_false(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "name": "test",
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                "overrideCommand": false
+            }"#,
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let base_image = DockerInspect {
+            id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels { metadata: None },
+                image_user: None,
+                env: Vec::new(),
+            },
+            mounts: None,
+            state: None,
+        };
+
+        let resources = devcontainer_manifest
+            .build_merged_resources(base_image)
+            .unwrap();
+        assert!(
+            resources.entrypoint_script.is_none(),
+            "overrideCommand: false must not produce an entrypoint script"
+        );
+
+        let docker_run_command = devcontainer_manifest
+            .create_docker_run_command(resources)
+            .unwrap();
+        let args: Vec<&OsStr> = docker_run_command.get_args().collect();
+        assert!(
+            !args.contains(&OsStr::new("--entrypoint")),
+            "overrideCommand: false must not pass --entrypoint to docker run"
+        );
+        assert!(
+            args.contains(&OsStr::new("mcr.microsoft.com/devcontainers/base:ubuntu")),
+            "image id must still be present in docker run command"
+        );
     }
 
     #[gpui::test]
@@ -4720,6 +4833,111 @@ ENV DOCKER_BUILDKIT=1
         );
     }
 
+    #[gpui::test]
+    async fn test_spawns_only_requested_compose_services(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+        {
+          "name": "Devcontainer and PostgreSQL",
+          "dockerComposeFile": "docker-compose.yml",
+          "service": "devcontainer",
+          "runServices": ["devcontainer", "db"],
+          "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+          "updateRemoteUserUID": false
+        }
+        "#;
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                r#"
+version: '3.8'
+
+x-base: &base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+
+volumes:
+  postgres-data:
+
+services:
+  app:
+    <<: *base
+    ports:
+      - "3000:3000"
+
+  devcontainer:
+    <<: *base
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../..:/workspaces:cached
+
+  db:
+    image: postgres:14.1
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    env_file:
+      - .env
+        "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                r#"
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+&& apt-get -y install clang lld \
+&& apt-get autoremove -y && apt-get clean -y
+        "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        let compose_up = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.first().map(String::as_str) == Some("compose")
+                    && c.args.iter().any(|a| a == "up")
+            })
+            .expect("docker compose up command recorded");
+        assert!(
+            compose_up.args.ends_with(&[
+                "up".to_string(),
+                "-d".to_string(),
+                "devcontainer".to_string(),
+                "db".to_string(),
+            ]),
+            "compose up should target only the requested service, got: {:?}",
+            compose_up.args
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_podman(cx: &mut TestAppContext) {
@@ -5772,6 +5990,55 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
         assert_eq!(base_image, "test_image:latest");
     }
 
+    #[gpui::test]
+    async fn test_expands_bare_dollar_args_in_dockerfile(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "ruby-devcontainer",
+              "build": {
+                "dockerfile": "Dockerfile",
+              },
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                // Mirrors real-world Dockerfiles that use bare $VAR instead of ${VAR}.
+                // $RUBY_VERSION2 must not be partially replaced when expanding $RUBY_VERSION.
+                r#"
+ARG RUBY_VERSION=3.4.4
+ARG RUBY_VERSION2=3.3.0
+FROM ghcr.io/rails/devcontainer/images/ruby:$RUBY_VERSION
+RUN echo $RUBY_VERSION2
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expanded = devcontainer_manifest
+            .expanded_dockerfile_content()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            expanded,
+            "ARG RUBY_VERSION=3.4.4\nARG RUBY_VERSION2=3.3.0\nFROM ghcr.io/rails/devcontainer/images/ruby:3.4.4\nRUN echo 3.3.0"
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn check_for_existing_container_errors_when_multiple_match(cx: &mut TestAppContext) {
@@ -6005,6 +6272,19 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                     name: None,
                     services: HashMap::from([
                         (
+                            "devcontainer".to_string(),
+                            DockerComposeService {
+                                image: Some("test_image:latest".to_string()),
+                                volumes: vec![MountDefinition {
+                                    source: Some("../..".to_string()),
+                                    target: "/workspaces".to_string(),
+                                    mount_type: Some("bind".to_string()),
+                                }],
+                                command: vec!["sleep".to_string(), "infinity".to_string()],
+                                ..Default::default()
+                            },
+                        ),
+                        (
                             "app".to_string(),
                             DockerComposeService {
                                 build: Some(DockerComposeServiceBuild {
@@ -6130,6 +6410,7 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             &self,
             _config_files: &Vec<PathBuf>,
             _project_name: &str,
+            _services: Option<&Vec<String>>,
         ) -> Result<(), DevContainerError> {
             Ok(())
         }
