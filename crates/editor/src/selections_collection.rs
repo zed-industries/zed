@@ -123,11 +123,19 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
-        let disjoint_anchors = &self.disjoint;
+        self.all_iter(snapshot).collect()
+    }
+
+    fn all_iter<'a, D>(
+        &'a self,
+        snapshot: &'a DisplaySnapshot,
+    ) -> impl 'a + Iterator<Item = Selection<D>>
+    where
+        D: 'a + MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
+    {
         let mut disjoint =
-            resolve_selections_wrapping_blocks::<D, _>(disjoint_anchors.iter(), &snapshot)
-                .peekable();
-        let mut pending_opt = self.pending::<D>(&snapshot);
+            resolve_selections_wrapping_blocks::<D, _>(self.disjoint.iter(), snapshot).peekable();
+        let mut pending_opt = self.pending::<D>(snapshot);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -157,7 +165,6 @@ impl SelectionsCollection {
                 disjoint.next()
             }
         })
-        .collect()
     }
 
     /// Returns all of the selections, adjusted to take into account the selection line_mode
@@ -326,7 +333,7 @@ impl SelectionsCollection {
                 .next()
                 .unwrap();
         }
-        self.all(snapshot).first().unwrap().clone()
+        self.all_iter(snapshot).next().unwrap()
     }
 
     pub fn last<D>(&self, snapshot: &DisplaySnapshot) -> Selection<D>
@@ -340,7 +347,7 @@ impl SelectionsCollection {
                 .next()
                 .unwrap();
         }
-        self.all(snapshot).last().unwrap().clone()
+        self.all_iter(snapshot).last().unwrap()
     }
 
     /// Returns a list of (potentially backwards!) ranges representing the selections.
