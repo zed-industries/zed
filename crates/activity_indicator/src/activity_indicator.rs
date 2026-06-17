@@ -1,6 +1,5 @@
 use auto_update::DismissMessage;
 use editor::Editor;
-use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
     App, Context, Entity, EventEmitter, InteractiveElement as _, ParentElement as _, Render,
@@ -606,36 +605,6 @@ impl ActivityIndicator {
             });
         }
 
-        // Show any extension installation info.
-        if let Some(extension_store) =
-            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-            && let Some((extension_id, operation)) =
-                extension_store.outstanding_operations().iter().next()
-        {
-            let (message, icon) = match operation {
-                ExtensionOperation::Install => (
-                    format!("Installing {extension_id} extension…"),
-                    ActivityIcon::LoadingSpinner,
-                ),
-                ExtensionOperation::Upgrade => (
-                    format!("Updating {extension_id} extension…"),
-                    ActivityIcon::Icon(IconName::Download),
-                ),
-                ExtensionOperation::Remove => (
-                    format!("Removing {extension_id} extension…"),
-                    ActivityIcon::LoadingSpinner,
-                ),
-            };
-
-            return Some(Content {
-                icon,
-                message,
-                on_click: Some(Arc::new(|this, window, cx| {
-                    this.dismiss_message(&Default::default(), window, cx)
-                })),
-                tooltip_message: None,
-            });
-        }
 
         None
     }

@@ -7,12 +7,10 @@ mod remote_editing_tests;
 pub mod windows;
 
 pub use headless_project::{HeadlessAppState, HeadlessProject};
-
 use anyhow::{Context as _, Result, anyhow};
 use clap::Subcommand;
 use client::ProxySettings;
 use collections::HashMap;
-use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{
     AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt,
@@ -645,9 +643,6 @@ pub fn execute_run(
         git_hosting_providers::init(cx);
         dap_adapters::init(cx);
 
-        extension::init(cx);
-        let extension_host_proxy = ExtensionHostProxy::global(cx);
-
         json_schema_store::init(cx);
 
         let project = cx.new(|cx| {
@@ -686,7 +681,6 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
-                    extension_host_proxy,
                     startup_time,
                 },
                 true,

@@ -3649,11 +3649,6 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
                     command,
                     remote,
                     ..
-                }
-                | project::context_server_store::ContextServerConfiguration::Extension {
-                    command,
-                    remote,
-                    ..
                 } if is_local || *remote => Some(acp::McpServer::Stdio(
                     acp::McpServerStdio::new(id.0.to_string(), &command.path)
                         .args(command.args.clone())

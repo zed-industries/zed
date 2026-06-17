@@ -3,8 +3,8 @@ pub use telemetry_events::FlexibleEvent as Event;
 
 #[macro_export]
 macro_rules! event {
-    ($name:expr) => {};
-    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {};
+    ($name:expr) => { () };
+    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => { () };
 }
 
 #[macro_export]

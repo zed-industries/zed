@@ -25,9 +25,7 @@ client.workspace = true
 cloud_llm_client = { workspace = true, features = ["predict-edits"] }
 collections.workspace = true
 db.workspace = true
-debug_adapter_extension.workspace = true
 dirs.workspace = true
-extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -35,7 +33,6 @@ gpui_platform.workspace = true
 gpui_tokio.workspace = true
 indoc.workspace = true
 language.workspace = true
-language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }

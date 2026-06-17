@@ -1,12 +1,10 @@
 use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore};
 use db::AppDatabase;
-use extension::ExtensionHostProxy;
 use fs::RealFs;
 use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext, Entity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
-use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::project_settings::ProjectSettings;
 use release_channel::{AppCommitSha, AppVersion};
@@ -77,7 +75,7 @@ pub fn init(cx: &mut App) -> EpAppState {
 
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
 
-    extension::init(cx);
+
 
     let (mut tx, rx) = watch::channel(None);
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -105,10 +103,6 @@ pub fn init(cx: &mut App) -> EpAppState {
     .detach();
     let node_runtime = NodeRuntime::new(client.http_client(), None, rx);
 
-    let extension_host_proxy = ExtensionHostProxy::global(cx);
-
-    debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-    language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(cx);
     RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);

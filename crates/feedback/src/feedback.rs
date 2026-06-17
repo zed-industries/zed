@@ -1,5 +1,4 @@
 use client::telemetry;
-use extension_host::ExtensionStore;
 use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
@@ -115,31 +114,6 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn format_installed_extensions_for_clipboard(cx: &mut App) -> String {
-    let store = ExtensionStore::global(cx);
-    let store = store.read(cx);
-    let mut lines = Vec::with_capacity(store.extension_index.extensions.len());
-
-    for (extension_id, entry) in store.extension_index.extensions.iter() {
-        let line = format!(
-            "- {} ({}) v{}{}",
-            entry.manifest.name,
-            extension_id,
-            entry.manifest.version,
-            if entry.dev { " (dev)" } else { "" }
-        );
-        lines.push(line);
-    }
-
-    lines.sort();
-
-    if lines.is_empty() {
-        return "No extensions installed.".to_string();
-    }
-
-    format!(
-        "Installed extensions ({}):\n{}",
-        lines.len(),
-        lines.join("\n")
-    )
+fn format_installed_extensions_for_clipboard(_cx: &mut App) -> String {
+    "No extensions installed (extension support is disabled).".to_string()
 }

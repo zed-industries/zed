@@ -56,7 +56,6 @@ acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
 agent_ui = { workspace = true, features = ["test-support"] }
 editor.workspace = true
-extension.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true

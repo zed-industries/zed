@@ -53,9 +53,6 @@ pub enum OpenRequestKind {
         ),
     ),
     FocusApp,
-    Extension {
-        extension_id: String,
-    },
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
@@ -174,10 +171,6 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
-            } else if let Some(extension_id) = url.strip_prefix("zed://extension/") {
-                this.kind = Some(OpenRequestKind::Extension {
-                    extension_id: extension_id.to_string(),
-                });
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {

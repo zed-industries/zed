@@ -80,31 +80,6 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ExtensionCategoryFilter {
-    Themes,
-    IconThemes,
-    Languages,
-    Grammars,
-    LanguageServers,
-    ContextServers,
-    Snippets,
-    DebugAdapters,
-}
-
-/// Opens the extensions management interface.
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-#[action(namespace = zed)]
-#[serde(deny_unknown_fields)]
-pub struct Extensions {
-    /// Filters the extensions page down to extensions that are in the specified category.
-    #[serde(default)]
-    pub category_filter: Option<ExtensionCategoryFilter>,
-    /// Focuses just the extension with the specified ID.
-    #[serde(default)]
-    pub id: Option<String>,
-}
 
 /// Opens the ACP registry.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]

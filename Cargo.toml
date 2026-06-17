@@ -45,7 +45,6 @@ members = [
     "crates/dap",
     "crates/dap_adapters",
     "crates/db",
-    "crates/debug_adapter_extension",
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
@@ -66,11 +65,6 @@ members = [
     "crates/eval_cli",
     "crates/eval_utils",
     "crates/explorer_command_injector",
-    "crates/extension",
-    "crates/extension_api",
-    "crates/extension_cli",
-    "crates/extension_host",
-    "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feature_flags_macros",
     "crates/feedback",
@@ -107,7 +101,6 @@ members = [
     "crates/keymap_editor",
     "crates/language",
     "crates/language_core",
-    "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
     "crates/language_models",
@@ -194,7 +187,6 @@ members = [
     "crates/terminal_view",
     "crates/text",
     "crates/theme",
-    "crates/theme_extension",
     "crates/theme_settings",
     "crates/theme_importer",
     "crates/theme_selector",
@@ -228,14 +220,6 @@ members = [
     "crates/ztracing",
     "crates/ztracing_macro",
 
-    #
-    # Extensions
-    #
-
-    "extensions/glsl",
-    "extensions/html",
-    "extensions/proto",
-    "extensions/test-extension",
 
     #
     # Tooling
@@ -302,7 +286,6 @@ csv_preview = { path = "crates/csv_preview"}
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
-debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
 debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
@@ -315,9 +298,6 @@ encoding_selector = { path = "crates/encoding_selector" }
 env_var = { path = "crates/env_var" }
 etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
-extension = { path = "crates/extension" }
-extension_host = { path = "crates/extension_host" }
-extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
 feedback = { path = "crates/feedback" }
@@ -336,7 +316,7 @@ gpui = { path = "crates/gpui", default-features = false }
 gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
-gpui_platform = { path = "crates/gpui_platform", default-features = false }
+gpui_platform = { path = "crates/gpui_platform", default-features = false, features = ["runtime_shaders"] }
 gpui_tokio = { path = "crates/gpui_tokio" }
 gpui_util = { path = "crates/gpui_util" }
 html_to_markdown = { path = "crates/html_to_markdown" }
@@ -356,7 +336,6 @@ json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
-language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
 language_models = { path = "crates/language_models" }
@@ -442,7 +421,6 @@ terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
-theme_extension = { path = "crates/theme_extension" }
 theme_settings = { path = "crates/theme_settings" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }

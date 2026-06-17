@@ -45,12 +45,6 @@ enum ConfigurationTarget {
         headers: HashMap<String, String>,
         oauth: Option<OAuthClientSettings>,
     },
-
-    Extension {
-        id: ContextServerId,
-        repository_url: Option<SharedString>,
-        installation: Option<extension::ContextServerConfiguration>,
-    },
 }
 
 enum ConfigurationSource {
@@ -62,18 +56,11 @@ enum ConfigurationSource {
         editor: Entity<Editor>,
         is_http: bool,
     },
-    Extension {
-        id: ContextServerId,
-        editor: Option<Entity<Editor>>,
-        repository_url: Option<SharedString>,
-        installation_instructions: Option<Entity<markdown::Markdown>>,
-        settings_validator: Option<jsonschema::Validator>,
-    },
 }
 
 impl ConfigurationSource {
     fn has_configuration_options(&self) -> bool {
-        !matches!(self, ConfigurationSource::Extension { editor: None, .. })
+        true
     }
 
     fn is_new(&self) -> bool {
@@ -133,37 +120,6 @@ impl ConfigurationSource {
                 ),
                 is_http: true,
             },
-
-            ConfigurationTarget::Extension {
-                id,
-                repository_url,
-                installation,
-            } => {
-                let settings_validator = installation.as_ref().and_then(|installation| {
-                    jsonschema::validator_for(&installation.settings_schema)
-                        .context("Failed to load JSON schema for context server settings")
-                        .log_err()
-                });
-                let installation_instructions = installation.as_ref().map(|installation| {
-                    cx.new(|cx| {
-                        Markdown::new(
-                            installation.installation_instructions.clone().into(),
-                            Some(language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    })
-                });
-                ConfigurationSource::Extension {
-                    id,
-                    repository_url,
-                    installation_instructions,
-                    settings_validator,
-                    editor: installation.map(|installation| {
-                        create_editor(installation.default_settings, jsonc_language, window, cx)
-                    }),
-                }
-            }
         }
     }
 
@@ -196,32 +152,6 @@ impl ConfigurationSource {
                         )
                     })
                 }
-            }
-            ConfigurationSource::Extension {
-                id,
-                editor,
-                settings_validator,
-                ..
-            } => {
-                let text = editor
-                    .as_ref()
-                    .context("No output available")?
-                    .read(cx)
-                    .text(cx);
-                let settings = serde_json_lenient::from_str::<serde_json::Value>(&text)?;
-                if let Some(settings_validator) = settings_validator
-                    && let Err(error) = settings_validator.validate(&settings)
-                {
-                    return Err(anyhow::anyhow!(error.to_string()));
-                }
-                Ok((
-                    id.clone(),
-                    ContextServerSettings::Extension {
-                        enabled: true,
-                        remote: false,
-                        settings,
-                    },
-                ))
             }
         }
     }
@@ -374,34 +304,6 @@ fn parse_http_input(
     ))
 }
 
-fn resolve_context_server_extension(
-    id: ContextServerId,
-    worktree_store: Entity<WorktreeStore>,
-    cx: &mut App,
-) -> Task<Option<ConfigurationTarget>> {
-    let registry = ContextServerDescriptorRegistry::default_global(cx).read(cx);
-
-    let Some(descriptor) = registry.context_server_descriptor(&id.0) else {
-        return Task::ready(None);
-    };
-
-    let extension = crate::agent_configuration::resolve_extension_for_context_server(&id, cx);
-    cx.spawn(async move |cx| {
-        let installation = descriptor
-            .configuration(worktree_store, cx)
-            .await
-            .context("Failed to resolve context server configuration")
-            .log_err()
-            .flatten();
-
-        Some(ConfigurationTarget::Extension {
-            id,
-            repository_url: extension
-                .and_then(|(_, manifest)| manifest.repository.clone().map(SharedString::from)),
-            installation,
-        })
-    })
-}
 
 enum State {
     Idle,
@@ -438,8 +340,7 @@ impl ConfigureContextServerModal {
     ) -> State {
         let Some(server_id) = (match target {
             ConfigurationTarget::Existing { id, .. }
-            | ConfigurationTarget::ExistingHttp { id, .. }
-            | ConfigurationTarget::Extension { id, .. } => Some(id),
+            | ConfigurationTarget::ExistingHttp { id, .. } => Some(id),
             ConfigurationTarget::New => None,
         }) else {
             return State::Idle;
@@ -536,21 +437,7 @@ impl ConfigureContextServerModal {
                     oauth,
                 }),
 
-                ContextServerSettings::Extension { .. } => {
-                    match workspace
-                        .update(cx, |workspace, cx| {
-                            resolve_context_server_extension(
-                                server_id,
-                                workspace.project().read(cx).worktree_store(),
-                                cx,
-                            )
-                        })
-                        .ok()
-                    {
-                        Some(task) => task.await,
-                        None => None,
-                    }
-                }
+                ContextServerSettings::Extension { .. } => None,
             };
 
             match target {
@@ -579,7 +466,6 @@ impl ConfigureContextServerModal {
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::ExistingHttp { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
                         ConfigurationTarget::New => None,
                     },
                     source: ConfigurationSource::from_target(
@@ -813,10 +699,6 @@ impl Focusable for ConfigureContextServerModal {
         match &self.source {
             ConfigurationSource::New { editor, .. } => editor.focus_handle(cx),
             ConfigurationSource::Existing { editor, .. } => editor.focus_handle(cx),
-            ConfigurationSource::Extension { editor, .. } => editor
-                .as_ref()
-                .map(|editor| editor.focus_handle(cx))
-                .unwrap_or_else(|| cx.focus_handle()),
         }
     }
 }
@@ -828,33 +710,17 @@ impl ConfigureContextServerModal {
         let text: SharedString = match &self.source {
             ConfigurationSource::New { .. } => "Add MCP Server".into(),
             ConfigurationSource::Existing { .. } => "Configure MCP Server".into(),
-            ConfigurationSource::Extension { id, .. } => format!("Configure {}", id.0).into(),
         };
         ModalHeader::new().headline(text)
     }
 
-    fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_modal_description(&self, _window: &mut Window, _cx: &mut Context<Self>) -> AnyElement {
         const MODAL_DESCRIPTION: &str =
             "Check the server docs for required arguments and environment variables.";
 
-        if let ConfigurationSource::Extension {
-            installation_instructions: Some(installation_instructions),
-            ..
-        } = &self.source
-        {
-            div()
-                .pb_2()
-                .text_sm()
-                .child(MarkdownElement::new(
-                    installation_instructions.clone(),
-                    default_markdown_style(window, cx),
-                ))
-                .into_any_element()
-        } else {
-            Label::new(MODAL_DESCRIPTION)
-                .color(Color::Muted)
-                .into_any_element()
-        }
+        Label::new(MODAL_DESCRIPTION)
+            .color(Color::Muted)
+            .into_any_element()
     }
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -922,12 +788,6 @@ impl ConfigureContextServerModal {
         let editor = match &self.source {
             ConfigurationSource::New { editor, .. } => editor,
             ConfigurationSource::Existing { editor, .. } => editor,
-            ConfigurationSource::Extension { editor, .. } => {
-                let Some(editor) = editor else {
-                    return div().into_any_element();
-                };
-                editor
-            }
         };
 
         div()
@@ -966,39 +826,7 @@ impl ConfigureContextServerModal {
         let is_busy = matches!(self.state, State::Waiting | State::Authenticating { .. });
 
         ModalFooter::new()
-            .start_slot::<Button>(
-                if let ConfigurationSource::Extension {
-                    repository_url: Some(repository_url),
-                    ..
-                } = &self.source
-                {
-                    Some(
-                        Button::new("open-repository", "Open Repository")
-                            .end_icon(
-                                Icon::new(IconName::ArrowUpRight)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .tooltip({
-                                let repository_url = repository_url.clone();
-                                move |_window, cx| {
-                                    Tooltip::with_meta(
-                                        "Open Repository",
-                                        None,
-                                        repository_url.clone(),
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click({
-                                let repository_url = repository_url.clone();
-                                move |_, _, cx| cx.open_url(&repository_url)
-                            }),
-                    )
-                } else {
-                    None
-                },
-            )
+            .start_slot::<Button>(None)
             .end_slot(
                 h_flex()
                     .gap_2()

@@ -1,4 +1,3 @@
-pub mod extension;
 pub mod registry;
 
 use std::path::Path;
@@ -11,7 +10,6 @@ use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSe
 use context_server::transport::{HttpTransport, TransportError};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
-use futures::future::Either;
 use futures::{FutureExt as _, StreamExt as _, future::join_all};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt, WeakEntity, actions,
@@ -35,9 +33,8 @@ use crate::{
 /// Prevents extremely large timeout values from tying up resources indefinitely.
 const MAX_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
-pub fn init(cx: &mut App) {
-    extension::init(cx);
-}
+pub fn init(_cx: &mut App) {}
+
 
 actions!(
     context_server,
@@ -159,11 +156,6 @@ pub enum ContextServerConfiguration {
         command: ContextServerCommand,
         remote: bool,
     },
-    Extension {
-        command: ContextServerCommand,
-        settings: serde_json::Value,
-        remote: bool,
-    },
     Http {
         url: url::Url,
         headers: HashMap<String, String>,
@@ -176,7 +168,6 @@ impl ContextServerConfiguration {
     pub fn command(&self) -> Option<&ContextServerCommand> {
         match self {
             ContextServerConfiguration::Custom { command, .. } => Some(command),
-            ContextServerConfiguration::Extension { command, .. } => Some(command),
             ContextServerConfiguration::Http { .. } => None,
         }
     }
@@ -193,56 +184,25 @@ impl ContextServerConfiguration {
     pub fn remote(&self) -> bool {
         match self {
             ContextServerConfiguration::Custom { remote, .. } => *remote,
-            ContextServerConfiguration::Extension { remote, .. } => *remote,
             ContextServerConfiguration::Http { .. } => false,
         }
     }
 
     pub async fn from_settings(
         settings: ContextServerSettings,
-        id: ContextServerId,
-        registry: Entity<ContextServerDescriptorRegistry>,
-        worktree_store: Entity<WorktreeStore>,
-        cx: &AsyncApp,
+        _id: ContextServerId,
+        _registry: Entity<ContextServerDescriptorRegistry>,
+        _worktree_store: Entity<WorktreeStore>,
+        _cx: &AsyncApp,
     ) -> Option<Self> {
-        const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-
         match settings {
             ContextServerSettings::Stdio {
                 enabled: _,
                 command,
                 remote,
             } => Some(ContextServerConfiguration::Custom { command, remote }),
-            ContextServerSettings::Extension {
-                enabled: _,
-                settings,
-                remote,
-            } => {
-                let descriptor =
-                    cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
-
-                let command_future = descriptor.command(worktree_store, cx);
-                let timeout_future = cx.background_executor().timer(EXTENSION_COMMAND_TIMEOUT);
-
-                match futures::future::select(command_future, timeout_future).await {
-                    Either::Left((Ok(command), _)) => Some(ContextServerConfiguration::Extension {
-                        command,
-                        settings,
-                        remote,
-                    }),
-                    Either::Left((Err(e), _)) => {
-                        log::error!(
-                            "Failed to create context server configuration from settings: {e:#}"
-                        );
-                        None
-                    }
-                    Either::Right(_) => {
-                        log::error!(
-                            "Timed out resolving command for extension context server {id}"
-                        );
-                        None
-                    }
-                }
+            ContextServerSettings::Extension { .. } => {
+                None
             }
             ContextServerSettings::Http {
                 enabled: _,
@@ -741,8 +701,7 @@ impl ContextServerStore {
     ) -> Result<(Arc<ContextServer>, Arc<ContextServerConfiguration>)> {
         let remote = configuration.remote();
         let needs_remote_command = match configuration.as_ref() {
-            ContextServerConfiguration::Custom { .. }
-            | ContextServerConfiguration::Extension { .. } => remote,
+            ContextServerConfiguration::Custom { .. } => remote,
             ContextServerConfiguration::Http { .. } => false,
         };
 

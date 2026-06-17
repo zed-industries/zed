@@ -12,8 +12,6 @@ use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
 use language_model::{LanguageModelRegistry, LanguageModelToolResultContent};
 use languages::rust_lang;
-
-use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use git::{
     Oid,
@@ -2903,7 +2901,6 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
-    let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
         HeadlessProject::new(
@@ -2913,7 +2910,6 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
-                extension_host_proxy: proxy,
                 startup_time: std::time::Instant::now(),
             },
             false,

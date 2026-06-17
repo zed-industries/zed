@@ -66,20 +66,6 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
-        cx.subscribe(&extension_events, move |_, evt, cx| match evt {
-            extension::Event::ExtensionsInstalledChanged => {
-                cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-                    schema_store.notify_schema_changed(ChangedSchemas::Settings, cx);
-                });
-            }
-            extension::Event::ExtensionUninstalled(_)
-            | extension::Event::ExtensionInstalled(_)
-            | extension::Event::ConfigureExtensionRequested(_) => {}
-        })
-        .detach();
-    }
-
     cx.observe_global::<dap::DapRegistry>(move |cx| {
         cx.update_global::<SchemaStore, _>(|schema_store, cx| {
             schema_store.notify_schema_changed(ChangedSchemas::DebugTasks, cx);

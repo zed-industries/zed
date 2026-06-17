@@ -4336,7 +4336,7 @@ impl ProjectPanel {
                             .iter()
                             .map(|worktree| worktree.entries.len())
                             .sum::<usize>(),
-                    )
+                    );
                 }
                 if this.update_visible_entries_task.focus_filename_editor {
                     this.update_visible_entries_task.focus_filename_editor = false;

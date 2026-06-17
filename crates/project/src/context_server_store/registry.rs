@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use collections::HashMap;
 use context_server::ContextServerCommand;
-use extension::ContextServerConfiguration;
+use crate::context_server_store::ContextServerConfiguration;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task};
 
 use crate::worktree_store::WorktreeStore;

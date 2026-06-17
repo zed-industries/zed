@@ -22,9 +22,7 @@ clap.workspace = true
 client.workspace = true
 ctrlc = { version = "3.5", features = ["termination"] }
 db.workspace = true
-debug_adapter_extension.workspace = true
 env_logger.workspace = true
-extension.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -32,7 +30,6 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
 language.workspace = true
-language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }

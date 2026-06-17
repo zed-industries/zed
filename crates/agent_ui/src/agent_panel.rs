@@ -69,7 +69,6 @@ use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
-use extension_host::ExtensionStore;
 use feature_flags::{CreateThreadToolFeatureFlag, FeatureFlagAppExt as _};
 
 use fs::Fs;
@@ -1166,7 +1165,6 @@ pub struct AgentPanel {
     pending_terminal_spawn: Option<TerminalId>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
-    _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
@@ -1510,15 +1508,7 @@ impl AgentPanel {
             )
         });
 
-        // Subscribe to extension events to sync agent servers when extensions change
-        let extension_subscription = ExtensionStore::try_global(cx).map(|store| {
-            cx.subscribe(&store, |this, _source, event, cx| match event {
-                extension_host::Event::ExtensionUninstalled(id) => {
-                    this.migrate_agent_server_from_extensions(id.clone(), cx);
-                }
-                _ => {}
-            })
-        });
+
 
         let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
         let _project_subscription =
@@ -1572,7 +1562,6 @@ impl AgentPanel {
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
 
-            _extension_subscription: extension_subscription,
             _project_subscription,
             zoomed: false,
             pending_serialization: None,
@@ -4328,13 +4317,6 @@ impl AgentPanel {
         })
     }
 
-    fn migrate_agent_server_from_extensions(&mut self, id: Arc<str>, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            project.agent_server_store().update(cx, |store, cx| {
-                store.migrate_agent_server_from_extensions(id, project.fs().clone(), cx);
-            });
-        });
-    }
 
     pub fn new_agent_thread_with_external_source_prompt(
         &mut self,
@@ -5625,15 +5607,6 @@ impl AgentPanel {
                             menu = menu
                                 .header("MCP Servers")
                                 .action("Add Custom Server…", Box::new(AddContextServer))
-                                .action(
-                                    "Install New Servers…",
-                                    Box::new(zed_actions::Extensions {
-                                        category_filter: Some(
-                                            zed_actions::ExtensionCategoryFilter::ContextServers,
-                                        ),
-                                        id: None,
-                                    }),
-                                )
                                 .separator()
                                 .header("Context")
                                 .action("Skills", Box::new(ManageSkills));

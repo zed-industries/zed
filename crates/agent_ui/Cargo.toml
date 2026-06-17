@@ -50,8 +50,6 @@ context_server.workspace = true
 db.workspace = true
 editor.workspace = true
 eval_utils = { workspace = true, optional = true }
-extension.workspace = true
-extension_host.workspace = true
 feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true

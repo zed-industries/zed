@@ -12,8 +12,6 @@ use cloud_api_types::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
-use extension::ExtensionManifest;
-use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Anchor, AnyView, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable,
@@ -38,8 +36,8 @@ use ui::{
     Switch, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
+use zed_actions::OpenBrowser;
 use workspace::{Workspace, create_and_open_local_file};
-use zed_actions::{ExtensionCategoryFilter, OpenBrowser};
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
@@ -540,20 +538,6 @@ impl AgentConfiguration {
                                 window.dispatch_action(crate::AddContextServer.boxed_clone(), cx)
                             }
                         })
-                        .entry("Install from Extensions", None, {
-                            |window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::Extensions {
-                                        category_filter: Some(
-                                            ExtensionCategoryFilter::ContextServers,
-                                        ),
-                                        id: None,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                )
-                            }
-                        })
                     }))
                 }
             })
@@ -629,29 +613,8 @@ impl AgentConfiguration {
 
         let is_running = matches!(server_status, ContextServerStatus::Running);
         let item_id = SharedString::from(context_server_id.0.clone());
-        // Servers without a configuration can only be provided by extensions.
-        let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
-            matches!(
-                config.as_ref(),
-                ContextServerConfiguration::Extension { .. }
-            )
-        });
-
-        let display_name = if provided_by_extension {
-            resolve_extension_for_context_server(&context_server_id, cx)
-                .map(|(_, manifest)| {
-                    let name = manifest.name.as_str();
-                    let stripped = name
-                        .strip_suffix(" MCP Server")
-                        .or_else(|| name.strip_suffix(" MCP"))
-                        .or_else(|| name.strip_suffix(" Context Server"))
-                        .unwrap_or(name);
-                    SharedString::from(stripped.to_string())
-                })
-                .unwrap_or_else(|| item_id.clone())
-        } else {
-            item_id.clone()
-        };
+        let provided_by_extension = false;
+        let display_name = item_id.clone();
 
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
@@ -780,50 +743,18 @@ impl AgentConfiguration {
                             let context_server_id = context_server_id.clone();
                             let workspace = workspace.clone();
                             move |_, cx| {
-                                let uninstall_extension_task = match (
-                                    provided_by_extension,
-                                    resolve_extension_for_context_server(&context_server_id, cx),
-                                ) {
-                                    (true, Some((id, manifest))) => {
-                                        if extension_only_provides_context_server(manifest.as_ref())
-                                        {
-                                            ExtensionStore::global(cx).update(cx, |store, cx| {
-                                                store.uninstall_extension(id, cx)
-                                            })
-                                        } else {
-                                            workspace.update(cx, |workspace, cx| {
-                                                show_unable_to_uninstall_extension_with_context_server(workspace, context_server_id.clone(), cx);
-                                            }).log_err();
-                                            Task::ready(Ok(()))
+                                update_settings_file(
+                                    fs.clone(),
+                                    cx,
+                                    {
+                                        let context_server_id = context_server_id.clone();
+                                        move |settings, _| {
+                                            settings.project
+                                                .context_servers
+                                                .remove(&context_server_id.0);
                                         }
-                                    }
-                                    _ => Task::ready(Ok(())),
-                                };
-
-                                cx.spawn({
-                                    let fs = fs.clone();
-                                    let context_server_id = context_server_id.clone();
-                                    async move |cx| {
-                                        uninstall_extension_task.await?;
-                                        cx.update(|cx| {
-                                            update_settings_file(
-                                                fs.clone(),
-                                                cx,
-                                                {
-                                                    let context_server_id =
-                                                        context_server_id.clone();
-                                                    move |settings, _| {
-                                                        settings.project
-                                                            .context_servers
-                                                            .remove(&context_server_id.0);
-                                                    }
-                                                },
-                                            )
-                                        });
-                                        anyhow::Ok(())
-                                    }
-                                })
-                                .detach_and_log_err(cx);
+                                    },
+                                );
                             }
                         })
                     }))
@@ -1313,93 +1244,6 @@ impl Render for AgentConfiguration {
     }
 }
 
-fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool {
-    manifest.context_servers.len() == 1
-        && manifest.themes.is_empty()
-        && manifest.icon_themes.is_empty()
-        && manifest.languages.is_empty()
-        && manifest.grammars.is_empty()
-        && manifest.language_servers.is_empty()
-        && manifest.slash_commands.is_empty()
-        && manifest.snippets.is_none()
-        && manifest.debug_locators.is_empty()
-}
-
-pub(crate) fn resolve_extension_for_context_server(
-    id: &ContextServerId,
-    cx: &App,
-) -> Option<(Arc<str>, Arc<ExtensionManifest>)> {
-    ExtensionStore::global(cx)
-        .read(cx)
-        .installed_extensions()
-        .iter()
-        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
-        .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
-}
-
-// This notification appears when trying to delete
-// an MCP server extension that not only provides
-// the server, but other things, too, like language servers and more.
-fn show_unable_to_uninstall_extension_with_context_server(
-    workspace: &mut Workspace,
-    id: ContextServerId,
-    cx: &mut App,
-) {
-    let workspace_handle = workspace.weak_handle();
-    let context_server_id = id.clone();
-
-    let status_toast = StatusToast::new(
-        format!(
-            "The {} extension provides more than just the MCP server. Proceed to uninstall anyway?",
-            id.0
-        ),
-        cx,
-        move |this, _cx| {
-            let workspace_handle = workspace_handle.clone();
-
-            this.icon(
-                Icon::new(IconName::Warning)
-                    .size(IconSize::Small)
-                    .color(Color::Warning),
-            )
-            .dismiss_button(true)
-            .action("Uninstall", move |_, _cx| {
-                if let Some((extension_id, _)) =
-                    resolve_extension_for_context_server(&context_server_id, _cx)
-                {
-                    ExtensionStore::global(_cx).update(_cx, |store, cx| {
-                        store
-                            .uninstall_extension(extension_id, cx)
-                            .detach_and_log_err(cx);
-                    });
-
-                    workspace_handle
-                        .update(_cx, |workspace, cx| {
-                            let fs = workspace.app_state().fs.clone();
-                            cx.spawn({
-                                let context_server_id = context_server_id.clone();
-                                async move |_workspace_handle, cx| {
-                                    cx.update(|cx| {
-                                        update_settings_file(fs, cx, move |settings, _| {
-                                            settings
-                                                .project
-                                                .context_servers
-                                                .remove(&context_server_id.0);
-                                        });
-                                    });
-                                    anyhow::Ok(())
-                                }
-                            })
-                            .detach_and_log_err(cx);
-                        })
-                        .log_err();
-                }
-            })
-        },
-    );
-
-    workspace.toggle_status_toast(status_toast, cx);
-}
 
 async fn open_new_agent_servers_entry_in_settings_editor(
     workspace: WeakEntity<Workspace>,
