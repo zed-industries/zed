@@ -119,7 +119,8 @@ impl ProfileSelector {
                 Picker::list(delegate, window, cx)
                     .show_scrollbar(true)
                     .width(rems(18.))
-                    .max_height(Some(rems(20.)))
+                    .height(rems(20.))
+                    .no_vertical_padding()
             });
 
             self.picker = Some(picker);

@@ -287,7 +287,8 @@ impl ConfigOptionSelector {
                 }
                 .show_scrollbar(true)
                 .width(rems(20.))
-                .max_height(Some(rems(20.)))
+                .height(rems(20.))
+                .no_vertical_padding()
             })
         };
 

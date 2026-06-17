@@ -172,11 +172,19 @@ relative_size!(RelativeHeight);
 relative_size!(RelativeWidth);
 relative_size!(RelativeLength);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum VerticalPadding {
+    /// The picker always fills its height even if there are no resutls
+    #[default]
+    Pad,
+    /// Picker might be shorter then it's height if there is not enough to display
+    None,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Shape {
-    /// Non centered while user is extending a side
     Resizing(PositionAndShape),
-    /// This is also what is serialized
+    /// This is what we serialize
     HorizontallyCentered {
         width: RelativeWidth,
         height: RelativeHeight,
@@ -184,19 +192,46 @@ pub(crate) enum Shape {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SizeBounds {
-    max_width: Option<Rems>,
-    min_width: Option<Rems>,
-    max_height: Option<Rems>,
-    min_height: Option<Rems>,
+    max_width: RelativeWidth,
+    min_width: Rems,
+    max_height: RelativeWidth,
+    min_height: Rems,
+}
+
+impl Default for SizeBounds {
+    fn default() -> Self {
+        Self {
+            max_width: RelativeWidth::viewport(0.95),
+            min_width: Rems(15.0),
+            max_height: RelativeWidth::viewport(0.95),
+            min_height: Rems(20.0),
+        }
+    }
+}
+
+impl SizeBounds {
+    /// Clamps a width in pixels to the configured min/max width.
+    fn clamp_width(&self, width: Pixels, window: &Window) -> Pixels {
+        width
+            .min(self.max_width.as_pixels(window))
+            .max(self.min_width * window.rem_size())
+    }
+
+    /// Clamps a height in pixels to the configured min/max height.
+    fn clamp_height(&self, height: Pixels, window: &Window) -> Pixels {
+        height
+            .min(self.max_height.as_pixels(window))
+            .max(self.min_height * window.rem_size())
+    }
 }
 
 impl Shape {
     const TOP: RelativeHeight = RelativeHeight::viewport(0.10); // TODO!(yara) should be able to drop this now right?
     fn picker_position_and_size(&self, window: &Window) -> PositionAndShape {
         let (width, height, preview_size) = match self {
-            Shape::Resizing(res) => return *res,
+            Shape::Resizing(pos) => return *pos,
             Shape::HorizontallyCentered {
                 width,
                 height,
@@ -258,14 +293,43 @@ impl Shape {
         center - viewport_center // shifting the picker by this uncenters it again
     }
 
-    /// Sets the picker's width and height from the shape.
-    fn apply_picker_size(&self, preview: &Option<Preview>, div: Div, window: &Window) -> Div {
+    fn apply_picker_size(
+        &self,
+        preview: &Option<Preview>,
+        bounds: &SizeBounds,
+        vertical_padding: VerticalPadding,
+        div: Div,
+        window: &Window,
+    ) -> Div {
         let pos = if let Some(preview) = preview {
             self.results_position_and_size(preview, window)
         } else {
             self.picker_position_and_size(window)
         };
-        div.w(pos.right - pos.left).h(pos.bottom - pos.top)
+        let width = bounds.clamp_width(pos.right - pos.left, window);
+        let div = div.w(width);
+        match vertical_padding {
+            VerticalPadding::None => div,
+            VerticalPadding::Pad => {
+                let height = bounds.clamp_height(pos.bottom - pos.top, window);
+                div.h(height)
+            }
+        }
+    }
+
+    fn results_max_height(
+        &self,
+        bounds: &SizeBounds,
+        vertical_padding: VerticalPadding,
+        window: &Window,
+    ) -> Option<Pixels> {
+        match vertical_padding {
+            VerticalPadding::None => {
+                let pos = self.picker_position_and_size(window);
+                Some(bounds.clamp_height(pos.bottom - pos.top, window))
+            }
+            VerticalPadding::Pad => None,
+        }
     }
 
     fn height(&self, window: &Window) -> Pixels {
@@ -293,7 +357,7 @@ impl Shape {
     }
 
     /// Resizing done, re-center the picker and use relative sizes instead of
-    /// pixels again
+    /// pixels again.
     pub(crate) fn centered_and_relative(pos: PositionAndShape, window: &Window) -> Self {
         Shape::HorizontallyCentered {
             width: RelativeWidth::from_pixels(pos.right - pos.left, window),
@@ -308,9 +372,9 @@ impl Shape {
         }
     }
 
-    fn set_initial_height(&mut self, max_height: impl Into<RelativeHeight>) {
+    fn set_initial_height(&mut self, h: impl Into<RelativeHeight>) {
         if let Shape::HorizontallyCentered { height, .. } = self {
-            *height = max_height.into();
+            *height = h.into();
         }
     }
 }
@@ -333,6 +397,7 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     shape: Shape,
+    vertical_padding: VerticalPadding,
     size_bounds: SizeBounds,
     widest_item: Option<usize>,
     /// An external control to display a scrollbar in the `Picker`.
@@ -643,9 +708,8 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
-            // TODO1(yara) vertical resize done later
-            // height: rems(42.0).to_pixels(window.rem_size()),
             shape: Shape::default(),
+            vertical_padding: VerticalPadding::default(),
             widest_item: None,
             show_scrollbar: false,
             is_modal: true,
@@ -681,10 +745,18 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn max_height(mut self, max_height: Option<impl Into<RelativeHeight>>) -> Self {
-        if let Some(h) = max_height {
-            self.shape.set_initial_height(h);
-        }
+    /// Sets the picker's initial height. By default the picker pads to this
+    /// height; call [`Self::no_vertical_padding`] to instead shrink to fit
+    /// content, growing only up to this height.
+    pub fn height(mut self, height: impl Into<RelativeHeight>) -> Self {
+        self.shape.set_initial_height(height);
+        self
+    }
+
+    /// Makes the picker shrink to fit its content rather than padding out to its
+    /// full height when there are fewer results than fit.
+    pub fn no_vertical_padding(mut self) -> Self {
+        self.vertical_padding = VerticalPadding::None;
         self
     }
 
@@ -1159,12 +1231,13 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sizing_behavior = ListSizingBehavior::Infer;
-        // let sizing_behavior = if self.shape.max_height.is_some() {
-        //     ListSizingBehavior::Infer
-        // } else {
-        //     ListSizingBehavior::Auto
-        // };
+        // When the picker shrinks to fit content (`None`), the list infers its
+        // size from its items. When the picker pads to its full height (`Pad`),
+        // the list fills the available space.
+        let sizing_behavior = match self.vertical_padding {
+            VerticalPadding::None => ListSizingBehavior::Infer,
+            VerticalPadding::Pad => ListSizingBehavior::Auto,
+        };
 
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(

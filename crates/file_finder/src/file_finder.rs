@@ -193,6 +193,8 @@ impl FileFinder {
         let picker = cx.new(|cx| {
             Picker::uniform_list_with_preview(delegate, project, window, cx)
                 .width(Rems::from_pixels(modal_max_width, window))
+                .height(gpui::rems(24.))
+                .no_vertical_padding()
         });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {

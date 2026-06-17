@@ -478,7 +478,8 @@ where
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .width(rems(34.))
-                .max_height(Some(rems(24.)))
+                .height(rems(24.))
+                .no_vertical_padding()
         });
 
         PopoverMenu::new("kernel-switcher")

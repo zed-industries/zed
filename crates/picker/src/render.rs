@@ -82,7 +82,15 @@ impl<D: PickerDelegate> Picker<D> {
         let menu = v_flex()
             .key_context("Picker")
             .relative()
-            .map(|this| self.shape.apply_picker_size(&self.preview, this, window))
+            .map(|this| {
+                self.shape.apply_picker_size(
+                    &self.preview,
+                    &self.size_bounds,
+                    self.vertical_padding,
+                    this,
+                    window,
+                )
+            })
             .child(
                 canvas(
                     move |bounds, _window, _cx| {
@@ -142,6 +150,14 @@ impl<D: PickerDelegate> Picker<D> {
                         .relative()
                         .flex_grow()
                         .min_h_0()
+                        .when_some(
+                            self.shape.results_max_height(
+                                &self.size_bounds,
+                                self.vertical_padding,
+                                window,
+                            ),
+                            |this, max_height| this.max_h(max_height),
+                        )
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))

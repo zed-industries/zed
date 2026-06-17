@@ -113,7 +113,8 @@ impl WorktreePicker {
                 .list_measure_all()
                 .show_scrollbar(true)
                 .modal(false)
-                .max_height(Some(rems(20.)))
+                .height(rems(20.))
+                .no_vertical_padding()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
