@@ -2928,6 +2928,131 @@ mod tests {
         assert_eq!(environment.terminal_creation_count(), 0);
     }
 
+    /// Regression test: choosing "Allow always" on a sandbox prompt must persist
+    /// the grant to settings *only* — it must not also cache an in-memory thread
+    /// grant. Otherwise removing the entry from settings.json wouldn't revoke it
+    /// within the same conversation, and a later identical command would run
+    /// without prompting again (the bug this guards against).
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_allow_always_grant_is_revocable_via_settings(cx: &mut gpui::TestAppContext) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        // Auto-allow the terminal tool itself so only the *sandbox* escalation
+        // prompts, and start with no persisted sandbox grants (mirroring a
+        // settings.json that doesn't grant the path — e.g. after the user
+        // removed it).
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            settings.sandbox_permissions = agent_settings::SandboxPermissions::default();
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        // Both tool calls belong to the same conversation, so they share one set
+        // of in-memory thread sandbox grants, exactly like a real `Thread`.
+        let sandbox_grants = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::sandboxing::ThreadSandboxGrants::default(),
+        ));
+
+        let input = serde_json::json!({
+            "command": "touch build/output",
+            "cd": "root",
+            "fs_write_paths": ["build"],
+            "reason": "needs to write build artifacts",
+        });
+
+        // ---- First call: the user picks "Allow always".
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project.clone(),
+            environment.clone(),
+        ));
+        let (event_stream, mut receiver) =
+            crate::ToolCallEventStream::test_with_grants(sandbox_grants.clone());
+        let resolved: SandboxedTerminalToolInput = serde_json::from_value(input.clone()).unwrap();
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(resolved), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow_always"),
+                acp::PermissionOptionKind::AllowAlways,
+            ))
+            .expect("authorization response should send");
+        task.await.expect("granted command should run");
+        assert_eq!(environment.terminal_creation_count(), 1);
+
+        // The grant must NOT have been cached in the shared thread grants: with
+        // empty persistent settings, the thread grants should cover nothing.
+        let cached = sandbox_grants.borrow().effective_with_persistent(
+            &crate::sandboxing::SandboxRequest::default(),
+            &agent_settings::SandboxPermissions::default(),
+        );
+        assert!(
+            cached.write_paths.is_empty(),
+            "\"Allow always\" must not cache an in-memory thread grant: {:?}",
+            cached.write_paths
+        );
+
+        // ---- Second call: the same request, with the path absent from
+        // settings, must prompt again instead of being silently allowed.
+        let environment2 = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool2 = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project.clone(),
+            environment2.clone(),
+        ));
+        let (event_stream2, mut receiver2) =
+            crate::ToolCallEventStream::test_with_grants(sandbox_grants.clone());
+        let resolved2: SandboxedTerminalToolInput = serde_json::from_value(input).unwrap();
+        let task2 =
+            cx.update(|cx| tool2.run(crate::ToolInput::resolved(resolved2), event_stream2, cx));
+
+        let authorization2 = receiver2.expect_authorization().await;
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization2.tool_call.meta)
+                .expect("the identical request should prompt for sandbox authorization again");
+        assert!(
+            details
+                .write_paths
+                .iter()
+                .any(|path| path.ends_with("build")),
+            "re-prompt should request the same write path: {:?}",
+            details.write_paths
+        );
+
+        authorization2
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+        let result = task2
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied the requested sandbox permissions"));
+        assert_eq!(environment2.terminal_creation_count(), 0);
+    }
+
     fn host_request(list: &[&str]) -> NetworkRequest {
         NetworkRequest::Hosts(
             list.iter()
