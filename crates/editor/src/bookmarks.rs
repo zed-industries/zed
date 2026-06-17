@@ -394,9 +394,7 @@ impl Editor {
                         )
                     })
                     .into_iter()
-                    .filter_map(|bookmark| {
-                        multi_buffer_snapshot.anchor_in_buffer(bookmark.anchor)
-                    })
+                    .filter_map(|bookmark| multi_buffer_snapshot.anchor_in_buffer(bookmark.anchor))
                     .collect::<Vec<_>>()
             })
             .collect()

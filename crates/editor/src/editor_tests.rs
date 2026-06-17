@@ -28896,6 +28896,105 @@ impl BookmarkTestContext {
             .update(|window, cx| window.is_action_available(&menu::Confirm, cx))
     }
 
+    fn select_rows(&mut self, rows: &[u32]) {
+        assert!(!rows.is_empty(), "expected at least one row to select");
+
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(
+                        rows.iter()
+                            .copied()
+                            .map(|row| Point::new(row, 0)..Point::new(row, 0)),
+                    )
+                });
+            });
+    }
+
+    fn prompt_blocks(&mut self) -> Vec<(DisplayRow, u32)> {
+        self.editor.update(&mut self.cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let max_row = snapshot.max_point().row().next_row();
+
+            snapshot
+                .blocks_in_range(DisplayRow(0)..max_row)
+                .filter_map(|(row, block)| match block {
+                    crate::display_map::Block::Custom(_) => Some((row, block.height())),
+                    _ => None,
+                })
+                .collect()
+        })
+    }
+
+    fn assert_prompt_block_count(&mut self, expected_count: usize) {
+        assert_eq!(expected_count, self.prompt_blocks().len());
+    }
+
+    fn draw_window(&mut self) {
+        self.cx.update(|window, cx| {
+            window.refresh();
+            let _ = window.draw(cx);
+        });
+    }
+
+    fn focus_bookmark_prompt_block(&mut self, block_index: usize) {
+        self.draw_window();
+
+        let prompt_blocks = self.prompt_blocks();
+        let (block_row, block_height) = *prompt_blocks
+            .get(block_index)
+            .expect("expected bookmark prompt block");
+
+        let click_position =
+            self.editor
+                .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                    let snapshot = editor.snapshot(window, cx);
+                    let block_top = DisplayPoint::new(block_row, 0);
+                    let relative_block_top = editor
+                        .display_to_pixel_point(block_top, &snapshot, window, cx)
+                        .expect("expected prompt block to be visible");
+                    let line_height = editor
+                        .style(cx)
+                        .text
+                        .line_height_in_pixels(window.rem_size());
+                    let editor_origin = editor
+                        .last_position_map
+                        .as_ref()
+                        .expect("expected editor position map")
+                        .text_hitbox
+                        .bounds
+                        .origin;
+                    let editor_center_x = editor
+                        .last_bounds
+                        .expect("expected editor bounds")
+                        .center()
+                        .x;
+
+                    gpui::Point {
+                        x: editor_center_x,
+                        y: editor_origin.y
+                            + relative_block_top.y
+                            + line_height * (block_height as f32 / 2.),
+                    }
+                });
+
+        self.cx
+            .simulate_click(click_position, gpui::Modifiers::none());
+        self.cx.run_until_parked();
+
+        assert!(
+            self.confirm_action_available(),
+            "expected bookmark prompt block to be focused"
+        );
+    }
+
+    fn confirm_bookmark_prompt_at_block_index(&mut self, block_index: usize, label: &str) {
+        // Confirming a PromptEditor returns focus to the parent editor, so each remaining
+        // prompt block must be focused explicitly before typing into it.
+        self.focus_bookmark_prompt_block(block_index);
+        self.confirm_bookmark_prompt(label);
+    }
+
     fn cursor_row(&mut self) -> u32 {
         self.cursor_point().row
     }
@@ -28929,6 +29028,7 @@ impl BookmarkTestContext {
             self.cx.simulate_input(label);
         }
         self.cx.dispatch_action(menu::Confirm);
+        self.cx.run_until_parked();
     }
 
     fn add_bookmark_with_label(&mut self, label: &str) {
@@ -28987,34 +29087,55 @@ async fn test_bookmark_toggling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "multi-cursor bookmark prompt behavior is still being designed"]
 async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext) {
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    ctx.editor
-        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.move_to_beginning(&MoveToBeginning, window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-        });
-
+    ctx.select_rows(&[0, 1, 2]);
     ctx.toggle_bookmark();
 
-    assert_eq!(1, ctx.all_bookmarks().len());
-    ctx.assert_bookmark_rows(vec![0, 1, 2, 3]);
+    ctx.assert_prompt_block_count(3);
+    ctx.assert_bookmarked_file_count(0);
 
-    ctx.editor
-        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.move_to_beginning(&MoveToBeginning, window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        });
+    ctx.confirm_bookmark_prompt_at_block_index(0, "first label");
+    ctx.assert_prompt_block_count(2);
+    ctx.confirm_bookmark_prompt_at_block_index(0, "second label");
+    ctx.assert_prompt_block_count(1);
+    ctx.confirm_bookmark_prompt_at_block_index(0, "third label");
+    ctx.assert_prompt_block_count(0);
 
-    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmarked_file_count(1);
+    ctx.assert_bookmark_labels(vec![
+        (0, "first label"),
+        (1, "second label"),
+        (2, "third label"),
+    ]);
+
+    ctx.select_rows(&[0, 1, 2, 3]);
+    ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(1);
+    ctx.assert_bookmark_labels(vec![
+        (0, "first label"),
+        (1, "second label"),
+        (2, "third label"),
+    ]);
+
+    ctx.confirm_bookmark_prompt_at_block_index(0, "fourth label");
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmark_labels(vec![
+        (0, "first label"),
+        (1, "second label"),
+        (2, "third label"),
+        (3, "fourth label"),
+    ]);
+
+    ctx.select_rows(&[0, 1, 2, 3]);
+    ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmarked_file_count(0);
     ctx.assert_bookmark_rows(vec![]);
 }
 
