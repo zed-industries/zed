@@ -509,9 +509,11 @@ pub fn authorize_with_sensitive_settings(
         Some(SensitiveSettingsKind::Global) => {
             event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
         }
-        Some(SensitiveSettingsKind::AgentSkills) => {
-            event_stream.authorize_always_prompt(format!("{title} (agent skills)"), context, cx)
-        }
+        Some(SensitiveSettingsKind::AgentSkills) => event_stream.authorize_always_prompt(
+            format!("{title} (agent skills)"),
+            context.for_agent_skills(),
+            cx,
+        ),
         None => event_stream.authorize(title, context, cx),
     }
 }
@@ -761,7 +763,8 @@ pub fn authorize_file_edit(
                     let context = ToolPermissionContext::new(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
-                    );
+                    )
+                    .for_agent_skills();
                     event_stream.authorize_always_prompt(
                         format!("{title} (agent skills)"),
                         context,

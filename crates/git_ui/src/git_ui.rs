@@ -35,6 +35,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
+pub mod created_worktrees;
 pub mod file_diff_view;
 pub mod git_graph;
 pub mod git_panel;
@@ -58,11 +59,13 @@ pub use conflict_view::MergeConflictIndicator;
 pub fn get_provider_icon(name: &str) -> IconName {
     match name {
         "Bitbucket" => IconName::Bitbucket,
+        "Chromium" => IconName::Gerrit,
         "Codeberg" => IconName::Codeberg,
         "Forgejo Self-Hosted" => IconName::Forgejo,
         "GitHub" => IconName::Github,
         "GitLab" => IconName::Gitlab,
         "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
         _ => IconName::Link,
     }
 }
