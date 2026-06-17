@@ -1194,27 +1194,7 @@ impl Render for CodeCell {
                                                 || is_executing
                                                 || execution_time_label.is_some(),
                                             |this| {
-                                                let time_element = if is_queued {
-                                                    h_flex()
-                                                        .gap_1()
-                                                        .items_center()
-                                                        .child(
-                                                            Icon::new(IconName::ArrowCircle)
-                                                                .size(IconSize::XSmall)
-                                                                .color(Color::Muted)
-                                                                .with_rotate_animation(2)
-                                                                .into_any_element(),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    cx.theme().colors().text_muted,
-                                                                )
-                                                                .child("Waiting..."),
-                                                        )
-                                                        .into_any_element()
-                                                } else if is_executing {
+                                                let time_element = if is_executing {
                                                     h_flex()
                                                         .gap_1()
                                                         .items_center()
@@ -1232,6 +1212,26 @@ impl Render for CodeCell {
                                                                     cx.theme().colors().text_muted,
                                                                 )
                                                                 .child("Running..."),
+                                                        )
+                                                        .into_any_element()
+                                                } else if is_queued {
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .items_center()
+                                                        .child(
+                                                            Icon::new(IconName::ArrowCircle)
+                                                                .size(IconSize::XSmall)
+                                                                .color(Color::Muted)
+                                                                .with_rotate_animation(2)
+                                                                .into_any_element(),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    cx.theme().colors().text_muted,
+                                                                )
+                                                                .child("Waiting..."),
                                                         )
                                                         .into_any_element()
                                                 } else if let Some(duration_text) =
