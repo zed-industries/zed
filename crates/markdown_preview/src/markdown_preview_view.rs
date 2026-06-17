@@ -724,6 +724,7 @@ impl MarkdownPreviewView {
         };
 
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
+            .input_focus_handle(self.focus_handle.clone())
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
