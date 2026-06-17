@@ -1023,6 +1023,11 @@ pub struct FoldPointCursor<'transforms> {
 }
 
 impl FoldPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: InlayPoint, bias: Bias) -> FoldPoint {
         let cursor = &mut self.cursor;
