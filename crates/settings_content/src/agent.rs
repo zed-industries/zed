@@ -728,6 +728,12 @@ pub enum CustomAgentServerSettings {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SandboxPermissionsContent {
+    /// Whether the agent terminal sandbox is enabled at all. When disabled,
+    /// agent-run terminal commands are not wrapped in an OS-level sandbox and
+    /// the rest of the sandbox permissions are ignored.
+    /// Default: true
+    pub enabled: Option<bool>,
+
     /// Whether sandboxed terminal commands may always reach any host over the
     /// network without prompting.
     /// Default: false

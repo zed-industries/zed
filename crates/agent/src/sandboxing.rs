@@ -6,8 +6,8 @@
 //! place instead of scattered across the agent crate).
 //!
 //! The current policy is: enabled iff the user has the `sandboxing` feature
-//! flag turned on. There's deliberately no settings or env-var override yet —
-//! the flag is the only switch.
+//! flag turned on *and* the `agent.sandbox_permissions.enabled` setting is not
+//! turned off (it defaults to on).
 //!
 //! macOS (Seatbelt) and Linux (Bubblewrap) have real sandbox integrations; on
 //! platforms without one the per-command wrap is a no-op, so commands run with
@@ -16,16 +16,18 @@
 //! Naming note: this module is about agent terminal sandboxing specifically.
 //! Other agent operations (e.g. file edits) are gated separately.
 
-use agent_settings::SandboxPermissions;
+use agent_settings::{AgentSettings, SandboxPermissions};
 use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
+use settings::Settings as _;
 use std::path::PathBuf;
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
     cx.has_flag::<SandboxingFeatureFlag>()
+        && AgentSettings::get_global(cx).sandbox_permissions.enabled
 }
 
 /// Network escalation requested for (or granted to) a sandboxed command.
@@ -500,6 +502,7 @@ mod tests {
         let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(hosts(&["github.com"]), false, &[]));
         let persistent = SandboxPermissions {
+            enabled: true,
             allow_all_hosts: false,
             network_hosts: Vec::new(),
             allow_fs_write_all: false,
@@ -521,6 +524,7 @@ mod tests {
     fn persistent_network_hosts_are_honored() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
+            enabled: true,
             allow_all_hosts: false,
             network_hosts: vec!["*.npmjs.org".to_string()],
             allow_fs_write_all: false,
@@ -542,6 +546,7 @@ mod tests {
     fn persistent_all_access_covers_concrete_writes() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
+            enabled: true,
             allow_all_hosts: false,
             network_hosts: Vec::new(),
             allow_fs_write_all: true,
@@ -566,6 +571,7 @@ mod tests {
     fn persistent_unsandboxed_covers_unsandboxed_requests_only() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
+            enabled: true,
             allow_all_hosts: false,
             network_hosts: Vec::new(),
             allow_fs_write_all: false,
@@ -625,6 +631,7 @@ mod tests {
     fn effective_applies_persistent_grants_to_empty_request() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
+            enabled: true,
             allow_all_hosts: true,
             network_hosts: Vec::new(),
             allow_fs_write_all: false,

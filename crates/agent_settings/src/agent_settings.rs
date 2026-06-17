@@ -413,8 +413,11 @@ impl Default for AgentProfileId {
 /// combines them with the in-memory per-thread grants. `write_paths` are
 /// stored as minimal, lexically-normalized subtrees (see
 /// [`compile_sandbox_permissions`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandboxPermissions {
+    /// Whether the agent terminal sandbox is enabled at all. When `false`,
+    /// agent-run terminal commands are not wrapped in an OS-level sandbox.
+    pub enabled: bool,
     /// Allow sandboxed commands to reach any host over the network.
     pub allow_all_hosts: bool,
     /// Hosts sandboxed commands may always reach, in canonical form (exact
@@ -424,6 +427,19 @@ pub struct SandboxPermissions {
     pub allow_fs_write_all: bool,
     pub allow_unsandboxed: bool,
     pub write_paths: Vec<PathBuf>,
+}
+
+impl Default for SandboxPermissions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allow_all_hosts: false,
+            network_hosts: Vec::new(),
+            allow_fs_write_all: false,
+            allow_unsandboxed: false,
+            write_paths: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -805,6 +821,7 @@ fn compile_sandbox_permissions(
         .unwrap_or_default();
 
     SandboxPermissions {
+        enabled: content.enabled.unwrap_or(true),
         allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
         network_hosts,
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
