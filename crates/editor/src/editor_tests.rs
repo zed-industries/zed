@@ -38423,17 +38423,13 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
 #[track_caller]
 fn assert_select_delimiters(around: bool, before: &str, after: &str, cx: &mut EditorTestContext) {
     let _state_context = cx.set_state(before);
-    cx.run_until_parked();
 
-    cx.update_editor(|editor, window, cx| {
-        if around {
-            editor.select_around_delimiters(&SelectAroundDelimiters, window, cx);
-        } else {
-            editor.select_inside_delimiters(&SelectInsideDelimiters, window, cx);
-        }
-    });
+    if around {
+        cx.dispatch_action(SelectAroundDelimiters);
+    } else {
+        cx.dispatch_action(SelectInsideDelimiters);
+    }
 
-    cx.run_until_parked();
     cx.assert_editor_state(after);
 }
 
@@ -38571,4 +38567,32 @@ async fn test_select_delimiters_in_markdown(cx: &mut TestAppContext) {
         r#"This is «`hello, world!`ˇ»."#,
         &mut cx,
     );
+}
+
+#[gpui::test]
+async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
+
+    let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo«([1, 2, 3])ˇ»;");
+
+    let _state_context = cx.set_state("foo(x, { ˇa: 1 });");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(x, {« a: 1 ˇ»});");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }

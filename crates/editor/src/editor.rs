@@ -7555,21 +7555,39 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_offsets_with(&mut |snapshot, selection| {
-                let Some((open, close)) = snapshot
-                    .innermost_enclosing_bracket_ranges(selection.start..selection.end, None)
+                let Some(enclosing_bracket_ranges) =
+                    snapshot.enclosing_bracket_ranges(selection.start..selection.end)
                 else {
                     return;
                 };
 
-                let (start, end) = if include_brackets {
-                    (open.start, close.end)
-                } else {
-                    (open.end, close.start)
-                };
-                selection.start = start;
-                selection.end = end;
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
+                let mut best = None;
+                let mut best_length = usize::MAX;
+
+                for (open, close) in enclosing_bracket_ranges {
+                    let range = if include_brackets {
+                        open.start..close.end
+                    } else {
+                        open.end..close.start
+                    };
+
+                    // Skip any bracket pair that is already covered by the
+                    // selection so repeated uses of delimiters selection only
+                    // evere expands outwards to the next pair.
+                    if (selection.start..selection.end).contains_inclusive(&range) {
+                        continue;
+                    }
+
+                    let length = close.end - open.start;
+                    if length < best_length {
+                        best_length = length;
+                        best = Some(range);
+                    }
+                }
+
+                if let Some(range) = best {
+                    selection.set_head_tail(range.end, range.start, SelectionGoal::None);
+                }
             })
         });
     }
