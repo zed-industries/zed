@@ -613,9 +613,6 @@ impl EditorActionId {
     }
 }
 
-// type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
-// type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
-
 type BackgroundHighlight = (
     Arc<dyn Fn(&usize, &Theme) -> Hsla + Send + Sync>,
     Arc<[Range<Anchor>]>,
@@ -1493,7 +1490,7 @@ impl Default for RowHighlightOptions {
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
-    color: Hsla,
+    color: fn(&App) -> Hsla,
     options: RowHighlightOptions,
     type_id: TypeId,
 }
@@ -6219,7 +6216,7 @@ impl Editor {
 
             self.go_to_line::<ActiveDebugLine>(
                 multibuffer_anchor,
-                Some(cx.theme().colors().editor_debugger_active_line_background),
+                |cx| cx.theme().colors().editor_debugger_active_line_background,
                 window,
                 cx,
             );
@@ -7532,6 +7529,51 @@ impl Editor {
         }
     }
 
+    pub fn select_inside_delimiters(
+        &mut self,
+        _: &SelectInsideDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(false, window, cx);
+    }
+
+    pub fn select_around_delimiters(
+        &mut self,
+        _: &SelectAroundDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(true, window, cx);
+    }
+
+    fn select_delimiters_impl(
+        &mut self,
+        include_brackets: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.move_offsets_with(&mut |snapshot, selection| {
+                let Some((open, close)) = snapshot
+                    .innermost_enclosing_bracket_ranges(selection.start..selection.end, None)
+                else {
+                    return;
+                };
+
+                let (start, end) = if include_brackets {
+                    (open.start, close.end)
+                } else {
+                    (open.end, close.start)
+                };
+                selection.start = start;
+                selection.end = end;
+                selection.reversed = false;
+                selection.goal = SelectionGoal::None;
+            })
+        });
+    }
+
     pub fn rename(
         &mut self,
         _: &Rename,
@@ -8626,7 +8668,7 @@ impl Editor {
     pub fn highlight_rows<T: 'static>(
         &mut self,
         range: Range<Anchor>,
-        color: Hsla,
+        color: fn(&App) -> Hsla,
         options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
@@ -8738,12 +8780,15 @@ impl Editor {
     }
 
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
-    pub fn highlighted_rows<T: 'static>(&self) -> impl '_ + Iterator<Item = (Range<Anchor>, Hsla)> {
+    pub fn highlighted_rows<'a, T: 'static>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
             .map_or(&[] as &[_], |vec| vec.as_slice())
             .iter()
-            .map(|highlight| (highlight.range.clone(), highlight.color))
+            .map(|highlight| (highlight.range.clone(), (highlight.color)(cx)))
     }
 
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
@@ -8780,7 +8825,7 @@ impl Editor {
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
                                     border: None,
-                                    background: highlight.color.into(),
+                                    background: (highlight.color)(cx).into(),
                                     type_id: Some(highlight.type_id),
                                 },
                             );

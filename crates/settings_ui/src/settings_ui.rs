@@ -417,6 +417,10 @@ impl Focusable for NonFocusableHandle {
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
     should_do_titlecase: Option<bool>,
+    display_confirm_button: bool,
+    display_clear_button: bool,
+    confirm_on_focus_out: bool,
+    treat_missing_text_as_empty: bool,
 }
 
 pub fn init(cx: &mut App) {
@@ -4744,7 +4748,17 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
 ) -> AnyElement {
     let (_, initial_text) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let initial_text = initial_text.filter(|s| !s.as_ref().is_empty());
+    let initial_text = if metadata.is_some_and(|metadata| metadata.treat_missing_text_as_empty) {
+        Some(
+            initial_text
+                .map(|text| text.as_ref().to_string())
+                .unwrap_or_default(),
+        )
+    } else {
+        initial_text
+            .filter(|text| !text.as_ref().is_empty())
+            .map(|text| text.as_ref().to_string())
+    };
 
     // The JSON path uniquely identifies the setting this field edits, making
     // it a stable, collision-free element ID within the page.
@@ -4754,12 +4768,22 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             a11y_label_for_json_path(field.json_path),
             |editor, label| editor.aria_label(label),
         )
-        .when_some(initial_text, |editor, text| {
-            editor.with_initial_text(text.as_ref().to_string())
-        })
+        .when_some(initial_text, |editor, text| editor.with_initial_text(text))
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.display_confirm_button),
+            |editor| editor.display_confirm_button(),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.display_clear_button),
+            |editor| editor.display_clear_button(),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.confirm_on_focus_out),
+            |editor| editor.confirm_on_focus_out(),
         )
         .on_confirm({
             move |new_text, window, cx| {

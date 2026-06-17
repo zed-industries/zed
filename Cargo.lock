@@ -10672,6 +10672,7 @@ name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "db",
  "editor",
  "fs",
  "gpui",
@@ -16796,6 +16797,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "git",
+ "git_ui",
  "gpui",
  "http_client",
  "itertools 0.14.0",
