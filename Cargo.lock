@@ -10649,6 +10649,7 @@ dependencies = [
  "node_runtime",
  "pulldown-cmark 0.13.0",
  "settings",
+ "smallvec",
  "stacksafe",
  "sum_tree",
  "theme",
