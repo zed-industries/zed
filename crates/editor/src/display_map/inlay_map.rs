@@ -82,6 +82,12 @@ struct TransformSummary {
     output: MBTextSummary,
 }
 
+impl TransformSummary {
+    fn has_inlays(&self) -> bool {
+        self.input.len != self.output.len
+    }
+}
+
 impl sum_tree::ContextLessSummary for TransformSummary {
     fn zero() -> Self {
         Default::default()
@@ -593,22 +599,9 @@ impl InlayMap {
 
             snapshot.buffer = buffer_snapshot;
             (snapshot.clone(), Vec::new())
-        } else if self.inlays.is_empty() && {
-            // The transforms must already be inlay-free (no inlays to *remove*). Splicing inlays
-            // out only updates `self.inlays`; the stale inlay transforms live in the tree until the
-            // next `sync`, and removing them requires emitting inlay edits the fast path doesn't.
-            // `input.len == output.len` holds iff every transform is isomorphic (no inlay adds
-            // length to `output`), an O(1) check on the root summary.
-            let summary = snapshot.transforms.summary();
-            summary.input.len == summary.output.len
-        } {
-            // Fast path: with no inlays, the InlayMap is a pure passthrough. The slow path below
-            // would walk the transform tree once per edit (with a `text_summary_for_range` scan
-            // per edit) only to rebuild the same single isomorphic transform that
-            // `push_isomorphic` coalesces everything into. With thousands of simultaneous edits
-            // (multi-cursor), that O(N) work dominates a keystroke, so short-circuit it: the
-            // resulting transform tree is a single isomorphic node covering the whole buffer, and
-            // every inlay edit is the buffer edit verbatim (InlayOffset wraps MultiBufferOffset).
+        } else if self.inlays.is_empty() && !snapshot.transforms.summary().has_inlays() {
+            // Fast path: without inlays, the InlayMap is a passthrough, so rebuild a single
+            // isomorphic transform and forward buffer edits as inlay edits verbatim.
             let mut new_transforms = SumTree::default();
             push_isomorphic(&mut new_transforms, buffer_snapshot.text_summary());
             if new_transforms.is_empty() {
