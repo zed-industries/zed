@@ -288,6 +288,7 @@ dependencies = [
  "regex",
  "reqwest_client",
  "rust-embed",
+ "sandbox",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -15910,6 +15911,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "log",
+ "smol",
  "tempfile",
 ]
 

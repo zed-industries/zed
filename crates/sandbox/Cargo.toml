@@ -17,12 +17,25 @@ path = "src/sandbox.rs"
 # produce the test binary.
 nixos-test = []
 
+# Builds `wsl_sandbox_test_helper`, the Windows analog of `bwrap_test_helper`.
+# It drives the real WSL/Bubblewrap sandbox end-to-end (see
+# `script/test-wsl-sandbox.ps1` / `cargo xtask wsl-sandbox-tests`). Off by
+# default so normal builds and the workspace test run don't produce it.
+wsl-test = []
+
 # Behavior test helper for the Linux Bubblewrap sandbox. Only built when the
 # `nixos-test` feature is enabled (and only meaningful on Linux).
 [[bin]]
 name = "bwrap_test_helper"
 path = "src/bwrap_test_helper.rs"
 required-features = ["nixos-test"]
+
+# Behavior test helper for the Windows WSL/Bubblewrap sandbox. Only built when
+# the `wsl-test` feature is enabled (and only meaningful on Windows).
+[[bin]]
+name = "wsl_sandbox_test_helper"
+path = "src/wsl_sandbox_test_helper.rs"
+required-features = ["wsl-test"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 anyhow.workspace = true
@@ -34,3 +47,8 @@ tempfile.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 anyhow.workspace = true
 tempfile.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+anyhow.workspace = true
+log.workspace = true
+smol.workspace = true
