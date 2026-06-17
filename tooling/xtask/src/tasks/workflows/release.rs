@@ -2,7 +2,7 @@ use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx:
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
+    run_bundling::{build_static_bwrap, bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
     steps::{
@@ -36,6 +36,14 @@ pub(crate) fn release() -> Workflow {
         linux_x86_64: bundle_linux(
             Arch::X86_64,
             None,
+            &[&linux_tests, &linux_clippy, &check_scripts],
+        ),
+        bwrap_linux_aarch64: build_static_bwrap(
+            Arch::AARCH64,
+            &[&linux_tests, &linux_clippy, &check_scripts],
+        ),
+        bwrap_linux_x86_64: build_static_bwrap(
+            Arch::X86_64,
             &[&linux_tests, &linux_clippy, &check_scripts],
         ),
         mac_aarch64: bundle_mac(
@@ -123,6 +131,8 @@ pub(crate) fn release() -> Workflow {
 pub(crate) struct ReleaseBundleJobs {
     pub linux_aarch64: NamedJob,
     pub linux_x86_64: NamedJob,
+    pub bwrap_linux_aarch64: NamedJob,
+    pub bwrap_linux_x86_64: NamedJob,
     pub mac_aarch64: NamedJob,
     pub mac_x86_64: NamedJob,
     pub windows_aarch64: NamedJob,
@@ -134,6 +144,8 @@ impl ReleaseBundleJobs {
         vec![
             &self.linux_aarch64,
             &self.linux_x86_64,
+            &self.bwrap_linux_aarch64,
+            &self.bwrap_linux_x86_64,
             &self.mac_aarch64,
             &self.mac_x86_64,
             &self.windows_aarch64,
@@ -145,6 +157,8 @@ impl ReleaseBundleJobs {
         vec![
             self.linux_aarch64,
             self.linux_x86_64,
+            self.bwrap_linux_aarch64,
+            self.bwrap_linux_x86_64,
             self.mac_aarch64,
             self.mac_x86_64,
             self.windows_aarch64,
