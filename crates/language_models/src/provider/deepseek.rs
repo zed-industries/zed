@@ -12,8 +12,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -211,6 +211,30 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://platform.deepseek.com/api_keys",
+                    "Paste your DeepSeek API key",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
+    }
 }
 
 pub struct DeepSeekLanguageModel {
@@ -392,6 +416,7 @@ pub fn into_deepseek(
                 }
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
+                MessageContent::Compaction(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),

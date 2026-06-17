@@ -654,6 +654,17 @@ actions!(
         MoveToBeginning,
         /// Moves cursor to the enclosing bracket.
         MoveToEnclosingBracket,
+        /// Selects the content within the nearest enclosing delimiters
+        /// (brackets, braces, parentheses, or quotes), excluding the
+        /// delimiters.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectInsideDelimiters,
+        /// Selects the nearest enclosing delimiters (brackets, braces,
+        /// parentheses, or quotes) together with the content between them.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectAroundDelimiters,
         /// Moves cursor to the end of the document.
         MoveToEnd,
         /// Moves cursor to the end of the paragraph.
@@ -773,8 +784,6 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
-        /// Selects inside the innermost enclosing bracket pair.
-        SelectInsideEnclosingBracket,
         /// Selects to the start of the next larger syntax node.
         SelectToStartOfLargerSyntaxNode,
         /// Selects to the end of the next larger syntax node.
