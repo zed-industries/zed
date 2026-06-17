@@ -1196,12 +1196,8 @@ where
     D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
-    // When the display collapses no buffer content (no folds and no replacement blocks), the
-    // `Point -> DisplayPoint -> Point` round-trip is the identity, and coalescing on display points
-    // equals coalescing on buffer points. So resolve `Anchor -> Point` (batched via
-    // `summaries_for_anchors`) and `Point -> D` (batched via `dimensions_from_points`) directly,
-    // skipping the per-selection display-coordinate conversions. This is the hot path for
-    // multi-cursor editing, where the round-trip otherwise costs ~10 SumTree seeks per selection.
+    // Without collapsed content, coalescing in buffer point space is equivalent to coalescing in
+    // display point space, so skip the per selection display coordinate round trip.
     if !map.has_collapsed_content() {
         let (to_convert, selections) =
             coalesce_selections(resolve_selections_point(selections, map)).tee();
