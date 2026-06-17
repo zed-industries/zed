@@ -378,8 +378,8 @@ impl ThreadSearchBar {
                     })
                     .unwrap_or_default();
                 for markdown in markdowns {
-                    let source = markdown.read(cx).source().to_string();
-                    let ranges = query.search_str(&source);
+                    let source = markdown.read(cx).source();
+                    let ranges = query.search_str(source);
                     if ranges.is_empty() {
                         continue;
                     }
