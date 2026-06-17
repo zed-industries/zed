@@ -32,10 +32,13 @@ use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
 use util::ResultExt as _;
 use util::path_list::PathList;
+use util::paths::PathStyle;
 use util::process::Child;
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
+};
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
@@ -3982,15 +3985,10 @@ fn handle_session_notification(
 
                     thread
                         .update(cx, |thread, cx| {
-                            let builder = TerminalBuilder::new_display_only(
-                                CursorShape::default(),
-                                AlternateScroll::On,
-                                None,
-                                0,
-                                cx.background_executor(),
+                            let lower = create_acp_display_terminal(
                                 thread.project().read(cx).path_style(cx),
+                                cx,
                             );
-                            let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
                                 TerminalProviderEvent::Created {
                                     terminal_id,
@@ -4072,6 +4070,23 @@ fn handle_session_notification(
             }
         }
     }
+}
+
+fn create_acp_display_terminal(
+    path_style: PathStyle,
+    cx: &mut Context<AcpThread>,
+) -> Entity<terminal::Terminal> {
+    cx.new(|cx| {
+        TerminalBuilder::new_display_only(
+            CursorShape::default(),
+            AlternateScroll::On,
+            None,
+            0,
+            cx.background_executor(),
+            path_style,
+        )
+        .subscribe(cx)
+    })
 }
 
 fn handle_create_terminal(
