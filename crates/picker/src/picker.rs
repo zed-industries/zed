@@ -79,6 +79,8 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     shape: shape::Shape,
+    /// set through [Picker::width] and [Picker::height]
+    default_shape: shape::Centered,
     vertical_padding: shape::VerticalPadding,
     size_bounds: shape::SizeBounds,
     widest_item: Option<usize>,
@@ -406,6 +408,7 @@ impl<D: PickerDelegate> Picker<D> {
             preview,
             shape_loaded_from_persistence: shape.is_some(),
             shape: shape.unwrap_or_default(),
+            default_shape: shape::Centered::default(),
             vertical_padding: shape::VerticalPadding::default(),
             widest_item: None,
             show_scrollbar: false,
@@ -432,10 +435,23 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    /// Sets the width the picker appears with if the user has never resized it
+    /// or when the user sets it back to it's default size. // TODO!(yara) implement this
     pub fn width(mut self, width: impl Into<RelativeWidth>) -> Self {
+        let width = width.into();
+        self.default_shape.width = width;
         if !self.shape_loaded_from_persistence {
             self.shape.set_initial_width(width);
         }
+        self
+    }
+
+    /// Sets the minimum width, the picker can not be resized smaller then this.
+    /// Leave unset to use sane defaults.
+    ///
+    /// This applies to the results. If there is no preview that is the whole picker.
+    pub fn minimum_results_width(mut self, width: impl Into<Rems>) -> Self {
+        self.size_bounds.min_results.width = width.into();
         self
     }
 
@@ -444,9 +460,16 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    /// Sets the picker's initial height. By default the picker pads to this
-    /// height
+    /// Sets the width the picker appears with if the user has never resized it
+    /// or when the user sets it back to it's default size. // TODO!(yara) implement this
+    ///
+    /// # Padding
+    /// By default the picker will fill this space. If you want it to only grow
+    /// as large as it needs and treat the height as a bound use
+    /// [`no_vertical_padding`]
     pub fn height(mut self, height: impl Into<RelativeHeight>) -> Self {
+        let height = height.into();
+        self.default_shape.height = height;
         if !self.shape_loaded_from_persistence {
             self.shape.set_initial_height(height);
         }

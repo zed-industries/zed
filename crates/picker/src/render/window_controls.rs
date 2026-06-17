@@ -59,11 +59,12 @@
 use std::{any::type_name, marker::PhantomData};
 
 use gpui::{
-    Action, Context, CursorStyle, DragMoveEvent, Focusable, MouseButton, Point, Styled, Window,
+    Action, ClickEvent, Context, CursorStyle, DragMoveEvent, Focusable, MouseButton, Point, Styled,
+    Window,
 };
 use ui::{Tooltip, prelude::*};
 
-use crate::shape::{PositionAndShape, Shape};
+use crate::shape::{Centered, PositionAndShape, Shape, SizeBounds};
 use crate::{Picker, PickerDelegate, ToggleLayout, preview::Layout};
 
 pub struct DragPreview;
@@ -101,10 +102,6 @@ pub(crate) trait Side: Copy + 'static {
     }
     /// The resize cursor for this side's handle.
     fn cursor(&self) -> CursorStyle;
-    /// `None` for sides that don't move the preview.
-    fn layout(&self) -> Option<Layout> {
-        None
-    }
     /// Places and sizes the grab strip along this side's edge.
     fn position(
         &self,
@@ -117,6 +114,14 @@ pub(crate) trait Side: Copy + 'static {
         shape_before: PositionAndShape,
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape;
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    );
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered);
 }
 
 #[derive(Clone, Copy)]
@@ -144,15 +149,25 @@ impl Side for Left {
         shape_before.left += mouse_movement.x;
         shape_before
     }
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    ) {
+        bounds.clamp_left_edge(working, layout, window);
+        bounds.clamp_divider(working, layout, window);
+    }
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+        shape.reset_width(default);
+    }
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Right(pub(crate) Layout);
 impl Side for Right {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeColumn
-    }
-    fn layout(&self) -> Option<Layout> {
-        Some(self.0)
     }
     fn position(
         &self,
@@ -175,6 +190,19 @@ impl Side for Right {
         }
         shape_before.right += mouse_movement.x;
         shape_before
+    }
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    ) {
+        bounds.clamp_right_edge(working, layout, window);
+        bounds.clamp_divider(working, layout, window);
+    }
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+        shape.reset_width(default);
     }
 }
 
@@ -228,6 +256,19 @@ impl Side for Middle {
         }
         shape_before
     }
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    ) {
+        // The divider only moves the preview; the outer edges are unchanged.
+        bounds.clamp_divider(working, layout, window);
+    }
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+        shape.reset_preview_size(default);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -235,9 +276,6 @@ pub(crate) struct Bottom(pub(crate) Layout);
 impl Side for Bottom {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeRow
-    }
-    fn layout(&self) -> Option<Layout> {
-        Some(self.0)
     }
     fn position(
         &self,
@@ -261,15 +299,25 @@ impl Side for Bottom {
         shape_before.bottom += mouse_movement.y;
         shape_before
     }
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    ) {
+        bounds.clamp_bottom_edge(working, layout, window);
+        bounds.clamp_divider(working, layout, window);
+    }
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+        shape.reset_height(default);
+    }
 }
 #[derive(Clone, Copy)]
 pub(crate) struct LeftCorner(pub(crate) Layout);
 impl Side for LeftCorner {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeUpRightDownLeft
-    }
-    fn layout(&self) -> Option<Layout> {
-        Some(self.0)
     }
     fn position(
         &self,
@@ -296,15 +344,27 @@ impl Side for LeftCorner {
         shape_before.bottom += mouse_movement.y;
         shape_before
     }
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    ) {
+        bounds.clamp_left_edge(working, layout, window);
+        bounds.clamp_bottom_edge(working, layout, window);
+        bounds.clamp_divider(working, layout, window);
+    }
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+        shape.reset_width(default);
+        shape.reset_height(default);
+    }
 }
 #[derive(Clone, Copy)]
 pub(crate) struct RightCorner(pub(crate) Layout);
 impl Side for RightCorner {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeUpLeftDownRight
-    }
-    fn layout(&self) -> Option<Layout> {
-        Some(self.0)
     }
     fn position(
         &self,
@@ -331,19 +391,40 @@ impl Side for RightCorner {
         shape_before.bottom += mouse_movement.y;
         shape_before
     }
+    fn clamp(
+        &self,
+        working: &mut PositionAndShape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &Window,
+    ) {
+        bounds.clamp_right_edge(working, layout, window);
+        bounds.clamp_bottom_edge(working, layout, window);
+        bounds.clamp_divider(working, layout, window);
+    }
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+        shape.reset_width(default);
+        shape.reset_height(default);
+    }
 }
 
 impl<S: Side> ResizeDrag<S> {
-    fn start_new(shape: Shape, layout: Option<Layout>, window: &mut Window) -> Self {
+    fn start_new(
+        shape: Shape,
+        bounds: &SizeBounds,
+        layout: Option<Layout>,
+        window: &mut Window,
+    ) -> Self {
         Self {
             mouse_pos_before: window.mouse_position(),
-            shape_before: shape.picker_position_and_size(layout, window),
+            // Before rendering we always clamp so the current shape may not be
+            // within SizeBounds so use a clamped one
+            shape_before: shape.clamped_position_and_size(layout, bounds, window),
             phantom_data: PhantomData,
         }
     }
 }
 
-// TODO!(yara) make this all work for with and without preview
 impl<D: PickerDelegate> Picker<D> {
     /// Resizes the picker modal by dragging the handle on the given side or corner
     pub(crate) fn render_resize<S: Side>(
@@ -359,15 +440,23 @@ impl<D: PickerDelegate> Picker<D> {
             .map(|this| {
                 side.position(
                     this,
-                    self.shape
-                        .picker_position_and_size(self.preview_layout(), window),
+                    self.shape.clamped_position_and_size(
+                        self.preview_layout(),
+                        &self.size_bounds,
+                        window,
+                    ),
                     window,
                 )
             })
             .block_mouse_except_scroll()
             .on_mouse_down(MouseButton::Left, do_nothing) // TODO!(yara) do we need this?
             .on_drag(
-                ResizeDrag::<S>::start_new(self.shape, self.preview_layout(), window),
+                ResizeDrag::<S>::start_new(
+                    self.shape,
+                    &self.size_bounds,
+                    self.preview_layout(),
+                    window,
+                ),
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
             .on_drag_move::<ResizeDrag<S>>(cx.listener(
@@ -375,12 +464,37 @@ impl<D: PickerDelegate> Picker<D> {
                     let drag = event.drag(cx);
                     let delta = event.event.position - drag.mouse_pos_before;
                     let mut working = side.current_position_and_shape(drag.shape_before, delta);
-                    this.size_bounds
-                        .clamp(&drag.shape_before, &mut working, side.layout(), window);
+                    side.clamp(
+                        &mut working,
+                        &this.size_bounds,
+                        this.preview_layout(),
+                        window,
+                    );
                     this.shape = Shape::Resizing(working);
                     cx.notify();
                 },
             ))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                this.reset_size_to_default_on_double_click(side, event, window, cx)
+            }))
+    }
+
+    fn reset_size_to_default_on_double_click<S: Side>(
+        &mut self,
+        side: S,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Picker<D>>,
+    ) {
+        if event.click_count() < 2 {
+            return;
+        }
+        side.revert_to_default_size(&mut self.shape, &self.default_shape);
+        let pos =
+            self.shape
+                .clamped_position_and_size(self.preview_layout(), &self.size_bounds, window);
+        self.shape = Shape::Resizing(pos);
+        cx.notify();
     }
 
     pub(crate) fn render_header_controls(

@@ -3,8 +3,8 @@ use db::kvp::KeyValueStore;
 use gpui::App;
 use ui::Window;
 
-use crate::shape::{self, Centered, RelativeHeight, RelativeWidth, Shape, ViewportFraction};
 use crate::preview;
+use crate::shape::{self, Centered, RelativeHeight, RelativeWidth, Shape, ViewportFraction};
 
 const PICKERS_NAMESPACE: &str = "pickers";
 
@@ -55,13 +55,16 @@ pub(crate) fn try_load_shape(
     Ok(Some(Shape::HorizontallyCentered(shape)))
 }
 
-pub(crate) fn load_last_preview_layout(picker_delegate: &'static str, cx: &App) -> anyhow::Result<Option<preview::Layout>> {
+pub(crate) fn load_last_preview_layout(
+    picker_delegate: &'static str,
+    cx: &App,
+) -> anyhow::Result<Option<preview::Layout>> {
     let Some(last_layout) = KeyValueStore::global(cx)
         .scoped(PICKERS_NAMESPACE)
         .read(&last_layout_key(picker_delegate))
         .context("Could not read last picker layout from KeyValueStore")?
     else {
-         return Ok(None);
+        return Ok(None);
     };
 
     parse_layout(&last_layout)
@@ -85,18 +88,17 @@ fn layout_as_str(layout: Option<preview::Layout>) -> &'static str {
 }
 
 fn parse_layout(s: &str) -> anyhow::Result<Option<preview::Layout>> {
-     Ok(Some(match s {
-          "hidden" => preview::Layout::Hidden,
-          "below" => preview::Layout::Below,
-          "right" => preview::Layout::Right,
-          "none" => return Ok(None),
-          _ => return Err(anyhow!("Unknown layout: `{}`", s))
-     }))
-
+    Ok(Some(match s {
+        "hidden" => preview::Layout::Hidden,
+        "below" => preview::Layout::Below,
+        "right" => preview::Layout::Right,
+        "none" => return Ok(None),
+        _ => return Err(anyhow!("Unknown layout: `{}`", s)),
+    }))
 }
 
-/// Describes a resized picker for persisting its size. All values are stored as
-/// fractions of the viewport so they remain meaningful across window sizes.
+/// A resized picker for persisting its size. All values are stored as fractions
+/// of the viewport so they remain meaningful across window sizes.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PickerConfig {
     width: f32,        // relative fraction of viewport
@@ -115,9 +117,9 @@ impl PickerConfig {
 
     pub(crate) fn into_centered(self) -> Centered {
         Centered {
-            width: RelativeWidth::viewport(self.width),
-            height: RelativeHeight::viewport(self.height),
-            preview_size: ViewportFraction::fraction(self.preview_size),
+            width: RelativeWidth::viewport(self.width.clamp(0.0, 1.0)),
+            height: RelativeHeight::viewport(self.height.clamp(0.0, 1.0)),
+            preview_size: ViewportFraction::fraction(self.preview_size.clamp(0.0, 1.0)),
         }
     }
 }
