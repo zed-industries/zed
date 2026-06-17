@@ -139,7 +139,7 @@ impl Editor {
                                         &snapshot,
                                         range,
                                         to_insert,
-                                        url::Url::parse(to_insert).ok(),
+                                        is_standalone_url(to_insert),
                                     )
                                 } else {
                                     (range, Cow::Borrowed(to_insert))
@@ -169,7 +169,7 @@ impl Editor {
                     .all::<MultiBufferOffset>(&this.display_snapshot(cx));
                 this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             } else {
-                let url = url::Url::parse(&clipboard_text).ok();
+                let clipboard_is_url = is_standalone_url(&clipboard_text);
 
                 let auto_indent_mode = if !clipboard_text.is_empty() {
                     Some(AutoindentMode::Block {
@@ -213,7 +213,12 @@ impl Editor {
                         let (edit_range, edit_text) = if let Some(language) = language
                             && language.name() == "Markdown"
                         {
-                            edit_for_markdown_paste(&snapshot, range, text_for_cursor, url.clone())
+                            edit_for_markdown_paste(
+                                &snapshot,
+                                range,
+                                text_for_cursor,
+                                clipboard_is_url,
+                            )
                         } else {
                             (range, Cow::Borrowed(text_for_cursor))
                         };
@@ -538,18 +543,30 @@ fn edit_for_markdown_paste<'a>(
     buffer: &MultiBufferSnapshot,
     range: Range<MultiBufferOffset>,
     to_insert: &'a str,
-    url: Option<url::Url>,
+    to_insert_is_url: bool,
 ) -> (Range<MultiBufferOffset>, Cow<'a, str>) {
-    if url.is_none() {
+    if !to_insert_is_url {
         return (range, Cow::Borrowed(to_insert));
     };
 
     let old_text = buffer.text_for_range(range.clone()).collect::<String>();
 
-    let new_text = if range.is_empty() || url::Url::parse(&old_text).is_ok() {
+    let new_text = if range.is_empty() || is_standalone_url(&old_text) {
         Cow::Borrowed(to_insert)
     } else {
         Cow::Owned(format!("[{old_text}]({to_insert})"))
     };
     (range, new_text)
+}
+
+/// Whether `text` consists solely of a single URL, as opposed to merely
+/// starting with a scheme-like prefix (e.g. a commit message like
+/// `editor: Fix ...`, which `url::Url::parse` would accept).
+fn is_standalone_url(text: &str) -> bool {
+    let mut finder = linkify::LinkFinder::new();
+    finder.kinds(&[linkify::LinkKind::Url]);
+    finder
+        .links(text)
+        .next()
+        .is_some_and(|link| link.start() == 0 && link.end() == text.len())
 }

@@ -13,8 +13,9 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
-        render_tool_permissions_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
+        render_llm_providers_page, render_mcp_servers_page, render_sandbox_settings_page,
+        render_skills_setup_page, render_tool_permissions_setup_page,
     },
 };
 
@@ -257,6 +258,25 @@ fn general_page(cx: &App) -> SettingsPage {
                 })),
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Open Behavior",
+                description: "How projects open from the UI by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content.workspace.default_open_behavior.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
         ]
     }
     fn security_section() -> [SettingsPageItem; 2] {
@@ -365,7 +385,7 @@ fn general_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn privacy_section() -> [SettingsPageItem; 3] {
+    fn privacy_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Privacy"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -404,6 +424,28 @@ fn general_page(cx: &App) -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.telemetry.get_or_insert_default().metrics = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Anthropic Data Retention",
+                description: "Allow sending requests to Anthropic models that cannot be offered with Zero Data Retention.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("telemetry.anthropic_retention"),
+                    pick: |settings_content| {
+                        settings_content
+                            .telemetry
+                            .as_ref()
+                            .and_then(|telemetry| telemetry.anthropic_retention.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .telemetry
+                            .get_or_insert_default()
+                            .anthropic_retention = value;
                     },
                 }),
                 metadata: None,
@@ -7819,9 +7861,28 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
-        let mut items = vec![
-            SettingsPageItem::SectionHeader("Agent Configuration"),
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        // The LLM provider and MCP server pages are gated behind a feature flag
+        // while their configuration is being moved out of the agent panel.
+        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "LLM Providers".into(),
+                r#type: Default::default(),
+                json_path: Some("llm_providers"),
+                description: Some("Configure API keys and settings for LLM providers.".into()),
+                in_json: false,
+                files: USER,
+                render: render_llm_providers_page,
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
@@ -7832,6 +7893,18 @@ fn ai_page(cx: &App) -> SettingsPage {
                 render: render_skills_setup_page,
             }),
             SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Sandbox".into(),
+                r#type: Default::default(),
+                json_path: Some(zed_actions::AGENT_SANDBOX_SETTINGS_PATH),
+                description: Some(
+                    "Review and change the elevated terminal sandbox permissions that are always allowed without prompting."
+                        .into(),
+                ),
+                in_json: true,
+                files: USER,
+                render: render_sandbox_settings_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
@@ -7840,7 +7913,33 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
-        ];
+        ]);
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
+            }));
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "External Agents".into(),
+                r#type: Default::default(),
+                json_path: Some("agent_servers"),
+                description: Some(
+                    "View, add, and remove agents connected through the Agent Client Protocol."
+                        .into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_external_agents_page,
+            }));
+        }
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
@@ -7974,6 +8073,36 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Terminal Thread Init Command",
+                description: "Command to automatically run when Zed creates a Terminal Thread shell in the agent panel. Runs in your configured shell.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.terminal_init_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .terminal_init_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .terminal_init_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("e.g. claude"),
+                    display_confirm_button: true,
+                    display_clear_button: true,
+                    confirm_on_focus_out: true,
+                    treat_missing_text_as_empty: true,
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Thinking Display",
                 description: "How thinking blocks should be displayed by default. 'Auto' fully expands during streaming, then auto-collapses when done. 'Preview' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
                 field: Box::new(SettingField {
@@ -8101,6 +8230,66 @@ fn ai_page(cx: &App) -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+        ]);
+
+        items.extend([
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Compact",
+                description: "Automatically compact the agent's context when it grows too large, summarizing earlier messages to free up room in the model's context window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.auto_compact.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .auto_compact
+                            .as_ref()?
+                            .enabled
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .auto_compact
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Compact Threshold",
+                description: "When auto compaction runs. A percentage string like \"90%\" is measured against the context window. A positive integer is the number of used tokens to compact after. A negative integer is the number of tokens remaining in the context window before compacting.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.auto_compact.threshold"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .auto_compact
+                            .as_ref()?
+                            .threshold
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .auto_compact
+                            .get_or_insert_default()
+                            .threshold = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("90%"),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
         ]);

@@ -77,10 +77,9 @@ pub struct AcceptTermsOfServiceResponse {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct LlmToken(pub String);
 
-#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CreateLlmTokenBody {
-    #[serde(default)]
-    pub organization_id: Option<OrganizationId>,
+    pub organization_id: OrganizationId,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

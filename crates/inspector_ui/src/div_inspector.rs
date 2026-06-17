@@ -466,7 +466,7 @@ impl DivInspector {
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         });
 
         let buffer = project

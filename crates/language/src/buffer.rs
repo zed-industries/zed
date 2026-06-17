@@ -3330,6 +3330,76 @@ impl Buffer {
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.text.set_group_interval(group_interval);
     }
+
+    // TODO: see if ep can use this instead of Buffer::branch
+    pub fn snapshot_with_edits<I, S, T>(
+        &mut self,
+        edits: I,
+        cx: &mut Context<Self>,
+    ) -> Task<EditedBufferSnapshot>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        let mut snapshot = self.snapshot();
+        let text = snapshot.text.clone();
+        let mut syntax = snapshot.syntax.clone();
+        let language = self.language().cloned();
+        let registry = self.language_registry();
+        let new_text = self.text.snapshot_with_edits(edits);
+        cx.background_spawn(async move {
+            if let Some(language) = language.clone() {
+                syntax.reparse(&text, registry.clone(), language);
+            }
+
+            syntax.interpolate(&new_text.snapshot);
+
+            if let Some(language) = language {
+                syntax.reparse(&new_text.snapshot, registry, language);
+            }
+
+            snapshot.text = new_text.snapshot.clone();
+            snapshot.syntax = syntax;
+
+            EditedBufferSnapshot {
+                text: new_text,
+                snapshot,
+            }
+        })
+    }
+
+    pub fn fast_forward(&mut self, edited: EditedBufferSnapshot, cx: &mut Context<Self>) {
+        let base_version = edited.text.base_version.clone();
+        let did_edit = edited.text.did_edit;
+        self.text.fast_forward(edited.text);
+        if edited.snapshot.language == self.language {
+            self.reparse = None;
+            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            if did_edit {
+                cx.emit(BufferEvent::Edited {
+                    source: BufferEditSource::User,
+                });
+            }
+        } else {
+            self.did_edit(&base_version, false, BufferEditSource::User, cx);
+        }
+    }
+}
+
+pub struct EditedBufferSnapshot {
+    text: text::EditedBufferSnapshot,
+    snapshot: BufferSnapshot,
+}
+
+impl EditedBufferSnapshot {
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn base_version(&self) -> &clock::Global {
+        &self.text.base_version
+    }
 }
 
 #[doc(hidden)]
@@ -4465,6 +4535,7 @@ impl BufferSnapshot {
             anchor_items.push(OutlineItem {
                 depth: item_ends_stack.len(),
                 range: range_callback(self, item.range.clone()),
+                selection_range: range_callback(self, item.selection_range.clone()),
                 source_range_for_text: range_callback(self, item.source_range_for_text.clone()),
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
@@ -4542,6 +4613,14 @@ impl BufferSnapshot {
         }
         let source_range_for_text =
             buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end;
+        let selection_range = buffer_ranges
+            .iter()
+            .filter(|(_, node_is_name)| *node_is_name)
+            .map(|(buffer_range, _)| buffer_range.clone())
+            .reduce(|mut combined_range, next_range| {
+                combined_range.end = next_range.end;
+                combined_range
+            })?;
 
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
@@ -4599,6 +4678,7 @@ impl BufferSnapshot {
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
+            selection_range: selection_range.to_point(self),
             source_range_for_text: source_range_for_text.to_point(self),
             text: text.into(),
             highlight_ranges,
@@ -5728,7 +5808,9 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             let slice = &chunk[bit_start..bit_end];
 
-            let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
+            let mask = 1u128
+                .unbounded_shl((bit_end - bit_start) as u32)
+                .wrapping_sub(1);
             let tabs = (tabs >> bit_start) & mask;
             let chars = (chars_map >> bit_start) & mask;
             let newlines = (newlines >> bit_start) & mask;

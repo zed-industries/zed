@@ -1,5 +1,3 @@
-use super::*;
-use crate::udiff::apply_diff_to_string;
 use client::{RefreshLlmTokenListener, UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
@@ -15,8 +13,6 @@ use cloud_llm_client::{
 };
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
-use settings::EditPredictionDataCollectionChoice;
-
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -31,12 +27,12 @@ use language::{
     Anchor, Buffer, BufferEditSource, Capability, CursorShape, Diagnostic, DiagnosticEntry,
     DiagnosticSet, DiagnosticSeverity, Operation, Point, Selection, SelectionGoal,
 };
-
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
 use serde_json::json;
+use settings::EditPredictionDataCollectionChoice;
 use settings::SettingsStore;
 use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 use util::{
@@ -47,11 +43,14 @@ use uuid::Uuid;
 use workspace::{AppState, CollaboratorId, MultiWorkspace};
 use zeta_prompt::ZetaPromptInput;
 
+use crate::udiff::apply_diff_to_string;
 use crate::{
     BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
     EditPredictionJumpsFeatureFlag, EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
     REQUEST_TIMEOUT_BACKOFF,
 };
+
+use super::*;
 
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
@@ -2833,7 +2832,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
     cx: &mut TestAppContext,
     legacy_data_collection_choice: Option<&str>,
 ) -> (Entity<EditPredictionStore>, RequestChannels) {
-    cx.update(move |cx| {
+    let result = cx.update(move |cx| {
         cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
@@ -2934,13 +2933,49 @@ fn init_test_with_fake_client_and_legacy_data_collection(
 
         (
             ep_store,
+            user_store,
             RequestChannels {
                 predict: predict_req_rx,
                 reject: reject_req_rx,
                 settled: settled_req_rx,
             },
         )
-    })
+    });
+
+    let (ep_store, user_store, channels) = result;
+    set_test_organization(&user_store, cx);
+    (ep_store, channels)
+}
+
+/// Configures a current organization on the given `UserStore` for tests.
+///
+/// The test client starts out signed out, which causes `UserStore` to clear the
+/// current organization once that initial status is processed. This waits for
+/// that to happen before configuring the organization, so it isn't subsequently
+/// wiped out.
+fn set_test_organization(user_store: &Entity<UserStore>, cx: &mut TestAppContext) {
+    cx.run_until_parked();
+    cx.update(|cx| {
+        user_store.update(cx, |store, cx| {
+            store.set_current_organization_configuration_for_test(
+                Arc::new(Organization {
+                    id: OrganizationId("org_1".into()),
+                    name: "Organization 1".into(),
+                    is_personal: false,
+                }),
+                OrganizationConfiguration {
+                    is_zed_model_provider_enabled: true,
+                    is_agent_thread_feedback_enabled: true,
+                    is_collaboration_enabled: true,
+                    edit_prediction: OrganizationEditPredictionConfiguration {
+                        is_enabled: true,
+                        is_feedback_enabled: true,
+                    },
+                },
+                cx,
+            )
+        });
+    });
 }
 
 #[gpui::test]
@@ -3383,6 +3418,9 @@ async fn make_test_ep_store(
         RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
     let _server = FakeServer::for_client(42, &client, cx).await;
+
+    let project_user_store = cx.update(|cx| project.read(cx).user_store());
+    set_test_organization(&project_user_store, cx);
 
     let ep_store = cx.new(|cx| {
         let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);

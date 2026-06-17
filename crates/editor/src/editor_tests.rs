@@ -4665,6 +4665,43 @@ async fn test_newline_comments_with_multiple_delimiters(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_newline_comments_with_brackets(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "(".to_string(),
+                    end: ")".to_string(),
+                    close: false,
+                    surround: false,
+                    newline: true,
+                }],
+                ..BracketPairConfig::default()
+            },
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        // (ˇ)
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        // (
+        // ˇ)
+    "})
+    }
+}
+
+#[gpui::test]
 async fn test_newline_comments_repl_separators(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
@@ -8039,7 +8076,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in comment prefix (e.g., `//` to `///`) trigger seperate rewraps
+    // Test that change in comment prefix (e.g., `//` to `///`) trigger separate rewraps
     assert_rewrap(
         indoc! {"
             «// A regular long long comment to be wrapped.
@@ -8055,7 +8092,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that change in indentation level trigger seperate rewraps
+    // Test that change in indentation level trigger separate rewraps
     assert_rewrap(
         indoc! {"
             fn foo() {
@@ -14865,6 +14902,24 @@ async fn test_format_selections_action_available_when_range_formatting_is_suppor
         editor.set_text("one\ntwo\nthree\n", window, cx);
         editor.change_selections(SelectionEffects::default(), window, cx, |s| {
             s.select_ranges([Point::new(0, 0)..Point::new(1, 0)]);
+        });
+    });
+
+    refresh_editor_actions(cx);
+
+    assert!(cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
+}
+
+#[gpui::test]
+async fn test_format_selections_action_available_for_cursor_when_range_formatting_is_supported(
+    cx: &mut TestAppContext,
+) {
+    let (_, editor, cx, _) = setup_range_format_test(cx).await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("foo\nbar\n", window, cx);
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 1)..Point::new(1, 1)]);
         });
     });
 
@@ -33251,6 +33306,36 @@ async fn test_paste_plain_text_from_other_app_replaces_selection_without_creatin
 }
 
 #[gpui::test]
+async fn test_paste_text_with_scheme_like_prefix_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    // `url::Url::parse` accepts this as a URL with the scheme `editor`, but it
+    // should not be treated as one when pasting.
+    let text = "editor: Fix double-click bracket selection for large spans";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("«(feat on git-ui-add-info-exclude-to-context-menus) Fmtˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("{text}ˇ"));
+}
+
+#[gpui::test]
 async fn test_paste_url_from_other_app_without_creating_markdown_link_in_non_markdown_language(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -33762,6 +33847,66 @@ async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppConte
     assert_eq!(sticky_headers(5.5), vec![(class_foo, -0.5)]);
     assert_eq!(sticky_headers(6.0), vec![]);
     assert_eq!(sticky_headers(7.0), vec![]);
+}
+
+#[gpui::test]
+async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let buffer = indoc! {"
+        ˇvoid
+        evdev_post_scroll(struct evdev_device *device,
+                  usec_t time,
+                  enum libinput_pointer_axis_source source,
+                  const struct normalized_coords *delta)
+        {
+            const struct normalized_coords tilt_rot = {
+                cos(SCROLL_DELTA_TILT_ANGLE),
+                sin(SCROLL_DELTA_TILT_ANGLE),
+            };
+        }
+    "};
+    cx.set_state(buffer);
+
+    cx.update_editor(|editor, _, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(
+                    Some(languages::language("c", tree_sitter_c::LANGUAGE.into())),
+                    cx,
+                );
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            EditorElement::sticky_headers(&editor, &editor.snapshot(window, cx))
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let function_name_row = Point { row: 1, column: 0 };
+
+    assert_eq!(sticky_headers(1.0), vec![]);
+    assert_eq!(sticky_headers(1.5), vec![(function_name_row, 0.0)]);
+    assert_eq!(sticky_headers(5.0), vec![(function_name_row, 0.0)]);
 }
 
 #[gpui::test]
@@ -37619,95 +37764,6 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_restore_hunk_with_stale_base_text(cx: &mut TestAppContext) {
-    // Regression test: prepare_restore_change must read base_text from the same
-    // snapshot the hunk came from, not from the live BufferDiff entity. The live
-    // entity's base_text may have already been updated asynchronously (e.g.
-    // because git HEAD changed) while the MultiBufferSnapshot still holds the
-    // old hunk byte ranges — using both together causes Rope::slice to panic
-    // when the old range exceeds the new base text length.
-    init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx).await;
-
-    let long_base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
-    cx.set_state("ˇONE\ntwo\nTHREE\nfour\nFIVE\nsix\nseven\neight\nnine\nten\n");
-    cx.set_head_text(long_base_text);
-
-    let buffer_id = cx.update_buffer(|buffer, _| buffer.remote_id());
-
-    // Verify we have hunks from the initial diff.
-    let has_hunks = cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let hunks = snapshot
-            .buffer_snapshot()
-            .diff_hunks_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len());
-        hunks.count() > 0
-    });
-    assert!(has_hunks, "should have diff hunks before restoring");
-
-    // Now trigger a git HEAD change to a much shorter base text.
-    // After this, the live BufferDiff entity's base_text buffer will be
-    // updated synchronously (inside set_snapshot_with_secondary_inner),
-    // but DiffChanged is deferred until parsing_idle completes.
-    // We step the executor tick-by-tick to find the window where the
-    // live base_text is already short but the MultiBuffer snapshot is
-    // still stale (old hunks + old base_text).
-    let short_base_text = "short\n";
-    let fs = cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
-    let path = cx.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
-    fs.set_head_for_repo(
-        &Path::new(path!("/root")).join(".git"),
-        &[(path.as_unix_str(), short_base_text.to_string())],
-        "newcommit",
-    );
-
-    // Step the executor tick-by-tick. At each step, check whether the
-    // race condition exists: live BufferDiff has short base text but
-    // the MultiBuffer snapshot still has old (long) hunks.
-    let mut found_race = false;
-    for _ in 0..200 {
-        cx.executor().tick();
-
-        let race_exists = cx.update_editor(|editor, _window, cx| {
-            let multi_buffer = editor.buffer().read(cx);
-            let diff_entity = match multi_buffer.diff_for(buffer_id) {
-                Some(d) => d,
-                None => return false,
-            };
-            let live_base_len = diff_entity.read(cx).base_text(cx).len();
-            let snapshot = multi_buffer.snapshot(cx);
-            let snapshot_base_len = snapshot
-                .diff_for_buffer_id(buffer_id)
-                .map(|d| d.base_text().len());
-            // Race: live base text is shorter than what the snapshot knows.
-            live_base_len < long_base_text.len() && snapshot_base_len == Some(long_base_text.len())
-        });
-
-        if race_exists {
-            found_race = true;
-            // The race window is open: the live entity has new (short) base
-            // text but the MultiBuffer snapshot still has old hunks with byte
-            // ranges computed against the old long base text. Attempt restore.
-            // Without the fix, this panics with "cannot summarize past end of
-            // rope". With the fix, it reads base_text from the stale snapshot
-            // (consistent with the stale hunks) and succeeds.
-            cx.update_editor(|editor, window, cx| {
-                editor.select_all(&SelectAll, window, cx);
-                editor.git_restore(&Default::default(), window, cx);
-            });
-            break;
-        }
-    }
-
-    assert!(
-        found_race,
-        "failed to observe the race condition between \
-        live BufferDiff base_text and stale MultiBuffer snapshot; \
-        the test may need adjustment if the async diff pipeline changed"
-    );
-}
-
-#[gpui::test]
 async fn test_align_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -38029,6 +38085,164 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_columnar_selection_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The middle row contains a 2-byte char (ã) before the dragged column. A
+    // column selection that uses byte columns directly puts the ã row's
+    // selection at a different visual position than the ASCII rows; anchoring
+    // in x pixels keeps all rows at the same character offset.
+    cx.set_state(indoc! {"
+        ˇabcde
+        abcde
+        aãcde
+        abcde
+        abcde
+    "});
+
+    // Drag column-wise from (row 0, col 0) past the ã column on every row.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «abcdˇ»e
+        «abcdˇ»e
+        «aãcdˇ»e
+        «abcdˇ»e
+        «abcdˇ»e
+    "});
+
+    // Control: drag stops before the ã column, where byte columns and x
+    // positions agree.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aˇ»bcde
+        «aˇ»bcde
+        «aˇ»ãcde
+        «aˇ»bcde
+        «aˇ»bcde
+    "});
+}
+
+#[gpui::test]
+async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇaaaaaaaaaa
+        bb
+        cccccccccc
+    "});
+
+    // Drag from the start of the long first row to a point past the EOL of
+    // the short second row: the mouse handlers encode that as the nearest
+    // valid position (1, 2) plus an unclipped goal column of 8. The rectangle
+    // must keep tracking the mouse x on the long row instead of collapsing to
+    // the short row's width.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(1), 2),
+                goal_column: 8,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «aaaaaaaaˇ»aa
+        «bbˇ»
+        cccccccccc
+    "});
+
+    // Starting the drag past the EOL of the short row must anchor that edge
+    // of the rectangle at the click position, not at the short row's EOL.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(1), 2),
+                goal_column: 8,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(2), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        aaaaaaaaaa
+        bb
+        cccc«ˇcccc»cc
+    "});
+}
+
+#[gpui::test]
 async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -38122,4 +38336,181 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         third
         fourthˇ»
     "});
+}
+
+#[track_caller]
+fn assert_select_delimiters(around: bool, before: &str, after: &str, cx: &mut EditorTestContext) {
+    let _state_context = cx.set_state(before);
+
+    if around {
+        cx.dispatch_action(SelectAroundDelimiters);
+    } else {
+        cx.dispatch_action(SelectInsideDelimiters);
+    }
+
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
+async fn test_select_delimiters(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    // Inside.
+    assert_select_delimiters(false, "foo(ˇbar);", "foo(«barˇ»);", &mut cx);
+    assert_select_delimiters(false, "foo(a, ˇb, c);", "foo(«a, b, cˇ»);", &mut cx);
+    assert_select_delimiters(false, "foo([1, ˇ2, 3]);", "foo([«1, 2, 3ˇ»]);", &mut cx);
+    assert_select_delimiters(false, "let x = { aˇ: 1 };", "let x = {« a: 1 ˇ»};", &mut cx);
+    assert_select_delimiters(false, "let xˇ = 42;", "let xˇ = 42;", &mut cx);
+    assert_select_delimiters(false, "foo(a, «bˇ», c);", "foo(«a, b, cˇ»);", &mut cx);
+    assert_select_delimiters(
+        false,
+        "const s = \"hello ˇworld\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    assert_select_delimiters(
+        false,
+        "const s = \"ˇhello world\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    assert_select_delimiters(
+        false,
+        "const s = \"hello worldˇ\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    assert_select_delimiters(
+        false,
+        "console.log(\"deˇbug\");",
+        "console.log(\"«debugˇ»\");",
+        &mut cx,
+    );
+
+    // Around.
+    assert_select_delimiters(true, "foo(ˇbar);", "foo«(bar)ˇ»;", &mut cx);
+    assert_select_delimiters(true, "foo([1, ˇ2, 3]);", "foo(«[1, 2, 3]ˇ»);", &mut cx);
+    assert_select_delimiters(true, "let x = {ˇ a: 1 };", "let x = «{ a: 1 }ˇ»;", &mut cx);
+    assert_select_delimiters(true, "let xˇ = 42;", "let xˇ = 42;", &mut cx);
+    assert_select_delimiters(
+        true,
+        "console.log(\"deˇbug\");",
+        "console.log(«\"debug\"ˇ»);",
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_select_delimiters_in_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    // Inside.
+    assert_select_delimiters(
+        false,
+        r#"This is "ˇhello, world!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is "hello, ˇworld!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is "hello, world!ˇ"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is ˇ"hello, world!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is "hello, world!"ˇ."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is 'hello, ˇworld!'."#,
+        r#"This is '«hello, world!ˇ»'."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is `hello, ˇworld!`."#,
+        r#"This is `«hello, world!ˇ»`."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is ("hello, ˇworld!")."#,
+        r#"This is ("«hello, world!ˇ»")."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is hello, ˇworld!."#,
+        r#"This is hello, ˇworld!."#,
+        &mut cx,
+    );
+
+    // Around.
+    assert_select_delimiters(
+        true,
+        r#"This is "hello, ˇworld!"."#,
+        r#"This is «"hello, world!"ˇ»."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        true,
+        r#"This is 'hello, ˇworld!'."#,
+        r#"This is «'hello, world!'ˇ»."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        true,
+        r#"This is `hello, ˇworld!`."#,
+        r#"This is «`hello, world!`ˇ»."#,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
+
+    let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo«([1, 2, 3])ˇ»;");
+
+    let _state_context = cx.set_state("foo(x, { ˇa: 1 });");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(x, {« a: 1 ˇ»});");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }

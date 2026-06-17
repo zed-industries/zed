@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use component::{Component, ComponentScope, example_group_with_title, single_example};
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, Role, px};
 use smallvec::SmallVec;
 
 use crate::{Disclosure, prelude::*};
@@ -53,6 +53,9 @@ pub struct ListItem {
     focused: Option<bool>,
     docked_right: bool,
     height: Option<DefiniteLength>,
+    aria_role: Option<Role>,
+    aria_label: Option<SharedString>,
+    aria_active_descendant: bool,
 }
 
 impl ListItem {
@@ -84,7 +87,38 @@ impl ListItem {
             focused: None,
             docked_right: false,
             height: None,
+            aria_role: None,
+            aria_label: None,
+            aria_active_descendant: false,
         }
+    }
+
+    /// Sets the accessible role reported to assistive technology (e.g.
+    /// [`Role::MenuItem`] when this item is part of a menu). When unset, the
+    /// item is not reported as a distinct node, matching list defaults.
+    pub fn aria_role(mut self, role: Role) -> Self {
+        self.aria_role = Some(role);
+        self
+    }
+
+    /// Sets the label announced by assistive technology. List items render
+    /// arbitrary children, so this should be set when a meaningful textual
+    /// label exists.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Reports this item as the accessibility focus, overriding the element
+    /// that holds real keyboard focus. Requires [`Self::aria_role`] to be set.
+    ///
+    /// Use this on the selected item of a composite widget (e.g. a menu) that
+    /// keeps keyboard focus on its container. It is honored only while the
+    /// container actually holds focus, so it is safe to set unconditionally on
+    /// the selected item. See [`StatefulInteractiveElement::aria_active_descendant`].
+    pub fn aria_active_descendant(mut self) -> Self {
+        self.aria_active_descendant = true;
+        self
     }
 
     pub fn group_name(mut self, group_name: impl Into<SharedString>) -> Self {
@@ -270,6 +304,25 @@ impl RenderOnce for ListItem {
             .child(
                 h_flex()
                     .id("inner_list_item")
+                    // The accessible role/label live here, alongside the click
+                    // handler, so assistive technology reports one actionable
+                    // node (e.g. a menu item) rather than an inert container.
+                    .when_some(self.aria_role, |this, role| this.role(role))
+                    .when(
+                        self.aria_role.is_some() && self.aria_active_descendant,
+                        |this| this.aria_active_descendant(),
+                    )
+                    .when_some(self.aria_label, |this, label| this.aria_label(label))
+                    .when(self.aria_role.is_some(), |this| {
+                        this.aria_selected(self.selected)
+                            .when_some(self.toggle, |this, toggled| {
+                                this.aria_toggled(if toggled {
+                                    gpui::Toggled::True
+                                } else {
+                                    gpui::Toggled::False
+                                })
+                            })
+                    })
                     .group("list_item")
                     .w_full()
                     .relative()

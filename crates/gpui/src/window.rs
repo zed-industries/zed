@@ -20,6 +20,7 @@ use crate::{
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
     transparent_black,
 };
+
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -60,6 +61,8 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 mod prompts;
+
+pub use a11y::A11ySubtreeBuilder;
 
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
@@ -116,6 +119,17 @@ struct WindowInvalidatorInner {
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
     pub update_count: usize,
+    pub frame_dirty: FrameDirtyAccumulator,
+}
+
+/// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
+/// frame profiler. Tracks when the current frame first became dirty and how
+/// many invalidations were coalesced into it. Only populated while
+/// `profiler::frame_trace_enabled()` is set.
+#[derive(Default)]
+struct FrameDirtyAccumulator {
+    dirty_at: Option<Instant>,
+    invalidations: u64,
 }
 
 #[derive(Clone)]
@@ -131,6 +145,7 @@ impl WindowInvalidator {
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
+                frame_dirty: FrameDirtyAccumulator::default(),
             })),
         }
     }
@@ -140,6 +155,7 @@ impl WindowInvalidator {
         inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            Self::record_frame_dirty(&mut inner);
             inner.dirty = true;
             cx.push_effect(Effect::Notify { emitter: entity });
             true
@@ -157,6 +173,7 @@ impl WindowInvalidator {
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
+            Self::record_frame_dirty(&mut inner);
         }
     }
 
@@ -166,6 +183,17 @@ impl WindowInvalidator {
 
     pub fn update_count(&self) -> usize {
         self.inner.borrow().update_count
+    }
+
+    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
+        if profiler::frame_trace_enabled() {
+            inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+            inner.frame_dirty.invalidations += 1;
+        }
+    }
+
+    fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
+        mem::take(&mut self.inner.borrow_mut().frame_dirty)
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -1015,6 +1043,9 @@ pub struct Window {
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
+    /// Incremented every time focus moves. Used to invalidate a
+    /// pending keyboard activation state when focus changes.
+    pub(crate) focus_generation: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
@@ -1277,6 +1308,10 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        let initial_window_title = titlebar
+            .as_ref()
+            .and_then(|titlebar| titlebar.title.clone());
+
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
@@ -1335,8 +1370,12 @@ impl Window {
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
+            let mut initial_root_node = accesskit::Node::new(accesskit::Role::Window);
+            if let Some(title) = &initial_window_title {
+                initial_root_node.set_label(title.to_string());
+            }
             let initial_tree = accesskit::TreeUpdate {
-                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
+                nodes: vec![(ROOT_NODE_ID, initial_root_node)],
                 tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
                 tree_id: accesskit::TreeId::ROOT,
                 focus: ROOT_NODE_ID,
@@ -1709,6 +1748,7 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
+            focus_generation: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
@@ -1718,7 +1758,11 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
+            a11y: A11y::new(
+                a11y_active_flag,
+                accessibility_force_disabled,
+                initial_window_title,
+            ),
         })
     }
 
@@ -1865,6 +1909,7 @@ impl Window {
         }
 
         self.focus = Some(handle.id);
+        self.focus_generation = self.focus_generation.wrapping_add(1);
         self.clear_pending_keystrokes();
 
         // Avoid re-entrant entity updates by deferring observer notifications to the end of the
@@ -1887,6 +1932,9 @@ impl Window {
             return;
         }
 
+        if self.focus.is_some() {
+            self.focus_generation = self.focus_generation.wrapping_add(1);
+        }
         self.focus = None;
         self.refresh();
     }
@@ -2309,6 +2357,7 @@ impl Window {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
+        self.a11y.set_window_title(title.to_string());
     }
 
     /// Sets the position of the macOS traffic light buttons.
@@ -2575,6 +2624,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // Drain unconditionally so a stale first-invalidation timestamp can't
+        // leak into a later frame across enable/disable of frame tracing.
+        let frame_dirty = self.invalidator.take_frame_dirty();
+        let draw_started_at = profiler::frame_trace_enabled().then(Instant::now);
+
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
         let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
@@ -2668,6 +2722,16 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
+        if let Some(draw_start) = draw_started_at {
+            profiler::record_frame_timing(profiler::FrameTiming {
+                window_id: self.handle.window_id(),
+                dirty_at: frame_dirty.dirty_at,
+                invalidations: frame_dirty.invalidations,
+                draw_start,
+                draw_end: Instant::now(),
+            });
+        }
+
         ArenaClearNeeded::new(&cx.element_arena)
     }
 
@@ -2700,6 +2764,18 @@ impl Window {
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    /// Presents the most recently drawn frame if it hasn't been presented yet.
+    ///
+    /// Benchmarks drive drawing synchronously rather than through a platform
+    /// frame-request loop, so they call this after each measured update to
+    /// submit the frame like production presentation would.
+    #[cfg(feature = "bench")]
+    pub fn present_if_needed(&mut self) {
+        if self.needs_present.get() {
+            self.present();
+        }
     }
 
     /// Returns a snapshot of the current input-latency histograms.
@@ -5419,6 +5495,20 @@ impl Window {
     /// with the window, for others it's just a simple global function call.
     pub fn play_system_bell(&self) {
         self.platform_window.play_system_bell()
+    }
+
+    /// Returns whether accessibility features are active for this frame,
+    /// i.e. whether assistive technology (such as a screen reader) is
+    /// connected and an accessibility tree is being built.
+    ///
+    /// Use this to skip computing data during rendering that is only
+    /// observable through the accessibility tree. When accessibility is
+    /// activated, a redraw is forced, so gated work is recomputed before the
+    /// next tree update is sent to the platform.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    pub fn is_a11y_active(&self) -> bool {
+        self.a11y.is_active()
     }
 
     /// Register a listener for an accessibility action on a specific node.
