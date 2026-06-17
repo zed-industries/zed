@@ -284,8 +284,7 @@ fn ip_literal_connect_is_denied_for_pattern_allowlists() {
 
 #[test]
 fn ip_literal_connect_is_allowed_when_allowlist_allows_any() {
-    // `allow_all_hosts` matches the pre-allowlist `allow_network: true`
-    // semantics: unrestricted egress, IP literals included.
+    // `Allowlist::any()` preserves unrestricted proxy semantics, IP literals included.
     let (origin_addr, origin_join) = spawn_echo_origin(b"HTTP/1.1 200 OK\r\n\r\n");
     let (proxy, mut events) = spawn_proxy(Allowlist::any());
 

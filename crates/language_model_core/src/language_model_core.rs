@@ -56,6 +56,7 @@ pub enum LanguageModelCompletionEvent {
     },
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
+    Compaction(CompactionContent),
 }
 
 impl LanguageModelCompletionEvent {
