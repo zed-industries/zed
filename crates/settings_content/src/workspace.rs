@@ -820,6 +820,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Whether to show the expand all and collapse all buttons in the project panel.
+    ///
+    /// Default: true
+    pub show_expand_collapse_buttons: Option<bool>,
 }
 
 #[derive(

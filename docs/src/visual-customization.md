@@ -487,7 +487,9 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     // this also affects how file paths appear in the file finder history.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
-    "hide_hidden": false
+    "hide_hidden": false,
+    // Whether to show expand/collapse all buttons on root entries.
+    "show_expand_collapse_buttons": true
   }
 ```
 

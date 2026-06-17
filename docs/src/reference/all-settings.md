@@ -4959,6 +4959,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "sort_mode": "directories_first",
     "hide_root": false,
     "hide_hidden": false,
+    "show_expand_collapse_buttons": true,
     "starts_open": true,
     "auto_open": {
       "on_create": true,
@@ -5326,6 +5327,20 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `on_create`: Whether to automatically open newly created files in the editor.
 - `on_paste`: Whether to automatically open files after pasting or duplicating them.
 - `on_drop`: Whether to automatically open files dropped from external sources.
+
+### Expand / Collapse Buttons
+
+- Description: Whether to show expand all and collapse all buttons on the project panel root entries.
+- Setting: `show_expand_collapse_buttons`
+- Default:
+
+```json [settings]
+{
+  "project_panel": {
+    "show_expand_collapse_buttons": true
+  }
+}
+```
 
 ## Agent
 

@@ -38,6 +38,7 @@ pub struct ProjectPanelSettings {
     pub sort_order: ProjectPanelSortOrder,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
+    pub show_expand_collapse_buttons: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -145,6 +146,7 @@ impl Settings for ProjectPanelSettings {
             sort_order: project_panel.sort_order.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
             git_status_indicator: project_panel.git_status_indicator.unwrap(),
+            show_expand_collapse_buttons: project_panel.show_expand_collapse_buttons.unwrap(),
         }
     }
 }

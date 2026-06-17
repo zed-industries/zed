@@ -60,10 +60,11 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label, LabelSize, ListItem,
-    ListItemSpacing, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate,
-    Tooltip, WithScrollbar, prelude::*, v_flex,
+    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconButton, IconDecoration,
+    IconDecorationKind, IconName, IconSize, IndentGuideColors, IndentGuideLayout, Indicator,
+    KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ProjectEmptyState, ScrollAxes,
+    ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
+    v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
@@ -341,6 +342,8 @@ actions!(
         CollapseSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
+        /// Expands all entries in the project tree.
+        ExpandAllEntries,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -495,6 +498,14 @@ pub fn init(cx: &mut App) {
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.collapse_all_entries(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &ExpandAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.expand_all_entries(action, window, cx);
                 });
             }
         });
@@ -1473,6 +1484,35 @@ impl ProjectPanel {
                     None => *expanded_entries = Default::default(),
                 };
             });
+
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    fn expand_all_entries(
+        &mut self,
+        _: &ExpandAllEntries,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+
+        for worktree in project.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let worktree_snapshot = worktree.snapshot();
+
+            let mut directory_ids: Vec<ProjectEntryId> = worktree_snapshot
+                .entries(false, 0)
+                .filter(|entry| entry.is_dir())
+                .map(|entry| entry.id)
+                .collect();
+            directory_ids.sort();
+
+            self.state
+                .expanded_dir_ids
+                .insert(worktree_id, directory_ids);
+        }
 
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
@@ -5848,7 +5888,8 @@ impl ProjectPanel {
                     .when(
                         canonical_path.is_some()
                             || diagnostic_count.is_some()
-                            || git_indicator.is_some(),
+                            || git_indicator.is_some()
+                            || (details.depth == 0 && settings.show_expand_collapse_buttons),
                         |this| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
@@ -5872,6 +5913,71 @@ impl ProjectPanel {
                                     .gap_1()
                                     .flex_none()
                                     .pr_3()
+                                    .when(details.depth == 0 && settings.show_expand_collapse_buttons, |this| {
+                                        let worktree_proto = details.worktree_id.to_proto();
+                                        let entry_proto = entry_id.to_proto();
+                                        this.child(
+                                            IconButton::new(
+                                                format!("collapse-all-{worktree_proto}-{entry_proto}"),
+                                                IconName::ListCollapse,
+                                            )
+                                                .icon_size(IconSize::Small)
+                                                .tooltip(Tooltip::text("Collapse Folder"))
+                                                .on_click(cx.listener({
+                                                    let worktree_id = details.worktree_id;
+                                                    move |this, _, window, cx| {
+                                                        this.collapse_all_for_entry(
+                                                            worktree_id,
+                                                            entry_id,
+                                                            cx,
+                                                        );
+                                                        if let Some(expanded_dir_ids) =
+                                                            this.state.expanded_dir_ids.get_mut(&worktree_id)
+                                                        {
+                                                            if let Err(ix) =
+                                                                expanded_dir_ids.binary_search(&entry_id)
+                                                            {
+                                                                expanded_dir_ids.insert(ix, entry_id);
+                                                            }
+                                                        }
+                                                        this.update_visible_entries(
+                                                            None,
+                                                            false,
+                                                            false,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                        cx.notify();
+                                                    }
+                                                })),
+                                        )
+                                        .child(
+                                            IconButton::new(
+                                                format!("expand-all-{worktree_proto}-{entry_proto}"),
+                                                IconName::ListTree,
+                                            )
+                                                .icon_size(IconSize::Small)
+                                                .tooltip(Tooltip::text("Expand Folder"))
+                                                .on_click(cx.listener({
+                                                    let worktree_id = details.worktree_id;
+                                                    move |this, _, window, cx| {
+                                                        this.expand_all_for_entry(
+                                                            worktree_id,
+                                                            entry_id,
+                                                            cx,
+                                                        );
+                                                        this.update_visible_entries(
+                                                            None,
+                                                            false,
+                                                            false,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                        cx.notify();
+                                                    }
+                                                })),
+                                        )
+                                    })
                                     .when_some(diagnostic_count, |this, count| {
                                         this.when(count.error_count > 0, |this| {
                                             this.child(
@@ -6761,6 +6867,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::expand_all_entries))
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))

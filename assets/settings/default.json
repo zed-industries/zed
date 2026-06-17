@@ -861,6 +861,8 @@
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.
     "git_status_indicator": false,
+    // Whether to show expand/collapse all buttons at the top of the project panel.
+    "show_expand_collapse_buttons": true,
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;

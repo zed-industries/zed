@@ -930,6 +930,7 @@
       "left": "project_panel::CollapseSelectedEntry",
       "ctrl-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
+      "ctrl-right": "project_panel::ExpandAllEntries",
       "ctrl-n": "project_panel::NewFile",
       "alt-n": "project_panel::NewDirectory",
       "ctrl-x": "project_panel::Cut",
