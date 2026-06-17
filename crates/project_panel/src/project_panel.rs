@@ -60,10 +60,11 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label, LabelSize, ListItem,
-    ListItemSpacing, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate,
-    Tooltip, WithScrollbar, prelude::*, v_flex,
+    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration,
+    IconDecorationKind, IconName, IconSize, IndentGuideColors, IndentGuideLayout, Indicator,
+    KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ProjectEmptyState, ScrollAxes,
+    ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
+    v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
@@ -341,6 +342,8 @@ actions!(
         CollapseSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
+        /// Expands all entries in the project tree.
+        ExpandAllEntries,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -495,6 +498,14 @@ pub fn init(cx: &mut App) {
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.collapse_all_entries(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &ExpandAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.expand_all_entries(action, window, cx);
                 });
             }
         });
@@ -717,40 +728,12 @@ impl ProjectPanel {
                         cx.notify();
                     }
                     project::Event::ExpandedAllForEntry(worktree_id, entry_id) => {
-                        if let Some((worktree, expanded_dir_ids)) = project
-                            .read(cx)
-                            .worktree_for_id(*worktree_id, cx)
-                            .zip(this.state.expanded_dir_ids.get_mut(worktree_id))
-                        {
-                            let worktree = worktree.read(cx);
-
-                            let Some(entry) = worktree.entry_for_id(*entry_id) else {
-                                return;
-                            };
-                            let include_ignored_dirs = !entry.is_ignored;
-
-                            let mut dirs_to_expand = vec![*entry_id];
-                            while let Some(current_id) = dirs_to_expand.pop() {
-                                let Some(current_entry) = worktree.entry_for_id(current_id) else {
-                                    continue;
-                                };
-                                for child in worktree.child_entries(&current_entry.path) {
-                                    if !child.is_dir() || (include_ignored_dirs && child.is_ignored)
-                                    {
-                                        continue;
-                                    }
-
-                                    dirs_to_expand.push(child.id);
-
-                                    if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
-                                        expanded_dir_ids.insert(ix, child.id);
-                                    }
-                                    this.state.unfolded_dir_ids.insert(child.id);
-                                }
-                            }
-                            this.update_visible_entries(None, false, false, window, cx);
-                            cx.notify();
-                        }
+                        this.synchronously_expand_all_directories(
+                            *worktree_id,
+                            *entry_id,
+                            window,
+                            cx,
+                        );
                     }
                     _ => {}
                 },
@@ -1213,22 +1196,85 @@ impl ProjectPanel {
                                     .action("Remove from Project", Box::new(RemoveFromProject))
                             })
                             .when(is_dir && !is_root, |menu| {
-                                menu.separator().action(
-                                    "Collapse All",
-                                    Box::new(CollapseSelectedEntryAndChildren),
-                                )
+                                let entity = entity.clone();
+                                let worktree_id = worktree_id;
+                                let entry_id = entry_id;
+                                menu.separator()
+                                    .item(
+                                        ContextMenuEntry::new("Expand All").handler({
+                                            let entity = entity.clone();
+                                            move |window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    this.expand_all_for_entry(
+                                                        worktree_id,
+                                                        entry_id,
+                                                        cx,
+                                                    );
+                                                    this.synchronously_expand_all_directories_internal(
+                                                        worktree_id,
+                                                        entry_id,
+                                                        cx,
+                                                    );
+                                                    this.update_visible_entries(
+                                                        None,
+                                                        false,
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    cx.notify();
+                                                });
+                                            }
+                                        }),
+                                    )
+                                    .action(
+                                        "Collapse All",
+                                        Box::new(CollapseSelectedEntryAndChildren),
+                                    )
                             })
                             .when(is_dir && is_root, |menu| {
                                 let entity = entity.clone();
-                                menu.separator().item(
-                                    ContextMenuEntry::new("Collapse All").handler(
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.collapse_all_for_root(window, cx);
-                                            });
-                                        },
-                                    ),
-                                )
+                                let worktree_id = worktree_id;
+                                let entry_id = entry_id;
+                                menu.separator()
+                                    .item(
+                                        ContextMenuEntry::new("Expand All")
+                                            .action(Box::new(ExpandAllEntries))
+                                            .handler({
+                                                let entity = entity.clone();
+                                                move |window, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        this.expand_all_for_entry(
+                                                            worktree_id,
+                                                            entry_id,
+                                                            cx,
+                                                        );
+                                                        this.synchronously_expand_all_directories_internal(
+                                                            worktree_id,
+                                                            entry_id,
+                                                            cx,
+                                                        );
+                                                        this.update_visible_entries(
+                                                            None,
+                                                            false,
+                                                            false,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .item(
+                                        ContextMenuEntry::new("Collapse All")
+                                            .action(Box::new(CollapseAllEntries))
+                                            .handler(move |window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    this.collapse_all_for_root(window, cx);
+                                                });
+                                            }),
+                                    )
                             })
                     }
                 })
@@ -1424,9 +1470,16 @@ impl ProjectPanel {
             return;
         }
 
-        let worktree_id = worktree.id();
-        let root_id = entry.id;
+        self.collapse_all_for_worktree_root(worktree.id(), entry.id, window, cx);
+    }
 
+    fn collapse_all_for_worktree_root(
+        &mut self,
+        worktree_id: WorktreeId,
+        root_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
             if self.project.read(cx).visible_worktrees(cx).count() == 1 {
                 expanded_dir_ids.retain(|id| id == &root_id);
@@ -1476,6 +1529,87 @@ impl ProjectPanel {
 
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
+    }
+
+    fn expand_all_entries(
+        &mut self,
+        _: &ExpandAllEntries,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let worktree_roots = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                Some((worktree.id(), worktree.root_entry()?.id))
+            })
+            .collect::<Vec<_>>();
+
+        for (worktree_id, root_id) in worktree_roots {
+            self.expand_all_for_entry(worktree_id, root_id, cx);
+            self.synchronously_expand_all_directories_internal(worktree_id, root_id, cx);
+        }
+
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    fn synchronously_expand_all_directories(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.synchronously_expand_all_directories_internal(worktree_id, entry_id, cx);
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    fn synchronously_expand_all_directories_internal(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+        let Some((worktree, expanded_dir_ids)) = project
+            .worktree_for_id(worktree_id, cx)
+            .zip(self.state.expanded_dir_ids.get_mut(&worktree_id))
+        else {
+            return;
+        };
+
+        let worktree = worktree.read(cx);
+        let Some(entry) = worktree.entry_for_id(entry_id) else {
+            return;
+        };
+        let include_ignored_dirs = !entry.is_ignored;
+
+        if let Err(ix) = expanded_dir_ids.binary_search(&entry_id) {
+            expanded_dir_ids.insert(ix, entry_id);
+        }
+
+        let mut dirs_to_expand = vec![entry_id];
+        while let Some(current_id) = dirs_to_expand.pop() {
+            let Some(current_entry) = worktree.entry_for_id(current_id) else {
+                continue;
+            };
+            for child in worktree.child_entries(&current_entry.path) {
+                if !child.is_dir() || (include_ignored_dirs && child.is_ignored) {
+                    continue;
+                }
+
+                dirs_to_expand.push(child.id);
+
+                if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
+                    expanded_dir_ids.insert(ix, child.id);
+                }
+                self.state.unfolded_dir_ids.insert(child.id);
+            }
+        }
     }
 
     fn toggle_expanded(
@@ -6761,6 +6895,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::expand_all_entries))
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
