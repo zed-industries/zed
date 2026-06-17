@@ -40,7 +40,7 @@ use menu::{
 };
 use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
-use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
+use recent_projects::sidebar_recent_projects::{OnConfirmWorkspace, SidebarRecentProjects};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
 
@@ -891,6 +891,7 @@ pub struct Sidebar {
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
+    new_thread_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
@@ -1042,6 +1043,7 @@ impl Sidebar {
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
+            new_thread_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_new_thread_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
@@ -1453,7 +1455,13 @@ impl Sidebar {
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
                 &[],
                 None,
-                OpenMode::Activate,
+                // Add (don't activate) so the freshly opened workspace isn't
+                // revealed with its restored last thread while we await the
+                // open. `create_new_entry` below activates the workspace and
+                // creates the new entry in one synchronous block, so the user
+                // lands directly on the new thread without a flash of the
+                // previously active one.
+                OpenMode::Add,
                 window,
                 cx,
             )
@@ -7388,6 +7396,7 @@ impl Sidebar {
                         ws.clone(),
                         window_project_groups.clone(),
                         focus_handle.clone(),
+                        None,
                         window,
                         cx,
                     )
@@ -8266,26 +8275,80 @@ impl Sidebar {
             .child(self.render_recent_projects_button(cx))
     }
 
-    /// The sidebar's single new-thread action, shown to the right of the
-    /// thread search box. The section-based grouping modes
-    /// (updated/status) don't have a meaningful per-group target,
-    /// so this creates a thread in the active workspace. The per-group `+` on
-    /// project headers remains for the workspace grouping, where a group is a
-    /// real container.
+    /// The `+` button shown to the right of the thread search box. It opens the
+    /// same recent-projects popover as the "Add Project" button in the sidebar's
+    /// bottom bar, letting the user pick (or open) the workspace they want to
+    /// start a thread in. The per-group `+` on project headers remains for the
+    /// workspace grouping, where a group is a real container.
     fn render_global_new_thread_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
-        IconButton::new("sidebar-new-thread", IconName::Plus)
-            .icon_size(IconSize::Small)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in("Start New Agent Thread", &NewThread, &focus_handle, cx)
-            })
-            .on_click(cx.listener(|this, _, window, cx| {
-                if let Some(workspace) = this.active_workspace(cx) {
-                    this.selection = None;
-                    this.create_new_entry(&workspace, window, cx);
+
+        let multi_workspace = self.multi_workspace.upgrade();
+
+        let workspace = multi_workspace
+            .as_ref()
+            .map(|mw| mw.read(cx).workspace().downgrade());
+
+        let menu_focus_handle = workspace
+            .as_ref()
+            .and_then(|ws| ws.upgrade())
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        let window_project_groups: Vec<ProjectGroupKey> = multi_workspace
+            .as_ref()
+            .map(|mw| mw.read(cx).project_group_keys())
+            .unwrap_or_default();
+
+        let popover_handle = self.new_thread_popover_handle.clone();
+
+        let this = cx.weak_entity();
+        let on_confirm: OnConfirmWorkspace = Rc::new(move |key, window, cx| {
+            this.update(cx, |sidebar, cx| {
+                sidebar.selection = None;
+                if let Some(workspace) = sidebar.workspace_for_group(&key, cx) {
+                    sidebar.create_new_entry(&workspace, window, cx);
+                } else {
+                    sidebar.open_workspace_and_create_entry(
+                        &key,
+                        NewEntryTarget::LastCreatedKind,
+                        window,
+                        cx,
+                    );
                 }
-            }))
+            })
+            .ok();
+        });
+
+        PopoverMenu::new("sidebar-new-thread-menu")
+            .with_handle(popover_handle)
+            .menu(move |window, cx| {
+                let on_confirm = on_confirm.clone();
+                workspace.as_ref().map(|ws| {
+                    SidebarRecentProjects::popover(
+                        ws.clone(),
+                        window_project_groups.clone(),
+                        menu_focus_handle.clone(),
+                        Some(on_confirm),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .trigger_with_tooltip(
+                IconButton::new("sidebar-new-thread", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
+                move |_, cx| {
+                    Tooltip::for_action_in(
+                        "Start New Agent Thread",
+                        &NewThread,
+                        &focus_handle,
+                        cx,
+                    )
+                },
+            )
+            .anchor(gpui::Anchor::TopRight)
     }
 
     fn render_group_by_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {

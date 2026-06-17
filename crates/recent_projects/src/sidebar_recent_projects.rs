@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
@@ -28,11 +29,19 @@ pub struct SidebarRecentProjects {
     _subscription: Subscription,
 }
 
+/// Invoked when a recent project is chosen from the popover. Receives the
+/// selected project's [`ProjectGroupKey`]. When provided to
+/// [`SidebarRecentProjects::popover`], it replaces the default behavior (which
+/// simply opens/activates the project), letting callers do something else with
+/// the selected workspace, such as creating a new thread in it.
+pub type OnConfirmWorkspace = Rc<dyn Fn(ProjectGroupKey, &mut Window, &mut App)>;
+
 impl SidebarRecentProjects {
     pub fn popover(
         workspace: WeakEntity<Workspace>,
         window_project_groups: Vec<ProjectGroupKey>,
         _focus_handle: FocusHandle,
+        on_confirm: Option<OnConfirmWorkspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -44,6 +53,7 @@ impl SidebarRecentProjects {
             let delegate = SidebarRecentProjectsDelegate {
                 workspace,
                 window_project_groups,
+                on_confirm,
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
@@ -113,6 +123,7 @@ impl Render for SidebarRecentProjects {
 pub struct SidebarRecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
     window_project_groups: Vec<ProjectGroupKey>,
+    on_confirm: Option<OnConfirmWorkspace>,
     workspaces: Vec<RecentWorkspace>,
     filtered_workspaces: Vec<StringMatch>,
     selected_index: usize,
@@ -239,6 +250,13 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         let Some(recent_workspace) = self.workspaces.get(hit.candidate_id) else {
             return;
         };
+
+        if let Some(on_confirm) = self.on_confirm.clone() {
+            let key = recent_workspace.project_group_key();
+            on_confirm(key, window, cx);
+            cx.emit(DismissEvent);
+            return;
+        }
 
         let Some(workspace) = self.workspace.upgrade() else {
             return;
