@@ -403,17 +403,26 @@ impl ThreadSearchBar {
         }
 
         if !self.matches.is_empty() {
-            let active_match_ix = previous_active_match
-                .and_then(|position| self.matches.iter().position(|m| position.matches(m)))
+            let preserved_ix = previous_active_match
+                .as_ref()
+                .and_then(|position| self.matches.iter().position(|m| position.matches(m)));
+            let active_match_ix = preserved_ix
                 .or_else(|| previous_active_match_ix.filter(|ix| *ix < self.matches.len()))
                 .unwrap_or(0);
-            self.activate_match(active_match_ix, window, cx);
+            let scroll_to_match = preserved_ix.is_none();
+            self.activate_match(active_match_ix, scroll_to_match, window, cx);
         } else {
             cx.notify();
         }
     }
 
-    fn activate_match(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn activate_match(
+        &mut self,
+        ix: usize,
+        scroll_to_match: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(m) = self.matches.get(ix) else {
             return;
         };
@@ -434,7 +443,9 @@ impl ThreadSearchBar {
                 md.update(cx, |md, cx| {
                     if is_target {
                         md.set_active_search_highlight(target_markdown_match_ix, cx);
-                        md.request_autoscroll_to_source_index(source_index, cx);
+                        if scroll_to_match {
+                            md.request_autoscroll_to_source_index(source_index, cx);
+                        }
                     } else {
                         md.set_active_search_highlight(None, cx);
                     }
@@ -493,11 +504,12 @@ impl ThreadSearchBar {
             });
         }
 
-        if let MatchTarget::Editor {
-            editor,
-            anchor_range,
-            ..
-        } = &target
+        if scroll_to_match
+            && let MatchTarget::Editor {
+                editor,
+                anchor_range,
+                ..
+            } = &target
             && let Some(editor) = editor.upgrade()
         {
             let anchor_range = anchor_range.clone();
@@ -512,7 +524,9 @@ impl ThreadSearchBar {
         }
 
         self.active_match = Some(ix);
-        (self.on_activate_match)(entry_ix, window, cx);
+        if scroll_to_match {
+            (self.on_activate_match)(entry_ix, window, cx);
+        }
         cx.notify();
     }
 
@@ -529,7 +543,7 @@ impl ThreadSearchBar {
             Some(ix) => (ix + 1) % self.matches.len(),
             None => 0,
         };
-        self.activate_match(next, window, cx);
+        self.activate_match(next, true, window, cx);
     }
 
     pub(super) fn select_prev_match(
@@ -551,7 +565,7 @@ impl ThreadSearchBar {
             }
             None => self.matches.len() - 1,
         };
-        self.activate_match(prev, window, cx);
+        self.activate_match(prev, true, window, cx);
     }
 
     fn dismiss(&mut self, _: &DismissThreadSearch, _window: &mut Window, cx: &mut Context<Self>) {
