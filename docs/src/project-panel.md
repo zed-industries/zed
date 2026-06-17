@@ -23,7 +23,7 @@ permanent tab. Editing the file or double-clicking it promotes it to a permanent
 
 ### Auto-reveal
 
-By default, switching files in the editor will automatically highlight it in the
+By default, switching to a file in the editor will automatically highlight it in the
 project panel and scroll it into view. This can be disabled with the
 `project_panel.auto_reveal_entries` setting.
 
