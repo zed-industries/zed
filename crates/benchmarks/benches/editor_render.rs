@@ -143,9 +143,10 @@ fn criterion_benches(criterion: &mut criterion::Criterion) {
             let report = report.clone();
             move |bencher, line_count| {
                 let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                    gpui::bench_platform(Some(Box::new(|| {
-                        gpui_platform::current_headless_renderer()
-                    }))),
+                    gpui::bench_platform(
+                        Some(Box::new(|| gpui_platform::current_headless_renderer())),
+                        gpui_platform::current_platform(true).text_system(),
+                    ),
                     Some("editor_multi_cursor_input"),
                     bencher,
                     report.clone(),

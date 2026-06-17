@@ -1222,6 +1222,7 @@ where
     }
 
     // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
+    // todo(lw): We should be able to short circuit the `Anchor -> DisplayPoint -> Point` to `Anchor -> Point`
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();
     let mut converted_endpoints =
         map.buffer_snapshot()

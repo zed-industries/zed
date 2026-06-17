@@ -55,9 +55,12 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
                 let report = report.clone();
                 move |bencher| {
                     let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                        gpui::bench_platform(Some(Box::new(|| {
-                            gpui_platform::current_headless_renderer()
-                        }))),
+                        gpui::bench_platform(
+                            Some(Box::new(|| {
+                                gpui_platform::current_headless_renderer()
+                            })),
+                            gpui_platform::current_platform(true).text_system(),
+                        ),
                         Some(stringify!(#outer_fn_name)),
                         bencher,
                         report.clone(),
