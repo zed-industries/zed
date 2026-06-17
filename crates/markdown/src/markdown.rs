@@ -697,10 +697,6 @@ impl Markdown {
         &self.source
     }
 
-    pub fn source_shared(&self) -> SharedString {
-        self.source.clone()
-    }
-
     pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
         self.parsed_markdown.events.iter().find_map(|(_, event)| {
             let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
