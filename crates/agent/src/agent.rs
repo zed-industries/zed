@@ -3107,15 +3107,19 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // scope) at a client-side path would leak client environment into the
         // remote terminal and reference a directory that doesn't exist there.
         //
-        // Linux is excluded: the bwrap sandbox already mounts a fresh,
-        // writable `tmpfs` over `/tmp`, so the environment looks like a normal
+        // Linux and Windows are excluded: the bwrap sandbox (run directly on
+        // Linux, and via WSL on Windows) already mounts a fresh, writable
+        // `tmpfs` over `/tmp`, so the environment looks like a normal
         // filesystem with no special `$TMPDIR` (which would only make the
-        // sandbox more obviously Zed-specific).
-        #[cfg_attr(target_os = "linux", allow(unused_mut))]
+        // sandbox more obviously Zed-specific). On Windows a per-thread
+        // `$TMPDIR` would also be a Windows path that's meaningless inside
+        // WSL, and adding it to the writable scope would bind a stray
+        // `/mnt/<drive>/...` path.
+        #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut extra_env = extra_env;
-        #[cfg_attr(target_os = "linux", allow(unused_mut))]
+        #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut sandbox_wrap = sandbox_wrap;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             let temp_dir = self.thread.update(cx, |thread, cx| {
                 thread

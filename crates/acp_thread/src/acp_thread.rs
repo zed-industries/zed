@@ -3483,30 +3483,81 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) =
-                    ShellBuilder::new(&Shell::Program(shell), is_windows)
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
                 // Spawn the network proxy (if the wrap requests network) before
                 // generating the sandbox policy, since the policy must pin the
                 // child to the proxy's loopback port. This also injects the
-                // child's proxy env vars.
+                // child's proxy env vars. On Windows the WSL sandbox can only
+                // toggle the network wholesale, so this never spawns a proxy
+                // there, but it still resolves the allow/deny `network_policy`.
                 let (proxy_handle, network_policy) =
                     setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
-                let (task_command, task_args, sandbox_config) = apply_sandbox_wrap(
-                    task_command,
-                    task_args,
-                    cwd.as_deref(),
-                    sandbox_wrap,
-                    network_policy,
-                )?;
+
+                #[cfg(target_os = "windows")]
+                let (task_command, task_args, sandbox_config, spawn_cwd) =
+                    if let Some(sandbox_wrap) = sandbox_wrap {
+                        // Run the wrap on a background task: it probes WSL
+                        // (possibly booting its VM) and stats UNC paths,
+                        // either of which can take seconds and must not block
+                        // the foreground thread this task runs on. Bound it
+                        // with a timeout so a wedged `wsl.exe` can't stall
+                        // this command forever; on timeout, dropping the task
+                        // cancels the wrap future, which kills any in-flight
+                        // `wsl.exe` child (see `windows_wsl::wrap_invocation`).
+                        let wrap = cx.background_spawn(apply_windows_wsl_sandbox_wrap(
+                            command.clone(),
+                            args.clone(),
+                            cwd.clone(),
+                            sandbox_wrap,
+                            network_policy,
+                            env.clone(),
+                        ));
+                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
+                        let (task_command, task_args, sandbox_config) = futures::select_biased! {
+                            result = wrap.fuse() => result?,
+                            // A wedged `wsl.exe` is an environment failure, so
+                            // surface it as `WslSandboxUnavailable` (like the
+                            // probe failures inside `wrap_invocation`) so the
+                            // agent offers the run-unsandboxed fallback rather
+                            // than returning a bad request to the model.
+                            _ = timeout.fuse() => return Err(anyhow::Error::new(
+                                sandbox::windows_wsl::WslSandboxUnavailable::new(format!(
+                                    "WSL did not respond within {} seconds while preparing the \
+                                     sandboxed command",
+                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
+                                )),
+                            )),
+                        };
+                        (task_command, task_args, sandbox_config, None)
+                    } else {
+                        let (task_command, task_args) =
+                            ShellBuilder::new(&Shell::Program(shell), is_windows)
+                                .redirect_stdin_to_dev_null()
+                                .build(Some(command.clone()), &args);
+                        (task_command, task_args, None, cwd.clone())
+                    };
+
+                #[cfg(not(target_os = "windows"))]
+                let (task_command, task_args, sandbox_config, spawn_cwd) = {
+                    let (task_command, task_args) =
+                        ShellBuilder::new(&Shell::Program(shell), is_windows)
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
+                    let (task_command, task_args, sandbox_config) = apply_sandbox_wrap(
+                        task_command,
+                        task_args,
+                        cwd.as_deref(),
+                        sandbox_wrap,
+                        network_policy,
+                    )?;
+                    (task_command, task_args, sandbox_config, cwd.clone())
+                };
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: cwd.clone(),
+                                cwd: spawn_cwd,
                                 env,
                                 ..Default::default()
                             },

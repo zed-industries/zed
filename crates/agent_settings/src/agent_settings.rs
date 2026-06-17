@@ -413,11 +413,8 @@ impl Default for AgentProfileId {
 /// combines them with the in-memory per-thread grants. `write_paths` are
 /// stored as minimal, lexically-normalized subtrees (see
 /// [`compile_sandbox_permissions`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SandboxPermissions {
-    /// Whether the agent terminal sandbox is enabled at all. When `false`,
-    /// agent-run terminal commands are not wrapped in an OS-level sandbox.
-    pub enabled: bool,
     /// Allow sandboxed commands to reach any host over the network.
     pub allow_all_hosts: bool,
     /// Hosts sandboxed commands may always reach, in canonical form (exact
@@ -425,21 +422,13 @@ pub struct SandboxPermissions {
     /// consumed (`agent::sandboxing`).
     pub network_hosts: Vec<String>,
     pub allow_fs_write_all: bool,
+    /// Auto-approve commands that request `unsandboxed: true`. Unlike
+    /// `disabled`, the sandbox stays on for commands that don't ask.
     pub allow_unsandboxed: bool,
+    /// Turn terminal sandboxing off entirely: the sandboxed terminal tool is
+    /// not exposed and every command runs outside the sandbox.
+    pub disabled: bool,
     pub write_paths: Vec<PathBuf>,
-}
-
-impl Default for SandboxPermissions {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            allow_all_hosts: false,
-            network_hosts: Vec::new(),
-            allow_fs_write_all: false,
-            allow_unsandboxed: false,
-            write_paths: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -821,11 +810,11 @@ fn compile_sandbox_permissions(
         .unwrap_or_default();
 
     SandboxPermissions {
-        enabled: content.enabled.unwrap_or(true),
         allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
         network_hosts,
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        disabled: content.disabled.unwrap_or(false),
         write_paths,
     }
 }
@@ -1129,6 +1118,9 @@ mod tests {
         );
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
+        // `allow_unsandboxed` is a per-request grant; it must not imply that
+        // sandboxing is disabled.
+        assert!(!permissions.disabled);
         assert_eq!(
             permissions.write_paths,
             vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]
