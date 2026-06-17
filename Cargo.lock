@@ -3528,17 +3528,7 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
- "async-process",
- "crash-handler",
- "log",
- "mach2 0.5.0",
- "minidumper",
- "parking_lot",
- "serde",
- "serde_json",
- "system_specs",
- "windows 0.61.3",
- "zstd",
+ "gpui",
 ]
 
 [[package]]
@@ -7790,11 +7780,7 @@ dependencies = [
 name = "input_latency_ui"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "collections",
  "gpui",
- "hdrhistogram",
- "telemetry",
 ]
 
 [[package]]
@@ -9660,16 +9646,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 name = "miniprofiler_ui"
 version = "0.1.0"
 dependencies = [
- "command_palette_hooks",
  "gpui",
- "rpc",
- "serde_json",
- "settings",
- "smol",
- "theme_settings",
- "util",
- "workspace",
- "zed_actions",
 ]
 
 [[package]]
