@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::SandboxFallbackDecision;
 use crate::sandboxing::{NetworkRequest, sandboxing_enabled_for_project};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
@@ -490,8 +490,9 @@ async fn run_terminal_tool(
             None
         } else if event_stream.sandbox_fallback_granted_for_thread() {
             // The user allowed unsandboxed execution for the rest of this
-            // thread after an earlier sandbox failure (Linux only).
-            #[cfg(target_os = "linux")]
+            // thread after an earlier sandbox failure (Linux and Windows, which
+            // share the `authorize_sandbox_fallback` flow).
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
                 sandbox_not_applied =
                     Some(acp_thread::SandboxNotAppliedReason::DisabledForThisThread);
@@ -599,9 +600,104 @@ async fn run_terminal_tool(
         None
     };
 
-    // When sandboxing was active but we ran without a sandbox, tell the agent
-    // so it can account for the weaker isolation. The message is self-contained
-    // per reason, so every affected command communicates the state.
+    let output_byte_limit = if selection.is_enabled() {
+        None
+    } else {
+        Some(COMMAND_OUTPUT_LIMIT)
+    };
+
+    // Create the terminal. On Windows the WSL sandbox can only report whether
+    // it set up the environment once `wsl.exe` actually runs (its probe is
+    // async), so — unlike Linux's up-front `can_create_sandbox` loop above —
+    // the sandbox-creation fallback happens here, around `create_terminal`. The
+    // user gets the same choices via `authorize_sandbox_fallback` (retry / run
+    // unsandboxed once / for this thread / always / deny), and a chosen
+    // "run unsandboxed" is recorded in `sandbox_not_applied` exactly as on
+    // Linux so the model and UI are told the command ran without a sandbox.
+    #[cfg(target_os = "windows")]
+    let terminal = {
+        let mut retries = 0usize;
+        let mut effective_wrap = sandbox_wrap.clone();
+        loop {
+            let error = match environment
+                .create_terminal(
+                    input.command.clone(),
+                    extra_env.clone(),
+                    working_dir.clone(),
+                    output_byte_limit,
+                    effective_wrap.clone(),
+                    cx,
+                )
+                .await
+            {
+                Ok(terminal) => break terminal,
+                Err(error) => error,
+            };
+
+            // Only an *environment*-unavailable failure of the WSL sandbox is a
+            // sandbox-creation problem the user can act on. A bad request (a
+            // missing writable path, mixed distros) — or any failure once we're
+            // already running unsandboxed — goes straight back to the model.
+            let Some(message) = effective_wrap.as_ref().and_then(|_| {
+                error
+                    .downcast_ref::<sandbox::windows_wsl::WslSandboxUnavailable>()
+                    .map(|unavailable| unavailable.message().to_string())
+            }) else {
+                return Err(format!("{error:#}"));
+            };
+            let sandbox_error = acp_thread::LinuxWslSandboxError::Other(message);
+            log::warn!("Failed to create a WSL sandbox for an agent terminal command: {error:?}");
+
+            let decision = cx
+                .update(|cx| {
+                    event_stream.authorize_sandbox_fallback(
+                        Some(input.command.clone()),
+                        sandbox_error.user_facing_message(),
+                        retries,
+                        cx,
+                    )
+                })
+                .await;
+            match decision {
+                Ok(SandboxFallbackDecision::Retry) => {
+                    // WSL probe failures aren't cached, so retrying re-probes
+                    // the current environment (e.g. after installing `bwrap`).
+                    retries += 1;
+                }
+                Ok(SandboxFallbackDecision::RunUnsandboxed) => {
+                    sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(
+                        sandbox_error,
+                    ));
+                    effective_wrap = None;
+                }
+                Ok(SandboxFallbackDecision::Deny) | Err(_) => {
+                    return Ok(format!(
+                        "Command cancelled: the sandbox could not be created ({}) and the \
+                         user declined to run it without one.",
+                        sandbox_error.user_facing_message()
+                    ));
+                }
+            }
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let terminal = environment
+        .create_terminal(
+            input.command.clone(),
+            extra_env,
+            working_dir.clone(),
+            output_byte_limit,
+            sandbox_wrap.clone(),
+            cx,
+        )
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+
+    // When sandboxing was active but the command ran without a sandbox (a
+    // settings opt-out, a thread grant, or a sandbox-creation failure the user
+    // chose to run through), tell the agent so it can account for the weaker
+    // isolation. Computed here — after the Windows fallback above may have set
+    // the reason — so every affected command communicates the state.
     let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
         acp_thread::SandboxNotAppliedReason::DisabledForever => {
             "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
@@ -619,55 +715,6 @@ async fn run_terminal_tool(
             error.user_facing_message()
         ),
     });
-
-    let output_byte_limit = if selection.is_enabled() {
-        None
-    } else {
-        Some(COMMAND_OUTPUT_LIMIT)
-    };
-
-    let terminal = match environment
-        .create_terminal(
-            input.command.clone(),
-            extra_env.clone(),
-            working_dir.clone(),
-            output_byte_limit,
-            sandbox_wrap.clone(),
-            cx,
-        )
-        .await
-    {
-        Ok(terminal) => terminal,
-        Err(error)
-            if cfg!(target_os = "windows")
-                && sandbox_wrap.is_some()
-                && is_windows_wsl_sandbox_error(&format!("{error:#}")) =>
-        {
-            let error = format!("{error:#}");
-            if !prompt_to_turn_off_windows_sandboxing(&event_stream, &error, cx).await? {
-                return Ok(
-                    "Command cancelled: Windows sandboxing is unavailable, and the user chose to keep sandboxing enabled."
-                        .to_string(),
-                );
-            }
-            event_stream.turn_off_sandboxing_always(cx);
-            environment
-                .create_terminal(
-                    input.command.clone(),
-                    extra_env,
-                    working_dir,
-                    output_byte_limit,
-                    None,
-                    cx,
-                )
-                .await
-                .map_err(|e| e.to_string())?
-        }
-        // `{error:#}` keeps the context chain: bad-request errors from the
-        // WSL sandbox machinery put the actionable detail (which path, why)
-        // in the inner error.
-        Err(error) => return Err(format!("{error:#}")),
-    };
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
     let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
@@ -823,46 +870,6 @@ fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
     } else {
         None
     }
-}
-
-/// Whether a terminal-creation error means the Windows WSL sandboxing
-/// *environment* is unavailable (WSL missing, no usable `bwrap`, ...), in
-/// which case the user is offered the option of turning sandboxing off.
-///
-/// Bad-request errors from the same machinery — a nonexistent write path,
-/// paths mixing WSL distros — deliberately don't carry this marker; those
-/// are returned to the model, which can fix the request and retry, rather
-/// than prompting for a globally persistent remedy.
-fn is_windows_wsl_sandbox_error(error: &str) -> bool {
-    error.contains(sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX)
-}
-
-async fn prompt_to_turn_off_windows_sandboxing(
-    event_stream: &ToolCallEventStream,
-    error: &str,
-    cx: &mut AsyncApp,
-) -> Result<bool, String> {
-    let title = "Windows sandboxing is unavailable".to_string();
-    let message = format!(
-        "Zed couldn't start this terminal command in the Windows sandbox.\n\n{error}\n\nYou can cancel the command and keep sandboxing enabled, or turn off terminal sandboxing and run this command normally."
-    );
-    let options = vec![
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("turn_off_sandboxing"),
-            "Turn Off Sandboxing",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new(
-            acp::PermissionOptionId::new("cancel"),
-            "Cancel",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-    ];
-
-    let selected =
-        cx.update(|cx| event_stream.prompt_for_decision(Some(title), Some(message), options, cx));
-    let selected = selected.await.map_err(|error| error.to_string())?;
-    Ok(selected.0.as_ref() == "turn_off_sandboxing")
 }
 
 /// Convert a (validated) network request into the access mode enforced by the
@@ -2861,25 +2868,6 @@ mod tests {
             &["/a", "/b", "/c", "/d"],
         ));
         assert_eq!(title, "Allow write access to 4 paths?");
-    }
-
-    #[test]
-    fn test_wsl_sandbox_error_detection_only_matches_environment_errors() {
-        // Environment-unavailable errors carry the shared marker prefix and
-        // trigger the "turn off sandboxing" prompt...
-        assert!(is_windows_wsl_sandbox_error(&format!(
-            "{}: Bubblewrap (`bwrap`) is not installed in the default WSL distro",
-            sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX
-        )));
-        // ...while bad-request errors (model-fixable) must not, even though
-        // they mention WSL sandboxing.
-        assert!(!is_windows_wsl_sandbox_error(
-            "failed to map writable path `C:\\missing` into WSL: Windows sandboxing via WSL \
-             can only grant existing files or directories: C:\\missing"
-        ));
-        assert!(!is_windows_wsl_sandbox_error(
-            "cannot sandbox a command whose paths mix WSL distros `Ubuntu` and `Debian`"
-        ));
     }
 
     #[test]

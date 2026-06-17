@@ -3514,12 +3514,18 @@ impl AcpThread {
                         let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
                         let (task_command, task_args, sandbox_config) = futures::select_biased! {
                             result = wrap.fuse() => result?,
-                            _ = timeout.fuse() => anyhow::bail!(
-                                "{}: WSL did not respond within {} seconds while preparing the \
-                                 sandboxed command",
-                                sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX,
-                                WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
-                            ),
+                            // A wedged `wsl.exe` is an environment failure, so
+                            // surface it as `WslSandboxUnavailable` (like the
+                            // probe failures inside `wrap_invocation`) so the
+                            // agent offers the run-unsandboxed fallback rather
+                            // than returning a bad request to the model.
+                            _ = timeout.fuse() => return Err(anyhow::Error::new(
+                                sandbox::windows_wsl::WslSandboxUnavailable::new(format!(
+                                    "WSL did not respond within {} seconds while preparing the \
+                                     sandboxed command",
+                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
+                                )),
+                            )),
                         };
                         (task_command, task_args, sandbox_config, None)
                     } else {

@@ -5006,9 +5006,10 @@ impl ThreadEventStream {
 }
 
 /// The user's choice when the OS sandbox could not be created for a command
-/// (see [`ToolCallEventStream::authorize_sandbox_fallback`]). Only Linux can
-/// fail to create a sandbox, so this is Linux-only.
-#[cfg(target_os = "linux")]
+/// (see [`ToolCallEventStream::authorize_sandbox_fallback`]). Only the
+/// Bubblewrap sandboxes (Linux directly, Windows via WSL) can fail to create a
+/// sandbox, so this is gated to those platforms.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SandboxFallbackDecision {
     /// Try creating the sandbox again (e.g. after the user installed `bwrap`).
@@ -5514,21 +5515,6 @@ impl ToolCallEventStream {
             .effective_with_persistent(request, persistent)
     }
 
-    /// Persistently turn terminal sandboxing off entirely (the `disabled`
-    /// sandbox setting). Deliberately distinct from the `allow_unsandboxed`
-    /// grant, which only auto-approves commands that explicitly request
-    /// `unsandboxed: true` while keeping the sandbox on for everything else.
-    pub(crate) fn turn_off_sandboxing_always(&self, cx: &AsyncApp) {
-        let Some(fs) = self.fs.clone() else {
-            return;
-        };
-        cx.update(|cx| {
-            update_settings_file(fs, cx, |settings, _| {
-                settings.agent.get_or_insert_default().disable_sandbox();
-            });
-        });
-    }
-
     /// Whether the user allowed running commands unsandboxed for the rest of
     /// the thread (distinct from the persistent `allow_unsandboxed` setting).
     pub(crate) fn sandbox_fallback_granted_for_thread(&self) -> bool {
@@ -5544,13 +5530,14 @@ impl ToolCallEventStream {
     /// so the prompt explains why (`reason`) and lets the user retry, run the
     /// command unsandboxed (once / for this thread / always), or deny it. The
     /// "for this thread" choice is recorded in the in-memory thread grants and
-    /// "always" is persisted as the `allow_unsandboxed` setting. Only Linux can
-    /// fail to create a sandbox, so this is Linux-only.
+    /// "always" is persisted as the `allow_unsandboxed` setting. Only the
+    /// Bubblewrap sandboxes (Linux directly, Windows via WSL) can fail to
+    /// create a sandbox, so this is gated to those platforms.
     ///
     /// `retries` is how many times the user has already pressed Retry for this
     /// command; it's shown on the button so repeated presses visibly advance
     /// ("Retry", then "Retry (attempt 1)", "Retry (attempt 2)", …).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub(crate) fn authorize_sandbox_fallback(
         &self,
         command: Option<String>,
@@ -5665,7 +5652,7 @@ impl ToolCallEventStream {
 
     /// Persist the `allow_unsandboxed` setting so future commands skip the
     /// sandbox when it can't be created, without prompting again.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn persist_sandbox_unsandboxed_permission(fs: Option<Arc<dyn Fs>>, cx: &AsyncApp) {
         let Some(fs) = fs else {
             log::error!(

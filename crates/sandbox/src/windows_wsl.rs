@@ -13,14 +13,16 @@
 //!
 //! * **Environment unavailable** — WSL missing or failing to start, no
 //!   usable `bwrap`, or the probe/path-resolution stdout protocol breaking
-//!   down. These are prefixed with
-//!   [`WSL_SANDBOX_UNAVAILABLE_PREFIX`](crate::WSL_SANDBOX_UNAVAILABLE_PREFIX)
-//!   and prompt the user with the option of turning sandboxing off, since no
-//!   sandboxed command can succeed in such an environment.
+//!   down. These are returned as a [`WslSandboxUnavailable`] (whose `Display`
+//!   carries
+//!   [`WSL_SANDBOX_UNAVAILABLE_PREFIX`](crate::WSL_SANDBOX_UNAVAILABLE_PREFIX)),
+//!   so the agent recognizes them *by type* and offers the same
+//!   retry / run-unsandboxed fallback it offers on Linux, rather than matching
+//!   on message text.
 //! * **Bad request** — a specific path that doesn't exist or can't be mapped
-//!   into WSL, or a request mixing distros. These carry no prefix and are
-//!   reported back to the model, which can fix the request and retry;
-//!   they must never suggest turning sandboxing off globally.
+//!   into WSL, or a request mixing distros. These are ordinary `anyhow` errors
+//!   *without* [`WslSandboxUnavailable`], and are reported back to the model,
+//!   which can fix the request and retry.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -46,6 +48,43 @@ const BWRAP_UNUSABLE_EXIT_CODE: i32 = 42;
 /// Prefix of the probe script's single result line, so it can be picked out
 /// of any stdout noise printed by the login shell's profile scripts.
 const PROBE_RESULT_PREFIX: &str = "zed-wsl-probe:";
+
+/// Marks a failure of the Windows WSL sandboxing *environment*: WSL is missing
+/// or won't start, there's no usable `bwrap`, or the probe / path-resolution
+/// stdout protocol broke down. Returned as the root of the `anyhow::Error` so
+/// callers classify it by type ([`anyhow::Error::downcast_ref`]) instead of by
+/// matching message text. Per-request failures (a missing writable path, paths
+/// mixing distros) are ordinary `anyhow` errors *without* this type, so they
+/// never match — the agent returns those to the model rather than offering to
+/// run unsandboxed.
+#[derive(Debug, Clone)]
+pub struct WslSandboxUnavailable(String);
+
+impl WslSandboxUnavailable {
+    /// Build an environment-unavailable error from a human-readable reason
+    /// (without the [`WSL_SANDBOX_UNAVAILABLE_PREFIX`], which `Display` adds).
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+
+    /// The reason, without the leading [`WSL_SANDBOX_UNAVAILABLE_PREFIX`].
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for WslSandboxUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: {}", self.0)
+    }
+}
+
+impl std::error::Error for WslSandboxUnavailable {}
+
+/// Shorthand for an [`anyhow::Error`] wrapping a [`WslSandboxUnavailable`].
+fn unavailable(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(WslSandboxUnavailable::new(message))
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct WslPath {
@@ -147,11 +186,12 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
 
     let distro = select_distro(cwd_mapping.as_ref(), &writable_mappings)?;
     let wsl_exe = wsl_exe_path();
-    ensure!(
-        wsl_exe.is_file(),
-        "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: WSL (`wsl.exe`) was not found at `{}`",
-        wsl_exe.display()
-    );
+    if !wsl_exe.is_file() {
+        return Err(unavailable(format!(
+            "WSL (`wsl.exe`) was not found at `{}`",
+            wsl_exe.display()
+        )));
+    }
     let environment = probe_environment(&wsl_exe, distro.as_deref()).await?;
 
     // Resolve all paths (translating native drive-letter paths with `wslpath`
@@ -299,39 +339,40 @@ async fn probe_environment(wsl_exe: &Path, distro: Option<&str>) -> Result<Envir
     )
     .await?;
     if output.status.code() == Some(BWRAP_MISSING_EXIT_CODE) {
-        bail!(
-            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: Bubblewrap (`bwrap`) is not installed in {}",
+        return Err(unavailable(format!(
+            "Bubblewrap (`bwrap`) is not installed in {}",
             wsl_distro_label(distro)
-        );
+        )));
     }
     if output.status.code() == Some(BWRAP_UNUSABLE_EXIT_CODE) {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
-        bail!(
-            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: Bubblewrap (`bwrap`) is installed in {} but could \
-             not set up a sandbox — the distro may restrict unprivileged user namespaces \
-             (as Ubuntu 24.04's default AppArmor policy does){}",
+        return Err(unavailable(format!(
+            "Bubblewrap (`bwrap`) is installed in {} but could not set up a sandbox — the \
+             distro may restrict unprivileged user namespaces (as Ubuntu 24.04's default \
+             AppArmor policy does){}",
             wsl_distro_label(distro),
             if stderr.is_empty() {
                 String::new()
             } else {
                 format!(": {stderr}")
             }
-        );
+        )));
     }
-    ensure!(
-        output.status.success(),
-        "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to start a shell in {}{}",
-        wsl_distro_label(distro),
-        command_failure_details(output.status.code(), &output.stderr)
-    );
+    if !output.status.success() {
+        return Err(unavailable(format!(
+            "failed to start a shell in {}{}",
+            wsl_distro_label(distro),
+            command_failure_details(output.status.code(), &output.stderr)
+        )));
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let probe = parse_probe_output(&stdout).with_context(|| {
-        format!(
-            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: unexpected sandbox probe output from {}",
+    let probe = parse_probe_output(&stdout).map_err(|error| {
+        unavailable(format!(
+            "unexpected sandbox probe output from {}: {error:#}",
             wsl_distro_label(distro)
-        )
+        ))
     })?;
     cache
         .lock()
@@ -479,19 +520,20 @@ async fn resolve_uncached_paths(
         mappings.iter().map(|(mapping, _)| mapping),
     ));
     let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths").await?;
-    ensure!(
-        output.status.success(),
-        "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to resolve sandbox paths in {}{}",
-        wsl_distro_label(distro),
-        command_failure_details(output.status.code(), &output.stderr)
-    );
+    if !output.status.success() {
+        return Err(unavailable(format!(
+            "failed to resolve sandbox paths in {}{}",
+            wsl_distro_label(distro),
+            command_failure_details(output.status.code(), &output.stderr)
+        )));
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let resolved = parse_path_resolution_output(&stdout, mappings.len()).with_context(|| {
-        format!(
-            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to resolve sandbox paths in {}",
+    let resolved = parse_path_resolution_output(&stdout, mappings.len()).map_err(|error| {
+        unavailable(format!(
+            "failed to resolve sandbox paths in {}: {error:#}",
             wsl_distro_label(distro)
-        )
+        ))
     })?;
 
     mappings
@@ -619,10 +661,10 @@ async fn run_wsl_command(
         .kill_on_drop(true)
         .creation_flags(CREATE_NO_WINDOW);
 
-    command.output().await.with_context(|| {
-        format!(
-            "{WSL_SANDBOX_UNAVAILABLE_PREFIX}: failed to invoke WSL while trying to {description}"
-        )
+    command.output().await.map_err(|error| {
+        unavailable(format!(
+            "failed to invoke WSL while trying to {description}: {error:#}"
+        ))
     })
 }
 
@@ -1243,9 +1285,9 @@ mod tests {
     #[test]
     fn bad_request_errors_do_not_claim_sandboxing_is_unavailable() {
         // Mixed distros and missing/unmappable paths are model-fixable bad
-        // requests. Only environment errors may carry the prefix, because the
-        // agent uses it to offer the (globally persistent) "turn off
-        // sandboxing" prompt.
+        // requests. They must not be typed as `WslSandboxUnavailable` (nor
+        // carry its prefix), since the agent uses that type to offer the
+        // run-unsandboxed fallback only for genuine environment failures.
         let mixed_distros = select_distro(
             Some(&PathMapping::Wsl(WslPath {
                 distro: Some("Ubuntu".to_string()),
@@ -1257,14 +1299,44 @@ mod tests {
             })],
         )
         .unwrap_err();
+        assert!(
+            mixed_distros
+                .downcast_ref::<WslSandboxUnavailable>()
+                .is_none()
+        );
         assert!(!format!("{mixed_distros:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
 
         let missing_path =
             path_to_wsl(Path::new(r"C:\zed-test\definitely\does\not\exist-2769")).unwrap_err();
+        assert!(
+            missing_path
+                .downcast_ref::<WslSandboxUnavailable>()
+                .is_none()
+        );
         assert!(!format!("{missing_path:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
 
         let unmappable_cwd = directory_to_wsl(Path::new(r"\\server\share\project")).unwrap_err();
+        assert!(
+            unmappable_cwd
+                .downcast_ref::<WslSandboxUnavailable>()
+                .is_none()
+        );
         assert!(!format!("{unmappable_cwd:#}").contains(WSL_SANDBOX_UNAVAILABLE_PREFIX));
+    }
+
+    #[test]
+    fn unavailable_errors_are_typed_and_prefixed() {
+        // Environment failures are recognizable by type (so the agent doesn't
+        // depend on message text) and still render with the shared prefix.
+        let error = unavailable("Bubblewrap (`bwrap`) is not installed in the default WSL distro");
+        let typed = error
+            .downcast_ref::<WslSandboxUnavailable>()
+            .expect("environment failure should downcast to WslSandboxUnavailable");
+        assert_eq!(
+            typed.message(),
+            "Bubblewrap (`bwrap`) is not installed in the default WSL distro"
+        );
+        assert!(format!("{error:#}").starts_with(WSL_SANDBOX_UNAVAILABLE_PREFIX));
     }
 
     #[test]
