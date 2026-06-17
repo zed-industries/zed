@@ -36,7 +36,7 @@ use gaoya::minhash::{
     MinHashIndex, MinHasher, MinHasher32, calculate_minhash_params, compute_minhash_similarity,
 };
 use gpui::{AppContext as _, BackgroundExecutor, Task};
-use zeta_prompt::ZetaFormat;
+use zeta_prompt::{ContextSource, ZetaFormat};
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -59,7 +59,9 @@ use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::pull_examples::{fetch_settled_examples_after, parse_settled_after_input};
-use crate::retrieve_context::{ContextRetrievalType, run_context_retrieval};
+use crate::retrieve_context::{
+    ContextRetrievalType, context_sources_for_types, run_context_retrieval,
+};
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
@@ -127,12 +129,23 @@ pub enum FailedHandling {
 
 #[derive(Args, Debug, Clone)]
 struct ContextArgs {
-    /// Which context collector to run.
-    #[arg(long = "type", value_enum, default_value_t = ContextRetrievalType::Lsp)]
-    context_type: ContextRetrievalType,
+    /// Which context collectors to run.
+    /// May be repeated or comma-delimited, e.g. `--type=all,oracle-file`.
+    #[arg(long = "type", value_enum, value_delimiter = ',')]
+    context_types: Vec<ContextRetrievalType>,
     /// Recompute context even if the example already has related files.
     #[arg(long, short = 'f', default_value_t = false)]
     force: bool,
+}
+
+impl ContextArgs {
+    fn context_types(&self) -> Vec<ContextRetrievalType> {
+        if self.context_types.is_empty() {
+            vec![ContextRetrievalType::Lsp]
+        } else {
+            self.context_types.clone()
+        }
+    }
 }
 
 const INPUTS_HELP: &str = r#"
@@ -250,7 +263,13 @@ impl Display for Command {
             Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
             Command::Context(args) => {
-                write!(f, "context --type={}", args.context_type)?;
+                write!(f, "context --type=")?;
+                for (index, context_type) in args.context_types().iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, "{}", context_type)?;
+                }
                 if args.force {
                     write!(f, " --force")?;
                 }
@@ -273,6 +292,15 @@ impl Display for Command {
                 write!(f, "eval")?;
                 if args.context_only {
                     write!(f, " --context-only")?;
+                }
+                if !args.context_types.is_empty() {
+                    write!(f, " --type=")?;
+                    for (index, context_type) in args.context_types.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ",")?;
+                        }
+                        write!(f, "{}", context_type)?;
+                    }
                 }
                 if args.related_context_limit != score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT {
                     write!(f, " --related-context-limit={}", args.related_context_limit)?;
@@ -337,6 +365,10 @@ struct EvalArgs {
     /// Only compute editable context coverage from expected patches and retrieved context.
     #[clap(long)]
     context_only: bool,
+    /// Only score persisted related context excerpts from these context types.
+    /// May be repeated or comma-delimited, e.g. `--type=current-file,edit-history`.
+    #[arg(long = "type", value_enum, value_delimiter = ',')]
+    context_types: Vec<ContextRetrievalType>,
     /// Maximum number of retrieved context tokens to include when scoring.
     #[clap(long, default_value_t = score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT)]
     related_context_limit: usize,
@@ -346,6 +378,16 @@ struct EvalArgs {
     /// Print all individual example lines (default: up to 20)
     #[clap(long)]
     verbose: bool,
+}
+
+impl EvalArgs {
+    fn context_source_filter(&self) -> Option<Vec<ContextSource>> {
+        if self.context_types.is_empty() {
+            None
+        } else {
+            Some(context_sources_for_types(&self.context_types))
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
@@ -619,6 +661,7 @@ impl EpArgs {
 /// This version introduced the current request schema with predicted edits in the edit
 /// history, and open source repos distinguished.
 const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::MinCaptureVersion {
+    major: 0,
     minor: 224,
     patch: 1,
 };
@@ -765,16 +808,21 @@ async fn load_examples(
     let mut settled_after_timestamps = Vec::new();
     let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
         Vec::new();
+    let mut accepted_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
         let input_string = input.to_string_lossy();
         if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
             captured_after_timestamps.push(timestamp.to_string());
-        } else if let Some(timestamp) =
+        } else if let Some((explicit, timestamp)) =
             pull_examples::parse_rejected_after_input(input_string.as_ref())
         {
-            rejected_after_timestamps.push(timestamp.to_string());
+            rejected_after_timestamps.push((explicit, timestamp.to_string()));
+        } else if let Some(timestamp) =
+            pull_examples::parse_accepted_after_input(input_string.as_ref())
+        {
+            accepted_after_timestamps.push(timestamp.to_string());
         } else if let Some(timestamp) =
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
@@ -831,6 +879,21 @@ async fn load_examples(
             )
             .await?;
             examples.append(&mut rejected_examples);
+        }
+
+        if !accepted_after_timestamps.is_empty() {
+            accepted_after_timestamps.sort();
+
+            let mut accepted_examples = pull_examples::fetch_accepted_examples_after(
+                http_client.clone(),
+                &accepted_after_timestamps,
+                max_rows_per_timestamp,
+                remaining_offset,
+                background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
+            )
+            .await?;
+            examples.append(&mut accepted_examples);
         }
 
         if !requested_after_timestamps.is_empty() {
@@ -1260,7 +1323,7 @@ fn main() {
                                                 example,
                                                 app_state.clone(),
                                                 &example_progress,
-                                                args.context_type,
+                                                args.context_types(),
                                                 args.force,
                                                 cx.clone(),
                                             )
@@ -1301,15 +1364,19 @@ fn main() {
                                                 cx.clone(),
                                                 false,
                                                 None,
+                                                None,
                                             )
                                             .await?;
                                         }
                                         Command::Eval(args) => {
+                                            let context_source_filter =
+                                                args.context_source_filter();
                                             if args.context_only {
                                                 score::run_context_coverage_scoring(
                                                     example,
                                                     &example_progress,
                                                     Some(args.related_context_limit * 3),
+                                                    context_source_filter.as_deref(),
                                                 )?;
                                             } else {
                                                 run_scoring(
@@ -1320,6 +1387,7 @@ fn main() {
                                                     cx.clone(),
                                                     true,
                                                     Some(args.related_context_limit * 3),
+                                                    context_source_filter,
                                                 )
                                                 .await?;
                                             }
@@ -1474,14 +1542,21 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
+                        let context_source_filter = args.context_source_filter();
                         score::print_report(
                             &examples,
                             args.verbose,
                             args.context_only,
                             Some(args.related_context_limit * 3),
+                            context_source_filter.as_deref(),
                         );
                         if let Some(summary_path) = &args.summary_json {
-                            score::write_summary_json(&examples, summary_path)?;
+                            score::write_summary_json(
+                                &examples,
+                                summary_path,
+                                Some(args.related_context_limit * 3),
+                                context_source_filter.as_deref(),
+                            )?;
                         }
                     }
                     Command::Repair(args) => {
