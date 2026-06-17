@@ -1211,7 +1211,7 @@ impl Render for CodeCell {
                                                                 .text_color(
                                                                     cx.theme().colors().text_muted,
                                                                 )
-                                                                .child("Queued..."),
+                                                                .child("Waiting..."),
                                                         )
                                                         .into_any_element()
                                                 } else if is_executing {
