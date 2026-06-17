@@ -16,6 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
+use smallvec::SmallVec;
 use theme_settings::ThemeSettings;
 use util::maybe;
 
@@ -112,6 +113,7 @@ pub struct MarkdownStyle {
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
+    pub soft_break_as_hard_break: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -136,6 +138,7 @@ impl Default for MarkdownStyle {
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
+            soft_break_as_hard_break: false,
         }
     }
 }
@@ -271,6 +274,7 @@ impl MarkdownStyle {
                 }),
                 ..Default::default()
             },
+            soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
             heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
                 HeadingLevelStyles {
                     h1: Some(TextStyleRefinement {
@@ -1324,7 +1328,11 @@ impl MarkdownElement {
             builder.pop_text_style();
             builder.pop_text_style();
         } else {
-            builder.push_text_style(self.style.inline_code.clone());
+            let mut code_style = self.style.inline_code.clone();
+            if builder.link_depth > 0 {
+                code_style.color = self.style.link.color.or(code_style.color);
+            }
+            builder.push_text_style(code_style);
             builder.push_text(text, range);
             builder.pop_text_style();
         }
@@ -2645,7 +2653,13 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
+                MarkdownEvent::SoftBreak => {
+                    if self.style.soft_break_as_hard_break {
+                        builder.push_text("\n", range.clone())
+                    } else {
+                        builder.push_text(" ", range.clone())
+                    }
+                }
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
@@ -2782,6 +2796,11 @@ fn apply_heading_style(
         pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
         pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
         pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
+    };
+
+    heading = match level {
+        pulldown_cmark::HeadingLevel::H1 => heading,
+        _ => heading.mt_6(),
     };
 
     if let Some(border_color) = border_color
@@ -3642,12 +3661,12 @@ impl RenderedText {
         all_bounds
     }
 
-    fn wrapped_line_segments(line: &RenderedLine) -> Vec<WrappedLineSegment> {
+    fn wrapped_line_segments(line: &RenderedLine) -> SmallVec<[WrappedLineSegment; 1]> {
         let layout = &line.layout;
         let line_height = layout.line_height();
         let mut row_top = layout.bounds().top();
         let mut wrapped_line_start = 0;
-        let mut segments = Vec::new();
+        let mut segments = SmallVec::new();
 
         for wrapped_line in layout.line_layouts() {
             let wrapped_line_end = wrapped_line_start + wrapped_line.len();

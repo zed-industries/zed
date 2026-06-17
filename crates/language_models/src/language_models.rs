@@ -10,10 +10,12 @@ use language_model::{
 };
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
+mod api_key_editor;
 pub mod extension;
 pub mod provider;
 mod settings;
 
+pub use crate::api_key_editor::{ApiKeyEditor, ApiKeyStatus, api_key_status};
 pub use crate::extension::init_proxy as init_extension_proxy;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;

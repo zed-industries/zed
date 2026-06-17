@@ -18,7 +18,7 @@ use fs::Fs;
 mod wsl_picker;
 
 use remote::RemoteConnectionOptions;
-pub use remote_connection::{RemoteConnectionModal, connect};
+pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
@@ -1192,11 +1192,22 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .log_err();
                         } else {
                             let path_list = key.path_list().clone();
+                            let host = key.host();
                             if let Some(task) = handle
                                 .update(cx, |multi_workspace, window, cx| {
-                                    multi_workspace.find_or_create_local_workspace(
+                                    let modal_workspace = multi_workspace.workspace().clone();
+                                    multi_workspace.find_or_create_workspace(
                                         path_list,
+                                        host,
                                         Some(key.clone()),
+                                        move |options, window, cx| {
+                                            connect_with_modal(
+                                                &modal_workspace,
+                                                options,
+                                                window,
+                                                cx,
+                                            )
+                                        },
                                         &[],
                                         None,
                                         OpenMode::Activate,
@@ -1263,7 +1274,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new(("remove-folder", worktree_id.to_usize()), IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Folder from Project"))
+                            .tooltip({
+                                let focus_handle = self.focus_handle.clone();
+                                move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove Folder from Project",
+                                        &RemoveSelected,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
                             .on_click(cx.listener(move |picker, _, window, cx| {
                                 let Some(workspace) = picker.delegate.workspace.upgrade() else {
                                     return;
@@ -1425,7 +1446,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                         this.child(
                             IconButton::new("remove_open_project", IconName::Close)
                                 .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Remove Project from Window"))
+                                .tooltip({
+                                    let focus_handle = self.focus_handle.clone();
+                                    move |_, cx| {
+                                        Tooltip::for_action_in(
+                                            "Remove Project from Window",
+                                            &RemoveSelected,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
                                 .on_click({
                                     let project_group_key = project_group_key.clone();
                                     cx.listener(move |picker, _, window, cx| {
@@ -1550,13 +1581,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                         this.child(
                             IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
                                 .icon_size(IconSize::Small)
-                                .tooltip(move |_, cx| {
-                                    Tooltip::with_meta(
-                                        tooltip_title,
-                                        None,
-                                        "As a multi-root folder",
-                                        cx,
-                                    )
+                                .tooltip({
+                                    let focus_handle = self.focus_handle.clone();
+                                    move |_, cx| {
+                                        Tooltip::with_meta_in(
+                                            tooltip_title,
+                                            Some(&AddToWorkspace),
+                                            "As a multi-root folder",
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
                                 })
                                 .on_click({
                                     let paths_to_add = paths_to_add.clone();
@@ -1595,7 +1630,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new("delete", IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove from Recent Projects"))
+                            .tooltip({
+                                let focus_handle = self.focus_handle.clone();
+                                move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove from Recent Projects",
+                                        &RemoveSelected,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 cx.stop_propagation();
                                 window.prevent_default();
@@ -2988,5 +3033,114 @@ mod tests {
             editor::init(cx);
             state
         })
+    }
+
+    #[gpui::test]
+    async fn test_remote_project_group_confirm_does_not_create_local_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        // Regression test: confirming a ProjectGroup entry with a remote host
+        // should call find_or_create_workspace with the host, not
+        // find_or_create_local_workspace.
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/local", json!({}))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from("/local")],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        let mw = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let remote_key = remote_project_group(1);
+
+        // Get workspace info via WindowHandle::read_with (returns Result)
+        let (workspace, groups, fh) = mw
+            .read_with(cx, |mw, _cx| {
+                let ws = mw.workspace().clone();
+                (
+                    ws.clone(),
+                    mw.project_group_keys(),
+                    ws.read(_cx).focus_handle(_cx),
+                )
+            })
+            .unwrap();
+
+        let mut augmented_groups = groups.clone();
+        augmented_groups.push(remote_key.clone());
+
+        // Create the popover (same as the title bar does)
+        let popover: Entity<RecentProjects> = cx.update(|cx| {
+            let window = cx.windows()[0];
+            window
+                .update(cx, |_, window, cx| {
+                    RecentProjects::popover(
+                        workspace.downgrade(),
+                        augmented_groups,
+                        Some(false),
+                        fh,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap()
+        });
+
+        cx.run_until_parked();
+
+        // Get the picker from the popover
+        let picker: Entity<Picker<RecentProjectsDelegate>> = cx.update(|cx| {
+            let window = cx.windows()[0];
+            window
+                .update(cx, |_, _window, cx| popover.read(cx).picker.clone())
+                .unwrap()
+        });
+
+        cx.run_until_parked();
+
+        // Find the remote project group entry index via Entity::read_with (no unwrap)
+        let filtered = picker.read_with(cx, |p, _| p.delegate.filtered_entries.clone());
+        let remote_idx = filtered
+            .iter()
+            .position(|entry| {
+                matches!(entry, ProjectPickerEntry::ProjectGroup(m) if m.candidate_id == groups.len())
+            })
+            .expect("remote project group entry should exist");
+
+        // Select and confirm the remote entry via Entity::update
+        let _ = cx.update(|cx| {
+            let window = cx.windows()[0];
+            window.update(cx, |_, window, cx| {
+                picker.update(cx, |picker, cx| {
+                    picker.delegate.set_selected_index(remote_idx, window, cx);
+                    picker.delegate.confirm(false, window, cx);
+                });
+            })
+        });
+
+        cx.run_until_parked();
+
+        // Verify no local workspace was created for the remote paths
+        let has_local = mw
+            .read_with(cx, |mw, cx| {
+                mw.workspace_for_paths(remote_key.path_list(), None, cx)
+                    .is_some()
+            })
+            .unwrap();
+        assert!(
+            !has_local,
+            "remote project group confirm should not create a local workspace"
+        );
     }
 }
