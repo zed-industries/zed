@@ -1,7 +1,7 @@
 use gpui::Action;
 use ui::{
-    ActiveTheme, App, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
-    Styled, div, v_flex,
+    ActiveTheme, App, Color, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
+    ParentElement, StatefulInteractiveElement, Styled, div, v_flex,
 };
 
 use crate::ToMultiBuffer;
@@ -24,12 +24,7 @@ impl EditorPreview {
             .size_full()
             .border_l_1()
             .border_color(cx.theme().colors().border)
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(self.editor_as_giant_button()),
-            )
+            .child(self.render_body(cx))
     }
 
     fn render_preview_below(&self, cx: &App) -> impl IntoElement {
@@ -37,12 +32,27 @@ impl EditorPreview {
             .size_full()
             .border_t_1()
             .border_color(cx.theme().colors().border)
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(self.editor_as_giant_button()),
-            )
+            .child(self.render_body(cx))
+    }
+
+    fn render_body(&self, cx: &App) -> impl IntoElement {
+        if self.has_content(cx) {
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .child(self.editor_as_giant_button())
+                .into_any_element()
+        } else {
+            self.render_empty().into_any_element()
+        }
+    }
+
+    fn render_empty(&self) -> impl IntoElement {
+        v_flex().size_full().items_center().justify_center().child(
+            Label::new("No results to preview")
+                .size(LabelSize::Large)
+                .color(Color::Muted),
+        )
     }
 
     fn editor_as_giant_button(&self) -> impl IntoElement {

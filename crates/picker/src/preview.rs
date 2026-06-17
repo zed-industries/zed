@@ -161,6 +161,10 @@ impl EditorPreview {
         }
     }
 
+    pub(crate) fn has_content(&self, cx: &App) -> bool {
+        !self.preview_editor.read(cx).is_empty(cx)
+    }
+
     fn update(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
         let Update { source, highlight } = update;
 
