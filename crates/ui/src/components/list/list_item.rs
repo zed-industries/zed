@@ -308,9 +308,10 @@ impl RenderOnce for ListItem {
                     // handler, so assistive technology reports one actionable
                     // node (e.g. a menu item) rather than an inert container.
                     .when_some(self.aria_role, |this, role| this.role(role))
-                    .when(self.aria_role.is_some() && self.aria_active_descendant, |this| {
-                        this.aria_active_descendant()
-                    })
+                    .when(
+                        self.aria_role.is_some() && self.aria_active_descendant,
+                        |this| this.aria_active_descendant(),
+                    )
                     .when_some(self.aria_label, |this, label| this.aria_label(label))
                     .when(self.aria_role.is_some(), |this| {
                         this.aria_selected(self.selected)

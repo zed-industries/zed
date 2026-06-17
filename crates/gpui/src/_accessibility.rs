@@ -266,7 +266,7 @@
 //!     }
 //! }
 //! ```
-//! 
+//!
 //! Notably, synthetic children are added *after* an element is
 //! [prepainted][Element::prepaint], so prepaint state can be used (for example,
 //! to determine what is visible on screen).

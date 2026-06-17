@@ -123,10 +123,11 @@ impl RenderOnce for SettingsInputField {
             ..Default::default()
         };
 
-        let first_render_initial_text =
-            window.use_keyed_state((self.id.clone(), "first-render-initial-text"), cx, |_, _| {
-                self.initial_text.clone()
-            });
+        let first_render_initial_text = window.use_keyed_state(
+            (self.id.clone(), "first-render-initial-text"),
+            cx,
+            |_, _| self.initial_text.clone(),
+        );
 
         let editor = window.use_keyed_state((self.id.clone(), "editor"), cx, {
             let initial_text = self.initial_text.clone();
@@ -164,22 +165,23 @@ impl RenderOnce for SettingsInputField {
             }
         });
 
-        // When settings change externally (e.g. editing settings.json), the page
-        // re-renders but use_keyed_state returns the cached editor with stale text.
-        // Reconcile with the expected initial_text when the editor is not focused,
-        // so we don't clobber what the user is actively typing.
-        if let Some(initial_text) = &self.initial_text
-            && let Some(first_initial) = first_render_initial_text.read(cx)
-        {
-            if initial_text != first_initial && !editor.read(cx).is_focused(window) {
+        let is_editor_focused = editor.read(cx).is_focused(window);
+        let editor_text = editor.read(cx).text(cx);
+
+        // The cached editor keeps stale text when the setting changes underneath it, so
+        // reconcile it here, skipping focused editors with unsaved edits to avoid clobbering.
+        let synced_text = first_render_initial_text.read(cx);
+        if &self.initial_text != synced_text {
+            let has_unsaved_edits = editor_text != synced_text.as_deref().unwrap_or_default();
+            if !is_editor_focused || !has_unsaved_edits {
                 *first_render_initial_text.as_mut(cx) = self.initial_text.clone();
                 let weak_editor = editor.downgrade();
-                let initial_text = initial_text.clone();
+                let new_text = self.initial_text.clone().unwrap_or_default();
 
                 window.defer(cx, move |window, cx| {
                     weak_editor
                         .update(cx, |editor, cx| {
-                            editor.set_text(initial_text, window, cx);
+                            editor.set_text(new_text, window, cx);
                         })
                         .ok();
                 });
@@ -196,16 +198,7 @@ impl RenderOnce for SettingsInputField {
         let display_confirm_button = self.display_confirm_button;
         let display_clear_button = self.display_clear_button;
         let confirm_for_button = self.confirm.clone();
-        // Avoids `editor.text(cx)` which materializes the whole buffer into a
-        // (potentially huge) string.
-        let is_editor_empty = editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .snapshot(cx)
-            .chars_at(MultiBufferOffset(0))
-            .all(|c| c.is_whitespace());
-        let is_editor_focused = editor.read(cx).is_focused(window);
+        let is_editor_empty = editor_text.trim().is_empty();
 
         let aria_label = self
             .aria_label
@@ -363,7 +356,7 @@ impl RenderOnce for SettingsInputField {
 /// All work is skipped when accessibility is inactive (no assistive
 /// technology connected), since the results are only observable through the
 /// accessibility tree.
-/// 
+///
 /// Note: much of this may want
 pub(crate) fn text_field_a11y_state(
     state_key: impl Into<ElementId>,
@@ -461,7 +454,10 @@ fn build_a11y_text_runs(
     selection_tail: usize,
     selection_head: usize,
     synthetic_node_id: impl Fn(u64) -> accesskit::NodeId,
-) -> (Vec<(accesskit::NodeId, accesskit::Node)>, accesskit::TextSelection) {
+) -> (
+    Vec<(accesskit::NodeId, accesskit::Node)>,
+    accesskit::TextSelection,
+) {
     let chars: Vec<char> = text.chars().collect();
     let total_chars = chars.len();
     // Build at least one (possibly empty) run so the text pattern remains
@@ -510,8 +506,14 @@ fn build_a11y_text_runs(
         runs.push((synthetic_node_id(chunk_index as u64), node));
     }
 
-    let anchor = a11y_text_position(char_index_for_byte(text, selection_tail), &synthetic_node_id);
-    let focus = a11y_text_position(char_index_for_byte(text, selection_head), &synthetic_node_id);
+    let anchor = a11y_text_position(
+        char_index_for_byte(text, selection_tail),
+        &synthetic_node_id,
+    );
+    let focus = a11y_text_position(
+        char_index_for_byte(text, selection_head),
+        &synthetic_node_id,
+    );
     (runs, accesskit::TextSelection { anchor, focus })
 }
 
@@ -548,14 +550,14 @@ mod tests {
     /// byte widths (1–4 UTF-8 bytes). Lengths reach past one chunk (255 chars).
     fn arbitrary_text() -> impl Strategy<Value = String> {
         let character = gpui::proptest::prop_oneof![
-            gpui::proptest::char::range(' ', '~'),              // ASCII printable
+            gpui::proptest::char::range(' ', '~'), // ASCII printable
             gpui::proptest::char::range('\u{00A1}', '\u{00FF}'), // Latin-1 (accents)
             gpui::proptest::char::range('\u{0100}', '\u{024F}'), // Latin Extended-A/B
             gpui::proptest::char::range('\u{0400}', '\u{04FF}'), // Cyrillic
             gpui::proptest::char::range('\u{0600}', '\u{06FF}'), // Arabic
             gpui::proptest::char::range('\u{4E00}', '\u{9FFF}'), // CJK Unified Ideographs
             gpui::proptest::char::range('\u{1F300}', '\u{1FAFF}'), // emoji & pictographs
-            gpui::proptest::char::any(),                          // anything else
+            gpui::proptest::char::any(),           // anything else
         ];
         gpui::proptest::collection::vec(character, 0..600)
             .prop_map(|chars| chars.into_iter().collect::<String>())

@@ -519,7 +519,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
         h_flex()
             .id(self.id.clone())
             .role(Role::SpinButton)
-            .when_some(self.aria_label.clone(), |this, label| this.aria_label(label))
+            .when_some(self.aria_label.clone(), |this, label| {
+                this.aria_label(label)
+            })
             .when_some(a11y_numeric_value(&self.value), |this, value| {
                 this.aria_numeric_value(value)
             })
