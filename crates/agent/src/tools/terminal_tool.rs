@@ -902,6 +902,23 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
     }
 }
 
+/// Recovers the exit code that [`process_content`] records in the persisted
+/// output string of a failed command. The terminal tool's output is a plain
+/// string, so after a thread is reloaded from disk this sentinel is the only
+/// remaining failure signal; the UI uses it to restore the failure indicator
+/// on replayed terminal cards.
+pub fn parse_failed_exit_code(output: &str) -> Option<i32> {
+    let head = match output.find("\n\n") {
+        Some(end) => &output[..end],
+        None => output,
+    };
+    head.strip_prefix("Command \"")?;
+    let marker = "\" failed with exit code ";
+    // `rfind`, because the command itself may contain the marker text.
+    let code = &head[head.rfind(marker)? + marker.len()..];
+    code.strip_suffix('.')?.parse().ok()
+}
+
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
@@ -1549,6 +1566,35 @@ mod tests {
             "Expected failure message, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_parse_failed_exit_code_round_trips_process_content() {
+        let failed = |output: &str, command: &str, exit_code: u32| {
+            process_content(
+                acp::TerminalOutputResponse::new(output.to_string(), false)
+                    .exit_status(acp::TerminalExitStatus::new().exit_code(exit_code)),
+                command,
+                false,
+                false,
+                TerminalOutputSelection::default(),
+            )
+        };
+
+        assert_eq!(
+            parse_failed_exit_code(&failed("error output", "false", 137)),
+            Some(137)
+        );
+        assert_eq!(parse_failed_exit_code(&failed("", "false", 1)), Some(1));
+        // Quotes in the command must not break the parse.
+        assert_eq!(
+            parse_failed_exit_code(&failed("oops", "echo \"a b\" && false", 2)),
+            Some(2)
+        );
+        // Success and non-terminal-shaped outputs carry no exit code.
+        assert_eq!(parse_failed_exit_code(&failed("fine", "true", 0)), None);
+        assert_eq!(parse_failed_exit_code("Command executed successfully."), None);
+        assert_eq!(parse_failed_exit_code("arbitrary tool output"), None);
     }
 
     #[test]
