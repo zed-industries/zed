@@ -1,19 +1,23 @@
-use criterion::{Bencher, BenchmarkId};
 use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
-use gpui::{AppContext as _, BenchAppContext, Focusable as _, TestAppContext, TestDispatcher};
+use gpui::{AppContext as _, BenchAppContext, Focusable as _};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
 use util::RandomCharIter;
 use zed_actions::editor::{MoveDown, MoveUp};
 
-#[gpui::bench]
-fn editor_input_with_1000_cursors(cx: &mut BenchAppContext) {
+#[gpui::bench(
+    inputs = multi_cursor_line_counts(),
+    group = "Multi-cursor input",
+    input_name = "cursors",
+    sample_size = 10
+)]
+fn editor_multi_cursor_input(line_count: &usize, cx: &mut BenchAppContext) {
     init_context(cx);
 
-    let text = String::from_iter(["line:\n"; 1000]);
+    let text = "line:\n".repeat(*line_count);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
     let mut window = cx.add_empty_window();
@@ -60,15 +64,16 @@ fn editor_input_with_1000_cursors(cx: &mut BenchAppContext) {
     });
 }
 
-fn open_editor_with_one_long_line(bencher: &mut Bencher<'_>, args: &(String, TestAppContext)) {
-    let (text, cx) = args;
-    let mut cx = cx.clone();
+#[gpui::bench]
+fn open_editor_with_one_long_line(cx: &mut BenchAppContext) {
+    init_context(cx);
 
-    bencher.iter(|| {
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+    let text = String::from_iter(["char"; 1000]);
+    cx.bench_iter(move |cx| {
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
-        let cx = cx.add_empty_window();
-        cx.update(|window, cx| {
+        let mut window = cx.add_empty_window();
+        window.update(|window, cx| {
             let editor = cx.new(|cx| {
                 let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
                 editor.set_style(editor::EditorStyle::default(), window, cx);
@@ -129,36 +134,18 @@ fn init_context(cx: &mut BenchAppContext) {
     });
 }
 
-fn init_test_context(cx: &TestAppContext) {
-    cx.update(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        assets::Assets.load_test_fonts(cx);
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
-        editor::init(cx);
-    });
-}
-
-fn criterion_benches(criterion: &mut criterion::Criterion) {
-    let dispatcher = TestDispatcher::new(1);
-    let cx = gpui::TestAppContext::build(dispatcher, None);
-    init_test_context(&cx);
-
-    let text = String::from_iter(["char"; 1000]);
-    let input = (text, cx);
-    let mut group = criterion.benchmark_group("Build buffer with one long line");
-    group.bench_with_input(
-        BenchmarkId::new("editor_with_one_long_line", "(String, TestAppContext )"),
-        &input,
-        open_editor_with_one_long_line,
-    );
-    group.finish();
+fn multi_cursor_line_counts() -> Vec<usize> {
+    let mut line_counts = vec![1000, 10000];
+    if std::env::var("ZED_BENCH_HUGE").is_ok() {
+        line_counts.push(100000);
+    }
+    line_counts
 }
 
 gpui::bench_group!(
     benches,
-    editor_input_with_1000_cursors,
-    editor_render,
-    criterion_benches
+    editor_multi_cursor_input,
+    open_editor_with_one_long_line,
+    editor_render
 );
 gpui::bench_main!(benches);
