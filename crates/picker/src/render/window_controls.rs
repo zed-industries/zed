@@ -58,7 +58,9 @@
 
 use std::{any::type_name, marker::PhantomData};
 
-use gpui::{Action, Context, CursorStyle, DragMoveEvent, Focusable, MouseButton, Point, Styled, Window};
+use gpui::{
+    Action, Context, CursorStyle, DragMoveEvent, Focusable, MouseButton, Point, Styled, Window,
+};
 use ui::{Tooltip, prelude::*};
 
 use crate::{
@@ -100,6 +102,10 @@ pub(crate) trait Side: Copy + 'static {
     }
     /// The resize cursor for this side's handle.
     fn cursor(&self) -> CursorStyle;
+    /// `None` for sides that don't move the preview.
+    fn layout(&self) -> Option<PreviewLayout> {
+        None
+    }
     /// Places and sizes the grab strip along this side's edge.
     fn position(
         &self,
@@ -145,6 +151,9 @@ pub(crate) struct Right(pub(crate) PreviewLayout);
 impl Side for Right {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeColumn
+    }
+    fn layout(&self) -> Option<PreviewLayout> {
+        Some(self.0)
     }
     fn position(
         &self,
@@ -228,6 +237,9 @@ impl Side for Bottom {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeRow
     }
+    fn layout(&self) -> Option<PreviewLayout> {
+        Some(self.0)
+    }
     fn position(
         &self,
         div: gpui::Stateful<Div>,
@@ -256,6 +268,9 @@ pub(crate) struct LeftCorner(pub(crate) PreviewLayout);
 impl Side for LeftCorner {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeUpRightDownLeft
+    }
+    fn layout(&self) -> Option<PreviewLayout> {
+        Some(self.0)
     }
     fn position(
         &self,
@@ -288,6 +303,9 @@ pub(crate) struct RightCorner(pub(crate) PreviewLayout);
 impl Side for RightCorner {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeUpLeftDownRight
+    }
+    fn layout(&self) -> Option<PreviewLayout> {
+        Some(self.0)
     }
     fn position(
         &self,
@@ -347,12 +365,13 @@ impl<D: PickerDelegate> Picker<D> {
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
             .on_drag_move::<ResizeDrag<S>>(cx.listener(
-                move |this, event: &DragMoveEvent<ResizeDrag<S>>, _, cx| {
+                move |this, event: &DragMoveEvent<ResizeDrag<S>>, window, cx| {
                     let drag = event.drag(cx);
                     let delta = event.event.position - drag.mouse_pos_before;
-                    this.shape = Shape::Resizing(
-                        side.current_position_and_shape(drag.shape_before, delta),
-                    );
+                    let mut working = side.current_position_and_shape(drag.shape_before, delta);
+                    this.size_bounds
+                        .clamp(&drag.shape_before, &mut working, side.layout(), window);
+                    this.shape = Shape::Resizing(working);
                     cx.notify();
                 },
             ))

@@ -225,29 +225,61 @@ impl SizeBounds {
             .min(self.max_height.as_pixels(window))
             .max(self.min_height * window.rem_size())
     }
+
+    /// Clamps an in-progress resize back into bounds.
+    fn clamp(
+        &self,
+        before: &PositionAndShape,
+        working: &mut PositionAndShape,
+        layout: Option<PreviewLayout>,
+        window: &Window,
+    ) {
+        // Width: pin whichever horizontal edge didn't move.
+        let target_width = self.clamp_width(working.right - working.left, window);
+        let width_correction = if working.left != before.left {
+            let new_left = working.right - target_width;
+            let correction = new_left - working.left;
+            working.left = new_left;
+            correction
+        } else {
+            let new_right = working.left + target_width;
+            let correction = new_right - working.right;
+            working.right = new_right;
+            correction
+        };
+
+        // Height: only the bottom edge moves; the top stays pinned.
+        let target_height = self.clamp_height(working.bottom - working.top, window);
+        let new_bottom = working.top + target_height;
+        let height_correction = new_bottom - working.bottom;
+        working.bottom = new_bottom;
+
+        match layout {
+            Some(PreviewLayout::Right) => working.preview += width_correction,
+            Some(PreviewLayout::Below) => working.preview += height_correction,
+            Some(PreviewLayout::Hidden) | None => {}
+        }
+    }
 }
 
 impl Shape {
-    const TOP: RelativeHeight = RelativeHeight::viewport(0.10); // TODO!(yara) should be able to drop this now right?
     fn picker_position_and_size(&self, window: &Window) -> PositionAndShape {
-        let (width, height, preview_size) = match self {
-            Shape::Resizing(pos) => return *pos,
+        match self {
+            Shape::Resizing(pos) => *pos,
             Shape::HorizontallyCentered {
                 width,
                 height,
                 preview_size,
-            } => (width, height, preview_size),
-        };
-
-        PositionAndShape {
-            //        W              V: full width     xxxxx: picker modal
-            // -----xxxxx------      left = (V - W) / 2
-            //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
-            left: ((RelativeWidth::FULL - *width) / 2.0).as_pixels(window),
-            right: (RelativeWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
-            top: Self::TOP.as_pixels(window),
-            bottom: (Self::TOP + *height).as_pixels(window),
-            preview: preview_size.as_pixels(window),
+            } => PositionAndShape {
+                //        W              V: full width     xxxxx: picker modal
+                // -----xxxxx------      left = (V - W) / 2
+                //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
+                left: ((RelativeWidth::FULL - *width) / 2.0).as_pixels(window),
+                right: (RelativeWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
+                top: Pixels::ZERO,
+                bottom: height.as_pixels(window),
+                preview: preview_size.as_pixels(window),
+            },
         }
     }
 
@@ -255,12 +287,8 @@ impl Shape {
         let mut pos = self.picker_position_and_size(window);
 
         match preview.layout {
-            PreviewLayout::Below => {
-                pos.bottom -= pos.preview;
-            }
-            PreviewLayout::Right => {
-                pos.right -= pos.preview;
-            }
+            PreviewLayout::Below => pos.bottom -= pos.preview,
+            PreviewLayout::Right => pos.right -= pos.preview,
             PreviewLayout::Hidden => (),
         }
         pos
@@ -270,12 +298,8 @@ impl Shape {
         let mut pos = self.picker_position_and_size(window);
 
         match preview.layout {
-            PreviewLayout::Below => {
-                pos.top = pos.bottom - pos.preview;
-            }
-            PreviewLayout::Right => {
-                pos.left = pos.right - pos.preview;
-            }
+            PreviewLayout::Below => pos.top = pos.bottom - pos.preview,
+            PreviewLayout::Right => pos.left = pos.right - pos.preview,
             PreviewLayout::Hidden => (),
         }
         pos
@@ -283,7 +307,8 @@ impl Shape {
 
     /// How far the center of the picker has been moved during dragging
     /// this allows extending it on one side without the picker centering during
-    /// the resize.
+    /// the resize. The drag is clamped to the size bounds (see
+    /// [`Side::current_position_and_shape`]), so the center stays in bounds too.
     pub(crate) fn horizontal_offset(&self, window: &Window) -> Pixels {
         let Shape::Resizing(PositionAndShape { left, right, .. }) = self else {
             return Pixels::ZERO; // picker should be centered
