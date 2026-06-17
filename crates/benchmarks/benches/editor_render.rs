@@ -1,4 +1,3 @@
-use criterion::BenchmarkId;
 use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
@@ -9,10 +8,16 @@ use settings::SettingsStore;
 use util::RandomCharIter;
 use zed_actions::editor::{MoveDown, MoveUp};
 
-fn editor_multi_cursor_input(cx: &mut BenchAppContext, line_count: usize) {
+#[gpui::bench(
+    inputs = multi_cursor_line_counts(),
+    group = "Multi-cursor input",
+    input_name = "cursors",
+    sample_size = 10
+)]
+fn editor_multi_cursor_input(line_count: &usize, cx: &mut BenchAppContext) {
     init_context(cx);
 
-    let text = "line:\n".repeat(line_count);
+    let text = "line:\n".repeat(*line_count);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
     let mut window = cx.add_empty_window();
@@ -129,41 +134,18 @@ fn init_context(cx: &mut BenchAppContext) {
     });
 }
 
-fn criterion_benches(criterion: &mut criterion::Criterion) {
-    let mut line_counts = vec![1000usize, 10000];
+fn multi_cursor_line_counts() -> Vec<usize> {
+    let mut line_counts = vec![1000, 10000];
     if std::env::var("ZED_BENCH_HUGE").is_ok() {
         line_counts.push(100000);
     }
-
-    let mut group = criterion.benchmark_group("Multi-cursor input");
-    group.sample_size(10);
-    for line_count in line_counts {
-        let report = gpui::BenchReport::default();
-        group.bench_with_input(BenchmarkId::new("cursors", line_count), &line_count, {
-            let report = report.clone();
-            move |bencher, line_count| {
-                let mut cx = gpui::BenchAppContext::new_with_platform_and_report(
-                    gpui::bench_platform(
-                        Some(Box::new(|| gpui_platform::current_headless_renderer())),
-                        gpui_platform::current_platform(true).text_system(),
-                    ),
-                    Some("editor_multi_cursor_input"),
-                    bencher,
-                    report.clone(),
-                );
-                editor_multi_cursor_input(&mut cx, *line_count);
-                cx.teardown();
-            }
-        });
-        report.print(Some("editor_multi_cursor_input"));
-    }
-    group.finish();
+    line_counts
 }
 
 gpui::bench_group!(
     benches,
+    editor_multi_cursor_input,
     open_editor_with_one_long_line,
-    editor_render,
-    criterion_benches
+    editor_render
 );
 gpui::bench_main!(benches);

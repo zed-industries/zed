@@ -365,9 +365,9 @@ impl Editor {
         // autoscroll, so resolve just those instead of every selection (O(visible) rather than
         // O(selections), which matters with thousands of cursors).
         let visible_end_row = DisplayRow(start_row.0 + layouts.len() as u32);
-        let visible_range = display_map.buffer_snapshot().anchor_before(
-            DisplayPoint::new(start_row, 0).to_offset(&display_map, Bias::Left),
-        )
+        let visible_range = display_map
+            .buffer_snapshot()
+            .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&display_map, Bias::Left))
             ..display_map.buffer_snapshot().anchor_after(
                 DisplayPoint::new(visible_end_row, 0).to_offset(&display_map, Bias::Right),
             );
