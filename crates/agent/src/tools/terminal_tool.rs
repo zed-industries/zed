@@ -13,6 +13,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "linux")]
+use crate::SandboxFallbackDecision;
 use crate::sandboxing::{NetworkRequest, sandboxing_enabled};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
@@ -468,54 +470,154 @@ async fn run_terminal_tool(
 
     // Build the sandbox request, then decide whether we can actually sandbox.
     // The sandbox itself never silently runs a command unsandboxed: if it can't
-    // create the sandbox it aborts. As the consumer we fail *open* for now — we
-    // re-run the command without a sandbox so a missing/blocked `bwrap` doesn't
-    // break the terminal — but we tell the model we did, via `sandbox_fallback`.
-    let mut sandbox_fallback: Option<String> = None;
+    // create the sandbox it aborts. As the consumer we may still run the command
+    // without a sandbox (when the user has opted into that), but we record
+    // *why* in `sandbox_not_applied` so we can warn the user and tell the agent.
+    let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         let sandbox_permissions = cx.update(|cx| {
             agent_settings::AgentSettings::get_global(cx)
                 .sandbox_permissions
                 .clone()
         });
-        let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
-        let writable_paths: Vec<PathBuf> = cx.update(|cx| {
-            project
-                .read(cx)
-                .worktrees(cx)
-                .map(|w| w.read(cx).abs_path().to_path_buf())
-                .collect::<Vec<_>>()
-        });
-        let wrap = acp_thread::SandboxWrap {
-            writable_paths,
-            extra_write_paths: effective.write_paths,
-            network: network_request_to_sandbox_network_access(&effective.network),
-            allow_fs_write: effective.allow_fs_write_all,
-            is_local: is_local_project,
-        };
 
-        // The viability check runs a brief probe subprocess, so do it off the
-        // main thread.
-        let probe_wrap = wrap.clone();
-        let probe_cwd = working_dir.clone();
-        let availability = cx
-            .background_executor()
-            .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
-            .await;
+        if sandbox_permissions.allow_unsandboxed {
+            // Unsandboxed execution is permanently allowed in settings: skip
+            // the sandbox machinery entirely and run the command the same way
+            // the unsandboxed terminal tool does.
+            sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::DisabledForever);
+            None
+        } else if event_stream.sandbox_fallback_granted_for_thread() {
+            // The user allowed unsandboxed execution for the rest of this
+            // thread after an earlier sandbox failure (Linux only).
+            #[cfg(target_os = "linux")]
+            {
+                sandbox_not_applied =
+                    Some(acp_thread::SandboxNotAppliedReason::DisabledForThisThread);
+            }
+            None
+        } else {
+            let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
+            let writable_paths: Vec<PathBuf> = cx.update(|cx| {
+                project
+                    .read(cx)
+                    .worktrees(cx)
+                    .map(|w| w.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>()
+            });
+            let wrap = acp_thread::SandboxWrap {
+                writable_paths,
+                extra_write_paths: effective.write_paths,
+                network: network_request_to_sandbox_network_access(&effective.network),
+                allow_fs_write: effective.allow_fs_write_all,
+                is_local: is_local_project,
+            };
 
-        match availability {
-            Ok(()) => Some(wrap),
-            Err(reason) => {
-                sandbox_fallback = Some(format!(
-                    "Note: failed to create the sandbox ({reason}); ran this command \
-                     WITHOUT a sandbox."
-                ));
-                None
+            // The viability check runs a brief probe subprocess, so do it off
+            // the main thread. On Linux the sandbox can genuinely be unavailable
+            // (missing `bwrap`, disabled user namespaces, …); rather than
+            // silently failing open, we ask the user how to proceed and let them
+            // retry after fixing their environment. (On other platforms the
+            // probe never fails, so this prompt is Linux-only.)
+            // Each retry re-probes from scratch, so the failure reason shown to
+            // the user reflects the *current* environment (e.g. it can change
+            // from "no bwrap" to "bwrap is setuid" after they install one).
+            #[cfg(target_os = "linux")]
+            {
+                let mut retries = 0usize;
+                loop {
+                    let probe_wrap = wrap.clone();
+                    let probe_cwd = working_dir.clone();
+                    let error = match cx
+                        .background_executor()
+                        .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                        .await
+                    {
+                        Ok(()) => break Some(wrap),
+                        Err(error) => error,
+                    };
+
+                    // Distinct from the intentional skips above (settings / thread
+                    // grant): the sandbox was requested but couldn't be created.
+                    log::warn!(
+                        "Failed to create a sandbox for an agent terminal command: {error:?}"
+                    );
+
+                    let decision = cx
+                        .update(|cx| {
+                            event_stream.authorize_sandbox_fallback(
+                                Some(input.command.clone()),
+                                error.user_facing_message(),
+                                retries,
+                                cx,
+                            )
+                        })
+                        .await;
+                    match decision {
+                        Ok(SandboxFallbackDecision::Retry) => {
+                            retries += 1;
+                            continue;
+                        }
+                        Ok(SandboxFallbackDecision::RunUnsandboxed) => {
+                            sandbox_not_applied =
+                                Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error));
+                            break None;
+                        }
+                        Ok(SandboxFallbackDecision::Deny) | Err(_) => {
+                            return Ok(format!(
+                                "Command cancelled: the sandbox could not be created ({}) and \
+                                 the user declined to run it without one.",
+                                error.user_facing_message()
+                            ));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let probe_wrap = wrap.clone();
+                let probe_cwd = working_dir.clone();
+                match cx
+                    .background_executor()
+                    .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                    .await
+                {
+                    Ok(()) => Some(wrap),
+                    Err(error) => {
+                        // The probe can't fail off Linux; keep failing open just
+                        // in case a future platform's probe ever does.
+                        log::warn!(
+                            "Failed to create a sandbox for an agent terminal command: {error:?}"
+                        );
+                        None
+                    }
+                }
             }
         }
     } else {
         None
     };
+
+    // When sandboxing was active but we ran without a sandbox, tell the agent
+    // so it can account for the weaker isolation. The message is self-contained
+    // per reason, so every affected command communicates the state.
+    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
+        acp_thread::SandboxNotAppliedReason::DisabledForever => {
+            "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
+             enabled in settings."
+                .to_string()
+        }
+        acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
+            "Note: this command ran WITHOUT an OS sandbox because you allowed unsandboxed \
+             execution for the rest of this thread."
+                .to_string()
+        }
+        acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
+            "Note: I tried to run this command inside an OS sandbox, but it could not be \
+             created ({}). It ran WITHOUT a sandbox.",
+            error.user_facing_message()
+        ),
+    });
 
     let output_byte_limit = if selection.is_enabled() {
         None
@@ -536,9 +638,17 @@ async fn run_terminal_tool(
         .map_err(|e| e.to_string())?;
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-        acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
-    ]));
+    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
+        acp::Terminal::new(terminal_id),
+    )]);
+    if let Some(reason) = &sandbox_not_applied {
+        event_stream.update_fields_with_meta(
+            fields,
+            Some(acp_thread::meta_with_sandbox_not_applied(reason)),
+        );
+    } else {
+        event_stream.update_fields(fields);
+    }
 
     let timeout = input.timeout_ms.map(Duration::from_millis);
 
@@ -583,7 +693,7 @@ async fn run_terminal_tool(
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
     let result = process_content(output, &input.command, timed_out, user_stopped, selection);
-    Ok(match sandbox_fallback {
+    Ok(match sandbox_note {
         Some(note) => format!("{note}\n\n{result}"),
         None => result,
     })
