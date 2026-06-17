@@ -488,7 +488,9 @@ message Envelope {
     GetDocumentLinks get_document_links = 453;
     GetDocumentLinksResponse get_document_links_response = 454;
     ResolveDocumentLink resolve_document_link = 455;
-    ResolveDocumentLinkResponse resolve_document_link_response = 456; // current max
+    ResolveDocumentLinkResponse resolve_document_link_response = 456;
+    GitWorktreeCreatedAt git_worktree_created_at = 457;
+    GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458; // current max
   }
 
   reserved 87 to 88;
