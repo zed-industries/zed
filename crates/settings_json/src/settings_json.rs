@@ -5,6 +5,59 @@ use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
 
+/// Returns each top-level key of a JSON(C) object together with the byte range
+/// covering the whole `"key": value` pair. Returns an empty vec if the text does
+/// not parse into a top-level object.
+pub fn top_level_pairs(text: &str) -> Vec<(String, Range<usize>)> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return Vec::new();
+    };
+
+    // Descend to the first `object` node (the top-level settings object).
+    let mut object = None;
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "object" {
+            object = Some(node);
+            break;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    let Some(object) = object else {
+        return Vec::new();
+    };
+
+    let mut pairs = Vec::new();
+    let mut cursor = object.walk();
+    for child in object.children(&mut cursor) {
+        if child.kind() != "pair" {
+            continue;
+        }
+        let Some(key_node) = child.child_by_field_name("key") else {
+            continue;
+        };
+        let Some(key_text) = text.get(key_node.byte_range()) else {
+            continue;
+        };
+        // The key node includes the surrounding quotes; parse it to unescape.
+        let Ok(key) = serde_json::from_str::<String>(key_text) else {
+            continue;
+        };
+        pairs.push((key, child.byte_range()));
+    }
+    pairs
+}
+
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
     key_path: &mut Vec<&'a str>,

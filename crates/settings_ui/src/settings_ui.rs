@@ -1,6 +1,7 @@
 mod components;
 mod page_data;
 pub mod pages;
+mod redundant_settings;
 
 use agent_skills::SkillIndex;
 use anyhow::{Context as _, Result};
@@ -417,6 +418,7 @@ struct SettingsFieldMetadata {
 
 pub fn init(cx: &mut App) {
     init_renderers(cx);
+    redundant_settings::init(cx);
     let queue = ProjectSettingsUpdateQueue::new(cx);
     cx.set_global(queue);
 
