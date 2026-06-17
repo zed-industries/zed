@@ -32,6 +32,7 @@ markup5ever_rcdom.workspace = true
 mermaid_render = { path = "../mermaid_render" }
 pulldown-cmark.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 stacksafe.workspace = true
 sum_tree.workspace = true
 theme.workspace = true

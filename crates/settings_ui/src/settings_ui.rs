@@ -58,7 +58,10 @@ use crate::components::{
     SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
     theme_picker,
 };
-use crate::pages::{render_input_audio_device_dropdown, render_output_audio_device_dropdown};
+use crate::pages::{
+    CustomAgentForm, McpServerForm, render_input_audio_device_dropdown,
+    render_output_audio_device_dropdown,
+};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -413,6 +416,10 @@ impl Focusable for NonFocusableHandle {
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
     should_do_titlecase: Option<bool>,
+    display_confirm_button: bool,
+    display_clear_button: bool,
+    confirm_on_focus_out: bool,
+    treat_missing_text_as_empty: bool,
 }
 
 pub fn init(cx: &mut App) {
@@ -886,9 +893,27 @@ pub struct SettingsWindow {
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
+    /// Cached configuration views per provider, created lazily. Holds the
+    /// provider's chosen presentation ([`Inline`] or [`SubPage`]).
+    pub(crate) provider_configuration_views:
+        HashMap<language_model::LanguageModelProviderId, language_model::ProviderConfigurationView>,
+    /// The provider whose configuration sub-page is currently open, if any.
+    pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
+    /// State for the active "add/edit custom MCP server" form sub-page, if open.
+    pub(crate) mcp_server_form: Option<McpServerForm>,
+    /// Stable focus handle for the MCP "Add Server" button, so it can show a
+    /// focus ring when the page auto-focuses it on open (which happens via mouse,
+    /// where `focus_visible` styling would otherwise be suppressed).
+    pub(crate) mcp_add_server_focus_handle: FocusHandle,
+    /// State for the active "add/edit custom external agent" form sub-page, if open.
+    pub(crate) custom_agent_form: Option<CustomAgentForm>,
+    /// Stable focus handle for the external agents "Add Agent" button, so it can
+    /// show a focus ring when the page auto-focuses it on open (which happens via
+    /// mouse, where `focus_visible` styling would otherwise be suppressed).
+    pub(crate) external_agent_add_focus_handle: FocusHandle,
     skill_creator_page: Option<(Entity<pages::SkillCreatorPage>, Subscription)>,
 }
 
@@ -1279,19 +1304,23 @@ impl SettingsPageItem {
     }
 }
 
-fn render_settings_item(
+/// Shared layout for both JSON-backed and non-JSON-backed setting items.
+///
+/// Renders title + description on the left, control on the right, with
+/// optional reset button and copy-link icon.
+fn render_settings_item_layout(
     settings_window: &SettingsWindow,
-    setting_item: &SettingItem,
-    file: SettingsUiFile,
+    title: &'static str,
+    description: &'static str,
     control: AnyElement,
+    reset_fn: Option<Box<dyn Fn(&mut Window, &mut App)>>,
+    modified_in: Option<String>,
+    json_path: Option<&'static str>,
     sub_field: bool,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
-    let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
-    let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
-
     h_flex()
-        .id(setting_item.title)
+        .id(title)
         .min_w_0()
         .justify_between()
         .child(
@@ -1304,89 +1333,108 @@ fn render_settings_item(
                     h_flex()
                         .w_full()
                         .gap_1()
-                        .child(Label::new(SharedString::new_static(setting_item.title)))
-                        .when_some(
-                            if sub_field {
-                                None
-                            } else {
-                                setting_item
-                                    .field
-                                    .reset_to_default_fn(&file, &found_in_file, cx)
-                            },
-                            |this, reset_to_default| {
-                                this.child(
-                                    IconButton::new("reset-to-default-btn", IconName::Undo)
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Reset to Default"))
-                                        .on_click({
-                                            move |_, window, cx| {
-                                                reset_to_default(window, cx);
-                                            }
-                                        }),
-                                )
-                            },
-                        )
-                        .when_some(
-                            file_set_in.filter(|file_set_in| file_set_in != &file),
-                            |this, file_set_in| {
-                                this.child(
-                                    Label::new(format!(
-                                        "—  Modified in {}",
-                                        settings_window
-                                            .display_name(&file_set_in)
-                                            .expect("File name should exist")
-                                    ))
+                        .child(Label::new(SharedString::new_static(title)))
+                        .when_some(reset_fn, |this, reset_to_default| {
+                            this.child(
+                                IconButton::new("reset-to-default-btn", IconName::Undo)
+                                    .icon_color(Color::Muted)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Reset to Default"))
+                                    .on_click(move |_, window, cx| {
+                                        reset_to_default(window, cx);
+                                    }),
+                            )
+                        })
+                        .when_some(modified_in, |this, modified_in| {
+                            this.child(
+                                Label::new(format!("\u{2014}  Modified in {modified_in}"))
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
-                                )
-                            },
-                        ),
+                            )
+                        }),
                 )
                 .child(
-                    Label::new(SharedString::new_static(setting_item.description))
+                    Label::new(SharedString::new_static(description))
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .render_code_spans(),
                 ),
         )
-        .child(if setting_item.field.is_overridden_by_organization(cx) {
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .id(format!(
-                            "{}-organization-configuration-warning",
-                            setting_item.title
-                        ))
-                        .child(
-                            Icon::new(IconName::Warning)
-                                .size(IconSize::Small)
-                                .color(Color::Warning),
-                        )
-                        .tooltip(|_, cx| {
-                            Tooltip::with_meta(
-                                "Overridden by Organization",
-                                None,
-                                "Contact your organization admins to adjust this setting.",
-                                cx,
-                            )
-                        }),
-                )
-                .child(control)
-                .into_any_element()
-        } else {
-            control.into_any_element()
-        })
+        .child(control)
         .when(settings_window.sub_page_stack.is_empty(), |this| {
             this.child(render_settings_item_link(
-                setting_item.description,
-                setting_item.field.json_path(),
+                description,
+                json_path,
                 sub_field,
                 settings_window,
                 cx,
             ))
         })
+}
+
+fn render_settings_item(
+    settings_window: &SettingsWindow,
+    setting_item: &SettingItem,
+    file: SettingsUiFile,
+    control: AnyElement,
+    sub_field: bool,
+    cx: &mut Context<'_, SettingsWindow>,
+) -> Stateful<Div> {
+    let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
+    let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
+
+    let reset_fn = if sub_field {
+        None
+    } else {
+        setting_item
+            .field
+            .reset_to_default_fn(&file, &found_in_file, cx)
+    };
+
+    let modified_in = file_set_in
+        .filter(|f| f != &file)
+        .and_then(|f| settings_window.display_name(&f));
+
+    let control = if setting_item.field.is_overridden_by_organization(cx) {
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id(format!(
+                        "{}-organization-configuration-warning",
+                        setting_item.title
+                    ))
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .tooltip(|_, cx| {
+                        Tooltip::with_meta(
+                            "Overridden by Organization",
+                            None,
+                            "Contact your organization admins to adjust this setting.",
+                            cx,
+                        )
+                    }),
+            )
+            .child(control)
+            .into_any_element()
+    } else {
+        control
+    };
+
+    render_settings_item_layout(
+        settings_window,
+        setting_item.title,
+        setting_item.description,
+        control,
+        reset_fn,
+        modified_in,
+        setting_item.field.json_path(),
+        sub_field,
+        cx,
+    )
 }
 
 fn render_settings_item_link(
@@ -1864,7 +1912,13 @@ impl SettingsWindow {
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
+            provider_configuration_views: HashMap::default(),
+            configuring_provider: None,
             last_copied_skill_directory_path: None,
+            mcp_server_form: None,
+            mcp_add_server_focus_handle: cx.focus_handle(),
+            custom_agent_form: None,
+            external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
         };
 
@@ -1984,7 +2038,9 @@ impl SettingsWindow {
                 move |this: &mut SettingsWindow,
                       window: &mut Window,
                       cx: &mut Context<SettingsWindow>| {
-                    this.open_and_scroll_to_navbar_entry(entry_index, None, false, window, cx);
+                    if this.sub_page_stack.is_empty() {
+                        this.open_and_scroll_to_navbar_entry(entry_index, None, false, window, cx);
+                    }
                 },
             );
             focus_subscriptions.push(subscription);
@@ -2481,6 +2537,7 @@ impl SettingsWindow {
 
         let is_new_page = self.navbar_entries[self.navbar_entry].page_index
             != self.navbar_entries[navbar_entry].page_index;
+
         self.navbar_entry = navbar_entry;
 
         // We only need to reset visible items when updating matches
@@ -3761,7 +3818,16 @@ impl SettingsWindow {
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !this.sub_page_stack.is_empty() {
+                    // Keep Tab navigation within the sub-page content. Global
+                    // `focus_next` would otherwise wrap past the last control to
+                    // the navbar; instead, when focus leaves the content region we
+                    // wrap back to the first content tab stop.
+                    let content_handle = this.content_focus_handle.focus_handle(cx);
                     window.focus_next(cx);
+                    if !content_handle.contains_focused(window, cx) {
+                        content_handle.focus(window, cx);
+                        window.focus_next(cx);
+                    }
                     return;
                 }
                 for (logical_index, (actual_index, _)) in this.visible_page_items().enumerate() {
@@ -4016,6 +4082,7 @@ impl SettingsWindow {
         title: impl Into<SharedString>,
         section_header: impl Into<SharedString>,
         json_path: Option<&'static str>,
+        in_json: bool,
         render: fn(
             &SettingsWindow,
             &ScrollHandle,
@@ -4031,7 +4098,7 @@ impl SettingsWindow {
             r#type: SubPageType::default(),
             description: None,
             json_path,
-            in_json: true,
+            in_json,
             files: USER,
             render,
         };
@@ -4204,7 +4271,7 @@ impl SettingsWindow {
         false
     }
 
-    fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+    pub(crate) fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.regex_validation_error = None;
         if let Some(popped) = self.sub_page_stack.pop()
             && popped.link.r#type == SubPageType::SkillCreator
@@ -4650,16 +4717,36 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
 ) -> AnyElement {
     let (_, initial_text) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let initial_text = initial_text.filter(|s| !s.as_ref().is_empty());
+    let initial_text = if metadata.is_some_and(|metadata| metadata.treat_missing_text_as_empty) {
+        Some(
+            initial_text
+                .map(|text| text.as_ref().to_string())
+                .unwrap_or_default(),
+        )
+    } else {
+        initial_text
+            .filter(|text| !text.as_ref().is_empty())
+            .map(|text| text.as_ref().to_string())
+    };
 
     SettingsInputField::new()
         .tab_index(0)
-        .when_some(initial_text, |editor, text| {
-            editor.with_initial_text(text.as_ref().to_string())
-        })
+        .when_some(initial_text, |editor, text| editor.with_initial_text(text))
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.display_confirm_button),
+            |editor| editor.display_confirm_button(),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.display_clear_button),
+            |editor| editor.display_clear_button(),
+        )
+        .when(
+            metadata.is_some_and(|metadata| metadata.confirm_on_focus_out),
+            |editor| editor.confirm_on_focus_out(),
         )
         .on_confirm({
             move |new_text, window, cx| {
@@ -5020,7 +5107,13 @@ pub mod test {
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
+                provider_configuration_views: HashMap::default(),
+                configuring_provider: None,
                 last_copied_skill_directory_path: None,
+                mcp_server_form: None,
+                mcp_add_server_focus_handle: cx.focus_handle(),
+                custom_agent_form: None,
+                external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
             }
         }
@@ -5149,7 +5242,13 @@ pub mod test {
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
+            provider_configuration_views: HashMap::default(),
+            configuring_provider: None,
             last_copied_skill_directory_path: None,
+            mcp_server_form: None,
+            mcp_add_server_focus_handle: cx.focus_handle(),
+            custom_agent_form: None,
+            external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
         };
 
