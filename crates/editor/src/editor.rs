@@ -4055,6 +4055,8 @@ impl Editor {
             "Set Hit Condition Breakpoint"
         };
 
+        let show_git_blame_gutter = self.show_git_blame_gutter();
+
         let set_breakpoint_msg = if breakpoint.as_ref().is_some() {
             "Unset Breakpoint"
         } else {
@@ -4185,6 +4187,23 @@ impl Editor {
                             .log_err();
                     }
                 })
+                .separator()
+                .toggleable_entry(
+                    "Column Git Blame",
+                    show_git_blame_gutter,
+                    IconPosition::Start,
+                    Some(::git::Blame.boxed_clone()),
+                    {
+                        let weak_editor = weak_editor.clone();
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.toggle_git_blame(&::git::Blame, window, cx);
+                                })
+                                .log_err();
+                        }
+                    },
+                )
                 .separator()
                 .entry(set_bookmark_msg, None, move |_window, cx| {
                     weak_editor
