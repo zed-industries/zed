@@ -214,8 +214,7 @@ fn render_host_row(index: usize, host: String, cx: &mut Context<SettingsWindow>)
     let host_for_update = host.clone();
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(format!("sandbox-host-{}", index))
+    SettingsInputField::new(format!("sandbox-host-{}", index))
         .with_initial_text(host)
         .tab_index(0)
         .with_buffer_font()
@@ -259,8 +258,7 @@ fn render_host_row(index: usize, host: String, cx: &mut Context<SettingsWindow>)
 fn render_add_host_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id("sandbox-host-new")
+    SettingsInputField::new("sandbox-host-new")
         .with_placeholder("Add domain (e.g. github.com or *.npmjs.org)…")
         .tab_index(0)
         .with_buffer_font()
@@ -299,8 +297,7 @@ fn render_path_row(index: usize, path: PathBuf, cx: &mut Context<SettingsWindow>
     let path_for_update = path.clone();
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(format!("sandbox-path-{}", index))
+    SettingsInputField::new(format!("sandbox-path-{}", index))
         .with_initial_text(path.to_string_lossy().into_owned())
         .tab_index(0)
         .with_buffer_font()
@@ -335,8 +332,7 @@ fn render_path_row(index: usize, path: PathBuf, cx: &mut Context<SettingsWindow>
 fn render_add_path_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id("sandbox-path-new")
+    SettingsInputField::new("sandbox-path-new")
         .with_placeholder("Add an absolute path (e.g. /path/to/directory)…")
         .tab_index(0)
         .with_buffer_font()
