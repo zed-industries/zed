@@ -63,9 +63,8 @@ use gpui::{
 };
 use ui::{Tooltip, prelude::*};
 
-use crate::{
-    Picker, PickerDelegate, PositionAndShape, Shape, ToggleLayout, preview::PreviewLayout,
-};
+use crate::shape::{PositionAndShape, Shape};
+use crate::{Picker, PickerDelegate, ToggleLayout, preview::Layout};
 
 pub struct DragPreview;
 
@@ -103,7 +102,7 @@ pub(crate) trait Side: Copy + 'static {
     /// The resize cursor for this side's handle.
     fn cursor(&self) -> CursorStyle;
     /// `None` for sides that don't move the preview.
-    fn layout(&self) -> Option<PreviewLayout> {
+    fn layout(&self) -> Option<Layout> {
         None
     }
     /// Places and sizes the grab strip along this side's edge.
@@ -147,12 +146,12 @@ impl Side for Left {
     }
 }
 #[derive(Clone, Copy)]
-pub(crate) struct Right(pub(crate) PreviewLayout);
+pub(crate) struct Right(pub(crate) Layout);
 impl Side for Right {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeColumn
     }
-    fn layout(&self) -> Option<PreviewLayout> {
+    fn layout(&self) -> Option<Layout> {
         Some(self.0)
     }
     fn position(
@@ -171,7 +170,7 @@ impl Side for Right {
         mut shape_before: PositionAndShape,
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
-        if let PreviewLayout::Right = self.0 {
+        if let Layout::Right = self.0 {
             shape_before.preview += mouse_movement.x;
         }
         shape_before.right += mouse_movement.x;
@@ -180,15 +179,15 @@ impl Side for Right {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Middle(pub(crate) PreviewLayout);
+pub(crate) struct Middle(pub(crate) Layout);
 impl Side for Middle {
     fn cursor(&self) -> CursorStyle {
         match self.0 {
-            PreviewLayout::Hidden => {
+            Layout::Hidden => {
                 unreachable!("This resize handle is not drawn when the preview is hidden")
             }
-            PreviewLayout::Below => CursorStyle::ResizeRow,
-            PreviewLayout::Right => CursorStyle::ResizeColumn,
+            Layout::Below => CursorStyle::ResizeRow,
+            Layout::Right => CursorStyle::ResizeColumn,
         }
     }
 
@@ -199,15 +198,15 @@ impl Side for Middle {
         window: &Window,
     ) -> gpui::Stateful<Div> {
         match self.0 {
-            PreviewLayout::Hidden => {
+            Layout::Hidden => {
                 unreachable!("This resize handle is not drawn when the preview is hidden")
             }
-            PreviewLayout::Below => div
+            Layout::Below => div
                 .left(Self::corner_clearance(window))
                 .right(Self::corner_clearance(window))
                 .h(Self::handle_width(window))
                 .bottom(shape.preview - Self::handle_offset(window)),
-            PreviewLayout::Right => div
+            Layout::Right => div
                 .top_0()
                 .bottom(Self::corner_clearance(window))
                 .w(Self::handle_width(window))
@@ -221,23 +220,23 @@ impl Side for Middle {
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
         match self.0 {
-            PreviewLayout::Hidden => {
+            Layout::Hidden => {
                 unreachable!("This resize handle is not drawn when the preview is hidden")
             }
-            PreviewLayout::Below => shape_before.preview -= mouse_movement.y,
-            PreviewLayout::Right => shape_before.preview -= mouse_movement.x,
+            Layout::Below => shape_before.preview -= mouse_movement.y,
+            Layout::Right => shape_before.preview -= mouse_movement.x,
         }
         shape_before
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Bottom(pub(crate) PreviewLayout);
+pub(crate) struct Bottom(pub(crate) Layout);
 impl Side for Bottom {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeRow
     }
-    fn layout(&self) -> Option<PreviewLayout> {
+    fn layout(&self) -> Option<Layout> {
         Some(self.0)
     }
     fn position(
@@ -256,7 +255,7 @@ impl Side for Bottom {
         mut shape_before: PositionAndShape,
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
-        if let PreviewLayout::Below = self.0 {
+        if let Layout::Below = self.0 {
             shape_before.preview += mouse_movement.y;
         }
         shape_before.bottom += mouse_movement.y;
@@ -264,12 +263,12 @@ impl Side for Bottom {
     }
 }
 #[derive(Clone, Copy)]
-pub(crate) struct LeftCorner(pub(crate) PreviewLayout);
+pub(crate) struct LeftCorner(pub(crate) Layout);
 impl Side for LeftCorner {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeUpRightDownLeft
     }
-    fn layout(&self) -> Option<PreviewLayout> {
+    fn layout(&self) -> Option<Layout> {
         Some(self.0)
     }
     fn position(
@@ -289,9 +288,9 @@ impl Side for LeftCorner {
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
         match self.0 {
-            PreviewLayout::Hidden => (),
-            PreviewLayout::Below => shape_before.preview += mouse_movement.y,
-            PreviewLayout::Right => shape_before.preview += mouse_movement.x,
+            Layout::Hidden => (),
+            Layout::Below => shape_before.preview += mouse_movement.y,
+            Layout::Right => shape_before.preview += mouse_movement.x,
         }
         shape_before.left += mouse_movement.x;
         shape_before.bottom += mouse_movement.y;
@@ -299,12 +298,12 @@ impl Side for LeftCorner {
     }
 }
 #[derive(Clone, Copy)]
-pub(crate) struct RightCorner(pub(crate) PreviewLayout);
+pub(crate) struct RightCorner(pub(crate) Layout);
 impl Side for RightCorner {
     fn cursor(&self) -> CursorStyle {
         CursorStyle::ResizeUpLeftDownRight
     }
-    fn layout(&self) -> Option<PreviewLayout> {
+    fn layout(&self) -> Option<Layout> {
         Some(self.0)
     }
     fn position(
@@ -324,9 +323,9 @@ impl Side for RightCorner {
         mouse_movement: Point<Pixels>,
     ) -> PositionAndShape {
         match self.0 {
-            PreviewLayout::Hidden => (),
-            PreviewLayout::Below => shape_before.preview += mouse_movement.y,
-            PreviewLayout::Right => shape_before.preview += mouse_movement.x,
+            Layout::Hidden => (),
+            Layout::Below => shape_before.preview += mouse_movement.y,
+            Layout::Right => shape_before.preview += mouse_movement.x,
         }
         shape_before.right += mouse_movement.x;
         shape_before.bottom += mouse_movement.y;
@@ -335,10 +334,10 @@ impl Side for RightCorner {
 }
 
 impl<S: Side> ResizeDrag<S> {
-    fn start_new(shape: Shape, window: &mut Window) -> Self {
+    fn start_new(shape: Shape, layout: Option<Layout>, window: &mut Window) -> Self {
         Self {
             mouse_pos_before: window.mouse_position(),
-            shape_before: shape.picker_position_and_size(window),
+            shape_before: shape.picker_position_and_size(layout, window),
             phantom_data: PhantomData,
         }
     }
@@ -357,11 +356,18 @@ impl<D: PickerDelegate> Picker<D> {
             .id(S::id())
             .absolute()
             .cursor(side.cursor())
-            .map(|this| side.position(this, self.shape.picker_position_and_size(window), window))
+            .map(|this| {
+                side.position(
+                    this,
+                    self.shape
+                        .picker_position_and_size(self.preview_layout(), window),
+                    window,
+                )
+            })
             .block_mouse_except_scroll()
             .on_mouse_down(MouseButton::Left, do_nothing) // TODO!(yara) do we need this?
             .on_drag(
-                ResizeDrag::<S>::start_new(self.shape, window),
+                ResizeDrag::<S>::start_new(self.shape, self.preview_layout(), window),
                 |_, _, _, cx| cx.new(|_| DragPreview),
             )
             .on_drag_move::<ResizeDrag<S>>(cx.listener(
@@ -387,9 +393,9 @@ impl<D: PickerDelegate> Picker<D> {
         Some(h_flex().gap_1().items_center().child({
             let focus_handle = self.focus_handle(cx);
             let (icon, tooltip_text) = match preview.layout {
-                PreviewLayout::Hidden => (IconName::Split, "Show preview to the right"),
-                PreviewLayout::Right => (IconName::ListTree, "Show preview below"),
-                PreviewLayout::Below => (IconName::ListCollapse, "Hide Preview"),
+                Layout::Hidden => (IconName::Split, "Show preview to the right"),
+                Layout::Right => (IconName::ListTree, "Show preview below"),
+                Layout::Below => (IconName::ListCollapse, "Hide Preview"),
             };
             IconButton::new("layout-cycle", icon)
                 .size(ButtonSize::Compact)

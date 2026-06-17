@@ -8,10 +8,11 @@ use ui::{
     rems_from_px, utils::WithRemSize, v_flex,
 };
 
+use crate::shape::Shape;
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, Shape,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
     head::Head,
-    preview::PreviewLayout,
+    preview::Layout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
 };
 
@@ -22,19 +23,19 @@ impl<D: PickerDelegate> Render for Picker<D> {
         if let Shape::Resizing(pos) = self.shape
             && !cx.has_active_drag()
         {
-            self.shape = Shape::centered_and_relative(pos, window);
+            self.shape = Shape::centered_and_relative(pos, self.preview_layout(), window);
         }
 
         let layout = self
             .preview
             .as_ref()
             .map(|preview| preview.layout)
-            .unwrap_or(PreviewLayout::Hidden);
+            .unwrap_or(Layout::Hidden);
 
         let content = match &self.preview {
             Some(
                 preview @ Preview {
-                    layout: PreviewLayout::Below,
+                    layout: Layout::Below,
                     ..
                 },
             ) => self
@@ -42,14 +43,14 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .into_any_element(),
             Some(
                 preview @ Preview {
-                    layout: PreviewLayout::Right,
+                    layout: Layout::Right,
                     ..
                 },
             ) => self
                 .render_with_preview_right(preview, window, cx)
                 .into_any_element(),
             Some(Preview {
-                layout: PreviewLayout::Hidden,
+                layout: Layout::Hidden,
                 ..
             })
             | None => self.render_results(window, cx).into_any_element(),
@@ -95,7 +96,7 @@ impl<D: PickerDelegate> Picker<D> {
             .relative()
             .map(|this| {
                 self.shape.apply_picker_size(
-                    &self.preview,
+                    self.preview_layout(),
                     &self.size_bounds,
                     self.vertical_padding(),
                     this,
@@ -126,7 +127,6 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
             .on_action(cx.listener(Self::toggle_layout))
-            .on_action(cx.listener(Self::to_multibuffer))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
@@ -285,14 +285,14 @@ impl<D: PickerDelegate> Picker<D> {
                 .h(self.shape.height(window))
                 .child(
                     div()
-                        .h(self.shape.results_height(preview, window))
+                        .h(self.shape.results_height(Layout::Below, window))
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
                 .child(self.render_resize(Middle(preview.layout), window, cx))
                 .child(
                     div()
-                        .h(self.shape.preview_height(preview, window))
+                        .h(self.shape.preview_height(Layout::Below, window))
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .child(preview.render(cx)),
@@ -316,10 +316,10 @@ impl<D: PickerDelegate> Picker<D> {
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
-                .child(self.render_resize(Middle(preview.layout), window, cx))
+                .child(self.render_resize(Middle(Layout::Right), window, cx))
                 .child(
                     div()
-                        .w(self.shape.preview_width(preview, window))
+                        .w(self.shape.preview_width(Layout::Right, window))
                         .map(|this| self.shape.apply_height(this, window))
                         .border_l_1()
                         .border_color(cx.theme().colors().border_variant)

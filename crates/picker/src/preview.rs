@@ -21,17 +21,26 @@ pub mod render;
 /// showing any condition (if any) and how many times the breakpoint got hit.
 pub struct Preview {
     content: Entity<EditorPreview>,
-    pub(crate) layout: PreviewLayout,
+    pub(crate) layout: Layout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PreviewLayout {
+pub(crate) enum Layout {
     Hidden,
     Below,
     Right,
 }
+impl Layout {
+    pub(crate) fn next(&self) -> Layout {
+        match self {
+            Layout::Hidden => Layout::Right,
+            Layout::Right => Layout::Below,
+            Layout::Below => Layout::Hidden,
+        }
+    }
+}
 
-impl Default for PreviewLayout {
+impl Default for Layout {
     fn default() -> Self {
         Self::Hidden
     }
@@ -41,7 +50,7 @@ impl Preview {
     pub fn new_editor(project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         Preview {
             content: cx.new(|cx| EditorPreview::new(project, window, cx)),
-            layout: PreviewLayout::default(),
+            layout: Layout::default(),
         }
     }
 

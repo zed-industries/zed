@@ -1,15 +1,4 @@
-mod head;
-mod preview;
-pub use preview::Preview;
-pub use preview::PreviewHighlight;
-pub use preview::PreviewSource;
-pub use preview::Update as PreviewUpdate;
-
-pub mod highlighted_match_with_paths;
-pub mod popover_menu;
-
 use anyhow::Result;
-
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels,
@@ -20,7 +9,6 @@ use head::Head;
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::ops;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
@@ -29,9 +17,20 @@ use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::ModalView;
 use zed_actions::editor::{MoveDown, MoveUp};
 
-use crate::preview::PreviewLayout;
-
+mod head;
+pub mod highlighted_match_with_paths;
+mod persistence;
+pub mod popover_menu;
+mod preview;
 mod render;
+mod shape;
+
+use crate::shape::RelativeHeight;
+use crate::shape::RelativeWidth;
+pub use preview::Preview;
+pub use preview::PreviewHighlight;
+pub use preview::PreviewSource;
+pub use preview::Update as PreviewUpdate;
 
 enum ElementContainer {
     List(ListState),
@@ -71,349 +70,6 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PositionAndShape {
-    /// Absolute position of left most side of the picker
-    left: Pixels,
-    /// Absolute position of right most side of the picker
-    right: Pixels,
-    /// Absolute position of top most side of the picker
-    top: Pixels,
-    /// Absolute position of bottom most side of the picker
-    bottom: Pixels,
-    /// Relative position of divide between results and preview,
-    /// either a height or a width depends on previews layoutmode.
-    /// Should be zero when preview is disabled or hidden
-    preview: Pixels,
-}
-
-macro_rules! relative_size {
-    ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq)]
-        pub struct $name {
-            viewport_fraction: f32,
-            rems: Rems,
-        }
-
-        impl From<Rems> for $name {
-            fn from(v: Rems) -> Self {
-                Self::rems(v)
-            }
-        }
-
-        impl $name {
-            pub const FULL: Self = Self {
-                viewport_fraction: 1.0,
-                rems: Rems::ZERO,
-            };
-
-            pub const fn viewport(fraction: f32) -> Self {
-                Self {
-                    viewport_fraction: fraction,
-                    rems: Rems::ZERO,
-                }
-            }
-
-            pub const fn rems(val: Rems) -> Self {
-                Self {
-                    viewport_fraction: 0.0,
-                    rems: val,
-                }
-            }
-
-            pub fn as_pixels(&self, window: &Window) -> Pixels {
-                self.viewport_fraction * window.viewport_size().width
-                    + self.rems * window.rem_size()
-            }
-
-            pub fn from_pixels(width: Pixels, window: &Window) -> Self {
-                Self {
-                    viewport_fraction: width / window.viewport_size().width,
-                    rems: Rems::ZERO,
-                }
-            }
-        }
-
-        impl ops::Add for $name {
-            type Output = Self;
-
-            fn add(self, rhs: Self) -> Self::Output {
-                Self {
-                    viewport_fraction: self.viewport_fraction + rhs.viewport_fraction,
-                    rems: self.rems + rhs.rems,
-                }
-            }
-        }
-
-        impl ops::Sub for $name {
-            type Output = Self;
-
-            fn sub(self, rhs: Self) -> Self::Output {
-                Self {
-                    viewport_fraction: self.viewport_fraction - rhs.viewport_fraction,
-                    rems: self.rems - rhs.rems,
-                }
-            }
-        }
-
-        impl ops::Div<f32> for $name {
-            type Output = Self;
-
-            fn div(mut self, rhs: f32) -> Self::Output {
-                self.viewport_fraction /= rhs;
-                self.rems = Rems(self.rems.0 / rhs);
-                self
-            }
-        }
-    };
-}
-
-relative_size!(RelativeHeight);
-relative_size!(RelativeWidth);
-relative_size!(RelativeLength);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum VerticalPadding {
-    /// The picker always fills its height even if there are no resutls
-    #[default]
-    Pad,
-    /// Picker might be shorter then it's height if there is not enough to display
-    None,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum Shape {
-    Resizing(PositionAndShape),
-    /// This is what we serialize
-    HorizontallyCentered {
-        width: RelativeWidth,
-        height: RelativeHeight,
-        preview_size: RelativeLength,
-    },
-}
-
-#[derive(Debug)]
-pub struct SizeBounds {
-    max_width: RelativeWidth,
-    min_width: Rems,
-    max_height: RelativeWidth,
-    min_height: Rems,
-}
-
-impl Default for SizeBounds {
-    fn default() -> Self {
-        Self {
-            max_width: RelativeWidth::viewport(0.95),
-            min_width: Rems(15.0),
-            max_height: RelativeWidth::viewport(0.95),
-            min_height: Rems(20.0),
-        }
-    }
-}
-
-impl SizeBounds {
-    /// Clamps a width in pixels to the configured min/max width.
-    fn clamp_width(&self, width: Pixels, window: &Window) -> Pixels {
-        width
-            .min(self.max_width.as_pixels(window))
-            .max(self.min_width * window.rem_size())
-    }
-
-    /// Clamps a height in pixels to the configured min/max height.
-    fn clamp_height(&self, height: Pixels, window: &Window) -> Pixels {
-        height
-            .min(self.max_height.as_pixels(window))
-            .max(self.min_height * window.rem_size())
-    }
-
-    /// Clamps an in-progress resize back into bounds.
-    fn clamp(
-        &self,
-        before: &PositionAndShape,
-        working: &mut PositionAndShape,
-        layout: Option<PreviewLayout>,
-        window: &Window,
-    ) {
-        // Width: pin whichever horizontal edge didn't move.
-        let target_width = self.clamp_width(working.right - working.left, window);
-        let width_correction = if working.left != before.left {
-            let new_left = working.right - target_width;
-            let correction = new_left - working.left;
-            working.left = new_left;
-            correction
-        } else {
-            let new_right = working.left + target_width;
-            let correction = new_right - working.right;
-            working.right = new_right;
-            correction
-        };
-
-        // Height: only the bottom edge moves; the top stays pinned.
-        let target_height = self.clamp_height(working.bottom - working.top, window);
-        let new_bottom = working.top + target_height;
-        let height_correction = new_bottom - working.bottom;
-        working.bottom = new_bottom;
-
-        match layout {
-            Some(PreviewLayout::Right) => working.preview += width_correction,
-            Some(PreviewLayout::Below) => working.preview += height_correction,
-            Some(PreviewLayout::Hidden) | None => {}
-        }
-    }
-}
-
-impl Shape {
-    fn picker_position_and_size(&self, window: &Window) -> PositionAndShape {
-        match self {
-            Shape::Resizing(pos) => *pos,
-            Shape::HorizontallyCentered {
-                width,
-                height,
-                preview_size,
-            } => PositionAndShape {
-                //        W              V: full width     xxxxx: picker modal
-                // -----xxxxx------      left = (V - W) / 2
-                //     L     R           right = left + W = (V/2 - W/2) + W =  V/2 + W/2
-                left: ((RelativeWidth::FULL - *width) / 2.0).as_pixels(window),
-                right: (RelativeWidth::FULL / 2.0 + *width / 2.0).as_pixels(window),
-                top: Pixels::ZERO,
-                bottom: height.as_pixels(window),
-                preview: preview_size.as_pixels(window),
-            },
-        }
-    }
-
-    fn results_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
-        let mut pos = self.picker_position_and_size(window);
-
-        match preview.layout {
-            PreviewLayout::Below => pos.bottom -= pos.preview,
-            PreviewLayout::Right => pos.right -= pos.preview,
-            PreviewLayout::Hidden => (),
-        }
-        pos
-    }
-
-    fn preview_position_and_size(&self, preview: &Preview, window: &Window) -> PositionAndShape {
-        let mut pos = self.picker_position_and_size(window);
-
-        match preview.layout {
-            PreviewLayout::Below => pos.top = pos.bottom - pos.preview,
-            PreviewLayout::Right => pos.left = pos.right - pos.preview,
-            PreviewLayout::Hidden => (),
-        }
-        pos
-    }
-
-    /// How far the center of the picker has been moved during dragging
-    /// this allows extending it on one side without the picker centering during
-    /// the resize. The drag is clamped to the size bounds (see
-    /// [`Side::current_position_and_shape`]), so the center stays in bounds too.
-    pub(crate) fn horizontal_offset(&self, window: &Window) -> Pixels {
-        let Shape::Resizing(PositionAndShape { left, right, .. }) = self else {
-            return Pixels::ZERO; // picker should be centered
-        };
-        let center = (*left + *right) / 2.0;
-        let viewport_center = window.viewport_size().width / 2.0;
-        center - viewport_center // shifting the picker by this uncenters it again
-    }
-
-    fn apply_picker_size(
-        &self,
-        preview: &Option<Preview>,
-        bounds: &SizeBounds,
-        vertical_padding: VerticalPadding,
-        div: Div,
-        window: &Window,
-    ) -> Div {
-        let pos = if let Some(preview) = preview {
-            self.results_position_and_size(preview, window)
-        } else {
-            self.picker_position_and_size(window)
-        };
-        let width = bounds.clamp_width(pos.right - pos.left, window);
-        let div = div.w(width);
-        match vertical_padding {
-            VerticalPadding::None => div,
-            VerticalPadding::Pad => {
-                let height = bounds.clamp_height(pos.bottom - pos.top, window);
-                div.h(height)
-            }
-        }
-    }
-
-    fn results_max_height(
-        &self,
-        bounds: &SizeBounds,
-        vertical_padding: VerticalPadding,
-        window: &Window,
-    ) -> Option<Pixels> {
-        match vertical_padding {
-            VerticalPadding::None => {
-                let pos = self.picker_position_and_size(window);
-                Some(bounds.clamp_height(pos.bottom - pos.top, window))
-            }
-            VerticalPadding::Pad => None,
-        }
-    }
-
-    fn height(&self, window: &Window) -> Pixels {
-        let pos = self.picker_position_and_size(window);
-        pos.bottom - pos.top
-    }
-
-    fn apply_height(&self, div: Div, window: &Window) -> Div {
-        div.h(self.height(window))
-    }
-
-    fn results_height(&self, preview: &Preview, window: &mut Window) -> Pixels {
-        let pos = self.results_position_and_size(preview, window);
-        pos.bottom - pos.top
-    }
-
-    fn preview_width(&self, preview: &Preview, window: &mut Window) -> Pixels {
-        let pos = self.preview_position_and_size(preview, window);
-        pos.right - pos.left
-    }
-
-    fn preview_height(&self, preview: &Preview, window: &mut Window) -> Pixels {
-        let pos = self.preview_position_and_size(preview, window);
-        pos.bottom - pos.top
-    }
-
-    /// Resizing done, re-center the picker and use relative sizes instead of
-    /// pixels again.
-    pub(crate) fn centered_and_relative(pos: PositionAndShape, window: &Window) -> Self {
-        Shape::HorizontallyCentered {
-            width: RelativeWidth::from_pixels(pos.right - pos.left, window),
-            height: RelativeHeight::from_pixels(pos.bottom - pos.top, window),
-            preview_size: RelativeLength::from_pixels(pos.preview, window),
-        }
-    }
-
-    fn set_initial_width(&mut self, w: impl Into<RelativeWidth>) {
-        if let Shape::HorizontallyCentered { width, .. } = self {
-            *width = w.into();
-        }
-    }
-
-    fn set_initial_height(&mut self, h: impl Into<RelativeHeight>) {
-        if let Shape::HorizontallyCentered { height, .. } = self {
-            *height = h.into();
-        }
-    }
-}
-
-impl Default for Shape {
-    fn default() -> Self {
-        Self::HorizontallyCentered {
-            width: RelativeWidth::viewport(0.6),
-            height: RelativeHeight::viewport(0.6),
-            preview_size: RelativeLength::viewport(0.3),
-        }
-    }
-}
-
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
@@ -421,9 +77,9 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
-    shape: Shape,
-    vertical_padding: VerticalPadding,
-    size_bounds: SizeBounds,
+    shape: shape::Shape,
+    vertical_padding: shape::VerticalPadding,
+    size_bounds: shape::SizeBounds,
     widest_item: Option<usize>,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
@@ -733,14 +389,14 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
-            shape: Shape::default(),
-            vertical_padding: VerticalPadding::default(),
+            shape: shape::Shape::default(),
+            vertical_padding: shape::VerticalPadding::default(),
             widest_item: None,
             show_scrollbar: false,
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
-            size_bounds: SizeBounds::default(),
+            size_bounds: shape::SizeBounds::default(),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -780,17 +436,17 @@ impl<D: PickerDelegate> Picker<D> {
     /// Makes the picker shrink to fit its content rather than padding out to its
     /// full height when there are fewer results than fit.
     pub fn no_vertical_padding(mut self) -> Self {
-        self.vertical_padding = VerticalPadding::None;
+        self.vertical_padding = shape::VerticalPadding::None;
         self
     }
 
-    fn vertical_padding(&self) -> VerticalPadding {
+    fn vertical_padding(&self) -> shape::VerticalPadding {
         let preview_visible = self
             .preview
             .as_ref()
-            .is_some_and(|preview| preview.layout != PreviewLayout::Hidden);
+            .is_some_and(|preview| preview.layout != preview::Layout::Hidden);
         if preview_visible {
-            VerticalPadding::Pad
+            shape::VerticalPadding::Pad
         } else {
             self.vertical_padding
         }
@@ -1035,21 +691,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn to_multibuffer(&mut self, _: &ToMultiBuffer, _window: &mut Window, _cx: &mut Context<Self>) {
-        // TODO!(yara) open the previewed buffer in a multibuffer.
-    }
-
     fn toggle_layout(&mut self, _: &ToggleLayout, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(preview) = &mut self.preview else {
             return;
         };
-        preview.layout = match preview.layout {
-            PreviewLayout::Hidden => PreviewLayout::Right,
-            PreviewLayout::Right => PreviewLayout::Below,
-            PreviewLayout::Below => PreviewLayout::Hidden,
-        };
+        preview.layout = preview.layout.next();
         self.delegate
-            .preview_layout_changed(matches!(preview.layout, PreviewLayout::Right));
+            .preview_layout_changed(matches!(preview.layout, preview::Layout::Right));
         cx.notify();
     }
 
@@ -1271,8 +919,8 @@ impl<D: PickerDelegate> Picker<D> {
         // size from its items. When the picker pads to its full height (`Pad`),
         // the list fills the available space.
         let sizing_behavior = match self.vertical_padding() {
-            VerticalPadding::None => ListSizingBehavior::Infer,
-            VerticalPadding::Pad => ListSizingBehavior::Auto,
+            shape::VerticalPadding::None => ListSizingBehavior::Infer,
+            shape::VerticalPadding::Pad => ListSizingBehavior::Auto,
         };
 
         match &self.element_container {
@@ -1314,6 +962,10 @@ impl<D: PickerDelegate> Picker<D> {
                 scroll_handle.logical_scroll_top_index()
             }
         }
+    }
+
+    fn preview_layout(&self) -> Option<preview::Layout> {
+        self.preview.as_ref().map(|p| p.layout)
     }
 }
 

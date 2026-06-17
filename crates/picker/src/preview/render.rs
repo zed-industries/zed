@@ -6,14 +6,15 @@ use ui::{
 
 use crate::ToMultiBuffer;
 
-use crate::preview::{EditorPreview, PreviewLayout};
+use crate::preview;
+use crate::preview::EditorPreview;
 
 impl EditorPreview {
-    pub(crate) fn render(&self, layout: PreviewLayout, cx: &App) -> impl IntoElement {
+    pub(crate) fn render(&self, layout: preview::Layout, cx: &App) -> impl IntoElement {
         match layout {
-            PreviewLayout::Below => self.render_preview_below(cx).into_any_element(),
-            PreviewLayout::Right => self.render_preview_right(cx).into_any_element(),
-            PreviewLayout::Hidden => gpui::Empty.into_any_element(),
+            preview::Layout::Below => self.render_preview_below(cx).into_any_element(),
+            preview::Layout::Right => self.render_preview_right(cx).into_any_element(),
+            preview::Layout::Hidden => gpui::Empty.into_any_element(),
         }
     }
 }
