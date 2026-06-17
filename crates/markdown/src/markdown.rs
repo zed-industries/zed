@@ -1185,7 +1185,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1244,7 +1244,7 @@ impl MarkdownElement {
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Box::new(handler));
+        self.on_url_click = Some(Rc::new(handler));
         self
     }
 
@@ -1345,16 +1345,40 @@ impl MarkdownElement {
         builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
 
         let image_element = {
-            let mut wrapper = div().min_w_0();
-            if let Some(link) = (builder.link_depth > 0)
+            let wrapper = div()
+                .id(("markdown-image-link", range.start))
+                .min_w_0();
+            let wrapper = if let Some(link) = (builder.link_depth > 0)
                 .then(|| builder.rendered_links.last())
                 .flatten()
+                && !self.style.prevent_mouse_interaction
             {
                 let url = link.destination_url.clone();
-                wrapper = wrapper
+                let markdown = self.markdown.clone();
+                let url_click = self.on_url_click.clone();
+                wrapper
                     .cursor_pointer()
-                    .on_click(move |_, _, cx| cx.open_url(&url));
-            }
+                    .on_click({
+                        let url = url.clone();
+                        let url_click = url_click.clone();
+                        move |_, window, cx| {
+                            if let Some(ref on_url_click) = url_click {
+                                on_url_click(url.clone(), window, cx);
+                            } else {
+                                cx.open_url(&url);
+                            }
+                        }
+                    })
+                    .capture_any_mouse_down(move |event, _window, cx| {
+                        if event.button == MouseButton::Right {
+                            markdown.update(cx, |md, _| {
+                                md.capture_for_context_menu(Some(url.clone()))
+                            });
+                        }
+                    })
+            } else {
+                wrapper
+            };
             wrapper.child(
                 img(source)
                     .id(("markdown-image", range.start))
