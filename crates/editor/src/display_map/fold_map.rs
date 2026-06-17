@@ -722,6 +722,11 @@ impl FoldSnapshot {
         self.folds.items(&self.inlay_snapshot.buffer).len()
     }
 
+    #[inline(always)]
+    pub fn has_folds(&self) -> bool {
+        !self.folds.is_empty()
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> MBTextSummary {
         let mut summary = MBTextSummary::default();
