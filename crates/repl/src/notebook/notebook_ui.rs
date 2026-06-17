@@ -115,6 +115,37 @@ impl ExecutionQueue {
         true
     }
 
+    fn is_active_cell(&self, cell_id: &CellId) -> bool {
+        self.active_request
+            .as_ref()
+            .and_then(|request_id| self.request_cell_ids.get(request_id))
+            == Some(cell_id)
+    }
+
+    fn remove_cell(&mut self, cell_id: &CellId) {
+        self.pending_cells
+            .retain(|queued_cell_id| queued_cell_id != cell_id);
+
+        let request_ids = self
+            .request_cell_ids
+            .iter()
+            .filter_map(|(request_id, request_cell_id)| {
+                if request_cell_id == cell_id {
+                    Some(request_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for request_id in request_ids {
+            self.request_cell_ids.remove(&request_id);
+            if self.active_request.as_ref() == Some(&request_id) {
+                self.active_request = None;
+            }
+        }
+    }
+
     fn can_start_next(&self, kernel_status: KernelStatus) -> bool {
         self.active_request.is_none() && matches!(kernel_status, KernelStatus::Idle)
     }
@@ -591,18 +622,27 @@ impl NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Kernel::RunningKernel(kernel) = &self.kernel {
-            let interrupt_request = runtimelib::InterruptRequest {};
-            let message: JupyterMessage = interrupt_request.into();
+        if self.send_interrupt_to_kernel(cx) {
+            self.clear_pending_queued_cells(cx);
+        }
+    }
 
-            match kernel.request_tx().try_send(message) {
-                Ok(()) => {
-                    self.clear_pending_queued_cells(cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    log::error!("notebook: failed to interrupt kernel: {error:?}");
-                }
+    fn send_interrupt_to_kernel(&mut self, cx: &mut Context<Self>) -> bool {
+        let Kernel::RunningKernel(kernel) = &self.kernel else {
+            return false;
+        };
+
+        let interrupt_request = runtimelib::InterruptRequest {};
+        let message: JupyterMessage = interrupt_request.into();
+
+        match kernel.request_tx().try_send(message) {
+            Ok(()) => {
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                log::error!("notebook: failed to interrupt kernel: {error:?}");
+                false
             }
         }
     }
@@ -760,6 +800,34 @@ impl NotebookEditor {
                 });
             }
         }
+    }
+
+    fn delete_cell(&mut self, cell_id: CellId, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.execution_queue.is_active_cell(&cell_id) {
+            self.send_interrupt_to_kernel(cx);
+        }
+
+        self.execution_queue.remove_cell(&cell_id);
+
+        let Some(index) = self
+            .cell_order
+            .iter()
+            .position(|existing_cell_id| existing_cell_id == &cell_id)
+        else {
+            return;
+        };
+
+        self.cell_order.remove(index);
+        self.cell_map.remove(&cell_id);
+        self.cell_list.splice(index..index + 1, 0);
+
+        if self.cell_order.is_empty() {
+            self.selected_cell_index = 0;
+        } else if self.selected_cell_index >= self.cell_order.len() {
+            self.selected_cell_index = self.cell_order.len().saturating_sub(1);
+        }
+
+        cx.notify();
     }
 
     fn get_selected_cell(&self) -> Option<&Cell> {
@@ -1489,10 +1557,10 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let cell_position = self.cell_position(index);
-
         let is_selected = index == self.selected_cell_index;
+        let cell_id = cell.id(cx);
 
-        match cell {
+        let rendered_cell = match cell {
             Cell::Code(cell) => {
                 cell.update(cx, |cell, _cx| {
                     cell.set_selected(is_selected)
@@ -1514,7 +1582,35 @@ impl NotebookEditor {
                 });
                 cell.clone().into_any_element()
             }
-        }
+        };
+
+        div()
+            .relative()
+            .w_full()
+            .child(rendered_cell)
+            .when(is_selected, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .right_0p5()
+                        .when(cell_position == CellPosition::First, |this| {
+                            this.top(DynamicSpacing::Base12.px(cx) + px(3.))
+                        })
+                        .when(cell_position != CellPosition::First, |this| this.top_2())
+                        .child(
+                            IconButton::new(("delete-cell", index), IconName::Trash)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Delete cell"))
+                                .on_click(cx.listener({
+                                    let cell_id = cell_id.clone();
+                                    move |this, _, window, cx| {
+                                        this.delete_cell(cell_id.clone(), window, cx);
+                                    }
+                                })),
+                        ),
+                )
+            })
     }
 }
 
