@@ -206,6 +206,10 @@ impl KernelPickerDelegate {
 impl PickerDelegate for KernelPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "kernel picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }

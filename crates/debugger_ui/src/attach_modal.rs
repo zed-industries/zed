@@ -137,6 +137,10 @@ impl ModalView for AttachModal {}
 impl PickerDelegate for AttachModalDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "attach modal"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }

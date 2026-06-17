@@ -56,6 +56,10 @@ impl FontPickerDelegate {
 impl PickerDelegate for FontPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "font picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_fonts.len()
     }

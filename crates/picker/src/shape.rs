@@ -41,6 +41,8 @@ macro_rules! relative_size {
             };
 
             pub const fn viewport(fraction: f32) -> Self {
+                debug_assert!(fraction <= 1.0);
+                debug_assert!(fraction >= 0.0);
                 Self {
                     viewport_fraction: fraction,
                     rems: Rems::ZERO,
@@ -112,7 +114,7 @@ relative_size!(RelativeHeight, height);
 relative_size!(RelativeWidth, width);
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ViewportFraction(f32);
+pub struct ViewportFraction(f32);
 
 impl ViewportFraction {
     pub(crate) const ZERO: Self = Self(0.0);
@@ -380,7 +382,7 @@ impl Shape {
         pos: PositionAndShape,
         layout: impl Into<Option<Layout>>,
         window: &Window,
-    ) -> Self {
+    ) -> Centered {
         use Layout as Pl;
         let preview_size = match layout.into() {
             Some(Pl::Below) => ViewportFraction::from_height_pixels(pos.preview, window),
@@ -388,11 +390,11 @@ impl Shape {
             Some(Pl::Hidden) | None => ViewportFraction::ZERO,
         };
 
-        Shape::HorizontallyCentered(Centered {
+        Centered {
             width: RelativeWidth::from_pixels(pos.right - pos.left, window),
             height: RelativeHeight::from_pixels(pos.bottom - pos.top, window),
             preview_size,
-        })
+        }
     }
 
     pub(crate) fn set_initial_width(&mut self, w: impl Into<RelativeWidth>) {

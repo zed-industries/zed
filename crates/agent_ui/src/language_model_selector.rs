@@ -391,6 +391,10 @@ impl ModelMatcher {
 impl PickerDelegate for LanguageModelPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "language model selector"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }

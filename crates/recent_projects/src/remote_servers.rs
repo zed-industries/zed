@@ -205,6 +205,10 @@ impl DevContainerPickerDelegate {
 impl PickerDelegate for DevContainerPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "remote dev container picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matching_candidates.len()
     }

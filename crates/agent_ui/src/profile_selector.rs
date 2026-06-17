@@ -426,6 +426,10 @@ impl ProfilePickerDelegate {
 impl PickerDelegate for ProfilePickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "profile selector"
+    }
+
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
         "Search profiles…".into()
     }

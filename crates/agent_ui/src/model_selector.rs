@@ -203,6 +203,10 @@ impl ModelPickerDelegate {
 impl PickerDelegate for ModelPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "model selector"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }

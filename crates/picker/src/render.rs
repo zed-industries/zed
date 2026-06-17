@@ -8,6 +8,7 @@ use ui::{
     rems_from_px, utils::WithRemSize, v_flex,
 };
 
+use crate::persistence;
 use crate::shape::Shape;
 use crate::{
     ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
@@ -23,14 +24,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
         if let Shape::Resizing(pos) = self.shape
             && !cx.has_active_drag()
         {
-            self.shape = Shape::centered_and_relative(pos, self.preview_layout(), window);
+            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
+            persistence::store_shape_for_this_layout(
+                D::name(),
+                self.preview_layout(),
+                centered,
+                window,
+                cx,
+            );
+            self.shape = Shape::HorizontallyCentered(centered);
         }
-
-        let layout = self
-            .preview
-            .as_ref()
-            .map(|preview| preview.layout)
-            .unwrap_or(Layout::Hidden);
 
         let content = match &self.preview {
             Some(
@@ -66,6 +69,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.is_modal, |this| this.elevation_3(cx).border(px(1.5)))
             .when(has_preview, |this| this.overflow_hidden())
             .child(content);
+
+        let layout = self.preview_layout().unwrap_or(Layout::Hidden);
 
         // Embedded pickers are not resizable
         div().relative().child(content).when(self.is_modal, |this| {

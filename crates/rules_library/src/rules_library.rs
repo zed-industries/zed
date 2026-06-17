@@ -192,6 +192,10 @@ impl EventEmitter<RulePickerEvent> for Picker<RulePickerDelegate> {}
 impl PickerDelegate for RulePickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "rule picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }

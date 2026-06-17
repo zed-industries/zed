@@ -14,6 +14,7 @@ use std::{
 };
 use ui::{Divider, DocumentationAside, prelude::*, v_flex};
 use ui_input::{ErasedEditor, ErasedEditorEvent};
+use util::ResultExt;
 use workspace::ModalView;
 use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -91,6 +92,7 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    shape_loaded_from_persistence: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -105,6 +107,9 @@ pub enum PickerEditorPosition {
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
 
+    /// Name of the picker, this is the key for serialization. We could use the
+    /// typename of the delegate but then a rename would break persistence.
+    fn name() -> &'static str;
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
     fn separators_after_indices(&self) -> Vec<usize> {
@@ -377,19 +382,30 @@ impl<D: PickerDelegate> Picker<D> {
         delegate: D,
         container: ContainerKind,
         head: Head,
-        preview: Option<Preview>,
+        mut preview: Option<Preview>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let element_container = Self::create_element_container(container);
+        if let Some(preview) = &mut preview {
+            preview.layout = persistence::load_last_preview_layout(D::name(), cx)
+                .log_err()
+                .flatten()
+                .unwrap_or_default();
+        };
+        // TODO!(yara) This must overwrite any shape from settings
+        let shape = persistence::try_load_shape(D::name(), preview.as_ref().map(|p| p.layout), cx)
+            .log_err()
+            .flatten();
         let mut this = Self {
             delegate,
             head,
-            preview,
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
-            shape: shape::Shape::default(),
+            preview,
+            shape_loaded_from_persistence: shape.is_some(),
+            shape: shape.unwrap_or_default(),
             vertical_padding: shape::VerticalPadding::default(),
             widest_item: None,
             show_scrollbar: false,
@@ -417,7 +433,9 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn width(mut self, width: impl Into<RelativeWidth>) -> Self {
-        self.shape.set_initial_width(width);
+        if !self.shape_loaded_from_persistence {
+            self.shape.set_initial_width(width);
+        }
         self
     }
 
@@ -429,7 +447,9 @@ impl<D: PickerDelegate> Picker<D> {
     /// Sets the picker's initial height. By default the picker pads to this
     /// height
     pub fn height(mut self, height: impl Into<RelativeHeight>) -> Self {
-        self.shape.set_initial_height(height);
+        if !self.shape_loaded_from_persistence {
+            self.shape.set_initial_height(height);
+        }
         self
     }
 
@@ -993,6 +1013,10 @@ mod tests {
 
     impl PickerDelegate for TestDelegate {
         type ListItem = ui::ListItem;
+
+        fn name() -> &'static str {
+            "test"
+        }
 
         fn match_count(&self) -> usize {
             self.items.len()

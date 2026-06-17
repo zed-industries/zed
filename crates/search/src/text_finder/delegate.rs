@@ -423,6 +423,10 @@ const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 impl PickerDelegate for Delegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "text finder"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search all files...".into()
     }

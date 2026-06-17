@@ -12939,6 +12939,7 @@ name = "picker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "db",
  "editor",
  "gpui",
  "language",
@@ -12949,6 +12950,7 @@ dependencies = [
  "rope",
  "schemars 1.0.4",
  "serde",
+ "serde_json",
  "settings",
  "theme",
  "theme_settings",

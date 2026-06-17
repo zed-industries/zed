@@ -1207,6 +1207,10 @@ impl DebugDelegate {
 impl PickerDelegate for DebugDelegate {
     type ListItem = ui::ListItem;
 
+    fn name() -> &'static str {
+        "debug scenario picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
