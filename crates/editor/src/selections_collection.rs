@@ -317,12 +317,8 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     {
-        // When there is no pending selection, `all()` is the disjoint selections resolved in order,
-        // so the first one is `disjoint.first()`. Resolve only that anchor instead of every
-        // selection - this keeps the hot path O(log n) rather than O(selections), which matters
-        // with thousands of cursors. (`all()` additionally coalesces selections that land on the
-        // same display position, e.g. inside a fold, but that only ever extends a selection's end
-        // and so never changes which selection is first.)
+        // Without a pending selection, the first disjoint selection is also the first resolved
+        // selection, so avoid resolving every selection.
         if self.pending.is_none()
             && let Some(first) = self.disjoint.first()
         {

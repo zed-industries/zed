@@ -8259,10 +8259,7 @@ impl Element for EditorElement {
                                 let is_singleton =
                                     editor.buffer_kind(cx) == ItemBufferKind::Singleton;
 
-                                // For a singleton buffer `selected_buffer_ids` is unused and the
-                                // latest-per-buffer anchor is simply the newest selection, so we
-                                // avoid resolving every selection here. Doing so is O(selections),
-                                // which is pathological with thousands of cursors.
+                                // Singleton buffers only need the newest selection anchor here.
                                 let selected_buffer_ids = if is_singleton {
                                     Vec::new()
                                 } else {

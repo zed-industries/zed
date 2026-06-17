@@ -171,9 +171,7 @@ impl Editor {
             target_top = target_point.row().as_f64();
             target_bottom = target_top + 1.;
         } else {
-            // Only the first, last, and newest selections are needed here. Resolving just those
-            // three anchors keeps autoscroll O(log n) instead of resolving every selection, which
-            // matters when there are thousands of cursors.
+            // Autoscroll only needs the first, last, and newest selections.
             target_point = self
                 .selections
                 .first::<Point>(&display_map)
@@ -361,9 +359,7 @@ impl Editor {
         let scroll_width = ScrollOffset::from(scroll_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        // Only selections whose head falls within the visible rows can affect horizontal
-        // autoscroll, so resolve just those instead of every selection (O(visible) rather than
-        // O(selections), which matters with thousands of cursors).
+        // Horizontal autoscroll only needs selections whose head is visible.
         let visible_end_row = DisplayRow(start_row.0 + layouts.len() as u32);
         let visible_range = display_map
             .buffer_snapshot()
