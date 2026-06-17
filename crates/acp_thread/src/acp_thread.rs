@@ -3529,6 +3529,33 @@ impl AcpThread {
                         };
                         (task_command, task_args, sandbox_config, None)
                     } else {
+                        // No sandbox wrap means we're running unsandboxed, and
+                        // on Windows that deliberately changes the shell: the
+                        // sandboxed path runs under WSL's Linux bash, but this
+                        // fallback uses the host's `shell` (resolved above via
+                        // `get_default_system_shell_preferring_bash`) against
+                        // the native cwd. That resolution prefers Git Bash (or
+                        // scoop's bash), only dropping to the native Windows
+                        // shell (PowerShell/cmd) when no bash is installed — so
+                        // the interpreter usually stays bash-compatible, but its
+                        // path conventions differ from WSL's (e.g. `/c/...` or
+                        // native `C:\...` rather than `/mnt/c/...`). This is
+                        // unlike Linux/macOS, where the unsandboxed path (the
+                        // `#[cfg(not(target_os = "windows"))]` block below)
+                        // reuses the exact same shell and merely omits the bwrap
+                        // wrapper, so shell semantics are preserved untouched.
+                        //
+                        // The shell switch is intentional on Windows. The only
+                        // ways to reach this branch are: the model asking for
+                        // `unsandboxed: true` (often to run a Windows program),
+                        // the user choosing "run unsandboxed" after a sandbox-
+                        // creation failure, the `allow_unsandboxed` setting, or a
+                        // per-thread fallback grant. In every case the caller
+                        // warns the model that the command ran without a sandbox
+                        // (see `sandbox_not_applied` in the terminal tool); note
+                        // that warning reports the loss of isolation, not that
+                        // the shell (and its path conventions) changed, so a
+                        // command written for WSL may behave differently here.
                         let (task_command, task_args) =
                             ShellBuilder::new(&Shell::Program(shell), is_windows)
                                 .redirect_stdin_to_dev_null()
@@ -3536,6 +3563,12 @@ impl AcpThread {
                         (task_command, task_args, None, cwd.clone())
                     };
 
+                // On Linux/macOS the same shell (`/bin/sh`) is used whether or
+                // not we sandbox: `ShellBuilder` builds the command, and
+                // `apply_sandbox_wrap` either wraps it in bwrap (`Some`) or
+                // returns it untouched (`None`). Either way the interpreter is
+                // identical, so the unsandboxed fallback keeps shell semantics
+                // intact — unlike Windows, which falls back to the host shell.
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, sandbox_config, spawn_cwd) = {
                     let (task_command, task_args) =
