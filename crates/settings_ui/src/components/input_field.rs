@@ -17,6 +17,7 @@ pub struct SettingsInputField {
     display_confirm_button: bool,
     display_clear_button: bool,
     clear_on_confirm: bool,
+    confirm_on_focus_out: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
 }
@@ -33,6 +34,7 @@ impl SettingsInputField {
             display_confirm_button: false,
             display_clear_button: false,
             clear_on_confirm: false,
+            confirm_on_focus_out: false,
             action_slot: None,
             color: None,
         }
@@ -73,6 +75,11 @@ impl SettingsInputField {
 
     pub fn clear_on_confirm(mut self) -> Self {
         self.clear_on_confirm = true;
+        self
+    }
+
+    pub fn confirm_on_focus_out(mut self) -> Self {
+        self.confirm_on_focus_out = true;
         self
     }
 
@@ -125,9 +132,10 @@ impl RenderOnce for SettingsInputField {
                     }
 
                     if let Some(confirm) = confirm.take()
-                        && !self.display_confirm_button
-                        && !self.display_clear_button
-                        && !self.clear_on_confirm
+                        && (self.confirm_on_focus_out
+                            || (!self.display_confirm_button
+                                && !self.display_clear_button
+                                && !self.clear_on_confirm))
                     {
                         cx.on_focus_out(
                             &editor_focus_handle,
@@ -161,9 +169,10 @@ impl RenderOnce for SettingsInputField {
                     }
 
                     if let Some(confirm) = confirm.take()
-                        && !self.display_confirm_button
-                        && !self.display_clear_button
-                        && !self.clear_on_confirm
+                        && (self.confirm_on_focus_out
+                            || (!self.display_confirm_button
+                                && !self.display_clear_button
+                                && !self.clear_on_confirm))
                     {
                         cx.on_focus_out(
                             &editor_focus_handle,
