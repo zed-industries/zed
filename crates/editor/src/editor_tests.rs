@@ -37,6 +37,7 @@ use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
+use menu::Confirm as MenuConfirm;
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
@@ -38122,4 +38123,46 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         third
         fourthˇ»
     "});
+}
+
+#[gpui::test]
+fn test_gutter_context_menu_git_blame_toggle(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| language::Buffer::local("hello world", cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    // The default gutter context menu has six selectable entries in order:
+    // Set Breakpoint, Set Log Breakpoint, Set Condition Breakpoint,
+    // Set Hit Condition Breakpoint, Column Git Blame, Add Bookmark.
+    let select_column_git_blame =
+        |menu: &mut ContextMenu, window: &mut Window, cx: &mut Context<ContextMenu>| {
+            menu.select_first(&menu::SelectFirst, window, cx);
+            for _ in 0..4 {
+                menu.select_next(&menu::SelectNext, window, cx);
+            }
+        };
+
+    let toggle_column_git_blame = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+        let context_menu = editor.update_in(cx, |editor, window, cx| {
+            let anchor = editor
+                .buffer
+                .read(cx)
+                .snapshot(cx)
+                .anchor_before(Point::new(0, 0));
+            editor.gutter_context_menu(anchor, window, cx)
+        });
+
+        context_menu.update_in(cx, |menu, window, cx| {
+            select_column_git_blame(menu, window, cx);
+            menu.confirm(&MenuConfirm, window, cx);
+        });
+    };
+
+    assert!(!editor.update(cx, |editor, _cx| editor.show_git_blame_gutter()));
+    toggle_column_git_blame(&editor, cx);
+    assert!(editor.update(cx, |editor, _cx| editor.show_git_blame_gutter()));
+    toggle_column_git_blame(&editor, cx);
+    assert!(!editor.update(cx, |editor, _cx| editor.show_git_blame_gutter()));
 }
