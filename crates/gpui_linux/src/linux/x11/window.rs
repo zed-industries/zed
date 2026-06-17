@@ -1664,6 +1664,14 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
+        self.draw_with_damage(scene, None);
+    }
+
+    fn wants_render_damage(&self) -> bool {
+        self.0.state.borrow().renderer.damage_enabled()
+    }
+
+    fn draw_with_damage(&self, scene: &Scene, damage: Option<gpui::SceneDamage>) {
         let mut inner = self.0.state.borrow_mut();
 
         if inner.renderer.device_lost() {
@@ -1686,7 +1694,7 @@ impl PlatformWindow for X11Window {
             return;
         }
 
-        inner.renderer.draw(scene);
+        inner.renderer.draw_with_damage(scene, damage);
 
         if inner.renderer.needs_redraw() {
             inner.force_render_after_recovery = true;
