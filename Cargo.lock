@@ -117,6 +117,7 @@ dependencies = [
  "settings",
  "task",
  "telemetry",
+ "tempfile",
  "terminal",
  "text",
  "ui",

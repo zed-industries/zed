@@ -221,10 +221,10 @@ fn generate_seatbelt_config(
         .iter()
         .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
         .collect();
-    let canonical_unix_socket_paths: Vec<PathBuf> = allowed_unix_socket_paths
-        .iter()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
-        .collect();
+    // Unlike file paths, Unix socket literals are emitted verbatim: it isn't
+    // guaranteed whether Seatbelt resolves symlinks before matching a
+    // `remote unix-socket` literal, so the caller passes both the path the
+    // child connects to and its canonical form, and we keep them as given.
 
     let mut config = r#"(version 1)
 
@@ -253,14 +253,19 @@ fn generate_seatbelt_config(
     (literal "/dev/ptmx"))
 (allow file-read* file-write*
     (require-all
-        (regex #"^/dev/ttys[0-9]+")
+        (regex #"^/dev/ttys[0-9]+$")
         (extension "com.apple.sandbox.pty")))
 
-; PTYs created before entering Seatbelt may lack the extension. Allow ioctls
-; on those slave TTYs so interactive shells and signing prompts can manipulate
-; terminal state.
+; The command's PTY is allocated after this profile is generated, so its slave
+; TTY path isn't known here and may lack the `com.apple.sandbox.pty` extension.
+; Allow ioctls on slave TTYs so interactive shells and signing prompts can
+; manipulate terminal state. Seatbelt can't filter by ioctl request number, so
+; this can't exclude input-injection ioctls (e.g. TIOCSTI) specifically; the
+; residual risk is bounded by the kernel only honoring TTY operations for
+; devices owned by the same user, and the regex is anchored so it matches only
+; `/dev/ttysNNN` device nodes.
 (allow file-ioctl
-    (regex #"^/dev/ttys[0-9]+"))
+    (regex #"^/dev/ttys[0-9]+$"))
 "#
     .to_string();
 
@@ -300,11 +305,13 @@ fn generate_seatbelt_config(
 
     for protected_path in &canonical_protected_paths {
         let escaped_path = escape_sandbox_path(protected_path)?;
+        // `subpath` already matches the path itself plus everything beneath it,
+        // so it covers both a `.git` directory and a linked worktree's `.git`
+        // gitlink file without a redundant `literal` rule.
         config.push_str(&format!(
             r#"
 ; Block Git metadata content access unless Git access is approved
 (deny file-read-data file-write*
-    (literal "{escaped_path}")
     (subpath "{escaped_path}"))
 "#
         ));
@@ -337,7 +344,7 @@ fn generate_seatbelt_config(
         }
     }
 
-    if !canonical_unix_socket_paths.is_empty() {
+    if !allowed_unix_socket_paths.is_empty() {
         config.push_str(
             r#"
 ; Allow local IPC to inherited Unix domain sockets. Seatbelt models this as
@@ -348,7 +355,7 @@ fn generate_seatbelt_config(
 "#,
         );
 
-        for socket_path in &canonical_unix_socket_paths {
+        for socket_path in allowed_unix_socket_paths {
             let escaped_path = escape_sandbox_path(socket_path)?;
             config.push_str(&format!(
                 r#"(allow network-outbound
@@ -451,6 +458,79 @@ mod tests {
     }
 
     #[test]
+    fn test_sandbox_allows_connecting_to_allowed_unix_socket() {
+        use std::io::ErrorKind;
+        use std::os::unix::net::UnixListener;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        // Bind under `/tmp` rather than the default temp dir: macOS temp paths
+        // (`/var/folders/...`) overflow the `sun_path` limit for Unix sockets.
+        // `TempDir` still cleans up on drop, even if the test panics.
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-sock-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket_path = temp_dir.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should switch to non-blocking");
+
+        // Allow both the path the command connects to and its canonical form,
+        // mirroring how the real caller resolves `SSH_AUTH_SOCK`.
+        let canonical_socket_path = socket_path
+            .canonicalize()
+            .expect("bound socket path should canonicalize");
+
+        // Accept (and immediately drop) a single connection, with a bounded wait
+        // so the test can't hang if the sandbox blocks the connection instead.
+        let accepted = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match listener.accept() {
+                    Ok(_) => return true,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => return false,
+                }
+            }
+        });
+
+        let (program, args, _config_file) = wrap_invocation(
+            "/usr/bin/nc",
+            &[
+                "-U".to_string(),
+                "-w".to_string(),
+                "5".to_string(),
+                socket_path.display().to_string(),
+            ],
+            &[temp_dir.path()],
+            &[],
+            &[socket_path.as_path(), canonical_socket_path.as_path()],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        let output = Command::new(&program)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+            .expect("failed to execute sandbox-exec");
+
+        assert!(
+            accepted.join().unwrap(),
+            "sandbox should allow connecting to the allow-listed unix socket: stderr={} stdout={}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+    }
+
+    #[test]
     fn test_generate_seatbelt_config_denies_protected_path_data_and_writes() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let protected = dir.join(".gitignore");
@@ -463,9 +543,9 @@ mod tests {
         .unwrap();
 
         assert!(config.contains("(deny file-read-data file-write*"));
-        assert!(config.contains("/Users/test/projects/myproject/.gitignore"));
-        assert!(config.contains("(literal \"/Users/test/projects/myproject/.gitignore\")"));
         assert!(config.contains("(subpath \"/Users/test/projects/myproject/.gitignore\")"));
+        // `subpath` already covers the path itself, so no redundant `literal`.
+        assert!(!config.contains("(literal \"/Users/test/projects/myproject/.gitignore\")"));
     }
 
     #[test]

@@ -518,6 +518,7 @@ async fn run_terminal_tool(
                 extra_write_paths: effective.write_paths,
                 protected_paths: sandbox_paths.protected_paths,
                 allowed_unix_socket_paths: Vec::new(),
+                allow_git_access: effective.allow_git_access,
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
@@ -1006,26 +1007,25 @@ fn sandbox_paths(project: &Project, allow_git_access: bool, cx: &App) -> Sandbox
         let worktree = worktree.read(cx);
         let worktree_abs_path = worktree.abs_path();
         writable_paths.push(worktree_abs_path.to_path_buf());
+        // Protect `<worktree>/.git` even when it doesn't exist yet, so a command
+        // can't `git init` and then write to the freshly created metadata.
         git_paths.push(worktree_abs_path.join(".git"));
 
-        let snapshot = worktree.snapshot();
-        if let Some(root_repo_common_dir) = snapshot.root_repo_common_dir() {
+        // `Worktree` derefs to `Snapshot`; read the field directly instead of
+        // cloning the whole snapshot just for this path.
+        if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
             git_paths.push(root_repo_common_dir.to_path_buf());
         }
     }
 
-    let repositories = project
-        .git_store()
-        .read(cx)
-        .repositories()
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    for repository in repositories {
-        let snapshot = repository.read(cx).snapshot();
-        git_paths.push(snapshot.dot_git_abs_path.to_path_buf());
-        git_paths.push(snapshot.repository_dir_abs_path.to_path_buf());
-        git_paths.push(snapshot.common_dir_abs_path.to_path_buf());
+    // `Repository` derefs to `RepositorySnapshot`, so read the few path fields
+    // directly rather than cloning the entire snapshot (which carries the
+    // per-path status tree) for each repository.
+    for repository in project.git_store().read(cx).repositories().values() {
+        let repository = repository.read(cx);
+        git_paths.push(repository.dot_git_abs_path.to_path_buf());
+        git_paths.push(repository.repository_dir_abs_path.to_path_buf());
+        git_paths.push(repository.common_dir_abs_path.to_path_buf());
     }
 
     git_paths.sort();

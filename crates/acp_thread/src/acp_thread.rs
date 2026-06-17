@@ -60,27 +60,43 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
+/// Resolve the socket path(s) the sandbox may allow for the inherited
+/// `SSH_AUTH_SOCK`. The value is validated against the resolved directory
+/// environment the child command will actually run with, not Zed's own process
+/// environment, since the two can differ (direnv, a login shell, etc.).
+///
+/// Returns both the path as the child will pass it to `connect()` and its
+/// canonical form, because the two diverge when `SSH_AUTH_SOCK` points through
+/// a symlink (e.g. `/tmp` -> `/private/tmp` on macOS) and it isn't guaranteed
+/// which form Seatbelt matches the `remote unix-socket` literal against.
 #[cfg(unix)]
-fn trusted_ssh_auth_socket_path() -> Option<PathBuf> {
-    trusted_ssh_auth_socket_path_from_env(std::env::var_os("SSH_AUTH_SOCK")?)
-}
-
-#[cfg(unix)]
-fn trusted_ssh_auth_socket_path_from_env(path: impl Into<PathBuf>) -> Option<PathBuf> {
+fn trusted_ssh_auth_socket_paths(path: impl Into<PathBuf>) -> Vec<PathBuf> {
     let path = path.into();
     if !path.is_absolute() {
-        return None;
+        return Vec::new();
     }
 
-    let path = path.canonicalize().ok()?;
-    let metadata = std::fs::metadata(&path).ok()?;
+    let Ok(canonical) = path.canonicalize() else {
+        return Vec::new();
+    };
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return Vec::new();
+    };
     use std::os::unix::fs::FileTypeExt as _;
-    metadata.file_type().is_socket().then_some(path)
+    if !metadata.file_type().is_socket() {
+        return Vec::new();
+    }
+
+    if canonical == path {
+        vec![canonical]
+    } else {
+        vec![path, canonical]
+    }
 }
 
 #[cfg(not(unix))]
-fn trusted_ssh_auth_socket_path() -> Option<PathBuf> {
-    None
+fn trusted_ssh_auth_socket_paths(_path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
@@ -3495,7 +3511,6 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
-        let trusted_ssh_auth_socket = trusted_ssh_auth_socket_path();
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -3503,10 +3518,19 @@ impl AcpThread {
             async move |_this, cx| {
                 let mut env = env.await;
                 let mut sandbox_wrap = sandbox_wrap;
+                // Only expose the inherited SSH agent socket once Git access has
+                // been approved. The workflow that needs it (commit signing)
+                // already requires writing to `.git`, so gating it here keeps the
+                // agent socket out of reach of ordinary sandboxed commands.
+                // Validate the value the child will actually connect to, taken
+                // from its resolved environment rather than Zed's own.
                 if let Some(sandbox_wrap) = &mut sandbox_wrap
-                    && let Some(ssh_auth_socket) = trusted_ssh_auth_socket
+                    && sandbox_wrap.allow_git_access
+                    && let Some(ssh_auth_socket) = env.get("SSH_AUTH_SOCK")
                 {
-                    sandbox_wrap.allowed_unix_socket_paths.push(ssh_auth_socket);
+                    sandbox_wrap
+                        .allowed_unix_socket_paths
+                        .extend(trusted_ssh_auth_socket_paths(ssh_auth_socket.clone()));
                 }
                 let shell = project
                     .update(cx, |project, cx| {
@@ -3837,27 +3861,27 @@ mod tests {
     fn test_trusted_ssh_auth_socket_path_requires_socket() {
         use std::os::unix::net::UnixListener;
 
-        let temp_dir = PathBuf::from(format!(
-            "/tmp/zed-sock-{}-{}",
-            std::process::id(),
-            Uuid::new_v4().simple()
-        ));
-        std::fs::create_dir(&temp_dir).expect("temporary socket directory should be created");
-        let socket_path = temp_dir.join("agent.sock");
+        // Bind under `/tmp`: the default temp dir on macOS (`/var/folders/...`)
+        // overflows the `sun_path` limit for Unix sockets. `TempDir` still
+        // cleans up on drop, even if the test panics.
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-sock-")
+            .tempdir_in("/tmp")
+            .expect("temporary socket directory should be created");
+        let socket_path = temp_dir.path().join("agent.sock");
         let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
 
-        assert_eq!(
-            trusted_ssh_auth_socket_path_from_env(socket_path.clone()),
-            socket_path.canonicalize().ok()
-        );
-        assert_eq!(
-            trusted_ssh_auth_socket_path_from_env(temp_dir.clone()),
-            None
-        );
-        assert_eq!(trusted_ssh_auth_socket_path_from_env("relative.sock"), None);
+        // A real socket resolves to (at least) its canonical path.
+        let canonical = socket_path
+            .canonicalize()
+            .expect("socket path should canonicalize");
+        assert!(trusted_ssh_auth_socket_paths(socket_path).contains(&canonical));
+
+        // A directory is not a socket, and a relative path is rejected outright.
+        assert!(trusted_ssh_auth_socket_paths(temp_dir.path().to_path_buf()).is_empty());
+        assert!(trusted_ssh_auth_socket_paths("relative.sock").is_empty());
 
         drop(listener);
-        std::fs::remove_dir_all(&temp_dir).expect("temporary socket directory should be removed");
     }
 
     #[test]

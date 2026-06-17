@@ -53,6 +53,10 @@ pub struct SandboxWrap {
     /// from trusted process environment, not from the model-controlled command.
     /// This does not permit IP networking or sending packets to other machines.
     pub allowed_unix_socket_paths: Vec<PathBuf>,
+    /// Whether the user approved Git metadata access for this command. When set,
+    /// `.git` directories are writable (they are absent from `protected_paths`)
+    /// and the inherited SSH agent socket may be exposed for commit signing.
+    pub allow_git_access: bool,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
     /// Allow unrestricted filesystem writes (ignores all writable paths).

@@ -8038,18 +8038,29 @@ impl ThreadView {
         });
 
         let git_access_section = has_git_access.then(|| {
-            h_flex()
+            v_flex()
                 .p_1()
-                .gap_1()
+                .gap_0p5()
                 .child(
-                    Icon::new(IconName::GitBranch)
-                        .color(Color::Muted)
-                        .size(IconSize::Small),
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::GitBranch)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                        .child(
+                            Label::new("Git metadata access")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 )
                 .child(
-                    Label::new("Git metadata access")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    Label::new(
+                        "Allows reading and writing .git directories, which may include repositories outside this project.",
+                    )
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
                 )
                 .into_any_element()
         });
