@@ -260,6 +260,19 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
+    Compaction(CompactionContent),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub enum CompactionContent {
+    Pending,
+    Summary {
+        content: Option<Arc<str>>,
+    },
+    Encrypted {
+        id: Option<Arc<str>>,
+        encrypted_content: Arc<str>,
+    },
 }
 
 impl MessageContent {
@@ -270,7 +283,8 @@ impl MessageContent {
             MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
-            | MessageContent::Image(_) => false,
+            | MessageContent::Image(_)
+            | MessageContent::Compaction(_) => false,
         }
     }
 }
@@ -316,7 +330,8 @@ impl LanguageModelRequestMessage {
                 }
                 MessageContent::RedactedThinking(_)
                 | MessageContent::ToolUse(_)
-                | MessageContent::Image(_) => {}
+                | MessageContent::Image(_)
+                | MessageContent::Compaction(_) => {}
             }
         }
         buffer
@@ -370,6 +385,8 @@ pub struct LanguageModelRequest {
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
     pub speed: Option<Speed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_at_tokens: Option<u64>,
 }
 
 #[derive(

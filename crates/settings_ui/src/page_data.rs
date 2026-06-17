@@ -13,7 +13,8 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page, render_external_agents_page,
+        render_llm_providers_page, render_mcp_servers_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
 };
@@ -75,7 +76,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         terminal_page(),
         version_control_page(),
         collaboration_page(),
-        ai_page(),
+        ai_page(cx),
         network_page(),
         developer_page(cx),
     ]
@@ -7825,7 +7826,7 @@ fn collaboration_page() -> SettingsPage {
     }
 }
 
-fn ai_page() -> SettingsPage {
+fn ai_page(cx: &App) -> SettingsPage {
     fn general_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("General"),
@@ -7860,9 +7861,28 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> Box<[SettingsPageItem]> {
-        let mut items = vec![
-            SettingsPageItem::SectionHeader("Agent Configuration"),
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        // The LLM provider and MCP server pages are gated behind a feature flag
+        // while their configuration is being moved out of the agent panel.
+        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "LLM Providers".into(),
+                r#type: Default::default(),
+                json_path: Some("llm_providers"),
+                description: Some("Configure API keys and settings for LLM providers.".into()),
+                in_json: false,
+                files: USER,
+                render: render_llm_providers_page,
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
@@ -7881,9 +7901,62 @@ fn ai_page() -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
-        ];
+        ]);
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
+            }));
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "External Agents".into(),
+                r#type: Default::default(),
+                json_path: Some("agent_servers"),
+                description: Some(
+                    "View, add, and remove agents connected through the Agent Client Protocol."
+                        .into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_external_agents_page,
+            }));
+        }
 
         items.extend([
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Allow Unsandboxed Terminal Commands",
+                description: "When enabled, agent terminal commands run without the OS sandbox instead of prompting when the sandbox can't be created.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some(zed_actions::AGENT_ALLOW_UNSANDBOXED_SETTINGS_PATH),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .sandbox_permissions
+                            .as_ref()?
+                            .allow_unsandboxed
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .sandbox_permissions
+                            .get_or_insert_default()
+                            .allow_unsandboxed = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
@@ -8012,6 +8085,36 @@ fn ai_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Terminal Thread Init Command",
+                description: "Command to automatically run when Zed creates a Terminal Thread shell in the agent panel. Runs in your configured shell.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.terminal_init_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .terminal_init_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .terminal_init_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("e.g. claude"),
+                    display_confirm_button: true,
+                    display_clear_button: true,
+                    confirm_on_focus_out: true,
+                    treat_missing_text_as_empty: true,
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8265,7 +8368,7 @@ fn ai_page() -> SettingsPage {
         title: "AI",
         items: concat_sections![
             general_section(),
-            agent_configuration_section(),
+            agent_configuration_section(cx),
             context_servers_section(),
             edit_prediction_language_settings_section(),
             edit_prediction_display_sub_section()

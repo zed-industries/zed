@@ -1367,6 +1367,9 @@ impl Thread {
         &self.id
     }
 
+    // Only used by Seatbelt-style sandboxes; Linux relies on bwrap's tmpfs
+    // `/tmp` and never needs a per-thread temp directory.
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn sandboxed_terminal_temp_dir(
         &mut self,
         cx: &mut Context<Self>,
@@ -2914,7 +2917,8 @@ impl Thread {
                 | LanguageModelCompletionEvent::ReasoningDetails(_)
                 | LanguageModelCompletionEvent::ToolUse(_)
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
-                | LanguageModelCompletionEvent::StartMessage { .. } => {}
+                | LanguageModelCompletionEvent::StartMessage { .. }
+                | LanguageModelCompletionEvent::Compaction(_) => {}
             }
         }
 
@@ -3116,7 +3120,7 @@ impl Thread {
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
             Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
-            Started | Queued { .. } => {}
+            Started | Queued { .. } | Compaction(_) => {}
         }
 
         Ok(None)
@@ -3707,6 +3711,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
+            compact_at_tokens: None,
         };
 
         log::debug!("Completion request built successfully");
@@ -3905,6 +3910,7 @@ impl Thread {
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing: crate::sandboxing::sandboxing_enabled(cx),
+            is_linux: cfg!(target_os = "linux"),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -4325,7 +4331,8 @@ fn user_message_byte_len(message: &LanguageModelRequestMessage) -> usize {
             MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
-            | MessageContent::ToolUse(_) => 0,
+            | MessageContent::ToolUse(_)
+            | MessageContent::Compaction(_) => 0,
         })
         .sum()
 }
@@ -4361,7 +4368,8 @@ fn truncate_user_message_to_byte_budget(
             MessageContent::Thinking { .. }
             | MessageContent::RedactedThinking(_)
             | MessageContent::ToolResult(_)
-            | MessageContent::ToolUse(_) => {}
+            | MessageContent::ToolUse(_)
+            | MessageContent::Compaction(_) => {}
         }
     }
 
@@ -4992,6 +5000,20 @@ impl ThreadEventStream {
     }
 }
 
+/// The user's choice when the OS sandbox could not be created for a command
+/// (see [`ToolCallEventStream::authorize_sandbox_fallback`]). Only Linux can
+/// fail to create a sandbox, so this is Linux-only.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SandboxFallbackDecision {
+    /// Try creating the sandbox again (e.g. after the user installed `bwrap`).
+    Retry,
+    /// Run the command without a sandbox.
+    RunUnsandboxed,
+    /// Don't run the command at all.
+    Deny,
+}
+
 #[derive(Clone)]
 pub struct ToolCallEventStream {
     tool_use_id: LanguageModelToolUseId,
@@ -5244,6 +5266,7 @@ impl ToolCallEventStream {
         title: impl Into<String>,
         command: Option<String>,
         request: SandboxRequest,
+        reason: String,
         cx: &mut App,
     ) -> Task<Result<()>> {
         if Self::sandbox_request_covered_by_grants(&request, &self.sandbox_grants, cx) {
@@ -5265,6 +5288,7 @@ impl ToolCallEventStream {
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
+            reason,
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
@@ -5483,6 +5507,160 @@ impl ToolCallEventStream {
         self.sandbox_grants
             .borrow()
             .effective_with_persistent(request, persistent)
+    }
+
+    /// Whether the user allowed running commands unsandboxed for the rest of
+    /// the thread (distinct from the persistent `allow_unsandboxed` setting).
+    pub(crate) fn sandbox_fallback_granted_for_thread(&self) -> bool {
+        self.sandbox_grants.borrow().fallback_granted_for_thread()
+    }
+
+    /// Ask the user how to proceed when the OS sandbox could not be created
+    /// for a command (for example, `bwrap` is missing or user namespaces are
+    /// disabled).
+    ///
+    /// Unlike [`Self::authorize_sandbox`] — which gates a model-requested
+    /// *escalation* — this surfaces a *system limitation*: the sandbox failed,
+    /// so the prompt explains why (`reason`) and lets the user retry, run the
+    /// command unsandboxed (once / for this thread / always), or deny it. The
+    /// "for this thread" choice is recorded in the in-memory thread grants and
+    /// "always" is persisted as the `allow_unsandboxed` setting. Only Linux can
+    /// fail to create a sandbox, so this is Linux-only.
+    ///
+    /// `retries` is how many times the user has already pressed Retry for this
+    /// command; it's shown on the button so repeated presses visibly advance
+    /// ("Retry", then "Retry (attempt 1)", "Retry (attempt 2)", …).
+    #[cfg(target_os = "linux")]
+    pub(crate) fn authorize_sandbox_fallback(
+        &self,
+        command: Option<String>,
+        reason: String,
+        retries: usize,
+        cx: &mut App,
+    ) -> Task<Result<SandboxFallbackDecision>> {
+        let details = acp_thread::SandboxFallbackAuthorizationDetails { command, reason };
+        let retry_label = if retries == 0 {
+            "Retry".to_string()
+        } else {
+            format!("Retry (attempt {retries})")
+        };
+        let options = acp_thread::PermissionOptions::Flat(vec![
+            // Retry isn't an allow/deny choice; the UI renders it with its own
+            // icon and we dispatch on the option id, so the kind here only
+            // governs keybindings. Use `RejectAlways` (which has none) so the
+            // "allow once" shortcut maps to "Run without sandbox once" rather
+            // than to Retry.
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
+                retry_label,
+                acp::PermissionOptionKind::RejectAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+                "Run without sandbox once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
+                "Run without sandbox for this thread",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
+                "Always run without sandbox",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ]);
+
+        let fs = self.fs.clone();
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        let sandbox_grants = self.sandbox_grants.clone();
+        cx.spawn(async move |cx| {
+            let (response_tx, response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        // Deliberately leave the tool-call title untouched so
+                        // the card keeps showing the *command* (not the
+                        // failure reason): it's critical the user can see what
+                        // they're approving to run unsandboxed. The reason is
+                        // surfaced separately by the fallback details / warning.
+                        tool_call: acp::ToolCallUpdate::new(
+                            tool_use_id.to_string(),
+                            acp::ToolCallUpdateFields::new(),
+                        )
+                        .meta(
+                            acp_thread::meta_with_sandbox_fallback_authorization(details),
+                        ),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::ActionChoice,
+                    },
+                )))
+            {
+                log::error!("Failed to send sandbox fallback authorization: {error}");
+                return Err(anyhow!(
+                    "Failed to send sandbox fallback authorization: {error}"
+                ));
+            }
+
+            let outcome = response_rx
+                .await
+                .map_err(|_| anyhow!("authorization channel closed"))?;
+
+            let option_id = outcome.option_id.0.as_ref();
+            if option_id == acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID {
+                return Ok(SandboxFallbackDecision::Retry);
+            }
+            match acp_thread::SandboxPermission::from_id(option_id) {
+                Some(acp_thread::SandboxPermission::AllowOnce) => {
+                    Ok(SandboxFallbackDecision::RunUnsandboxed)
+                }
+                Some(acp_thread::SandboxPermission::AllowThread) => {
+                    sandbox_grants.borrow_mut().record_fallback();
+                    Ok(SandboxFallbackDecision::RunUnsandboxed)
+                }
+                Some(acp_thread::SandboxPermission::AllowAlways) => {
+                    sandbox_grants.borrow_mut().record_fallback();
+                    Self::persist_sandbox_unsandboxed_permission(fs, cx);
+                    Ok(SandboxFallbackDecision::RunUnsandboxed)
+                }
+                Some(acp_thread::SandboxPermission::Deny) => Ok(SandboxFallbackDecision::Deny),
+                None => {
+                    let other = option_id;
+                    debug_assert!(false, "unexpected sandbox fallback option_id: {other}");
+                    Ok(SandboxFallbackDecision::Deny)
+                }
+            }
+        })
+    }
+
+    /// Persist the `allow_unsandboxed` setting so future commands skip the
+    /// sandbox when it can't be created, without prompting again.
+    #[cfg(target_os = "linux")]
+    fn persist_sandbox_unsandboxed_permission(fs: Option<Arc<dyn Fs>>, cx: &AsyncApp) {
+        let Some(fs) = fs else {
+            log::error!(
+                "Cannot persist \"allow always\" unsandboxed permission: no filesystem available"
+            );
+            return;
+        };
+        cx.update(|cx| {
+            update_settings_file(fs, cx, move |settings, _| {
+                settings
+                    .agent
+                    .get_or_insert_default()
+                    .allow_sandbox_unsandboxed();
+            });
+        });
     }
 
     /// Prompts the user to choose between an explicit set of actions and
@@ -6858,7 +7036,13 @@ mod tests {
         };
 
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox("Allow write access?", None, request.clone(), cx)
+            event_stream.authorize_sandbox(
+                "Allow write access?",
+                None,
+                request.clone(),
+                "needs to write build artifacts".to_string(),
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         let details =
@@ -6924,6 +7108,154 @@ mod tests {
                 PathBuf::from("/tmp/secret"),
             ]
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn test_authorize_sandbox_fallback_options_and_details(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let authorize = cx.update(|cx| {
+            event_stream.authorize_sandbox_fallback(
+                Some("cargo build".to_string()),
+                "bwrap not found on PATH".to_string(),
+                0,
+                cx,
+            )
+        });
+        let authorization = receiver.expect_authorization().await;
+        let details = acp_thread::sandbox_fallback_authorization_details_from_meta(
+            &authorization.tool_call.meta,
+        )
+        .expect("fallback authorization should include details");
+        assert_eq!(details.command.as_deref(), Some("cargo build"));
+        assert_eq!(details.reason, "bwrap not found on PATH");
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat fallback permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| (option.option_id.0.as_ref(), option.name.as_ref()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("retry", "Retry"),
+                ("allow", "Run without sandbox once"),
+                ("allow_thread", "Run without sandbox for this thread"),
+                ("allow_always", "Always run without sandbox"),
+                ("deny", "Deny"),
+            ]
+        );
+
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
+                acp::PermissionOptionKind::RejectAlways,
+            ))
+            .unwrap();
+        assert_eq!(authorize.await.unwrap(), SandboxFallbackDecision::Retry);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn test_authorize_sandbox_fallback_retry_label_counts_attempts(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+
+        async fn retry_label(cx: &mut TestAppContext, retries: usize) -> String {
+            let (event_stream, mut receiver) = ToolCallEventStream::test();
+            let authorize = cx.update(|cx| {
+                event_stream.authorize_sandbox_fallback(
+                    None,
+                    "probe failed".to_string(),
+                    retries,
+                    cx,
+                )
+            });
+            let authorization = receiver.expect_authorization().await;
+            let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+                panic!("expected flat fallback permission options");
+            };
+            let label = options
+                .iter()
+                .find(|option| {
+                    option.option_id.0.as_ref() == acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID
+                })
+                .expect("retry option present")
+                .name
+                .to_string();
+            authorization
+                .response
+                .send(acp_thread::SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new(acp_thread::SANDBOX_FALLBACK_RETRY_OPTION_ID),
+                    acp::PermissionOptionKind::RejectAlways,
+                ))
+                .unwrap();
+            authorize.await.unwrap();
+            label
+        }
+
+        assert_eq!(retry_label(cx, 0).await, "Retry");
+        assert_eq!(retry_label(cx, 1).await, "Retry (attempt 1)");
+        assert_eq!(retry_label(cx, 2).await, "Retry (attempt 2)");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn test_authorize_sandbox_fallback_allow_thread_records_grant(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        assert!(!event_stream.sandbox_fallback_granted_for_thread());
+
+        let authorize = cx.update(|cx| {
+            event_stream.authorize_sandbox_fallback(
+                Some("cargo build".to_string()),
+                "user namespaces are disabled".to_string(),
+                0,
+                cx,
+            )
+        });
+        let authorization = receiver.expect_authorization().await;
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
+                acp::PermissionOptionKind::AllowAlways,
+            ))
+            .unwrap();
+        assert_eq!(
+            authorize.await.unwrap(),
+            SandboxFallbackDecision::RunUnsandboxed
+        );
+
+        // The thread-scoped grant now lets later commands skip the sandbox
+        // without prompting again.
+        assert!(event_stream.sandbox_fallback_granted_for_thread());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn test_authorize_sandbox_fallback_deny(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let authorize = cx.update(|cx| {
+            event_stream.authorize_sandbox_fallback(None, "bwrap probe failed".to_string(), 0, cx)
+        });
+        let authorization = receiver.expect_authorization().await;
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .unwrap();
+        assert_eq!(authorize.await.unwrap(), SandboxFallbackDecision::Deny);
+        assert!(!event_stream.sandbox_fallback_granted_for_thread());
     }
 
     #[test]

@@ -49,6 +49,12 @@ pub struct SystemPromptTemplate<'a> {
     /// per-command flags the model can request to relax them. When
     /// `false`, the prompt omits the sandbox section entirely.
     pub sandboxing: bool,
+    /// Whether the host is Linux. The writable-temp story differs by
+    /// platform (Linux exposes an ephemeral `tmpfs` over `/tmp`; other
+    /// platforms provide a persistent per-thread `$TMPDIR`), so the sandbox
+    /// section describes the right one rather than advertising a `$TMPDIR`
+    /// that doesn't behave as stated.
+    pub is_linux: bool,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -94,6 +100,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -125,6 +132,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
             sandboxing: false,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -152,6 +160,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -183,6 +192,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -199,6 +209,35 @@ mod tests {
     }
 
     #[test]
+    fn test_system_prompt_linux_sandbox_section_omits_tmpdir() {
+        use prompt_store::{ProjectContext, WorktreeContext};
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "alpha".to_string(),
+            abs_path: std::path::Path::new("/tmp/alpha").into(),
+            rules_file: None,
+        }];
+        let project = ProjectContext::new(worktrees);
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            sandboxing: true,
+            is_linux: true,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(rendered.contains("## Terminal sandbox"));
+        // On Linux we must not advertise the special persistent `$TMPDIR`.
+        assert!(!rendered.contains("$TMPDIR"));
+        assert!(rendered.contains("`/tmp` is writable"));
+        assert!(rendered.contains("`/tmp/alpha`"));
+    }
+
+    #[test]
     fn test_system_prompt_sandbox_section_handles_zero_worktrees() {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
@@ -208,6 +247,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -226,6 +266,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -242,6 +283,7 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

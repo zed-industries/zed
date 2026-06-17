@@ -181,6 +181,10 @@ pub struct SandboxAuthorizationDetails {
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<PathBuf>,
+    /// The agent-provided justification for requesting these permissions,
+    /// shown to the user (attributed to the agent) in the approval prompt.
+    #[serde(default)]
+    pub reason: String,
 }
 
 pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
@@ -195,6 +199,64 @@ pub fn sandbox_authorization_details_from_meta(
 ) -> Option<SandboxAuthorizationDetails> {
     meta.as_ref()
         .and_then(|m| m.get(SANDBOX_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+pub const SANDBOX_FALLBACK_AUTHORIZATION_META_KEY: &str = "sandbox_fallback_authorization";
+
+/// Stable `PermissionOption` id for the "Retry" choice in the sandbox
+/// *fallback* prompt (shown when the OS sandbox can't be created on this
+/// system). The remaining choices reuse the [`SandboxPermission`] ids.
+pub const SANDBOX_FALLBACK_RETRY_OPTION_ID: &str = "retry";
+
+/// Details shown when the OS sandbox could not be created for a command and
+/// the user is asked whether to run it without a sandbox. Distinct from
+/// [`SandboxAuthorizationDetails`] (a model-requested *escalation*): here the
+/// sandbox itself failed, so the prompt explains why and offers a retry.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SandboxFallbackAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Human-readable reason the OS sandbox could not be created (for example,
+    /// "bwrap not found on PATH"), shown to the user so they can decide
+    /// whether to run the command without a sandbox.
+    #[serde(default)]
+    pub reason: String,
+}
+
+pub fn meta_with_sandbox_fallback_authorization(
+    details: SandboxFallbackAuthorizationDetails,
+) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_FALLBACK_AUTHORIZATION_META_KEY.into(),
+        serde_json::to_value(details).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_fallback_authorization_details_from_meta(
+    meta: &Option<acp::Meta>,
+) -> Option<SandboxFallbackAuthorizationDetails> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_FALLBACK_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Meta key recording why the OS sandbox was not applied to a terminal tool
+/// call, even though sandboxing was active for the thread. The value is a
+/// serialized [`SandboxNotAppliedReason`]. Surfaced as a warning in the UI and
+/// used to explain the situation to both the user and the agent.
+pub const SANDBOX_NOT_APPLIED_META_KEY: &str = "sandbox_not_applied";
+
+pub fn meta_with_sandbox_not_applied(reason: &SandboxNotAppliedReason) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_NOT_APPLIED_META_KEY.into(),
+        serde_json::to_value(reason).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_not_applied_from_meta(meta: &Option<acp::Meta>) -> Option<SandboxNotAppliedReason> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_NOT_APPLIED_META_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
@@ -425,6 +487,11 @@ pub struct ToolCall {
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
     pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
+    pub sandbox_fallback_authorization_details: Option<SandboxFallbackAuthorizationDetails>,
+    /// Why this terminal command ran without the OS sandbox even though
+    /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
+    /// the command was sandboxed normally (or sandboxing was off).
+    pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
 }
 
 impl ToolCall {
@@ -468,6 +535,9 @@ impl ToolCall {
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
         let sandbox_authorization_details =
             sandbox_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_fallback_authorization_details =
+            sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
         let label = if tool_call.kind == acp::ToolKind::Execute {
             cx.new(|cx| Markdown::new_text(title.into(), cx))
@@ -489,6 +559,8 @@ impl ToolCall {
             tool_name,
             subagent_session_info,
             sandbox_authorization_details,
+            sandbox_fallback_authorization_details,
+            sandbox_not_applied,
         };
         Ok(result)
     }
@@ -527,6 +599,15 @@ impl ToolCall {
         if let Some(sandbox_authorization_details) = sandbox_authorization_details_from_meta(&meta)
         {
             self.sandbox_authorization_details = Some(sandbox_authorization_details);
+        }
+        if let Some(sandbox_fallback_authorization_details) =
+            sandbox_fallback_authorization_details_from_meta(&meta)
+        {
+            self.sandbox_fallback_authorization_details =
+                Some(sandbox_fallback_authorization_details);
+        }
+        if let Some(sandbox_not_applied) = sandbox_not_applied_from_meta(&meta) {
+            self.sandbox_not_applied = Some(sandbox_not_applied);
         }
 
         if let Some(title) = title {
@@ -2296,6 +2377,8 @@ impl AcpThread {
                     tool_name: None,
                     subagent_session_info: None,
                     sandbox_authorization_details: None,
+                    sandbox_fallback_authorization_details: None,
+                    sandbox_not_applied: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -3410,8 +3493,13 @@ impl AcpThread {
                 // child's proxy env vars.
                 let (proxy_handle, network_policy) =
                     setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap, network_policy)?;
+                let (task_command, task_args, sandbox_config) = apply_sandbox_wrap(
+                    task_command,
+                    task_args,
+                    cwd.as_deref(),
+                    sandbox_wrap,
+                    network_policy,
+                )?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
