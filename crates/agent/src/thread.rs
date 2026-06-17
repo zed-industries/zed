@@ -3970,6 +3970,7 @@ impl Thread {
         let model = self.model.as_ref()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_tokens = model.max_token_count();
+        let max_input_tokens = max_tokens.saturating_sub(model.max_output_tokens().unwrap_or(0));
         let tokens_before = self
             .latest_request_token_usage()
             .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
@@ -3987,7 +3988,7 @@ impl Thread {
             auto_compact_threshold: auto_compact.threshold.to_string(),
             auto_compact_threshold_tokens: auto_compact_threshold_token_count(
                 auto_compact.threshold,
-                max_tokens,
+                max_input_tokens,
             ),
             retries: 0,
         })
@@ -4010,9 +4011,11 @@ impl Thread {
 
         let model = self.model.as_ref()?;
         let max_token_count = model.max_token_count();
+        let max_input_tokens =
+            max_token_count.saturating_sub(model.max_output_tokens().unwrap_or(0));
         // Models with a small context window don't leave enough headroom for a
         // compaction pass; the UI warns the user about the token limit instead.
-        if max_token_count < MIN_COMPACTION_CONTEXT_WINDOW {
+        if max_input_tokens < MIN_COMPACTION_CONTEXT_WINDOW {
             return None;
         }
         let (usage_ix, usage) = {
@@ -4040,7 +4043,7 @@ impl Thread {
 
         let active_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
         let compaction_threshold =
-            auto_compact_threshold_token_count(auto_compact.threshold, max_token_count);
+            auto_compact_threshold_token_count(auto_compact.threshold, max_input_tokens);
         if active_tokens < compaction_threshold {
             return None;
         }
@@ -6259,6 +6262,70 @@ mod tests {
                     user_message_id.clone(),
                     language_model::TokenUsage {
                         input_tokens: 900_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_accounts_for_max_output_tokens(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_max_output_tokens(Some(32_000));
+        let user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model, cx);
+                thread.messages.push(user_text_message(
+                    user_message_id.clone(),
+                    "near input limit",
+                ));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 871_199,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 871_200,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+
+                set_auto_compact_settings(
+                    cx,
+                    agent_settings::AutoCompactSettings {
+                        enabled: true,
+                        threshold: AutoCompactThreshold::TokensRemaining(20_000),
+                    },
+                );
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 948_000,
+                        ..Default::default()
+                    },
+                );
+
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 948_001,
                         ..Default::default()
                     },
                 );
