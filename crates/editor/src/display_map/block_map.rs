@@ -331,6 +331,8 @@ impl std::fmt::Display for BlockId {
 #[derive(Clone, Debug)]
 struct Transform {
     summary: TransformSummary,
+    /// When `block` is `None`, the transform is isomorphic and passes input
+    /// wrap rows through as normal text.
     block: Option<Block>,
 }
 
@@ -510,6 +512,7 @@ struct TransformSummary {
     output_rows: BlockRow,
     longest_row: BlockRow,
     longest_row_chars: u32,
+    has_replacement_blocks: bool,
 }
 
 pub struct BlockChunks<'a> {
@@ -1089,6 +1092,7 @@ impl BlockMap {
                     output_rows: BlockRow(block.height()),
                     longest_row: BlockRow(0),
                     longest_row_chars: 0,
+                    has_replacement_blocks: false,
                 };
 
                 let rows_before_block;
@@ -1599,6 +1603,7 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot:
         output_rows: BlockRow(rows.0),
         longest_row: BlockRow(wrap_summary.longest_row),
         longest_row_chars: wrap_summary.longest_row_chars,
+        has_replacement_blocks: false,
     };
     let mut merged = false;
     tree.update_last(
@@ -2145,14 +2150,9 @@ impl BlockMapWriter<'_> {
 }
 
 impl BlockSnapshot {
-    /// Whether any block replaces (collapses) buffer rows - i.e. a custom `Replace` block or a
-    /// folded buffer. Like folds, replacement blocks map distinct buffer points to the same display
-    /// position, so they disqualify fast paths that assume buffer<->display point bijection. This is
-    /// O(1) when there are no blocks (a single isomorphic transform), which is the common case.
+    #[inline(always)]
     pub fn has_replacement_blocks(&self) -> bool {
-        self.transforms
-            .iter()
-            .any(|transform| transform.block.as_ref().is_some_and(Block::is_replacement))
+        self.transforms.summary().has_replacement_blocks
     }
 
     #[cfg(test)]
@@ -2765,7 +2765,9 @@ impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        self.summary.clone()
+        let mut summary = self.summary.clone();
+        summary.has_replacement_blocks = self.block.as_ref().is_some_and(Block::is_replacement);
+        summary
     }
 }
 
@@ -2781,6 +2783,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         }
         self.input_rows += summary.input_rows;
         self.output_rows += summary.output_rows;
+        self.has_replacement_blocks |= summary.has_replacement_blocks;
     }
 }
 
