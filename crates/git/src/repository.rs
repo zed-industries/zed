@@ -841,6 +841,10 @@ pub trait GitRepository: Send + Sync {
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
 
+    fn check_access(&self) -> BoxFuture<'_, Result<()>> {
+        async move { Ok(()) }.boxed()
+    }
+
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
@@ -1811,6 +1815,16 @@ impl GitRepository for RealGitRepository {
                 anyhow::bail!("git status failed: {stderr}");
             }
         })
+    }
+
+    fn check_access(&self) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                git?.run(&["rev-parse"]).await?;
+                Ok(())
+            })
+            .boxed()
     }
 
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -3945,6 +3959,25 @@ mod tests {
             original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
             repo_dir.path(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_check_access(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert!(repository.check_access().await.is_err());
+        git_init_repo(repo_dir.path());
+        assert!(repository.check_access().await.is_ok());
     }
 
     #[gpui::test]
