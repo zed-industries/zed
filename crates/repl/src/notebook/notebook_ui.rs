@@ -5,6 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
+use collections::VecDeque;
 use editor::DisplayPoint;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
@@ -69,6 +70,57 @@ pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
+#[derive(Default)]
+struct ExecutionQueue {
+    pending_cells: VecDeque<CellId>,
+    active_request: Option<String>,
+    request_cell_ids: HashMap<String, CellId>,
+}
+
+impl ExecutionQueue {
+    fn enqueue(&mut self, cell_id: CellId) {
+        self.pending_cells.push_back(cell_id);
+    }
+
+    fn clear(&mut self) {
+        self.pending_cells.clear();
+        self.active_request = None;
+        self.request_cell_ids.clear();
+    }
+
+    fn can_start_next(&self, kernel_status: KernelStatus) -> bool {
+        self.active_request.is_none() && matches!(kernel_status, KernelStatus::Idle)
+    }
+
+    fn pop_next_cell(&mut self, kernel_status: KernelStatus) -> Option<CellId> {
+        if !self.can_start_next(kernel_status) {
+            return None;
+        }
+
+        self.pending_cells.pop_front()
+    }
+
+    fn mark_started(&mut self, request_id: String, cell_id: CellId) {
+        self.request_cell_ids.insert(request_id.clone(), cell_id);
+        self.active_request = Some(request_id);
+    }
+
+    fn cell_for_request(&self, request_id: &str) -> Option<CellId> {
+        self.request_cell_ids.get(request_id).cloned()
+    }
+
+    fn mark_request_completed(&mut self, request_id: &str) -> bool {
+        self.request_cell_ids.remove(request_id);
+
+        if self.active_request.as_deref() == Some(request_id) {
+            self.active_request = None;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 pub fn init(cx: &mut App) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
         workspace::register_project_item::<NotebookEditor>(cx);
@@ -103,7 +155,7 @@ pub struct NotebookEditor {
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
     kernel_specification: Option<KernelSpecification>,
-    execution_requests: HashMap<String, CellId>,
+    execution_queue: ExecutionQueue,
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
@@ -218,7 +270,7 @@ impl NotebookEditor {
             cell_map: cell_map.clone(),
             kernel: Kernel::Shutdown,
             kernel_specification: None,
-            execution_requests: HashMap::default(),
+            execution_queue: ExecutionQueue::default(),
             kernel_picker_handle: PopoverMenuHandle::default(),
         };
         editor.launch_kernel(window, cx);
@@ -483,7 +535,7 @@ impl NotebookEditor {
             kernel.force_shutdown(window, cx).detach();
         }
 
-        self.execution_requests.clear();
+        self.execution_queue.clear();
 
         self.launch_kernel_with_spec(spec, window, cx);
     }
@@ -496,6 +548,8 @@ impl NotebookEditor {
 
             self.kernel = Kernel::Restarting;
             cx.notify();
+
+            self.execution_queue.clear();
 
             self.launch_kernel_with_spec(spec, window, cx);
         }
@@ -515,7 +569,12 @@ impl NotebookEditor {
         }
     }
 
-    fn execute_cell(&mut self, cell_id: CellId, window: &mut Window, cx: &mut Context<Self>) {
+    fn execute_cell_now(
+        &mut self,
+        cell_id: CellId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
         let code = if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
             let editor = cell.read(cx).editor().clone();
             let buffer = editor.read(cx).buffer().read(cx);
@@ -524,7 +583,7 @@ impl NotebookEditor {
                 .map(|b| b.read(cx).text())
                 .unwrap_or_default()
         } else {
-            return;
+            return None;
         };
 
         let request = ExecuteRequest {
@@ -561,8 +620,25 @@ impl NotebookEditor {
 
         if let Err(error) = send_result {
             log::error!("notebook: cannot execute cell: {error}");
+            None
         } else {
-            self.execution_requests.insert(msg_id, cell_id.clone());
+            Some(msg_id)
+        }
+    }
+
+    fn execute_cell(&mut self, cell_id: CellId, window: &mut Window, cx: &mut Context<Self>) {
+        self.execution_queue.enqueue(cell_id);
+        self.start_next_queued_execution(window, cx);
+    }
+
+    fn start_next_queued_execution(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Some(cell_id) = self.execution_queue.pop_next_cell(self.kernel.status()) {
+            let Some(message_id) = self.execute_cell_now(cell_id.clone(), window, cx) else {
+                continue;
+            };
+
+            self.execution_queue.mark_started(message_id, cell_id);
+            break;
         }
     }
 
@@ -1892,9 +1968,14 @@ impl ProjectItem for NotebookEditor {
 
 impl KernelSession for NotebookEditor {
     fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
+        let mut should_start_next_queued_execution = false;
+
         // Handle kernel status updates (these are broadcast to all)
         if let JupyterMessageContent::Status(status) = &message.content {
             self.kernel.set_execution_state(&status.execution_state);
+            if matches!(status.execution_state, runtimelib::ExecutionState::Idle) {
+                should_start_next_queued_execution = true;
+            }
             cx.notify();
         }
 
@@ -1913,18 +1994,35 @@ impl KernelSession for NotebookEditor {
         }
 
         // Handle cell-specific messages
+        let mut completed_request_id = None;
+
         if let Some(parent_header) = &message.parent_header {
-            if let Some(cell_id) = self.execution_requests.get(&parent_header.msg_id) {
-                if let Some(Cell::Code(cell)) = self.cell_map.get(cell_id) {
+            if let Some(cell_id) = self.execution_queue.cell_for_request(&parent_header.msg_id) {
+                if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
                     cell.update(cx, |cell, cx| {
                         cell.handle_message(message, window, cx);
                     });
                 }
+
+                if matches!(message.content, JupyterMessageContent::ExecuteReply(_)) {
+                    completed_request_id = Some(parent_header.msg_id.clone());
+                }
             }
+        }
+
+        if let Some(request_id) = completed_request_id {
+            if self.execution_queue.mark_request_completed(&request_id) {
+                should_start_next_queued_execution = true;
+            }
+        }
+
+        if should_start_next_queued_execution {
+            self.start_next_queued_execution(window, cx);
         }
     }
 
     fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>) {
+        self.execution_queue.clear();
         self.kernel = Kernel::ErroredLaunch(error_message);
         cx.notify();
     }
