@@ -212,11 +212,12 @@ jobs:
       run: |
         cp result/bin/bwrap bwrap-linux-aarch64
         chmod 755 bwrap-linux-aarch64
+        gzip -f --stdout --best bwrap-linux-aarch64 > bwrap-linux-aarch64.gz
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: bwrap-linux-aarch64
-        path: bwrap-linux-aarch64
+        name: bwrap-linux-aarch64.gz
+        path: bwrap-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
   build_static_bwrap_linux_x86_64:
@@ -244,11 +245,12 @@ jobs:
       run: |
         cp result/bin/bwrap bwrap-linux-x86_64
         chmod 755 bwrap-linux-x86_64
+        gzip -f --stdout --best bwrap-linux-x86_64 > bwrap-linux-x86_64.gz
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: bwrap-linux-x86_64
-        path: bwrap-linux-x86_64
+        name: bwrap-linux-x86_64.gz
+        path: bwrap-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_aarch64:
@@ -587,8 +589,8 @@ jobs:
         mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
         mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
         mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
-        mv ./artifacts/bwrap-linux-aarch64/bwrap-linux-aarch64 release-artifacts/bwrap-linux-aarch64
-        mv ./artifacts/bwrap-linux-x86_64/bwrap-linux-x86_64 release-artifacts/bwrap-linux-x86_64
+        mv ./artifacts/bwrap-linux-aarch64.gz/bwrap-linux-aarch64.gz release-artifacts/bwrap-linux-aarch64.gz
+        mv ./artifacts/bwrap-linux-x86_64.gz/bwrap-linux-x86_64.gz release-artifacts/bwrap-linux-x86_64.gz
         mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
         mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
         mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz

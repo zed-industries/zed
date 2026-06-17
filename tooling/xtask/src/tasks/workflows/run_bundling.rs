@@ -103,9 +103,13 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
         Arch::X86_64 => assets::BWRAP_LINUX_X86_64,
         Arch::AARCH64 => assets::BWRAP_LINUX_AARCH64,
     };
+    let binary_name = artifact_name
+        .strip_suffix(".gz")
+        .expect("static bwrap artifact name should end in .gz");
     let copy_artifact = indoc::formatdoc! {r#"
-        cp result/bin/bwrap {artifact_name}
-        chmod 755 {artifact_name}
+        cp result/bin/bwrap {binary_name}
+        chmod 755 {binary_name}
+        gzip -f --stdout --best {binary_name} > {artifact_name}
     "#};
 
     NamedJob {
@@ -137,9 +141,6 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
             .add_step(upload_artifact(artifact_name)),
     }
 }
-
-// https://cloud.zed.dev/releases/nightly/latest/asset?os=linux&arch=x86_64&asset=bwrap
-
 
 pub(crate) fn bundle_linux(
     arch: Arch,
