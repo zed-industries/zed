@@ -1067,9 +1067,13 @@ pub async fn derive_paths_with_position(
         // instead of parsing out the line/col number. This matters for paths whose final
         // component looks like a position suffix, e.g. a folder named `Test (3)` would
         // otherwise be parsed as `Test ` at row 3.
-        // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
-        // However, the colon is not valid in NTFS file names, so we can just skip this logic.
-        if !cfg!(windows)
+        // Colon : is not valid in NTFS file names, so skip this logic if colon on windows.
+        let has_colon = original_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| name.contains(':'));
+
+        if (!has_colon || !cfg!(windows))
             && parsed.row.is_some()
             && parsed.path != original_path
             && (fs.is_file(original_path).await || fs.is_dir(original_path).await)
