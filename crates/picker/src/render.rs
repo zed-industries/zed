@@ -1,8 +1,8 @@
-use gpui::canvas;
+use gpui::{canvas, px};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
+    ActiveTheme, Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
     InteractiveElement, IntoElement, Label, LabelCommon, ListItem, ListItemSpacing, ParentElement,
     Render, ScrollAxes, Scrollbars, Styled, StyledExt, Window, WithScrollbar, div, h_flex,
     rems_from_px, utils::WithRemSize, v_flex,
@@ -55,6 +55,17 @@ impl<D: PickerDelegate> Render for Picker<D> {
             | None => self.render_results(window, cx).into_any_element(),
         };
 
+        // The border, background and rounding wrap the whole picker (results and
+        // preview together). When there's a preview, clip the contents so its
+        // corners follow the rounded border. Avoid clipping otherwise, so a
+        // documentation aside (which is positioned outside the picker) isn't cut
+        // off.
+        let has_preview = self.preview.is_some();
+        let content = div()
+            .when(self.is_modal, |this| this.elevation_3(cx).border(px(1.5)))
+            .when(has_preview, |this| this.overflow_hidden())
+            .child(content);
+
         // Embedded pickers are not resizable
         div().relative().child(content).when(self.is_modal, |this| {
             // While resizing offset the (parent-centered) container
@@ -86,7 +97,7 @@ impl<D: PickerDelegate> Picker<D> {
                 self.shape.apply_picker_size(
                     &self.preview,
                     &self.size_bounds,
-                    self.vertical_padding,
+                    self.vertical_padding(),
                     this,
                     window,
                 )
@@ -103,11 +114,6 @@ impl<D: PickerDelegate> Picker<D> {
                 .top_0()
                 .left_0(),
             )
-            // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
-            // as a part of a modal rather than the entire modal.
-            //
-            // We should revisit how the `Picker` is styled to make it more composable.
-            .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::editor_move_down))
@@ -153,7 +159,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .when_some(
                             self.shape.results_max_height(
                                 &self.size_bounds,
-                                self.vertical_padding,
+                                self.vertical_padding(),
                                 window,
                             ),
                             |this, max_height| this.max_h(max_height),
@@ -287,6 +293,8 @@ impl<D: PickerDelegate> Picker<D> {
                 .child(
                     div()
                         .h(self.shape.preview_height(preview, window))
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .child(preview.render(cx)),
                 ),
         )
@@ -313,6 +321,8 @@ impl<D: PickerDelegate> Picker<D> {
                     div()
                         .w(self.shape.preview_width(preview, window))
                         .map(|this| self.shape.apply_height(this, window))
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .overflow_hidden()
                         .child(preview.render(cx)),
                 ),

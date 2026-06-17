@@ -771,8 +771,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     /// Sets the picker's initial height. By default the picker pads to this
-    /// height; call [`Self::no_vertical_padding`] to instead shrink to fit
-    /// content, growing only up to this height.
+    /// height
     pub fn height(mut self, height: impl Into<RelativeHeight>) -> Self {
         self.shape.set_initial_height(height);
         self
@@ -783,6 +782,18 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn no_vertical_padding(mut self) -> Self {
         self.vertical_padding = VerticalPadding::None;
         self
+    }
+
+    fn vertical_padding(&self) -> VerticalPadding {
+        let preview_visible = self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.layout != PreviewLayout::Hidden);
+        if preview_visible {
+            VerticalPadding::Pad
+        } else {
+            self.vertical_padding
+        }
     }
 
     pub fn show_scrollbar(mut self, show_scrollbar: bool) -> Self {
@@ -1259,7 +1270,7 @@ impl<D: PickerDelegate> Picker<D> {
         // When the picker shrinks to fit content (`None`), the list infers its
         // size from its items. When the picker pads to its full height (`Pad`),
         // the list fills the available space.
-        let sizing_behavior = match self.vertical_padding {
+        let sizing_behavior = match self.vertical_padding() {
             VerticalPadding::None => ListSizingBehavior::Infer,
             VerticalPadding::Pad => ListSizingBehavior::Auto,
         };
