@@ -23,7 +23,6 @@ use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
-    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
 
@@ -50,8 +49,8 @@ use crate::{
 };
 
 use model::{
-    GroupId, ItemId, PaneId, RemoteConnectionId, SerializedItem, SerializedPane,
-    SerializedPaneGroup, SerializedWorkspace,
+    BreakpointState, GroupId, ItemId, PaneId, RemoteConnectionId, SerializedItem, SerializedPane,
+    SerializedPaneGroup, SerializedWorkspace, SourceBreakpoint,
 };
 
 use self::model::{DockStructure, SerializedWorkspaceLocation, SessionWorkspace};

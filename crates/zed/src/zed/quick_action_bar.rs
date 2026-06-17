@@ -1,5 +1,4 @@
 mod preview;
-mod repl_menu;
 
 use agent_settings::AgentSettings;
 use editor::actions::{
@@ -676,7 +675,6 @@ impl Render for QuickActionBar {
         h_flex()
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
-            .children(self.render_repl_menu(cx))
             .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(

@@ -641,7 +641,6 @@ pub fn execute_run(
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
-        dap_adapters::init(cx);
 
         json_schema_store::init(cx);
 

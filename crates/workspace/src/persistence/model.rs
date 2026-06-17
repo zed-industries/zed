@@ -15,8 +15,23 @@ use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 use language::{Toolchain, ToolchainScope};
 use project::{
     Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
-    debugger::breakpoint_store::SourceBreakpoint,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BreakpointState {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceBreakpoint {
+    pub row: usize,
+    pub path: Arc<Path>,
+    pub message: Option<String>,
+    pub state: BreakpointState,
+    pub condition: Option<String>,
+    pub hit_condition: Option<String>,
+}
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{

@@ -42,11 +42,7 @@ members = [
     "crates/crashes",
     "crates/credentials_provider",
     "crates/csv_preview",
-    "crates/dap",
-    "crates/dap_adapters",
     "crates/db",
-    "crates/debugger_tools",
-    "crates/debugger_ui",
     "crates/deepseek",
     "crates/dev_container",
     "crates/diagnostics",
@@ -151,7 +147,6 @@ members = [
     "crates/remote",
     "crates/remote_connection",
     "crates/remote_server",
-    "crates/repl",
     "crates/reqwest_client",
     "crates/rope",
     "crates/rpc",
@@ -283,11 +278,7 @@ crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 crossbeam = "0.8.4"
 csv_preview = { path = "crates/csv_preview"}
-dap = { path = "crates/dap" }
-dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
-debugger_tools = { path = "crates/debugger_tools" }
-debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
@@ -386,7 +377,6 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
-repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
@@ -523,7 +513,6 @@ cpal = "0.17"
 crash-handler = "0.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "1.0.6"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
 dashmap = "6.0"
 derive_more = { version = "2.1.1", features = [
     "add",

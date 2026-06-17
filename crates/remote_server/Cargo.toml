@@ -30,7 +30,6 @@ clap.workspace = true
 client.workspace = true
 collections.workspace = true
 crashes.workspace = true
-dap_adapters.workspace = true
 env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true

@@ -30,7 +30,6 @@ test-support = [
     "prettier/test-support",
     "worktree/test-support",
     "gpui/test-support",
-    "dap/test-support",
 ]
 
 [dependencies]
@@ -47,7 +46,6 @@ clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
 credentials_provider.workspace = true
-dap.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -111,7 +109,6 @@ encoding_rs.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
-dap = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

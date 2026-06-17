@@ -21,7 +21,6 @@ settings = { workspace = true, features = ["test-support"] }
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-dap.workspace = true
 parking_lot.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true

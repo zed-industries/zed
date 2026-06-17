@@ -25,7 +25,6 @@ test-support = [
     "terminal_view/test-support",
     "image_viewer/test-support",
     "recent_projects/test-support",
-    "repl/test-support",
     "title_bar/test-support",
 ]
 visual-tests = [
@@ -91,10 +90,7 @@ copilot_chat.workspace = true
 copilot_ui.workspace = true
 crashes.workspace = true
 csv_preview.workspace = true
-dap_adapters.workspace = true
 db.workspace = true
-debugger_tools.workspace = true
-debugger_ui.workspace = true
 dev_container.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
@@ -166,7 +162,6 @@ proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
-repl.workspace = true
 reqwest.workspace = true
 reqwest_client.workspace = true
 rope.workspace = true
@@ -260,7 +255,6 @@ workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
-repl = { workspace = true, features = ["test-support"] }
 
 
 
