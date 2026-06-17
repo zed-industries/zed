@@ -150,7 +150,9 @@ impl FeatureFlagAppExt for App {
         F: FnMut(T::Value, &mut App) + 'static,
     {
         let value = T::Value::on_variant();
-        callback(value, self);
+        self.defer(move |cx| {
+            callback(value, cx);
+        });
         self.observe_global::<FeatureFlagStore>(move |_| {})
     }
 }
@@ -279,7 +281,7 @@ impl settings::Settings for FeatureFlagsSettings {
 // RegisterSetting is a derive macro, not a trait
 
 pub fn generate_feature_flags_schema() -> schemars::Schema {
-    schemars::Schema::new_ref(String::new())
+    schemars::schema_for!(serde_json::Value)
 }
 
 pub struct NotebookFeatureFlag;
