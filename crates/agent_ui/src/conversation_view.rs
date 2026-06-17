@@ -5627,6 +5627,9 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            // Use an isolated DB so parallel tests can't overwrite each
+            // other's global keys (e.g. the last-created entry kind).
+            cx.set_global(db::AppDatabase::test_new());
             ThreadMetadataStore::init_global(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);

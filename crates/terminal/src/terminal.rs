@@ -1860,10 +1860,21 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
+        self.keyboard_input_sent = true;
+        self.write_input(input);
+    }
+
+    /// Write a programmatically-generated command to the PTY as if it had been
+    /// typed, without marking the terminal as having received user keyboard
+    /// input.
+    pub fn write_init_command(&mut self, input: impl Into<Cow<'static, [u8]>>) {
+        self.write_input(input);
+    }
+
+    fn write_input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
-        self.keyboard_input_sent = true;
         let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
@@ -1874,6 +1885,11 @@ impl Terminal {
     #[cfg(any(test, feature = "test-support"))]
     pub fn take_input_log(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.input_log)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn keyboard_input_sent(&self) -> bool {
+        self.keyboard_input_sent
     }
 
     pub fn toggle_vi_mode(&mut self) {

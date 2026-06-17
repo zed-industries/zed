@@ -13,7 +13,7 @@ use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, 
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    ProviderConfigurationView, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -367,6 +367,18 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     ) -> AnyView {
         cx.new(|_| ConfigurationView::new(self.state.clone()))
             .into()
+    }
+
+    fn configuration_view_v2(
+        &self,
+        target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        // The Zed sign-in/plan control is small enough that sending users to a
+        // dedicated sub-page just to reach it would be annoying, so render it
+        // inline even though it isn't an API-key field.
+        ProviderConfigurationView::Inline(self.configuration_view(target_agent, window, cx))
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
