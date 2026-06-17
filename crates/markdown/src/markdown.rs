@@ -1333,16 +1333,28 @@ impl MarkdownElement {
     ) {
         builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
 
-        let image_element = div().min_w_0().child(
-            img(source)
-                .id(("markdown-image", range.start))
-                .min_w_0()
-                .max_w_full()
-                .rounded_md()
-                .when_some(height, |this, height| this.h(height))
-                .when_some(width, |this, width| this.w(width))
-                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
-        );
+        let image_element = {
+            let mut wrapper = div().min_w_0();
+            if let Some(link) = (builder.link_depth > 0)
+                .then(|| builder.rendered_links.last())
+                .flatten()
+            {
+                let url = link.destination_url.clone();
+                wrapper = wrapper
+                    .cursor_pointer()
+                    .on_click(move |_, _, cx| cx.open_url(&url));
+            }
+            wrapper.child(
+                img(source)
+                    .id(("markdown-image", range.start))
+                    .min_w_0()
+                    .max_w_full()
+                    .rounded_md()
+                    .when_some(height, |this, height| this.h(height))
+                    .when_some(width, |this, width| this.w(width))
+                    .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
+            )
+        };
 
         builder.push_image_child(image_element);
     }
