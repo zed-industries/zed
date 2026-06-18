@@ -9,9 +9,11 @@
 //! truncation of related files doesn't shift the addressing of the remaining
 //! markers. All context, including the current file, lives in related files:
 //! context retrieval includes the current file via `ContextSource::CurrentFile`,
-//! so the cursor file is expected to be one of the related files.
+//! so the cursor file is expected to be one of the related files. Inputs that
+//! weren't run through current-file retrieval can be normalized with
+//! [`ensure_cursor_file_excerpt`] before rendering or parsing.
 
-use crate::{ContextSource, ZetaPromptInput, multi_region, udiff};
+use crate::{ContextSource, RelatedExcerpt, RelatedFile, ZetaPromptInput, multi_region, udiff};
 use anyhow::{Context as _, Result, anyhow};
 use std::{
     borrow::Cow,
@@ -307,6 +309,74 @@ pub fn locate_cursor_in_related_files(input: &ZetaPromptInput) -> Option<Related
     }
 
     None
+}
+
+/// Ensure the cursor file is represented by a related-file excerpt that covers
+/// the cursor, synthesizing one from `cursor_excerpt` when it isn't.
+///
+/// All hashed-region context — including the current file — is addressed
+/// through `related_files` (see module docs), so a prompt built from a
+/// `ZetaPromptInput` whose `related_files` don't cover the cursor cannot be
+/// rendered or parsed. Inputs produced by current-file context retrieval
+/// (`ContextSource::CurrentFile`) are already covered and left untouched; this
+/// normalizes the rest (e.g. raw settled-data samples, or any caller that
+/// didn't run current-file retrieval) from the `cursor_excerpt` the input
+/// already carries, so the format is usable without re-running context
+/// collection.
+///
+/// When synthesis is needed, any pre-existing excerpts of the cursor file are
+/// **replaced** by the synthesized window: the renderer emits excerpts verbatim
+/// without coalescing, so keeping overlapping fragments would duplicate lines
+/// with conflicting markers. Other related files are left untouched.
+///
+/// Returns whether the cursor file is covered after the call (already, or via
+/// the synthesized excerpt). Returns `false` only when coverage couldn't be
+/// established — e.g. a missing `excerpt_start_row` or an empty
+/// `cursor_excerpt` — in which case the input is left unchanged.
+pub fn ensure_cursor_file_excerpt(input: &mut ZetaPromptInput) -> bool {
+    if locate_cursor_in_related_files(input).is_some() {
+        return true;
+    }
+    let Some(excerpt_start_row) = input.excerpt_start_row else {
+        return false;
+    };
+    if input.cursor_excerpt.is_empty() {
+        return false;
+    }
+
+    let cursor_excerpt = input.cursor_excerpt.clone();
+    let end_row = excerpt_start_row + cursor_excerpt.matches('\n').count() as u32;
+    let synthesized = RelatedExcerpt {
+        row_range: excerpt_start_row..end_row,
+        text: cursor_excerpt,
+        order: 0,
+        context_source: ContextSource::CurrentFile,
+    };
+
+    let cursor_path = input.cursor_path.clone();
+    let in_open_source_repo = input.in_open_source_repo;
+    let related_files = input.related_files.get_or_insert_with(Vec::new);
+    if let Some(file) = related_files
+        .iter_mut()
+        .find(|file| related_file_patch_path(&cursor_path, &file.path) == cursor_path.as_ref())
+    {
+        file.max_row = file.max_row.max(end_row);
+        file.excerpts = vec![synthesized];
+    } else {
+        related_files.insert(
+            0,
+            RelatedFile {
+                path: cursor_path,
+                max_row: end_row,
+                excerpts: vec![synthesized],
+                in_open_source_repo,
+            },
+        );
+    }
+
+    // Confirm the synthesized excerpt actually covers the cursor (guards against
+    // a cursor offset that lies outside the excerpt text).
+    locate_cursor_in_related_files(input).is_some()
 }
 
 pub fn marker_table_for_excerpt(
@@ -935,6 +1005,48 @@ mod tests {
             can_collect_data: false,
             repo_url: None,
         }
+    }
+
+    #[test]
+    fn test_ensure_cursor_file_excerpt_synthesizes_when_uncovered() {
+        // The cursor file's only related excerpt is a fragment elsewhere in the
+        // file (rows 40..42), not covering the cursor at row 1.
+        let mut input = make_input(
+            "fn main() {\n    let x = 1;\n}\n",
+            &[("src/main.rs", &["// unrelated\n// fragment\n"])],
+        );
+        input.cursor_offset_in_excerpt = 16; // inside "    let x = 1;"
+        input.related_files.as_mut().unwrap()[0].excerpts[0].row_range = 40..42;
+
+        assert!(locate_cursor_in_related_files(&input).is_none());
+        assert!(ensure_cursor_file_excerpt(&mut input));
+
+        let cursor =
+            locate_cursor_in_related_files(&input).expect("cursor covered after synthesis");
+        let file = &input.related_files.as_ref().unwrap()[cursor.file_ix];
+        // The fragment was replaced by the synthesized full window, so the file
+        // content isn't duplicated with overlapping markers.
+        assert_eq!(file.excerpts.len(), 1);
+        assert_eq!(file.excerpts[0].context_source, ContextSource::CurrentFile);
+        assert_eq!(file.excerpts[0].row_range, 0..3);
+        assert_eq!(
+            file.excerpts[0].text.as_ref(),
+            "fn main() {\n    let x = 1;\n}\n"
+        );
+    }
+
+    #[test]
+    fn test_ensure_cursor_file_excerpt_noop_when_covered() {
+        // make_input places the cursor file's excerpt at rows 0..3, covering the
+        // cursor at row 1.
+        let mut input = make_input(
+            "fn main() {\n    let x = 1;\n}\n",
+            &[("src/main.rs", &["fn main() {\n    let x = 1;\n}\n"])],
+        );
+        input.cursor_offset_in_excerpt = 16;
+        let before = input.clone();
+        assert!(ensure_cursor_file_excerpt(&mut input));
+        assert_eq!(input, before);
     }
 
     #[test]

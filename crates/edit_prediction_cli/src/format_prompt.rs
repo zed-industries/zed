@@ -44,6 +44,21 @@ pub async fn run_format_prompt(
     )
     .await?;
 
+    // Teacher-jumps addresses every edit through related-file excerpts and
+    // hard-errors unless the cursor file is covered by one. Settled-data
+    // samples carry a `cursor_excerpt` but were not run through current-file
+    // context retrieval, so normalize the input to synthesize a current-file
+    // excerpt from it when the cursor isn't already covered (a no-op for proper
+    // `ep context --type=current-file` runs).
+    if matches!(
+        args.provider,
+        PredictionProvider::TeacherJumps(_) | PredictionProvider::TeacherJumpsNonBatching(_)
+    ) {
+        if let Some(prompt_inputs) = example.prompt_inputs.as_mut() {
+            hashed_regions::ensure_cursor_file_excerpt(prompt_inputs);
+        }
+    }
+
     let step_progress = example_progress.start(Step::FormatPrompt);
 
     let prompt_inputs = example
@@ -995,6 +1010,37 @@ mod tests {
         let mut example = make_example("fn main() {}\n", 0, &[]);
         example.prompt_inputs.as_mut().unwrap().related_files = Some(Vec::new());
         assert!(TeacherJumpsPrompt::format_prompt(&example, 8192).is_err());
+    }
+
+    #[test]
+    fn test_teacher_jumps_synthesizes_missing_cursor_file_excerpt() {
+        // Simulate a settled-data sample: `cursor_excerpt` is present, but the
+        // related-file excerpts of the cursor file don't cover the cursor (only
+        // an unrelated fragment elsewhere in the file).
+        let mut example = make_example("fn main() {\n    let x = 1;\n}\n", 16, &[]);
+        {
+            let prompt_inputs = example.prompt_inputs.as_mut().unwrap();
+            prompt_inputs.related_files.as_mut().unwrap()[0].excerpts =
+                vec![zeta_prompt::RelatedExcerpt {
+                    row_range: 40..42,
+                    text: std::sync::Arc::from("// unrelated\n// fragment\n"),
+                    order: 0,
+                    context_source: zeta_prompt::ContextSource::Bm25,
+                }];
+        }
+
+        // Without a covering cursor-file excerpt, formatting hard-errors.
+        assert!(TeacherJumpsPrompt::format_prompt(&example, 8192).is_err());
+
+        // `ensure_cursor_file_excerpt` (in zeta_prompt) synthesizes one from
+        // `cursor_excerpt`, so the prompt formats with the cursor in the
+        // current-file window and the unrelated fragment is replaced (no
+        // duplicated content with overlapping markers).
+        hashed_regions::ensure_cursor_file_excerpt(example.prompt_inputs.as_mut().unwrap());
+        let prompt = TeacherJumpsPrompt::format_prompt(&example, 8192).unwrap();
+        assert!(prompt.contains("<|user_cursor|>let x = 1;"));
+        assert!(!prompt.contains("// unrelated"));
+        assert_eq!(prompt.matches("let x = 1;").count(), 1);
     }
 
     #[test]
