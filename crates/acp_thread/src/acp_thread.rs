@@ -3550,12 +3550,13 @@ impl AcpThread {
                         // `unsandboxed: true` (often to run a Windows program),
                         // the user choosing "run unsandboxed" after a sandbox-
                         // creation failure, the `allow_unsandboxed` setting, or a
-                        // per-thread fallback grant. In every case the caller
-                        // warns the model that the command ran without a sandbox
-                        // (see `sandbox_not_applied` in the terminal tool); note
-                        // that warning reports the loss of isolation, not that
-                        // the shell (and its path conventions) changed, so a
-                        // command written for WSL may behave differently here.
+                        // per-thread fallback grant. For the fallback cases the
+                        // command isn't one the model chose to run unsandboxed,
+                        // so the terminal tool's `sandbox_not_applied` note
+                        // warns it that the command ran without a sandbox *and*,
+                        // on Windows, that the shell and its path conventions
+                        // changed too (see `sandbox_note` in the terminal tool),
+                        // so it can adapt a command written for WSL.
                         let (task_command, task_args) =
                             ShellBuilder::new(&Shell::Program(shell), is_windows)
                                 .redirect_stdin_to_dev_null()

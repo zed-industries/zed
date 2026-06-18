@@ -708,17 +708,41 @@ async fn run_terminal_tool(
     // chose to run through), tell the agent so it can account for the weaker
     // isolation. Computed here — after the Windows fallback above may have set
     // the reason — so every affected command communicates the state.
-    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
-        acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
-            "Note: this command ran WITHOUT an OS sandbox because you allowed unsandboxed \
-             execution for the rest of this thread."
-                .to_string()
+    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| {
+        // Only the Windows-specific block below mutates this; on other
+        // platforms the note is returned exactly as built.
+        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+        let mut note = match reason {
+            acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
+                "Note: this command ran WITHOUT an OS sandbox because the user allowed unsandboxed \
+                 execution for the rest of this thread."
+                    .to_string()
+            }
+            acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
+                "Note: this command ran WITHOUT an OS sandbox because one could not be \
+                 created ({}).",
+                error.user_facing_message()
+            ),
+        };
+        // On Windows, running without a sandbox also changes the interpreter:
+        // the sandboxed path runs the command under WSL's Linux shell, but
+        // every unsandboxed path that reaches here falls back to the host
+        // shell (Git Bash, or PowerShell/cmd when no bash is installed) against
+        // native Windows paths. The model writes commands for the WSL/Linux
+        // sandbox, so the loss of isolation isn't the whole story — warn it
+        // that the shell and path conventions differ too, or a command that
+        // worked sandboxed may silently misbehave or fail here.
+        #[cfg(target_os = "windows")]
+        {
+            note.push(' ');
+            note.push_str(
+                "It also ran under the host shell (Git Bash, or PowerShell/cmd when no bash is \
+                 installed) instead of WSL's Linux shell, so the interpreter and path \
+                 conventions differ from the sandbox: Linux-only commands and `/mnt/...` paths \
+                 may fail. Rewrite the command for the host shell if it doesn't work.",
+            );
         }
-        acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
-            "Note: I tried to run this command inside an OS sandbox, but it could not be \
-             created ({}). It ran WITHOUT a sandbox.",
-            error.user_facing_message()
-        ),
+        note
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
