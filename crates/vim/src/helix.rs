@@ -164,8 +164,9 @@ impl Vim {
                     let (new_head, goal) = match motion {
                         // gg lands at col 0. With a count, at that buffer line's col 0.
                         Motion::StartOfDocument => {
+                            let last_buffer_row = map.buffer_snapshot().max_point().row;
                             let buffer_row = if let Some(n) = times {
-                                (n - 1) as u32
+                                ((n - 1) as u32).min(last_buffer_row)
                             } else {
                                 0
                             };
@@ -512,8 +513,9 @@ impl Vim {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
+                            let last_buffer_row = map.buffer_snapshot().max_point().row;
                             let buffer_row = if let Some(n) = times {
-                                (n - 1) as u32
+                                ((n - 1) as u32).min(last_buffer_row)
                             } else {
                                 0
                             };
@@ -4113,6 +4115,23 @@ mod test {
             line one
             ˇline two
               line three"},
+            Mode::HelixNormal,
+        );
+
+        // a count larger than the number of lines clips to the last line
+        cx.set_state(
+            indoc! {"
+            line one
+            line two
+            ˇline three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("9 9 9 g g");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            ˇline three"},
             Mode::HelixNormal,
         );
 
