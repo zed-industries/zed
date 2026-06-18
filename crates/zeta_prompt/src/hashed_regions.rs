@@ -824,8 +824,8 @@ fn detect_trailing_deletion(old_span: &str, new_span: &str) -> Option<String> {
     // A verbatim prefix is checked at the byte level so that a replacement
     // stopping mid-line is caught too; the line diff below would see that as a
     // trailing replace group rather than a pure deletion.
-    if old_span.starts_with(new_span) {
-        return flag_if_large(&old_span[new_span.len()..]);
+    if let Some(deleted_tail) = old_span.strip_prefix(new_span) {
+        return flag_if_large(deleted_tail);
     }
 
     // With zero context lines, hunks contain only `-` and `+` lines, and within
