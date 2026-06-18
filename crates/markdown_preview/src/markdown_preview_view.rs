@@ -377,8 +377,14 @@ impl MarkdownPreviewView {
                                 let focused = editor.focus_handle(cx).is_focused(window);
                                 (index, focused)
                             });
-                        this.sync_preview_to_source_index(selection_start, editor_is_focused, cx);
-                        cx.notify();
+                        if let Some(selection_start) = selection_start {
+                            this.sync_preview_to_source_index(
+                                selection_start,
+                                editor_is_focused,
+                                cx,
+                            );
+                            cx.notify();
+                        }
                     }
                     _ => {}
                 };
@@ -472,22 +478,27 @@ impl MarkdownPreviewView {
                 cx.background_executor().timer(REPARSE_DEBOUNCE).await;
             }
 
-            let editor_clone = editor.clone();
             let update = view.update(cx, |view, cx| {
                 let is_active_editor = view
                     .active_editor
                     .as_ref()
-                    .is_some_and(|active_editor| active_editor.editor == editor_clone);
+                    .is_some_and(|active_editor| active_editor.editor == editor);
                 if !is_active_editor {
                     return None;
                 }
 
-                let (contents, selection_start) = editor_clone.update(cx, |editor, cx| {
-                    let contents = editor.buffer().read(cx).snapshot(cx).text();
-                    let selection_start = Self::selected_source_index(editor, cx);
-                    (contents, selection_start)
-                });
-                Some((SharedString::from(contents), selection_start))
+                editor.update(cx, |editor, cx| {
+                    let contents = editor
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()?
+                        .read(cx)
+                        .as_rope()
+                        .to_string()
+                        .into();
+                    let selection_start = Self::selected_source_index(editor, cx)?;
+                    Some((contents, selection_start))
+                })
             })?;
 
             view.update(cx, move |view, cx| {
@@ -504,13 +515,24 @@ impl MarkdownPreviewView {
         })
     }
 
-    fn selected_source_index(editor: &Editor, cx: &mut App) -> usize {
-        editor
+    fn selected_source_index(editor: &Editor, cx: &mut App) -> Option<usize> {
+        let display_snapshot = editor.display_snapshot(cx);
+        let source_offset = editor
             .selections
-            .last::<MultiBufferOffset>(&editor.display_snapshot(cx))
+            .last::<MultiBufferOffset>(&display_snapshot)
             .range()
-            .start
-            .0
+            .start;
+        let buffer = editor.buffer().read(cx).as_singleton()?;
+        let buffer_id = buffer.read(cx).remote_id();
+        let (buffer_snapshot, buffer_offset) = display_snapshot
+            .buffer_snapshot()
+            .point_to_buffer_offset(source_offset)?;
+
+        if buffer_snapshot.remote_id() == buffer_id {
+            Some(buffer_offset.0)
+        } else {
+            None
+        }
     }
 
     fn sync_preview_to_source_index(
@@ -1454,6 +1476,7 @@ mod tests {
     use crate::markdown_preview_view::ImageSource;
     use crate::markdown_preview_view::Resource;
     use crate::markdown_preview_view::resolve_preview_image;
+    use buffer_diff::BufferDiff;
     use editor::Editor;
     use gpui::{AppContext as _, Entity, TestAppContext};
     use serde_json::json;
@@ -1575,6 +1598,79 @@ mod tests {
                 .await
                 .unwrap(),
             "- [x] Finish work\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_uses_buffer_contents_instead_of_diff_contents(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "note.md": "new\n"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir/note.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let preview = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let editor: Entity<Editor> = workspace
+                        .active_item(cx)
+                        .and_then(|item| item.act_as::<Editor>(cx))
+                        .unwrap();
+                    let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+                    let diff = cx.new(|cx| {
+                        BufferDiff::new_with_base_text(
+                            "old\n",
+                            &buffer.read(cx).text_snapshot(),
+                            cx,
+                        )
+                    });
+                    let multibuffer = editor.read(cx).buffer().clone();
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.add_diff(diff, cx);
+                        multibuffer.set_all_diff_hunks_expanded(cx);
+                    });
+
+                    let diff_text = multibuffer.read(cx).snapshot(cx).text();
+                    assert!(diff_text.contains("old"));
+                    assert!(diff_text.contains("new"));
+
+                    let preview =
+                        MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview
+                .markdown
+                .read(cx)
+                .source()
+                .to_string()),
+            "new\n"
         );
     }
 
