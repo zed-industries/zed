@@ -26,4 +26,12 @@ fn main() {
     if let Some(build_identifier) = option_env!("GITHUB_RUN_NUMBER") {
         println!("cargo:rustc-env=ZED_BUILD_ID={build_identifier}");
     }
+
+    #[cfg(windows)]
+    {
+        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+        println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
+
+        windows_resources::compile(false).expect("failed to compile Windows resources");
+    }
 }

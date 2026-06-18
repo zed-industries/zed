@@ -415,6 +415,7 @@ pub fn apply_diff_to_string_with_hunk_offset(
 
     let mut text = text.to_string();
     let mut first_hunk_offset = None;
+    let mut line_delta = 0i64;
 
     while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
@@ -424,9 +425,12 @@ pub fn apply_diff_to_string_with_hunk_offset(
                 status: _,
             } => {
                 let candidates = find_context_candidates(&text, &mut hunk);
+                let adjusted_start_line = hunk
+                    .start_line
+                    .and_then(|start_line| u32::try_from(start_line as i64 + line_delta).ok());
 
                 let hunk_offset =
-                    disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
+                    disambiguate_by_line_number(&candidates, adjusted_start_line, &|offset| {
                         text[..offset].matches('\n').count() as u32
                     })
                     .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
@@ -435,12 +439,19 @@ pub fn apply_diff_to_string_with_hunk_offset(
                     first_hunk_offset = Some(hunk_offset);
                 }
 
+                let mut hunk_line_delta = 0i64;
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
+                    let deleted_lines = text[range.clone()].matches('\n').count() as i64;
+                    let inserted_lines = edit.text.matches('\n').count() as i64;
                     text.replace_range(range, &edit.text);
+                    hunk_line_delta += inserted_lines - deleted_lines;
                 }
+                line_delta += hunk_line_delta;
             }
-            DiffEvent::FileEnd { .. } => {}
+            DiffEvent::FileEnd { .. } => {
+                line_delta = 0;
+            }
         }
     }
 
@@ -1313,6 +1324,49 @@ mod tests {
 
         let result = apply_diff_to_string(diff, text).unwrap();
         assert_eq!(result, "hello\nworld");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_adjusts_line_numbers_after_prior_hunks() {
+        let text = "first\nremove first\nfirst\nsame\nremove\nsame\nsame\nremove\nsame\n";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,2 @@
+             first
+            -remove first
+             first
+            @@ -4,3 +3,2 @@
+             same
+            -remove
+             same
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "first\nfirst\nsame\nsame\nsame\nremove\nsame\n");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_adjusts_line_numbers_after_prior_insertion_hunks() {
+        let text = "first\nfirst\nsame\nremove\nsame\nsame\nremove\nsame\n";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,3 @@
+             first
+            +inserted
+             first
+            @@ -6,3 +7,2 @@
+             same
+            -remove
+             same
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(
+            result,
+            "first\ninserted\nfirst\nsame\nremove\nsame\nsame\nsame\n"
+        );
     }
 
     #[test]

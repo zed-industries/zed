@@ -55,6 +55,7 @@ impl CsvPreviewView {
             .width_config(ColumnWidthConfig::Resizable(current_widths.clone()))
             .header(headers)
             .disable_base_style()
+            .pin_cols(1)
             .map(|table| {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
                 match self.settings.rendering_with {
@@ -133,7 +134,6 @@ impl CsvPreviewView {
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
-                    this.settings.font_type,
                     cx,
                 ),
             );

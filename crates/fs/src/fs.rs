@@ -1,5 +1,7 @@
 pub mod fs_watcher;
 
+pub use fs_watcher::requires_poll_watcher;
+
 use parking_lot::Mutex;
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -13,7 +15,6 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
-use std::borrow::Cow;
 #[cfg(unix)]
 use std::ffi::CString;
 use util::command::new_command;
@@ -53,10 +54,10 @@ mod fake_git_repo;
 #[cfg(feature = "test-support")]
 use collections::{BTreeMap, btree_map};
 #[cfg(feature = "test-support")]
-use fake_git_repo::FakeGitRepositoryState;
+use fake_git_repo::{FakeCommitDataEntry, FakeGitRepositoryState};
 #[cfg(feature = "test-support")]
 use git::{
-    repository::{InitialGraphCommitData, RepoPath, Worktree, repo_path},
+    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
@@ -160,7 +161,8 @@ pub trait Fs: Send + Sync {
     ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
+    async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -800,10 +802,10 @@ impl Fs for RealFs {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
-        let path = self
-            .canonicalize(path)
-            .await
-            .context("Could not canonicalize the path of the file")?;
+        // We deliberately use `std::path::absolute` instead of `canonicalize`
+        // to avoid resolving symlinks. Otherwise trashing a symlink would trash
+        // its target and leave the link behind.
+        let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
         let (tx, rx) = futures::channel::oneshot::channel();
         std::thread::Builder::new()
@@ -1070,20 +1072,17 @@ impl Fs for RealFs {
         use util::{ResultExt as _, paths::SanitizedPath};
         let executor = self.executor.clone();
 
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
-        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-        if let Err(e) = watcher.add(path)
-            && let Some(parent) = path.parent()
-            && let Err(parent_e) = watcher.add(parent)
-        {
-            log::warn!(
-                "Failed to watch {} and its parent directory {}:\n{e}\n{parent_e}",
-                path.display(),
-                parent.display()
-            );
+        let watcher: Arc<dyn Watcher> = Arc::new(fs_watcher::FsWatcher::new(
+            executor.clone(),
+            tx.clone(),
+            pending_paths.clone(),
+        ));
+
+        if let Err(e) = watcher.add(path) {
+            log::warn!("Failed to watch {}:\n{e}", path.display());
         }
 
         // Check if path is a symlink and follow the target parent
@@ -1115,6 +1114,7 @@ impl Fs for RealFs {
                     async move {
                         executor.timer(latency).await;
                         let paths = std::mem::take(&mut *pending_paths.lock());
+                        log::debug!("pending path events: {:?}", paths);
                         (!paths.is_empty()).then_some(paths)
                     }
                 }
@@ -1141,19 +1141,19 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        let config = new_command("git")
+        let result = new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
             .output()
-            .await?;
+            .await;
 
-        let branch_name;
-
-        if config.status.success() && !config.stdout.is_empty() {
-            branch_name = String::from_utf8_lossy(&config.stdout);
-        } else {
-            branch_name = Cow::Borrowed(fallback_branch_name.as_str());
-        }
+        // In case the `git config` command fails, which would be the case if
+        // the user doesn't have an `init.defaultBranch` value set, we'll just
+        // default to the provided `fallback_branch_name`.
+        let branch_name = match result {
+            Ok(output) if !output.stdout.is_empty() => String::from_utf8(output.stdout)?,
+            _ => fallback_branch_name,
+        };
 
         new_command("git")
             .current_dir(abs_work_directory_path)
@@ -1165,7 +1165,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()> {
         let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
         let job_info = JobInfo {
             id: job_id,
@@ -1189,6 +1189,24 @@ impl Fs for RealFs {
         }
 
         Ok(())
+    }
+
+    /// Runs `git config` with the given arguments.
+    /// Will return `Ok` if the commands exit status is `0`, with the stdout
+    /// contents. Otherwise returns `Err` with the stderr contents.
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String> {
+        let output = new_command("git")
+            .current_dir(abs_work_directory)
+            .args([String::from("config")].into_iter().chain(args))
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8(output.stderr)?;
+            anyhow::bail!(err);
+        }
+
+        String::from_utf8(output.stdout).map_err(Into::into)
     }
 
     fn is_fake(&self) -> bool {
@@ -1307,8 +1325,8 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: smol::channel::Sender<PathBuf>,
-    event_txs: Vec<(PathBuf, smol::channel::Sender<Vec<PathEvent>>)>,
+    git_event_tx: async_channel::Sender<PathBuf>,
+    event_txs: Vec<(PathBuf, async_channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
@@ -1317,6 +1335,40 @@ struct FakeFsState {
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
+    file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
+    remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+}
+
+#[cfg(feature = "test-support")]
+impl FakeFsState {
+    fn create_file_before_watch_add(&mut self, watch_path: &Path) -> Result<()> {
+        let Some((pending_watch_path, file_path)) = self.file_to_create_before_watch_add.take()
+        else {
+            return Ok(());
+        };
+        if pending_watch_path != watch_path {
+            self.file_to_create_before_watch_add = Some((pending_watch_path, file_path));
+            return Ok(());
+        }
+
+        let inode = self.get_and_increment_inode();
+        let mtime = self.get_and_increment_mtime();
+        self.write_path(&file_path, |entry| {
+            let btree_map::Entry::Vacant(entry) = entry else {
+                anyhow::bail!("file already exists: {}", file_path.display());
+            };
+            entry.insert(FakeFsEntry::File {
+                inode,
+                mtime,
+                len: 0,
+                content: Vec::new(),
+                git_dir_path: None,
+            });
+            Ok(())
+        })?;
+        self.emit_event([(file_path, Some(PathEventKind::Created))]);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -1578,7 +1630,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -1603,6 +1655,8 @@ impl FakeFs {
                 moves: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
                 trash: Vec::new(),
+                file_to_create_before_watch_add: None,
+                remove_dir_errors: Default::default(),
             })),
         });
 
@@ -1776,6 +1830,17 @@ impl FakeFs {
 
     pub fn clear_buffered_events(&self) {
         self.state.lock().buffered_events.clear();
+    }
+
+    pub fn create_file_before_next_watch_add(
+        &self,
+        watch_path: impl AsRef<Path>,
+        path: impl AsRef<Path>,
+    ) {
+        self.state.lock().file_to_create_before_watch_add = Some((
+            normalize_path(watch_path.as_ref()),
+            normalize_path(path.as_ref()),
+        ));
     }
 
     pub fn flush_events(&self, count: usize) {
@@ -2212,6 +2277,29 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_commit_data(
+        &self,
+        dot_git: &Path,
+        commit_data: impl IntoIterator<Item = (CommitData, bool)>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.commit_data = commit_data
+                .into_iter()
+                .map(|(data, should_fail)| {
+                    (
+                        data.sha,
+                        if should_fail {
+                            FakeCommitDataEntry::Fail(data)
+                        } else {
+                            FakeCommitDataEntry::Success(data)
+                        },
+                    )
+                })
+                .collect();
+        })
+        .unwrap();
+    }
+
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {
@@ -2309,6 +2397,14 @@ impl FakeFs {
             state.simulated_create_worktree_error = message;
         })
         .unwrap();
+    }
+
+    /// Makes subsequent `remove_dir` calls for `path` fail with `message`.
+    pub fn set_remove_dir_error(&self, path: impl AsRef<Path>, message: String) {
+        self.state
+            .lock()
+            .remove_dir_errors
+            .insert(normalize_path(path.as_ref()), message);
     }
 
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
@@ -2453,6 +2549,9 @@ impl FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
+        if let Some(message) = self.state.lock().remove_dir_errors.get(&path) {
+            anyhow::bail!("{message}");
+        }
         let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().context("cannot remove the root")?;
 
@@ -2549,8 +2648,7 @@ impl FakeFsEntry {
 
 #[cfg(feature = "test-support")]
 struct FakeWatcher {
-    tx: smol::channel::Sender<Vec<PathEvent>>,
-    original_path: PathBuf,
+    tx: async_channel::Sender<Vec<PathEvent>>,
     fs_state: Arc<Mutex<FakeFsState>>,
     prefixes: Mutex<Vec<PathBuf>>,
 }
@@ -2558,19 +2656,34 @@ struct FakeWatcher {
 #[cfg(feature = "test-support")]
 impl Watcher for FakeWatcher {
     fn add(&self, path: &Path) -> Result<()> {
-        if path.starts_with(&self.original_path) {
+        let path = normalize_path(path);
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .create_file_before_watch_add(&path)?;
+
+        let mut prefixes = self.prefixes.lock();
+        if prefixes.iter().any(|prefix| path.starts_with(prefix)) {
             return Ok(());
         }
+
         self.fs_state
             .try_lock()
             .unwrap()
             .event_txs
-            .push((path.to_owned(), self.tx.clone()));
-        self.prefixes.lock().push(path.to_owned());
+            .push((path.clone(), self.tx.clone()));
+        prefixes.push(path);
         Ok(())
     }
 
-    fn remove(&self, _: &Path) -> Result<()> {
+    fn remove(&self, path: &Path) -> Result<()> {
+        let path = normalize_path(path);
+        self.prefixes.lock().retain(|prefix| prefix != &path);
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .event_txs
+            .retain(|(watched_path, _)| watched_path != &path);
         Ok(())
     }
 }
@@ -3018,13 +3131,12 @@ impl Fs for FakeFs {
         Arc<dyn Watcher>,
     ) {
         self.simulate_random_delay().await;
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let path = path.to_path_buf();
         self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();
         let watcher = Arc::new(FakeWatcher {
             tx,
-            original_path: path.to_owned(),
             fs_state: self.state.clone(),
             prefixes: Mutex::new(vec![path]),
         });
@@ -3080,8 +3192,12 @@ impl Fs for FakeFs {
         self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
-    async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(&self, _abs_work_directory: &Path, _repo_url: &str) -> Result<()> {
         anyhow::bail!("Git clone is not supported in fake Fs")
+    }
+
+    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
+        anyhow::bail!("Git config is not supported in fake Fs")
     }
 
     fn is_fake(&self) -> bool {

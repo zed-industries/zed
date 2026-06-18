@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, Window, actions};
+use gpui::{Context, TaskExt, Window, actions};
 use language::{AutoIndentMode, Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -146,6 +146,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
         vim.record_current_action(cx);
+        let original_selections =
+            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
         vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
@@ -155,7 +157,17 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
-        vim.visual_delete(false, window, cx);
+        let transaction_id = vim.visual_delete(false, window, cx);
+        if let (Some(original_selections), Some(transaction_id)) =
+            (original_selections, transaction_id)
+        {
+            let updated = vim.update_editor(cx, |_, editor, _| {
+                editor.modify_transaction_selection_history(transaction_id, |selections| {
+                    selections.0 = original_selections;
+                })
+            });
+            debug_assert_ne!(updated, Some(false));
+        }
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
     });
 

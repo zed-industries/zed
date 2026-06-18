@@ -5,14 +5,16 @@ use indoc::formatdoc;
 use indoc::indoc;
 use serde_json::json;
 
-use crate::tasks::workflows::steps::CheckoutStep;
-use crate::tasks::workflows::steps::TokenPermissions;
-use crate::tasks::workflows::steps::cache_rust_dependencies_namespace;
+use crate::tasks::workflows::steps::{
+    CheckoutStep, DownloadArtifactStep, IfNoFilesFound, ResultEncoding, TokenPermissions,
+    UploadArtifactStep, cache_rust_dependencies_namespace,
+};
 use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, RepositoryTarget, generate_token, named,
+        self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, RepositoryTarget, ZippyGitIdentity,
+        generate_token, named,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -34,6 +36,7 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
         removed_ci,
         removed_shared,
         &extra_context_input,
+        &filter_repos_input,
     );
     let create_tag = create_rollout_tag(&rollout_workflows, &filter_repos_input);
 
@@ -51,33 +54,31 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
 
 fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOutput, JobOutput) {
     fn get_repositories(filter_repos_input: &WorkflowInput) -> (Step<Use>, StepOutput) {
-        let step = named::uses("actions", "github-script", "f28e40c7f34bde8b3046d885e986cb6290c5673b")
+        let step: Step<Use> = steps::github_script(formatdoc! {r#"
+                const repos = await github.paginate(github.rest.repos.listForOrg, {{
+                    org: 'zed-extensions',
+                    type: 'public',
+                    per_page: 100,
+                }});
+
+                let filteredRepos = repos
+                    .filter(repo => !repo.archived)
+                    .map(repo => repo.name);
+
+                const filterInput = `{filter_repos_input}`.trim();
+                if (filterInput.length > 0) {{
+                    const allowedNames = filterInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                    filteredRepos = filteredRepos.filter(name => allowedNames.includes(name));
+                    console.log(`Filter applied. Matched ${{filteredRepos.length}} repos from ${{allowedNames.length}} requested.`);
+                }}
+
+                console.log(`Found ${{filteredRepos.length}} extension repos`);
+                return filteredRepos;
+            "#})
+            .result_encoding(ResultEncoding::Json)
+            .custom_name("get_repositories")
             .id("list-repos")
-            .add_with((
-                "script",
-                formatdoc! {r#"
-                    const repos = await github.paginate(github.rest.repos.listForOrg, {{
-                        org: 'zed-extensions',
-                        type: 'public',
-                        per_page: 100,
-                    }});
-
-                    let filteredRepos = repos
-                        .filter(repo => !repo.archived)
-                        .map(repo => repo.name);
-
-                    const filterInput = `{filter_repos_input}`.trim();
-                    if (filterInput.length > 0) {{
-                        const allowedNames = filterInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                        filteredRepos = filteredRepos.filter(name => allowedNames.includes(name));
-                        console.log(`Filter applied. Matched ${{filteredRepos.length}} repos from ${{allowedNames.length}} requested.`);
-                    }}
-
-                    console.log(`Found ${{filteredRepos.length}} extension repos`);
-                    return filteredRepos;
-                "#},
-            ))
-            .add_with(("result-encoding", "json"));
+            .into();
 
         let filtered_repos = StepOutput::new(&step, "result");
 
@@ -143,15 +144,9 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
         .add_env(("COMMIT_SHA", "${{ github.sha }}"))
     }
 
-    fn upload_workflow_files() -> Step<Use> {
-        named::uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", WORKFLOW_ARTIFACT_NAME))
-        .add_with(("path", "extensions/workflows/**/*.yml"))
-        .add_with(("if-no-files-found", "error"))
+    fn upload_workflow_files() -> UploadArtifactStep {
+        steps::upload_artifact(WORKFLOW_ARTIFACT_NAME, "extensions/workflows/**/*.yml")
+            .if_no_files_found(IfNoFilesFound::Error)
     }
 
     let (get_org_repositories, list_repos_output) = get_repositories(filter_repos_input);
@@ -192,6 +187,7 @@ fn rollout_workflows_to_extension(
     removed_ci: JobOutput,
     removed_shared: JobOutput,
     extra_context_input: &WorkflowInput,
+    filter_repos_input: &WorkflowInput,
 ) -> NamedJob {
     fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
         steps::checkout_repo()
@@ -201,14 +197,10 @@ fn rollout_workflows_to_extension(
             .with_path("extension")
     }
 
-    fn download_workflow_files() -> Step<Use> {
-        named::uses(
-            "actions",
-            "download-artifact",
-            "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
-        )
-        .add_with(("name", WORKFLOW_ARTIFACT_NAME))
-        .add_with(("path", "workflow-files"))
+    fn download_workflow_files() -> DownloadArtifactStep {
+        steps::download_artifact()
+            .artifact_name(WORKFLOW_ARTIFACT_NAME)
+            .path("workflow-files")
     }
 
     fn sync_workflow_files(removed_ci: JobOutput, removed_shared: JobOutput) -> Step<Run> {
@@ -259,6 +251,7 @@ fn rollout_workflows_to_extension(
         token: &StepOutput,
         short_sha: &StepOutput,
         context_input: &WorkflowInput,
+        filter_repos_input: &WorkflowInput,
     ) -> Step<Use> {
         let title = format!("Update CI workflows to `{short_sha}`");
 
@@ -270,29 +263,16 @@ fn rollout_workflows_to_extension(
         "#,
         };
 
-        named::uses(
-            "peter-evans",
-            "create-pull-request",
-            "98357b18bf14b5342f975ff684046ec3b2a07725",
-        )
-        .add_with(("path", "extension"))
-        .add_with(("title", title.clone()))
-        .add_with(("body", body))
-        .add_with(("commit-message", title))
-        .add_with(("branch", "update-workflows"))
-        .add_with((
-            "committer",
-            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-        ))
-        .add_with((
-            "author",
-            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-        ))
-        .add_with(("base", "main"))
-        .add_with(("delete-branch", true))
-        .add_with(("token", token.to_string()))
-        .add_with(("sign-commits", true))
-        .id("create-pr")
+        let pr_step: Step<Use> = steps::CreatePrStep::new(title, "update-workflows", token)
+            .with_body(body)
+            .with_path("extension")
+            // Save my inbox from exploding on rollout
+            .with_assignee(format!(
+                "${{{{ {repos_expr} != '' && github.actor || '' }}}}",
+                repos_expr = filter_repos_input.expr()
+            ))
+            .into();
+        pr_step.id("create-pr")
     }
 
     fn enable_auto_merge(token: &StepOutput) -> Step<gh_workflow::Run> {
@@ -345,7 +325,7 @@ fn rollout_workflows_to_extension(
         .add_step(download_workflow_files())
         .add_step(sync_workflow_files(removed_ci, removed_shared))
         .add_step(calculate_short_sha)
-        .add_step(create_pull_request(&token, &short_sha, extra_context_input))
+        .add_step(create_pull_request(&token, &short_sha, extra_context_input, filter_repos_input))
         .add_step(enable_auto_merge(&token));
 
     named::job(job)
@@ -369,13 +349,6 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
         "#})
     }
 
-    fn configure_git() -> Step<Run> {
-        named::bash(indoc! {r#"
-            git config user.name "zed-zippy[bot]"
-            git config user.email "234243425+zed-zippy[bot]@users.noreply.github.com"
-        "#})
-    }
-
     let (authenticate, token) =
         generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
             .for_repository(RepositoryTarget::current())
@@ -392,8 +365,7 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
         .timeout_minutes(1u32)
         .add_step(authenticate)
         .add_step(checkout_zed_repo(&token))
-        .add_step(configure_git())
-        .add_step(update_rollout_tag());
+        .add_step(update_rollout_tag().with_zippy_git_identity());
 
     named::job(job)
 }

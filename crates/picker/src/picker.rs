@@ -47,6 +47,12 @@ pub enum Direction {
     Down,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollBehavior {
+    RevealSelected,
+    PreserveOffset,
+}
+
 actions!(
     picker,
     [
@@ -888,9 +894,19 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
+    }
+
+    pub fn update_matches_with_options(
+        &mut self,
+        query: String,
+        scroll_behavior: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
-        self.matches_updated(window, cx);
+        self.matches_updated(scroll_behavior, window, cx);
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -910,19 +926,40 @@ impl<D: PickerDelegate> Picker<D> {
                 })?;
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.matches_updated(window, cx);
+                    this.matches_updated(scroll_behavior, window, cx);
                 })
             }),
         });
     }
 
-    fn matches_updated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let ElementContainer::List(state) = &mut self.element_container {
-            state.reset(self.delegate.match_count());
+    fn matches_updated(
+        &mut self,
+        scroll_behavior: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let match_count = self.delegate.match_count();
+        match &mut self.element_container {
+            ElementContainer::List(state) => match scroll_behavior {
+                ScrollBehavior::RevealSelected => {
+                    state.reset(match_count);
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::PreserveOffset => {
+                    let offset = state.logical_scroll_top();
+                    state.reset(match_count);
+                    state.scroll_to(offset);
+                }
+            },
+            ElementContainer::UniformList(_) => match scroll_behavior {
+                ScrollBehavior::RevealSelected => {
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::PreserveOffset => {}
+            },
         }
-
-        let index = self.delegate.selected_index();
-        self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
             && let Some(preview) = &mut self.preview
@@ -958,6 +995,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        match &self.element_container {
+            ElementContainer::List(state) => state.is_scrolled_to_end(),
+            ElementContainer::UniformList(scroll_handle) => scroll_handle.is_scrolled_to_end(),
+        }
+    }
+
     fn render_element(
         &self,
         window: &mut Window,
@@ -965,7 +1009,8 @@ impl<D: PickerDelegate> Picker<D> {
         ix: usize,
     ) -> impl IntoElement + use<D> {
         let item_bounds = self.item_bounds.clone();
-        let selectable = self.delegate.can_select(ix, window, cx);
+        let selectable =
+            ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
         div()
             .id(("item", ix))
@@ -1058,8 +1103,8 @@ impl<D: PickerDelegate> Picker<D> {
                 }),
             )
             .with_sizing_behavior(sizing_behavior)
-            .flex_grow()
-            .py_2()
+            .flex_grow_1()
+            .py(DynamicSpacing::Base04.rems(cx))
             .into_any_element(),
         }
     }

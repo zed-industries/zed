@@ -56,6 +56,14 @@ pub struct TestServer {
     pub api_key: String,
     pub secret_key: String,
     rooms: Mutex<HashMap<String, TestServerRoom>>,
+    revoked_identities: Mutex<HashSet<String>>,
+    /// Log of `(room, identity)` pairs passed to `remove_participant`, for
+    /// tests that need to assert whether a participant was forcibly removed.
+    removed_participants: Mutex<Vec<(String, String)>>,
+    /// When set, `remove_participant` revokes the identity's tokens, mirroring
+    /// LiveKit Cloud (whose docs state removal "immediately revokes their
+    /// access token"). Off by default so unrelated tests are unaffected.
+    revoke_tokens_on_removal: AtomicBool,
     executor: BackgroundExecutor,
 }
 
@@ -73,6 +81,9 @@ impl TestServer {
                 api_key,
                 secret_key,
                 rooms: Default::default(),
+                revoked_identities: Default::default(),
+                removed_participants: Default::default(),
+                revoke_tokens_on_removal: AtomicBool::new(false),
                 executor,
             });
             e.insert(server.clone());
@@ -104,6 +115,20 @@ impl TestServer {
         }
     }
 
+    /// Makes `remove_participant` revoke the removed identity's tokens, as
+    /// LiveKit Cloud does. Used to reproduce the revoked-token failure.
+    pub fn set_revoke_tokens_on_removal(&self, revoke: bool) {
+        self.revoke_tokens_on_removal.store(revoke, SeqCst);
+    }
+
+    /// Whether `remove_participant` was ever called for the given identity.
+    pub fn participant_was_removed(&self, identity: &str) -> bool {
+        self.removed_participants
+            .lock()
+            .iter()
+            .any(|(_, removed_identity)| removed_identity == identity)
+    }
+
     pub async fn create_room(&self, room: String) -> Result<()> {
         self.simulate_random_delay().await;
 
@@ -132,6 +157,13 @@ impl TestServer {
         let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
+
+        if self.revoked_identities.lock().contains(&identity.0) {
+            anyhow::bail!(
+                "signal failure: client error: 401 Unauthorized - invalid token: revoked"
+            );
+        }
+
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 
@@ -244,6 +276,14 @@ impl TestServer {
         identity: ParticipantIdentity,
     ) -> Result<()> {
         self.simulate_random_delay().await;
+
+        self.removed_participants
+            .lock()
+            .push((room_name.clone(), identity.0.clone()));
+
+        if self.revoke_tokens_on_removal.load(SeqCst) {
+            self.revoked_identities.lock().insert(identity.0.clone());
+        }
 
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
@@ -420,7 +460,80 @@ impl TestServer {
         Ok(sid)
     }
 
-    pub(crate) async fn unpublish_track(&self, _token: String, _track: &TrackSid) -> Result<()> {
+    pub(crate) async fn unpublish_track(&self, token: String, track_sid: &TrackSid) -> Result<()> {
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
+        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
+        let room_name = claims.video.room.unwrap();
+
+        let mut server_rooms = self.rooms.lock();
+        let room = server_rooms
+            .get_mut(&*room_name)
+            .with_context(|| format!("room {room_name} does not exist"))?;
+
+        if let Some(video_to_unpublish) = room.video_tracks.iter().position(|t| t.sid == *track_sid)
+        {
+            let video_to_unpublish = room.video_tracks.remove(video_to_unpublish);
+            for client_room in room
+                .client_rooms
+                .iter()
+                .filter(|(id, _)| **id != identity)
+                .map(|(_, room)| room)
+            {
+                let track = RemoteTrack::Video(RemoteVideoTrack {
+                    server_track: video_to_unpublish.clone(),
+                    _room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: track_sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                let event = RoomEvent::TrackUnsubscribed {
+                    track,
+                    publication,
+                    participant,
+                };
+
+                client_room.0.lock().updates_tx.blocking_send(event).ok();
+            }
+        }
+
+        if let Some(audio_to_unpublish) = room.audio_tracks.iter().position(|t| t.sid == *track_sid)
+        {
+            let audio_to_unpublish = room.audio_tracks.remove(audio_to_unpublish);
+            for client_room in room
+                .client_rooms
+                .iter()
+                .filter(|(id, _)| **id != identity)
+                .map(|(_, room)| room)
+            {
+                let track = RemoteTrack::Audio(RemoteAudioTrack {
+                    server_track: audio_to_unpublish.clone(),
+                    room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: track_sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                let event = RoomEvent::TrackUnsubscribed {
+                    track,
+                    publication,
+                    participant,
+                };
+
+                client_room.0.lock().updates_tx.blocking_send(event).ok();
+            }
+        }
+
         Ok(())
     }
 

@@ -9,30 +9,6 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
-/// Where new threads should start by default.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum NewThreadLocation {
-    /// Start threads in the current project.
-    #[default]
-    LocalProject,
-    /// Start threads in a new worktree.
-    NewWorktree,
-}
-
 /// Where to position the threads sidebar.
 #[derive(
     Clone,
@@ -95,6 +71,123 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// Threshold at which agent auto-compaction runs. See
+/// [`AutoCompactSettingsContent::threshold`] for the accepted formats.
+///
+/// The canonical textual form is stored verbatim so it can round-trip through
+/// the settings UI; it is serialized back as a JSON string for percentages and
+/// as a JSON integer for token counts.
+#[derive(Clone, Debug, PartialEq, Eq, MergeFrom)]
+pub struct AutoCompactThreshold(pub String);
+
+impl From<String> for AutoCompactThreshold {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<AutoCompactThreshold> for String {
+    fn from(value: AutoCompactThreshold) -> Self {
+        value.0
+    }
+}
+
+impl AsRef<str> for AutoCompactThreshold {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for AutoCompactThreshold {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.ends_with('%') {
+            serializer.serialize_str(&self.0)
+        } else if let Ok(tokens) = self.0.parse::<i64>() {
+            serializer.serialize_i64(tokens)
+        } else {
+            serializer.serialize_str(&self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AutoCompactThreshold {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ThresholdVisitor;
+
+        impl serde::de::Visitor<'_> for ThresholdVisitor {
+            type Value = AutoCompactThreshold;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter
+                    .write_str("a percentage string like \"90%\" or an integer number of tokens")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_owned()))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+        }
+
+        deserializer.deserialize_any(ThresholdVisitor)
+    }
+}
+
+impl JsonSchema for AutoCompactThreshold {
+    fn schema_name() -> Cow<'static, str> {
+        "AutoCompactThreshold".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "string",
+                    "pattern": "^\\d+(\\.\\d+)?%$"
+                },
+                {
+                    "type": "integer"
+                }
+            ]
+        })
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct AutoCompactSettingsContent {
+    /// Whether to automatically compact the agent's context when it grows too
+    /// large, summarizing earlier messages to free up room in the model's
+    /// context window.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// The threshold at which auto-compaction runs. This is one of:
+    ///
+    /// - A percentage string ending in `%`, e.g. `"90%"`, measured against the
+    ///   model's context window. `"90%"` compacts once the context is 90% full.
+    /// - A positive integer: compaction runs once that many tokens have been
+    ///   used. For example, `100000` compacts after 100,000 tokens are used.
+    /// - A negative integer: compaction runs once that many tokens remain in
+    ///   the context window. For example, `-20000` compacts once there are
+    ///   fewer than 20,000 tokens of headroom left in the context window.
+    ///
+    /// `0` is not a valid threshold.
+    ///
+    /// Default: "90%"
+    pub threshold: Option<AutoCompactThreshold>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -108,7 +201,7 @@ pub struct AgentSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the agent panel.
     ///
-    /// Default: right
+    /// Default: left (Agentic layout), right (Classic layout)
     pub dock: Option<DockPosition>,
     /// Whether the agent panel should use flexible (proportional) sizing.
     ///
@@ -142,6 +235,8 @@ pub struct AgentSettingsContent {
     pub max_content_width: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
+    pub subagent_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -153,6 +248,9 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Custom instructions to include in the prompt when generating git commit messages.
+    /// Applied in addition to any project rules files (such as `.rules` or `AGENTS.md`).
+    pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
@@ -161,10 +259,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: write
     pub default_profile: Option<Arc<str>>,
-    /// Where new threads should start by default.
-    ///
-    /// Default: "local_project"
-    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -177,7 +271,7 @@ pub struct AgentSettingsContent {
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
-    /// Default: true
+    /// Default: false
     pub single_file_review: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list
@@ -188,6 +282,10 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
+    /// Settings for automatic agent context compaction, which summarizes
+    /// earlier messages to free up room in the model's context window once the
+    /// context grows too large.
+    pub auto_compact: Option<AutoCompactSettingsContent>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true
@@ -200,6 +298,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    /// The command is sent to the shell as if typed, so it is interpreted by your
+    /// configured shell (including on Windows and remote/WSL projects).
+    /// An empty string disables this behavior.
+    ///
+    /// Default: ""
+    pub terminal_init_command: Option<String>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
     /// Default: automatic
@@ -237,6 +342,11 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+
+    /// Persistent sandbox permission grants for agent-run terminal commands.
+    /// These are populated when choosing "Allow always" from a sandbox
+    /// escalation prompt.
+    pub sandbox_permissions: Option<SandboxPermissionsContent>,
 }
 
 impl AgentSettingsContent {
@@ -268,10 +378,6 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
-    }
-
-    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
-        self.new_thread_location = Some(value);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
@@ -342,6 +448,58 @@ impl AgentSettingsContent {
                 case_sensitive: None,
             });
         }
+    }
+
+    pub fn allow_sandbox_all_hosts(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_all_hosts = Some(true);
+    }
+
+    /// The persisted sandbox network host patterns, as written (callers own
+    /// parsing/validation).
+    pub fn sandbox_network_hosts(&self) -> &[String] {
+        self.sandbox_permissions
+            .as_ref()
+            .and_then(|permissions| permissions.network_hosts.as_ref())
+            .map(|hosts| hosts.0.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// Replace the persisted sandbox network host patterns. Callers compute
+    /// the new list (typically the old list plus newly granted hosts, pruned
+    /// of entries subsumed by wildcards) rather than appending blindly.
+    pub fn set_sandbox_network_hosts(&mut self, hosts: Vec<String>) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .network_hosts = Some(ExtendingVec(hosts));
+    }
+
+    pub fn allow_sandbox_fs_write_all(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_fs_write_all = Some(true);
+    }
+
+    pub fn allow_sandbox_unsandboxed(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_unsandboxed = Some(true);
+    }
+
+    pub fn disable_sandbox(&mut self) {
+        self.sandbox_permissions.get_or_insert_default().disabled = Some(true);
+    }
+
+    pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
+        let write_paths = &mut self
+            .sandbox_permissions
+            .get_or_insert_default()
+            .write_paths
+            .get_or_insert_default()
+            .0;
+
+        util::paths::insert_subtree(write_paths, path);
     }
 }
 
@@ -461,8 +619,8 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "opencode",
                         "openrouter",
-                        "vercel",
                         "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"
@@ -525,19 +683,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -553,46 +698,8 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
-    Extension {
-        /// Additional environment variables to pass to the agent.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        env: HashMap<String, String>,
-        /// The default mode to use for this agent.
-        ///
-        /// Note: Not only all agents support modes.
-        ///
-        /// Default: None
-        default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
-        /// Default values for session config options.
-        ///
-        /// This is a map from config option ID to value ID.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
-        /// Favorited values for session config options.
-        ///
-        /// This is a map from config option ID to a list of favorited value IDs.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        favorite_config_option_values: HashMap<String, Vec<String>>,
-    },
+    // Used for the ACP extension migration
+    #[serde(alias = "extension")]
     Registry {
         /// Additional environment variables to pass to the agent.
         ///
@@ -605,19 +712,6 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -633,6 +727,41 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SandboxPermissionsContent {
+    /// Whether sandboxed terminal commands may always reach any host over the
+    /// network without prompting.
+    /// Default: false
+    pub allow_all_hosts: Option<bool>,
+
+    /// Hosts that sandboxed terminal commands may always reach over the
+    /// network without prompting. Each entry is an exact hostname
+    /// (`github.com`) or a leading-`*.` subdomain wildcard (`*.npmjs.org`).
+    /// Default: []
+    pub network_hosts: Option<ExtendingVec<String>>,
+
+    /// Whether sandboxed terminal commands may always write anywhere on the
+    /// filesystem without prompting.
+    /// Default: false
+    pub allow_fs_write_all: Option<bool>,
+
+    /// Whether terminal commands may always run outside the sandbox without
+    /// prompting when they request `unsandboxed: true`.
+    /// Default: false
+    pub allow_unsandboxed: Option<bool>,
+
+    /// Whether terminal sandboxing is turned off entirely, so agent terminal
+    /// commands always run outside the sandbox.
+    /// Default: false
+    pub disabled: Option<bool>,
+
+    /// Directory subtrees that sandboxed terminal commands may always write
+    /// to without prompting. Paths written by Zed are absolute.
+    /// Default: []
+    pub write_paths: Option<ExtendingVec<PathBuf>>,
 }
 
 #[with_fallible_options]
@@ -899,5 +1028,68 @@ mod tests {
         let always_deny = terminal_rules.always_deny.as_ref().unwrap();
         assert_eq!(always_deny.0.len(), 1);
         assert_eq!(always_deny.0[0].pattern, "^rm\\s");
+    }
+
+    #[test]
+    fn test_allow_sandbox_permissions_create_structure() {
+        let mut settings = AgentSettingsContent::default();
+        assert!(settings.sandbox_permissions.is_none());
+
+        settings.allow_sandbox_all_hosts();
+        assert_eq!(settings.sandbox_network_hosts(), &[] as &[String]);
+        settings
+            .set_sandbox_network_hosts(vec!["github.com".to_string(), "*.npmjs.org".to_string()]);
+        assert_eq!(
+            settings.sandbox_network_hosts(),
+            &["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
+        settings.allow_sandbox_fs_write_all();
+        settings.allow_sandbox_unsandboxed();
+        settings.disable_sandbox();
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+
+        let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
+        assert_eq!(sandbox_permissions.allow_all_hosts, Some(true));
+        assert_eq!(
+            sandbox_permissions
+                .network_hosts
+                .as_ref()
+                .unwrap()
+                .0
+                .as_slice(),
+            &["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
+        assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
+        assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
+        assert_eq!(sandbox_permissions.disabled, Some(true));
+        assert_eq!(
+            sandbox_permissions
+                .write_paths
+                .as_ref()
+                .unwrap()
+                .0
+                .as_slice(),
+            &[PathBuf::from("/tmp/build")]
+        );
+    }
+
+    #[test]
+    fn test_add_sandbox_write_path_prunes_redundant_paths() {
+        let mut settings = AgentSettingsContent::default();
+
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/cache"));
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/output"));
+
+        let write_paths = settings
+            .sandbox_permissions
+            .as_ref()
+            .unwrap()
+            .write_paths
+            .as_ref()
+            .unwrap()
+            .0
+            .as_slice();
+        assert_eq!(write_paths, &[PathBuf::from("/tmp/build")]);
     }
 }

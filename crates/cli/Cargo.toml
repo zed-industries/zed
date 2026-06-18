@@ -52,3 +52,6 @@ plist = "1.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+
+[build-dependencies]
+windows_resources = { path = "../windows_resources" }

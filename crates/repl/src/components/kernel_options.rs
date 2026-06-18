@@ -366,7 +366,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                 .child(icon.color(Color::Default).size(IconSize::Medium))
                                 .child(
                                     v_flex()
-                                        .flex_grow()
+                                        .flex_grow_1()
                                         .overflow_x_hidden()
                                         .gap_0p5()
                                         .child(
@@ -375,7 +375,7 @@ impl PickerDelegate for KernelPickerDelegate {
                                                 .child(
                                                     div()
                                                         .overflow_x_hidden()
-                                                        .flex_shrink()
+                                                        .flex_shrink_1()
                                                         .text_ellipsis()
                                                         .child(
                                                             Label::new(spec.name())

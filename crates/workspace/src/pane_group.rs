@@ -408,7 +408,7 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                                 ))
                             })
                         } else {
-                            leader_join_data = Some((leader_project_id, leader.user.id));
+                            leader_join_data = Some((leader_project_id, leader.user.legacy_id));
                             Some(Label::new(format!(
                                 "Follow {} to their active project",
                                 leader.user.github_login,

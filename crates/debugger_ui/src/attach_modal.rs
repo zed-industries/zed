@@ -1,7 +1,7 @@
 use dap::{DapRegistry, DebugRequest};
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render, Task};
+use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, TaskExt};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use project::Project;
