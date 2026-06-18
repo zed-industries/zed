@@ -542,6 +542,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-p": "text_finder::ToProjectSearch",
+      "cmd-j": "pane::SplitDown",
+      "cmd-k": "pane::SplitUp",
+      "cmd-h": "pane::SplitLeft",
+      "cmd-l": "pane::SplitRight",
     },
   },
   {
@@ -1227,8 +1231,8 @@
     "context": "FileFinder || (FileFinder > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-a": "file_finder::ToggleSplitMenu",
-      "cmd-shift-i": "file_finder::ToggleFilterMenu",
+      "cmd-shift-a": "picker::ToggleLayout",
+      "cmd-shift-i": "search::ToggleIncludeIgnored",
     },
   },
   {

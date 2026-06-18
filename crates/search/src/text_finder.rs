@@ -129,6 +129,53 @@ impl TextFinder {
         .detach();
     }
 
+    fn split_left(
+        &mut self,
+        _: &workspace::pane::SplitLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_in_split(workspace::SplitDirection::Left, window, cx);
+    }
+
+    fn split_right(
+        &mut self,
+        _: &workspace::pane::SplitRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_in_split(workspace::SplitDirection::Right, window, cx);
+    }
+
+    fn split_up(
+        &mut self,
+        _: &workspace::pane::SplitUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_in_split(workspace::SplitDirection::Up, window, cx);
+    }
+
+    fn split_down(
+        &mut self,
+        _: &workspace::pane::SplitDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_in_split(workspace::SplitDirection::Down, window, cx);
+    }
+
+    fn open_in_split(
+        &mut self,
+        direction: workspace::SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.open_in_split(direction, window, cx);
+        });
+    }
+
     fn weak_workspace(&self, cx: &App) -> WeakEntity<Workspace> {
         let workspace = WeakEntity::clone(
             &self

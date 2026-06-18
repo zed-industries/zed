@@ -480,6 +480,10 @@
     "context": "TextPicker",
     "bindings": {
       "ctrl-alt-p": "text_finder::ToProjectSearch",
+      "ctrl-j": "pane::SplitDown",
+      "ctrl-k": "pane::SplitUp",
+      "ctrl-h": "pane::SplitLeft",
+      "ctrl-l": "pane::SplitRight",
     },
   },
   {
@@ -1164,8 +1168,8 @@
     "context": "FileFinder || (FileFinder > Picker > Editor)",
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
-      "ctrl-shift-a": "file_finder::ToggleSplitMenu",
-      "ctrl-shift-i": "file_finder::ToggleFilterMenu",
+      "ctrl-shift-a": "picker::ToggleLayout",
+      "ctrl-shift-i": "search::ToggleIncludeIgnored",
     },
   },
   {

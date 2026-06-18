@@ -8,7 +8,8 @@ use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task, TextStyle,
+    AnyElement, AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task,
+    TextStyle,
 };
 use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
@@ -20,17 +21,20 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, App, Color, Context, Div, FluentBuilder, Icon, InteractiveElement, ListItem,
-    ListItemSpacing, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    StyledTypography, Toggleable, Tooltip, Window, div, h_flex, relative,
+    ActiveTheme, App, ButtonCommon, Color, Context, ContextMenu, Div, FluentBuilder, Icon,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, ListItem,
+    ListItemSpacing, ParentElement, PopoverMenu, PopoverMenuHandle, SharedString,
+    StatefulInteractiveElement, Styled, StyledTypography, Toggleable, Tooltip, Window, div, h_flex,
+    relative,
 };
 use util::ResultExt;
+use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
 
 use super::SearchMatch;
 use crate::project_search::{ActiveSettings, ProjectSearch};
-use crate::{ProjectSearchView, SearchOptions};
+use crate::{ProjectSearchView, SearchOption, SearchOptions};
 
 /// The text_finder is a minimal modal interface to the project_search. It is
 /// targeted towards search for exploration. It can also be used as a filter
@@ -76,6 +80,9 @@ pub struct Delegate {
     /// picker via [`PickerDelegate::set_horizontal_preview`], because the
     /// delegate cannot read the picker entity while rendering.
     pub(crate) preview_layout_is_horizontal: bool,
+    /// Handle for the search-options filter menu, so the picker stays open while
+    /// it has focus.
+    pub(crate) filter_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 async fn get_ongoing_search(
@@ -300,6 +307,7 @@ impl Delegate {
                 in_progress_search,
                 unique_files: HashSet::default(),
                 preview_layout_is_horizontal: false,
+                filter_menu_handle: PopoverMenuHandle::default(),
             });
 
             this
@@ -327,6 +335,41 @@ impl Delegate {
 
     pub(crate) fn project<'a>(&self, cx: &'a App) -> &'a Entity<Project> {
         &self.project_search_view.read(cx).entity.read(cx).project
+    }
+
+    /// Opens the selected match in a new split in `direction`, then dismisses.
+    pub(crate) fn open_in_split(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(selected_match) = self.matches.get(self.selected_index) else {
+            return;
+        };
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+            return;
+        };
+        let path = selected_match.path.clone();
+        let line_number = selected_match.line_number;
+        let open_task = workspace.update(cx, |workspace, cx| {
+            workspace.split_path_preview(path, false, Some(direction), window, cx)
+        });
+        let row = line_number.saturating_sub(1);
+        cx.spawn_in(window, async move |_, cx| {
+            let item = open_task.await.log_err()?;
+            if let Some(active_editor) = item.downcast::<editor::Editor>() {
+                active_editor
+                    .downgrade()
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(text::Point::new(row, 0), window, cx);
+                    })
+                    .log_err();
+            }
+            Some(())
+        })
+        .detach();
+        cx.emit(DismissEvent);
     }
 }
 
@@ -429,6 +472,110 @@ impl PickerDelegate for Delegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search all files...".into()
+    }
+
+    fn has_another_open_menu(&self, window: &Window, cx: &App) -> bool {
+        self.filter_menu_handle.is_focused(window, cx) || self.filter_menu_handle.is_deployed()
+    }
+
+    fn search_filter(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let active = self.search_options;
+        let focus_handle = self.focus_handle.clone();
+        let any_active = active.intersects(
+            SearchOptions::CASE_SENSITIVE
+                | SearchOptions::WHOLE_WORD
+                | SearchOptions::REGEX
+                | SearchOptions::INCLUDE_IGNORED,
+        );
+        Some(
+            PopoverMenu::new("text-finder-filter-menu")
+                .with_handle(self.filter_menu_handle.clone())
+                .attach(gpui::Anchor::BottomRight)
+                .anchor(gpui::Anchor::TopLeft)
+                .trigger(
+                    IconButton::new("text-finder-filter", IconName::Sliders)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(any_active)
+                        .tooltip(Tooltip::text("Search Options")),
+                )
+                .menu({
+                    let picker = cx.entity();
+                    move |window, cx| {
+                        let picker = picker.clone();
+                        let focus_handle = focus_handle.clone();
+                        Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                            menu = menu.context(focus_handle.clone());
+                            for option in [
+                                SearchOption::CaseSensitive,
+                                SearchOption::WholeWord,
+                                SearchOption::Regex,
+                                SearchOption::IncludeIgnored,
+                            ] {
+                                let options = option.as_options();
+                                let is_active = active.contains(options);
+                                let picker = picker.clone();
+                                menu = menu.custom_entry(
+                                    move |_window, _cx| {
+                                        let color = if is_active {
+                                            Color::Accent
+                                        } else {
+                                            Color::Default
+                                        };
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .child(
+                                                Icon::new(option.icon())
+                                                    .size(IconSize::Small)
+                                                    .color(color),
+                                            )
+                                            .child(Label::new(option.label()).color(color))
+                                            .into_any_element()
+                                    },
+                                    move |window, cx| {
+                                        picker.update(cx, |picker, cx| {
+                                            picker.delegate.search_options.toggle(options);
+                                            picker.refresh(window, cx);
+                                        });
+                                    },
+                                );
+                            }
+                            menu
+                        }))
+                    }
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn actions_menu(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Vec<picker::PickerAction> {
+        use gpui::Action as _;
+        vec![
+            picker::PickerAction::header("Split…"),
+            picker::PickerAction::button(
+                "Left",
+                workspace::pane::SplitLeft::default().boxed_clone(),
+            ),
+            picker::PickerAction::button(
+                "Right",
+                workspace::pane::SplitRight::default().boxed_clone(),
+            ),
+            picker::PickerAction::button("Up", workspace::pane::SplitUp::default().boxed_clone()),
+            picker::PickerAction::button(
+                "Down",
+                workspace::pane::SplitDown::default().boxed_clone(),
+            ),
+            picker::PickerAction::separator(),
+            picker::PickerAction::button("Open File", menu::Confirm.boxed_clone()),
+        ]
     }
 
     fn match_count(&self) -> usize {
@@ -592,10 +739,6 @@ impl PickerDelegate for Delegate {
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         cx.emit(DismissEvent);
-    }
-
-    fn preview_layout_changed(&mut self, layout_is_horizontal: bool) {
-        self.preview_layout_is_horizontal = layout_is_horizontal
     }
 
     fn try_get_match(&self, _cx: &App) -> Option<picker::PreviewUpdate> {

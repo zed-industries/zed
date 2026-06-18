@@ -1,17 +1,22 @@
-use gpui::{canvas, px};
+use std::rc::Rc;
+
+use gpui::{AnyElement, Focusable, canvas, px};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
-    InteractiveElement, IntoElement, Label, LabelCommon, ListItem, ListItemSpacing, ParentElement,
-    Render, ScrollAxes, Scrollbars, Styled, StyledExt, Window, WithScrollbar, div, h_flex,
-    rems_from_px, utils::WithRemSize, v_flex,
+    ActiveTheme, ButtonCommon, Clickable, Color, Context, ContextMenu, Disableable,
+    DocumentationAside, DocumentationSide, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, IntoElement, KeyBinding, Label, LabelCommon, LabelSize, ListItem,
+    ListItemSpacing, ParentElement, PopoverMenu, Render, ScrollAxes, Scrollbars, SelectableButton,
+    Styled, StyledExt, Toggleable, Tooltip, Window, WithScrollbar, div, h_flex, rems_from_px,
+    utils::WithRemSize, v_flex,
 };
 
 use crate::persistence;
 use crate::shape::Shape;
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, ToggleActionsMenu,
+    ToggleLayout,
     head::Head,
     preview::Layout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
@@ -132,22 +137,20 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
             .on_action(cx.listener(Self::toggle_layout))
+            .on_action(cx.listener(Self::set_preview_right))
+            .on_action(cx.listener(Self::set_preview_below))
+            .on_action(cx.listener(Self::set_preview_hidden))
+            .on_action(cx.listener(Self::toggle_actions_menu))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {
-                        Some(
-                            h_flex()
-                                .w_full()
-                                .child(div().flex_1().child(self.delegate.render_editor(
-                                    &editor.clone(),
-                                    window,
-                                    cx,
-                                )))
-                                .when_some(
-                                    self.render_header_controls(window, cx),
-                                    |this, controls| this.child(div().pr_2().child(controls)),
-                                ),
-                        )
+                        Some(h_flex().w_full().child(
+                            div().flex_1().child(self.delegate.render_editor(
+                                &editor.clone(),
+                                window,
+                                cx,
+                            )),
+                        ))
                     } else {
                         None
                     }
@@ -204,7 +207,7 @@ impl<D: PickerDelegate> Picker<D> {
                     )
                 })
             })
-            .children(self.delegate.render_footer(window, cx))
+            .children(self.render_footer(window, cx))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::End {
@@ -278,6 +281,126 @@ impl<D: PickerDelegate> Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
+    fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(footer) = self.delegate.render_footer(window, cx) {
+            return Some(footer);
+        }
+        self.render_default_footer(window, cx)
+    }
+
+    fn render_default_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let actions = self.delegate.actions_menu(window, cx);
+        if self.preview.is_none() && actions.is_empty() {
+            return None;
+        }
+
+        let focus_handle = self.focus_handle(cx);
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .justify_between()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(div().when(self.preview.is_some(), |this| {
+                    this.child(self.render_preview_controls(window, cx))
+                }))
+                .when(!actions.is_empty(), |this| {
+                    this.child(self.render_actions_button(actions.into(), focus_handle, window, cx))
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_preview_controls(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+        let current = self.preview_layout().unwrap_or(Layout::Hidden);
+        let preview_visible = current != Layout::Hidden;
+
+        h_flex()
+            .gap_1()
+            .child(
+                ui::ButtonLike::new("picker-preview-toggle")
+                    .child(
+                        Label::new("Preview")
+                            .color(if preview_visible {
+                                Color::Accent
+                            } else {
+                                Color::Default
+                            })
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        KeyBinding::for_action_in(&ToggleLayout, &focus_handle, cx)
+                            .size(rems_from_px(12.)),
+                    )
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
+                    ),
+            )
+            .child(
+                IconButton::new("picker-preview-right", IconName::DiffSplit)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(current == Layout::Right)
+                    .tooltip(Tooltip::text("Preview to the Right"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_preview_layout(Layout::Right, window, cx)
+                    })),
+            )
+            .child(
+                IconButton::new("picker-preview-below", IconName::DiffUnified)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(current == Layout::Below)
+                    .tooltip(Tooltip::text("Preview Below"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_preview_layout(Layout::Below, window, cx)
+                    })),
+            )
+    }
+
+    fn render_actions_button(
+        &self,
+        actions: Rc<[crate::PickerAction]>,
+        focus_handle: gpui::FocusHandle,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let _ = cx;
+        PopoverMenu::new("picker-actions-menu")
+            .with_handle(self.actions_menu_handle.clone())
+            .attach(gpui::Anchor::TopRight)
+            .anchor(gpui::Anchor::BottomRight)
+            .trigger(
+                ui::ButtonLike::new("picker-actions-trigger")
+                    .child(Label::new("Actions…").size(LabelSize::Small))
+                    .child(
+                        KeyBinding::for_action_in(&ToggleActionsMenu, &focus_handle, cx)
+                            .size(rems_from_px(12.)),
+                    )
+                    .selected_style(ui::ButtonStyle::Tinted(ui::TintColor::Accent)),
+            )
+            .menu(move |window, cx| {
+                let actions = Rc::clone(&actions);
+                let focus_handle = focus_handle.clone();
+                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    menu = menu.context(focus_handle.clone());
+                    for item in actions.iter() {
+                        menu = item.add_to_menu(menu, &focus_handle);
+                    }
+                    menu
+                }))
+            })
+    }
+
     fn render_with_preview_below(
         &self,
         preview: &Preview,

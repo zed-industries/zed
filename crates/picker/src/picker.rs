@@ -12,8 +12,8 @@ use serde::Deserialize;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
-use ui::{Divider, DocumentationAside, prelude::*, v_flex};
-use ui_input::{ErasedEditor, ErasedEditorEvent};
+use ui::{ContextMenu, Divider, DocumentationAside, PopoverMenuHandle, prelude::*, v_flex};
+use ui_input::ErasedEditorEvent;
 use util::ResultExt;
 use workspace::ModalView;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -32,6 +32,7 @@ pub use preview::Preview;
 pub use preview::PreviewHighlight;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
+pub use ui_input::ErasedEditor;
 
 enum ElementContainer {
     List(ListState),
@@ -50,8 +51,14 @@ actions!(
         ConfirmCompletion,
         /// Switches between no preview, preview below, and preview right.
         ToggleLayout,
-        /// TODO!(yara)
-        ToggleSplitMenu,
+        /// Shows the preview to the right of the results.
+        SetPreviewRight,
+        /// Shows the preview below the results.
+        SetPreviewBelow,
+        /// Hides the preview.
+        SetPreviewHidden,
+        /// Opens the footer's actions menu.
+        ToggleActionsMenu,
         /// Take the picker's content and open it in a multibuffer
         ToMultiBuffer,
     ]
@@ -95,6 +102,9 @@ pub struct Picker<D: PickerDelegate> {
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
     shape_loaded_from_persistence: bool,
+    /// Handle for the default footer's Actions popover menu. Used to keep the
+    /// picker open while that menu has focus.
+    actions_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -104,6 +114,75 @@ pub enum PickerEditorPosition {
     Start,
     /// Render the editor at the end of the picker. Usually the bottom
     End,
+}
+
+/// Line in the Actions menu on the default footer.
+pub enum PickerAction {
+    Header(SharedString),
+    Separator,
+    Entry {
+        label: SharedString,
+        action: Box<dyn Action>,
+        toggled: Option<bool>,
+    },
+}
+
+impl PickerAction {
+    pub fn button(label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+        Self::Entry {
+            label: label.into(),
+            action,
+            toggled: None,
+        }
+    }
+
+    /// A non-clickable section title.
+    pub fn header(label: impl Into<SharedString>) -> Self {
+        Self::Header(label.into())
+    }
+
+    /// A divider between groups of entries.
+    pub fn separator() -> Self {
+        Self::Separator
+    }
+
+    /// Make it possible to turn the previous item on and off
+    pub fn toggled(mut self, toggled: bool) -> Self {
+        if let Self::Entry { toggled: t, .. } = &mut self {
+            *t = Some(toggled);
+        }
+        self
+    }
+
+    fn add_to_menu(&self, menu: ContextMenu, focus_handle: &FocusHandle) -> ContextMenu {
+        match self {
+            crate::PickerAction::Header(label) => menu.header(label),
+            crate::PickerAction::Separator => menu.separator(),
+            crate::PickerAction::Entry {
+                label,
+                action,
+                toggled: Some(toggled),
+            } => {
+                let dispatched = action.boxed_clone();
+                let handler_focus = focus_handle.clone();
+                menu.toggleable_entry(
+                    label,
+                    *toggled,
+                    ui::IconPosition::End,
+                    Some(action.boxed_clone()),
+                    move |window, cx| {
+                        window.focus(&handler_focus, cx);
+                        window.dispatch_action(dispatched.boxed_clone(), cx);
+                    },
+                )
+            }
+            crate::PickerAction::Entry {
+                label,
+                action,
+                toggled: None,
+            } => menu.action(label, action.boxed_clone()),
+        }
+    }
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -216,6 +295,24 @@ pub trait PickerDelegate: Sized + 'static {
         PickerEditorPosition::default()
     }
 
+    /// Prevent closing the modal on clicking in a popover menu that portrudes out
+    /// This is already set by the Actions menu from the picker, this is here to
+    /// support extra menus added by the delegate.
+    fn has_another_open_menu(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
+
+    /// An optional control rendered at the trailing edge of the search bar, e.g.
+    /// a filter toggle. Returning `Some` is the easy way to add such a control;
+    /// for full control over the search bar, override [`Self::render_editor`].
+    fn search_filter(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        None
+    }
+
     fn render_editor(
         &self,
         editor: &Arc<dyn ErasedEditor>,
@@ -233,7 +330,8 @@ pub trait PickerDelegate: Sized + 'static {
                     .flex_none()
                     .h_9()
                     .px_2p5()
-                    .child(editor.render(window, cx)),
+                    .child(div().flex_1().child(editor.render(window, cx)))
+                    .children(self.search_filter(window, cx)),
             )
             .when(
                 self.editor_position() == PickerEditorPosition::Start,
@@ -265,12 +363,25 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
 
+    /// Overrides the picker's footer.
+    ///
+    /// Note there normally isn't a footer unless this is set or the picker has
+    /// a preview. If the picker has a preview add actions to it using picker_actions.
     fn render_footer(
         &self,
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         None
+    }
+
+    /// Make this non-empty to have an `Actions` menu show up in the footer
+    fn actions_menu(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Vec<PickerAction> {
+        Vec::new()
     }
 
     fn documentation_aside(
@@ -416,6 +527,7 @@ impl<D: PickerDelegate> Picker<D> {
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
             size_bounds: shape::SizeBounds::default(),
+            actions_menu_handle: PopoverMenuHandle::default(),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -744,6 +856,42 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
+    fn set_preview_right(
+        &mut self,
+        _: &SetPreviewRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_preview_layout(preview::Layout::Right, window, cx);
+    }
+
+    fn set_preview_below(
+        &mut self,
+        _: &SetPreviewBelow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_preview_layout(preview::Layout::Below, window, cx);
+    }
+
+    fn set_preview_hidden(
+        &mut self,
+        _: &SetPreviewHidden,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_preview_layout(preview::Layout::Hidden, window, cx);
+    }
+
+    fn toggle_actions_menu(
+        &mut self,
+        _: &ToggleActionsMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.actions_menu_handle.toggle(window, cx);
+    }
+
     fn handle_click(
         &mut self,
         ix: usize,
@@ -784,7 +932,12 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             ErasedEditorEvent::Blurred => {
-                if self.is_modal && window.is_window_active() {
+                // Opening a footer/search-bar menu blurs the editor; don't
+                // dismiss the picker while such a menu is open/focused.
+                let menu_focused = self.actions_menu_handle.is_focused(window, cx)
+                    || self.actions_menu_handle.is_deployed()
+                    || self.delegate.has_another_open_menu(window, cx);
+                if self.is_modal && window.is_window_active() && !menu_focused {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
@@ -1009,6 +1162,29 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn preview_layout(&self) -> Option<preview::Layout> {
         self.preview.as_ref().map(|p| p.layout)
+    }
+
+    fn toggle_preview_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = match self.preview_layout() {
+            Some(preview::Layout::Hidden) | None => preview::Layout::Right,
+            Some(_) => preview::Layout::Hidden,
+        };
+        self.set_preview_layout(next, window, cx);
+    }
+
+    fn set_preview_layout(
+        &mut self,
+        layout: preview::Layout,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(preview) = &mut self.preview else {
+            return;
+        };
+        preview.layout = layout;
+        self.delegate
+            .preview_layout_changed(matches!(layout, preview::Layout::Right));
+        cx.notify();
     }
 }
 

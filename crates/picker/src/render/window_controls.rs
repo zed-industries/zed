@@ -58,14 +58,11 @@
 
 use std::{any::type_name, marker::PhantomData};
 
-use gpui::{
-    Action, ClickEvent, Context, CursorStyle, DragMoveEvent, Focusable, MouseButton, Point, Styled,
-    Window,
-};
-use ui::{Tooltip, prelude::*};
+use gpui::{ClickEvent, Context, CursorStyle, DragMoveEvent, MouseButton, Point, Styled, Window};
+use ui::prelude::*;
 
 use crate::shape::{Centered, PositionAndShape, Shape, SizeBounds};
-use crate::{Picker, PickerDelegate, ToggleLayout, preview::Layout};
+use crate::{Picker, PickerDelegate, preview::Layout};
 
 pub struct DragPreview;
 
@@ -495,31 +492,6 @@ impl<D: PickerDelegate> Picker<D> {
                 .clamped_position_and_size(self.preview_layout(), &self.size_bounds, window);
         self.shape = Shape::Resizing(pos);
         cx.notify();
-    }
-
-    pub(crate) fn render_header_controls(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        let preview = self.preview.as_ref()?;
-
-        Some(h_flex().gap_1().items_center().child({
-            let focus_handle = self.focus_handle(cx);
-            let (icon, tooltip_text) = match preview.layout {
-                Layout::Hidden => (IconName::Split, "Show preview to the right"),
-                Layout::Right => (IconName::ListTree, "Show preview below"),
-                Layout::Below => (IconName::ListCollapse, "Hide Preview"),
-            };
-            IconButton::new("layout-cycle", icon)
-                .size(ButtonSize::Compact)
-                .tooltip(move |_window, cx| {
-                    Tooltip::for_action_in(tooltip_text, &ToggleLayout, &focus_handle, cx)
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleLayout.boxed_clone(), cx);
-                })
-        }))
     }
 }
 
