@@ -1675,7 +1675,7 @@ impl PickerDelegate for FileFinderDelegate {
             .log_err();
     }
 
-    fn try_get_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
+    fn try_get_preview_data_for_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
         let m = self.matches.get(self.selected_index)?;
         Some(picker::PreviewUpdate::from_path(
             m.abs_path(&self.project, cx)?,

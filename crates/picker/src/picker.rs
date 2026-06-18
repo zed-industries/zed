@@ -337,7 +337,7 @@ pub trait PickerDelegate: Sized + 'static {
             )
     }
 
-    fn try_get_match(&self, _cx: &App) -> Option<PreviewUpdate> {
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
         None
     }
 
@@ -690,8 +690,8 @@ impl<D: PickerDelegate> Picker<D> {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
             }
-            if let Some(update) = self.delegate.try_get_match(cx)
-                && let Some(preview) = &mut self.preview
+            if let Some(preview) = &mut self.preview
+                && let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
             {
                 preview.update(update, window, cx);
             }
@@ -995,7 +995,7 @@ impl<D: PickerDelegate> Picker<D> {
         let index = self.delegate.selected_index();
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
-        if let Some(update) = self.delegate.try_get_match(cx)
+        if let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
             && let Some(preview) = &mut self.preview
         {
             preview.update(update, window, cx);

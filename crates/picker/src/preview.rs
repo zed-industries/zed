@@ -2,8 +2,8 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use editor::scroll::Autoscroll;
-use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions, SelectionEffects};
+use editor::display_map::ToDisplayPoint;
+use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, Window};
 use language::Buffer;
@@ -141,7 +141,7 @@ impl EditorPreview {
             editor.disable_expand_excerpt_buttons(cx);
             editor.disable_mouse_wheel_zoom();
             editor.set_show_gutter(false, cx);
-            editor.set_show_line_numbers(false, cx);
+            editor.set_show_line_numbers(true, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_bookmarks(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -212,6 +212,7 @@ impl EditorPreview {
         .detach_and_log_err(cx);
     }
 
+    /// TODO!(yara) we are not focussing the selection correctly.
     fn finish_update(
         &mut self,
         buffer: Entity<Buffer>,
@@ -221,6 +222,7 @@ impl EditorPreview {
     ) {
         self.current_path = buffer.read(cx).file().map(|file| file.path().clone());
 
+        // TODO!(yara) do not set full range. We are not allowing scrolling anyway
         let full_range = [rope::Point::zero()..buffer.read(cx).max_point()];
         self.preview_editor.update(cx, |editor, cx| {
             let multi_buffer = editor.buffer().clone();
@@ -237,35 +239,55 @@ impl EditorPreview {
             };
 
             let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-            if let (Some(start_anchor), Some(end_anchor)) = (
+            let (Some(start_anchor), Some(end_anchor)) = (
                 multi_buffer_snapshot.anchor_in_excerpt(highlight.anchor_range.start),
                 multi_buffer_snapshot.anchor_in_excerpt(highlight.anchor_range.end),
-            ) {
-                editor.highlight_rows::<SearchMatchLineHighlight>(
-                    start_anchor..start_anchor,
-                    cx.theme().colors().editor_active_line_background,
-                    RowHighlightOptions::default(),
-                    cx,
-                );
+            ) else {
+                return;
+            };
 
-                editor.highlight_background(
-                    HighlightKey::PickerPreview,
-                    &[start_anchor..end_anchor],
-                    |_, theme| theme.colors().search_match_background,
-                    cx,
-                );
-            }
-
-            let start = multi_buffer::MultiBufferOffset(highlight.range.start);
-            let end = multi_buffer::MultiBufferOffset(highlight.range.end);
-            editor.change_selections(
-                SelectionEffects::scroll(Autoscroll::center()),
-                window,
+            editor.highlight_rows::<SearchMatchLineHighlight>(
+                start_anchor..start_anchor,
+                cx.theme().colors().editor_active_line_background,
+                RowHighlightOptions::default(),
                 cx,
-                |s| {
-                    s.select_ranges([start..end]);
-                },
             );
+
+            editor.highlight_background(
+                HighlightKey::PickerPreview,
+                &[start_anchor..end_anchor],
+                |_, theme| theme.colors().search_match_background,
+                cx,
+            );
+
+            // The editor forbids vertical scrolling so the user can't scroll the
+            // preview themselves. That also blocks programmatic autoscroll, so we
+            // compute the scroll position ourselves and apply it while temporarily
+            // lifting the restriction.
+            let display_snapshot = editor.display_snapshot(cx);
+            let start_point = start_anchor.to_display_point(&display_snapshot);
+            let end_point = end_anchor.to_display_point(&display_snapshot);
+
+            // Vertically center the match.
+            let target_row = start_point.row().0 as f64;
+            let centered_y = editor
+                .visible_line_count()
+                .map_or(target_row, |visible_lines| {
+                    (target_row - (visible_lines - 1.) / 2.).max(0.)
+                });
+
+            // Scroll horizontally as far left as possible while keeping the match
+            // visible, so the editor doesn't drift right over time.
+            let start_column = start_point.column() as f64;
+            let end_column = end_point.column() as f64;
+            let centered_x = editor.visible_column_count().map_or(0., |visible_columns| {
+                let min_x_for_end = (end_column - visible_columns + 1.).max(0.);
+                min_x_for_end.min(start_column)
+            });
+
+            editor.scroll_manager.set_forbid_vertical_scroll(false);
+            editor.set_scroll_position(gpui::Point::new(centered_x, centered_y), window, cx);
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
         });
     }
 }
