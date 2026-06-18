@@ -128,6 +128,9 @@ impl StashList {
         let delegate = StashListDelegate::new(repository, workspace, window, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
+                .width(width)
+                .height(rems(24.))
+                .no_vertical_padding()
                 .show_scrollbar(true)
                 .modal(!embedded)
         });

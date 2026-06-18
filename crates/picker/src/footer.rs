@@ -157,7 +157,7 @@ impl<D: PickerDelegate> Picker<D> {
             // The layout buttons (preview to the right / below) are only relevant
             // once the preview is showing, so hide them while it's hidden.
             .when(preview_visible, |this| {
-                this.child(Divider::vertical())
+                this.child(Divider::vertical().color(ui::DividerColor::Border))
                     .child(
                         IconButton::new("picker-preview-right", IconName::DiffSplit)
                             .icon_size(IconSize::Small)

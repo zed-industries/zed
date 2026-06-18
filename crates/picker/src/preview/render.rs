@@ -26,16 +26,15 @@ impl EditorPreview {
     pub(crate) fn render_preview_right(&self, window: &mut Window, cx: &App) -> impl IntoElement {
         v_flex()
             .size_full()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
+            .rounded_t_md()
+            .rounded_b_md()
             .child(self.render_body(window, cx))
     }
 
     fn render_preview_below(&self, window: &mut Window, cx: &App) -> impl IntoElement {
         v_flex()
             .size_full()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
+            .rounded_b_md()
             .child(self.render_body(window, cx))
     }
 
@@ -43,7 +42,6 @@ impl EditorPreview {
         if self.has_content(cx) {
             div()
                 .flex_1()
-                .debug_bg_blue()
                 .overflow_hidden()
                 .child(self.editor_as_giant_button())
                 .into_any_element()

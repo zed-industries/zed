@@ -13,8 +13,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
+    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
+    TaskExt, WeakEntity, Window, actions, rems,
 };
 use language::{BufferSnapshot, Point};
 use open_path_prompt::{

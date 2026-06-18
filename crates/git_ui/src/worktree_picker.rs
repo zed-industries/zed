@@ -129,6 +129,7 @@ impl WorktreePicker {
                 .list_measure_all()
                 .show_scrollbar(true)
                 .modal(false)
+                .width(rems(34.))
                 .height(rems(20.))
                 .no_vertical_padding()
         });

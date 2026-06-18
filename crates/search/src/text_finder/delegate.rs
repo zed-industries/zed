@@ -9,7 +9,7 @@ use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
     AnyElement, AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task,
-    TextStyle,
+    TextStyle, prelude::*,
 };
 use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
@@ -21,11 +21,8 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, App, ButtonCommon, Color, Context, ContextMenu, Div, FluentBuilder, Icon,
-    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, ListItem,
-    ListItemSpacing, ParentElement, PopoverMenu, PopoverMenuHandle, SharedString,
-    StatefulInteractiveElement, Styled, StyledTypography, Toggleable, Tooltip, Window, div, h_flex,
-    relative,
+    ContextMenu, FluentBuilder, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle,
+    Toggleable, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
@@ -785,66 +782,83 @@ impl PickerDelegate for Delegate {
             .map(|icon| Icon::from_path(icon).color(Color::Muted));
 
         let file_location = h_flex()
+            .id(("text-picker-path", ix))
             .flex_1()
             .min_w_0()
             .overflow_hidden()
-            .id(("text-picker-path", ix))
-            .tooltip(Tooltip::text(full_path))
-            .child(div().flex_none().child(format!("{file_name} ")))
+            .child(Label::new(format!("{file_name} ")).color(Color::Muted))
             .when(!directory.is_empty(), |this| {
-                this.child(
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis_start()
-                        .text_color(cx.theme().colors().text_muted)
-                        .child(directory),
-                )
+                this.child(Label::new(directory).color(Color::Muted).truncate_start())
             });
 
-        let rendered_line = if self.preview_layout_is_horizontal {
-            h_flex().gap_2().py_px().child(file_location)
-        } else {
-            h_flex()
-                .w_full()
-                .gap_4()
-                .justify_between()
-                .font_buffer(cx)
-                .text_buffer(cx)
-                .when(!self.preview_layout_is_horizontal, |d| {
-                    d.child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .child(render_matched_line(search_match, cx)),
-                    )
-                })
-                .child(
-                    h_flex()
-                        .w(relative(0.35))
-                        .flex_none()
-                        .gap_2()
-                        .child(file_location),
-                )
+        // let rendered_line = if self.preview_layout_is_horizontal {
+        //     h_flex().gap_2().py_px().child(file_location)
+        // } else {
+        //     h_flex()
+        //         .w_full()
+        //         .gap_4()
+        //         .justify_between()
+        //         .font_buffer(cx)
+        //         .text_buffer(cx)
+        //         .when(!self.preview_layout_is_horizontal, |d| {
+        //             d.child(
+        //                 div()
+        //                     .flex_1()
+        //                     .min_w_0()
+        //                     .overflow_hidden()
+        //                     .text_ellipsis()
+        //                     .whitespace_nowrap()
+        //                     .child(render_matched_line(search_match, cx)),
+        //             )
+        //         })
+        //         .child(
+        //             h_flex()
+        //                 .w(relative(0.35))
+        //                 .flex_none()
+        //                 .gap_2()
+        //                 .child(file_location),
+        //         )
+        // };
+
+        let dot_separator = || {
+            Label::new("•")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .alpha(0.5)
         };
 
-        let line_number = div()
-            .flex_none()
-            .pr_2()
-            .text_color(cx.theme().colors().text_muted)
-            .child(search_match.line_number.to_string());
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .start_slot::<Icon>(file_icon)
-                .end_slot::<Div>(line_number)
                 .inset(true)
                 .toggle_state(selected)
-                .child(rendered_line),
+                .child(
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .children(file_icon)
+                                .text_sm()
+                                .child(render_matched_line(search_match, cx)),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1p5()
+                                .pl(IconSize::default().rems() + rems(0.5))
+                                .child(
+                                    Label::new(search_match.line_number.to_string())
+                                        .color(Color::Muted),
+                                )
+                                .child(dot_separator())
+                                .child(Label::new(full_path).color(Color::Muted).truncate_start()),
+                        ),
+                )
+                // .start_slot::<Icon>(file_icon)
+                // .end_slot::<Div>(line_number)
+                
         )
     }
 }
