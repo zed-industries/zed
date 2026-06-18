@@ -26,6 +26,11 @@ use util::paths::PathMatcher;
 
 use crate::entry_view_state::EntryViewState;
 
+use super::UserMessageContentSegment;
+use super::sticky_user_message_preview::{
+    StickyUserMessageSearchHighlights, sticky_user_message_search_highlights,
+};
+
 actions!(
     agent,
     [
@@ -149,6 +154,7 @@ pub struct ThreadSearchBar {
 
 pub enum ThreadSearchBarEvent {
     Dismissed,
+    MatchesUpdated,
 }
 
 impl EventEmitter<ThreadSearchBarEvent> for ThreadSearchBar {}
@@ -267,6 +273,35 @@ impl ThreadSearchBar {
         }
     }
 
+    pub(super) fn sticky_user_message_search_highlights(
+        &self,
+        entry_ix: usize,
+        segments: &[UserMessageContentSegment],
+        cx: &App,
+    ) -> Option<StickyUserMessageSearchHighlights> {
+        if !self.is_active || self.matches.iter().all(|mat| mat.entry_ix != entry_ix) {
+            return None;
+        }
+
+        let (query, _) = self.build_query(cx);
+        let query = query?;
+        let active_match_index = self.active_match.and_then(|active_match_index| {
+            let active_match = self.matches.get(active_match_index)?;
+            (active_match.entry_ix == entry_ix).then(|| {
+                self.matches[..active_match_index]
+                    .iter()
+                    .filter(|mat| mat.entry_ix == entry_ix)
+                    .count()
+            })
+        });
+
+        sticky_user_message_search_highlights(
+            segments,
+            |text| query.search_str(text),
+            active_match_index,
+        )
+    }
+
     fn current_query(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
     }
@@ -321,6 +356,7 @@ impl ThreadSearchBar {
         let Some(query) = query else {
             self.clear_results(cx);
             cx.notify();
+            cx.emit(ThreadSearchBarEvent::MatchesUpdated);
             return;
         };
 
@@ -361,6 +397,7 @@ impl ThreadSearchBar {
         if targets.is_empty() {
             self.clear_results(cx);
             cx.notify();
+            cx.emit(ThreadSearchBarEvent::MatchesUpdated);
             return;
         }
 
@@ -495,6 +532,7 @@ impl ThreadSearchBar {
             self.activate_match(active_match_ix, scroll_to_match, window, cx);
         } else {
             cx.notify();
+            cx.emit(ThreadSearchBarEvent::MatchesUpdated);
         }
     }
 
@@ -589,6 +627,7 @@ impl ThreadSearchBar {
             (self.on_activate_match)(entry_ix, window, cx);
         }
         cx.notify();
+        cx.emit(ThreadSearchBarEvent::MatchesUpdated);
     }
 
     pub(super) fn select_next_match(
@@ -637,6 +676,7 @@ impl ThreadSearchBar {
     pub fn clear_highlights(&mut self, cx: &mut Context<Self>) {
         self.clear_highlights_impl(cx);
         cx.notify();
+        cx.emit(ThreadSearchBarEvent::MatchesUpdated);
     }
 
     fn clear_highlights_impl(&mut self, cx: &mut App) {

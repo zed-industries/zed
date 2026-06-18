@@ -1,6 +1,8 @@
+use std::ops::Range;
+
 use agent_client_protocol::schema as acp;
-use gpui::{AnyElement, App, AvailableSpace, Pixels, Window};
-use ui::prelude::*;
+use gpui::{AnyElement, App, AvailableSpace, HighlightStyle, Pixels, StyledText, Window};
+use ui::{LabelLike, prelude::*};
 use util::paths::PathStyle;
 
 use super::{UserMessageContentSegment, parse_content_block};
@@ -10,6 +12,17 @@ pub(crate) struct StickyUserMessagePreview {
     pub(crate) segments: Vec<UserMessageContentSegment>,
     pub(crate) text: String,
     pub(crate) has_more_message_content: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StickyUserMessageSearchHighlight {
+    range: Range<usize>,
+    is_active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StickyUserMessageSearchHighlights {
+    segment_ranges: Vec<Vec<StickyUserMessageSearchHighlight>>,
 }
 
 pub(crate) fn parse_sticky_user_message_preview(
@@ -63,6 +76,31 @@ fn sticky_user_message_display_segments(
             UserMessageContentSegment::Mention { .. } => Some(segment),
         })
         .collect()
+}
+
+pub(crate) fn sticky_user_message_search_highlights(
+    segments: &[UserMessageContentSegment],
+    mut search_ranges: impl FnMut(&str) -> Vec<Range<usize>>,
+    active_match_index: Option<usize>,
+) -> Option<StickyUserMessageSearchHighlights> {
+    let mut match_index = 0;
+    let mut has_ranges = false;
+    let segment_ranges = sticky_user_message_display_segments(segments.to_vec())
+        .iter()
+        .map(|segment| {
+            search_ranges(segment_text(segment))
+                .into_iter()
+                .map(|range| {
+                    has_ranges = true;
+                    let is_active = active_match_index == Some(match_index);
+                    match_index += 1;
+                    StickyUserMessageSearchHighlight { range, is_active }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    has_ranges.then_some(StickyUserMessageSearchHighlights { segment_ranges })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,6 +172,7 @@ fn sticky_user_message_preview_width(
 
 pub(crate) fn render_sticky_user_message_preview(
     segments: Vec<UserMessageContentSegment>,
+    search_highlights: Option<StickyUserMessageSearchHighlights>,
     has_more_message_content: bool,
     available_width: Pixels,
     rem_size: Pixels,
@@ -141,44 +180,85 @@ pub(crate) fn render_sticky_user_message_preview(
     cx: &mut App,
 ) -> AnyElement {
     let segments = sticky_user_message_display_segments(segments);
-    let render_segment =
-        |index: usize, segment: UserMessageContentSegment, truncate: bool, cx: &mut App| {
-            match segment {
-                UserMessageContentSegment::Text(text) => Label::new(text)
-                    .size(LabelSize::Small)
-                    .color(Color::Default)
-                    .map(|this| {
-                        if truncate {
-                            this.truncate()
-                        } else {
-                            this.single_line().flex_none()
-                        }
-                    })
-                    .into_any_element(),
-                UserMessageContentSegment::Mention { uri, label } => h_flex()
-                    .id(("sticky-user-message-mention", index))
-                    .flex_none()
-                    .h_5()
-                    .px_1p5()
-                    .gap_1()
-                    .items_center()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().element_background)
-                    .child(
-                        Icon::from_path(uri.icon_path(cx))
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(label)
-                            .size(LabelSize::Small)
-                            .color(Color::Default),
-                    )
-                    .into_any_element(),
-            }
+    let render_text = |text: String,
+                       highlights: Option<&Vec<StickyUserMessageSearchHighlight>>,
+                       truncate: bool,
+                       cx: &mut App| {
+        let Some(highlights) = highlights.filter(|highlights| !highlights.is_empty()) else {
+            return Label::new(text)
+                .size(LabelSize::Small)
+                .color(Color::Default)
+                .map(|this| {
+                    if truncate {
+                        this.truncate()
+                    } else {
+                        this.single_line().flex_none()
+                    }
+                })
+                .into_any_element();
         };
+
+        let colors = cx.theme().colors();
+        let highlights = highlights.iter().map(|highlight| {
+            (
+                highlight.range.clone(),
+                HighlightStyle {
+                    background_color: Some(if highlight.is_active {
+                        colors.search_active_match_background
+                    } else {
+                        colors.search_match_background
+                    }),
+                    ..Default::default()
+                },
+            )
+        });
+        let label = LabelLike::new()
+            .size(LabelSize::Small)
+            .color(Color::Default)
+            .map(|this| {
+                if truncate {
+                    this.truncate()
+                } else {
+                    this.single_line()
+                }
+            })
+            .child(StyledText::new(text).with_highlights(highlights));
+
+        if truncate {
+            div().min_w_0().child(label).into_any_element()
+        } else {
+            div().flex_none().child(label).into_any_element()
+        }
+    };
+    let render_segment = |index: usize,
+                          segment: UserMessageContentSegment,
+                          truncate: bool,
+                          cx: &mut App| {
+        let highlights = search_highlights
+            .as_ref()
+            .and_then(|highlights| highlights.segment_ranges.get(index));
+        match segment {
+            UserMessageContentSegment::Text(text) => render_text(text, highlights, truncate, cx),
+            UserMessageContentSegment::Mention { uri, label } => h_flex()
+                .id(("sticky-user-message-mention", index))
+                .flex_none()
+                .h_5()
+                .px_1p5()
+                .gap_1()
+                .items_center()
+                .rounded_sm()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().element_background)
+                .child(
+                    Icon::from_path(uri.icon_path(cx))
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .child(render_text(label, highlights, false, cx))
+                .into_any_element(),
+        }
+    };
     let render_ellipsis = || {
         Label::new("…")
             .size(LabelSize::Small)
@@ -448,6 +528,39 @@ mod tests {
 
         assert_eq!(fit.visible_segment_count, 2);
         assert!(fit.show_ellipsis);
+    }
+
+    #[test]
+    fn search_highlights_are_mapped_to_display_segments() {
+        let segments = vec![
+            UserMessageContentSegment::Text("Check ".to_string()),
+            UserMessageContentSegment::Mention {
+                uri: MentionUri::PastedImage {
+                    name: "main.rs".to_string(),
+                },
+                label: "@main.rs".to_string(),
+            },
+            UserMessageContentSegment::Text(" and main.rs".to_string()),
+        ];
+
+        let highlights = sticky_user_message_search_highlights(
+            &segments,
+            |text| {
+                text.match_indices("main")
+                    .map(|(start, text)| start..start + text.len())
+                    .collect()
+            },
+            Some(1),
+        )
+        .expect("expected matches in sticky preview");
+
+        assert_eq!(highlights.segment_ranges[0], Vec::new());
+        assert_eq!(highlights.segment_ranges[1].len(), 1);
+        assert_eq!(highlights.segment_ranges[1][0].range, 1..5);
+        assert!(!highlights.segment_ranges[1][0].is_active);
+        assert_eq!(highlights.segment_ranges[2].len(), 1);
+        assert_eq!(highlights.segment_ranges[2][0].range, 4..8);
+        assert!(highlights.segment_ranges[2][0].is_active);
     }
 
     #[test]
