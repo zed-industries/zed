@@ -123,6 +123,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
+            .on_action(cx.listener(Self::toggle_preview))
             .on_action(cx.listener(Self::set_preview_right))
             .on_action(cx.listener(Self::set_preview_below))
             .on_action(cx.listener(Self::set_preview_hidden))

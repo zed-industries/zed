@@ -12,6 +12,7 @@ use crate::Picker;
 use crate::PickerDelegate;
 use crate::SetPreviewBelow;
 use crate::SetPreviewRight;
+use crate::TogglePreview;
 use crate::ToggleActionsMenu;
 use crate::preview;
 
@@ -131,6 +132,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let toggle_focus_handle = focus_handle.clone();
         let right_focus_handle = focus_handle.clone();
         let below_focus_handle = focus_handle.clone();
         let current = self.preview_layout().unwrap_or(preview::Layout::Hidden);
@@ -149,6 +151,18 @@ impl<D: PickerDelegate> Picker<D> {
                             })
                             .size(LabelSize::Small),
                     )
+                    .child(
+                        KeyBinding::for_action_in(&TogglePreview, &focus_handle, cx)
+                            .size(rems_from_px(12.)),
+                    )
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Preview",
+                            &TogglePreview,
+                            &toggle_focus_handle,
+                            cx,
+                        )
+                    })
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
                     ),

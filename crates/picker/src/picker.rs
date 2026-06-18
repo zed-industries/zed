@@ -51,6 +51,8 @@ actions!(
     [
         /// Confirms the selected completion in the picker.
         ConfirmCompletion,
+        /// Toggles the preview between hidden and visible.
+        TogglePreview,
         /// Shows the preview to the right of the results.
         SetPreviewRight,
         /// Shows the preview below the results.
@@ -1083,6 +1085,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn preview_layout(&self) -> Option<preview::Layout> {
         self.preview.as_ref().map(|p| p.layout)
+    }
+
+    fn toggle_preview(&mut self, _: &TogglePreview, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_preview_visible(window, cx);
     }
 
     fn toggle_preview_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
