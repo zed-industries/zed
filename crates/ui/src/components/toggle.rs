@@ -348,6 +348,7 @@ pub struct Switch {
     color: SwitchColor,
     tab_index: Option<isize>,
     aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
 }
 
 impl Switch {
@@ -366,6 +367,7 @@ impl Switch {
             color: SwitchColor::default(),
             tab_index: None,
             aria_label: None,
+            aria_description: None,
         }
     }
 
@@ -431,6 +433,13 @@ impl Switch {
         self.aria_label = Some(label.into());
         self
     }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the switch's name, role, and state.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
 }
 
 impl RenderOnce for Switch {
@@ -457,11 +466,15 @@ impl RenderOnce for Switch {
         let group_id = format!("switch_group_{:?}", self.id);
         let label = self.label;
         let aria_label = self.aria_label.or_else(|| label.clone());
+        let aria_description = self.aria_description;
 
         let switch = div()
             .id((self.id.clone(), "switch"))
             .role(Role::Switch)
             .when_some(aria_label, |this, label| this.aria_label(label))
+            .when_some(aria_description, |this, description| {
+                this.aria_description(description)
+            })
             .aria_toggled(match self.toggle_state {
                 ToggleState::Selected => Toggled::True,
                 ToggleState::Indeterminate => Toggled::Mixed,

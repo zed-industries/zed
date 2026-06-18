@@ -296,6 +296,19 @@ impl ContextMenu {
         );
         window.refresh();
 
+        // When the menu first receives focus (i.e. when it opens), move the
+        // selection onto a menu item so assistive technology announces a real
+        // item rather than the bare menu container. Per the ARIA menu button
+        // pattern, opening a menu places focus on a menu item; for select-style
+        // menus we prefer the currently-checked item. We only do this when
+        // nothing is selected yet so we don't override an existing selection.
+        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+            if this.selected_index.is_none() {
+                this.select_toggled_or_first(window, cx);
+            }
+        })
+        .detach();
+
         f(
             Self {
                 builder: None,
@@ -372,6 +385,15 @@ impl ContextMenu {
                 },
             );
             window.refresh();
+
+            // See the note in `ContextMenu::new`: select an item when the menu
+            // opens so screen readers announce it instead of just "menu".
+            cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+                if this.selected_index.is_none() {
+                    this.select_toggled_or_first(window, cx);
+                }
+            })
+            .detach();
 
             (builder.clone())(
                 Self {
@@ -1054,6 +1076,32 @@ impl ContextMenu {
             self.select_index(ix, window, cx);
         }
         cx.notify();
+    }
+
+    /// Selects the currently-checked entry if one exists (e.g. the active value
+    /// in a single-select dropdown), otherwise the first selectable item.
+    ///
+    /// This is intended to be called when the menu opens. Per the ARIA menu
+    /// button pattern, opening a menu should place focus on a menu item rather
+    /// than the menu container, so that assistive technology immediately
+    /// announces a meaningful item (ideally the current selection) instead of
+    /// just "menu".
+    pub fn select_toggled_or_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let toggled_ix = self.items.iter().position(|item| {
+            matches!(
+                item,
+                ContextMenuItem::Entry(ContextMenuEntry {
+                    toggle: Some((_, true)),
+                    ..
+                })
+            )
+        });
+        if let Some(ix) = toggled_ix {
+            self.select_index(ix, window, cx);
+            cx.notify();
+        } else {
+            self.select_first(&SelectFirst, window, cx);
+        }
     }
 
     pub fn select_last(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<usize> {
@@ -1888,6 +1936,7 @@ impl ContextMenu {
                     } else {
                         Role::MenuItem
                     })
+                    .when_some(*toggle, |item, (_, checked)| item.aria_checked(checked))
                     .when(is_active_descendant, |item| item.aria_active_descendant())
                     .aria_label(label.clone())
                     .toggle_state(Some(ix) == self.selected_index)

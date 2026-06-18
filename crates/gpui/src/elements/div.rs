@@ -1201,6 +1201,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the accessible description for this element. Unlike the label (which
+    /// names the element), the description provides supplementary information
+    /// that assistive technology announces after the name, role, and value -
+    /// for example a settings subtitle or a hint.
+    fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_description = Some(description.into());
+        self
+    }
+
     /// Report this element as the focused node in the accessibility tree,
     /// overriding the element that holds real keyboard focus — but only while
     /// one of its ancestors actually holds focus.
@@ -1933,6 +1942,7 @@ pub struct Interactivity {
     pub(crate) report_active_descendant_focus: bool,
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_description: Option<SharedString>,
     pub(crate) aria_selected: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
@@ -3176,6 +3186,9 @@ impl Interactivity {
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
         if let Some(label) = &self.aria_label {
             node.set_label(label.to_string());
+        }
+        if let Some(description) = &self.aria_description {
+            node.set_description(description.to_string());
         }
         if let Some(selected) = self.aria_selected {
             node.set_selected(selected);
