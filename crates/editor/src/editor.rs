@@ -128,7 +128,7 @@ pub use split::{SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
-use ::git::status::FileStatus;
+use ::git::{Blame, status::FileStatus};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow, bail};
 use blink_manager::BlinkManager;
@@ -4081,12 +4081,16 @@ impl Editor {
             "Set Hit Condition Breakpoint"
         };
 
-        let show_git_blame_gutter = self.show_git_blame_gutter();
-
         let set_breakpoint_msg = if breakpoint.as_ref().is_some() {
             "Unset Breakpoint"
         } else {
             "Set Breakpoint"
+        };
+
+        let git_blame_msg = if self.show_git_blame_gutter {
+            "Close Git Blame"
+        } else {
+            "Open Git Blame"
         };
 
         let bookmark = self.bookmark_at_row(row, window, cx);
@@ -4235,22 +4239,16 @@ impl Editor {
                     }
                 })
                 .separator()
-                .toggleable_entry(
-                    "Column Git Blame",
-                    show_git_blame_gutter,
-                    IconPosition::Start,
-                    Some(::git::Blame.boxed_clone()),
-                    {
-                        let weak_editor = weak_editor.clone();
-                        move |window, cx| {
-                            weak_editor
-                                .update(cx, |this, cx| {
-                                    this.toggle_git_blame(&::git::Blame, window, cx);
-                                })
-                                .log_err();
-                        }
-                    },
-                )
+                .entry(git_blame_msg, Some(Blame.boxed_clone()), {
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.toggle_git_blame(&Blame, window, cx);
+                            })
+                            .log_err();
+                    }
+                })
                 .separator()
                 .entry(set_bookmark_msg, None, move |_window, cx| {
                     weak_editor
