@@ -325,51 +325,35 @@ impl ThreadSearchBar {
         };
 
         let mut targets: Vec<SearchTarget> = Vec::new();
-        let entry_count = self.thread.read(cx).entries().len();
-        for entry_ix in 0..entry_count {
-            // Past user messages render through `MessageEditor`, not markdown.
-            let is_user_message = self
-                .thread
-                .read(cx)
-                .entries()
-                .get(entry_ix)
-                .map(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
-                .unwrap_or(false);
-
-            if is_user_message {
-                let editor_entity = self
-                    .entry_view_state
-                    .read(cx)
-                    .entry(entry_ix)
-                    .and_then(|entry| entry.message_editor())
-                    .map(|message_editor| message_editor.read(cx).editor().clone());
-                let Some(editor) = editor_entity else {
-                    continue;
-                };
-                let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                targets.push(SearchTarget::Editor {
-                    entry_ix,
-                    editor,
-                    snapshot,
-                });
-            } else {
-                let markdowns = self
-                    .thread
-                    .read(cx)
-                    .entries()
-                    .get(entry_ix)
-                    .map(|entry| {
-                        let entry_view_state = self.entry_view_state.read(cx);
-                        collect_markdowns(entry_ix, entry, &entry_view_state, cx)
-                    })
-                    .unwrap_or_default();
-                for markdown in markdowns {
-                    let source = markdown.read(cx).source().clone();
-                    targets.push(SearchTarget::Markdown {
+        let thread = self.thread.read(cx);
+        let entry_view_state = self.entry_view_state.read(cx);
+        for (entry_ix, entry) in thread.entries().iter().enumerate() {
+            match entry {
+                // Past user messages render through `MessageEditor`, not markdown.
+                AgentThreadEntry::UserMessage(_) => {
+                    let editor = entry_view_state
+                        .entry(entry_ix)
+                        .and_then(|view_entry| view_entry.message_editor())
+                        .map(|message_editor| message_editor.read(cx).editor().clone());
+                    let Some(editor) = editor else {
+                        continue;
+                    };
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    targets.push(SearchTarget::Editor {
                         entry_ix,
-                        markdown,
-                        source,
+                        editor,
+                        snapshot,
                     });
+                }
+                _ => {
+                    for markdown in collect_markdowns(entry_ix, entry, &entry_view_state, cx) {
+                        let source = markdown.read(cx).source().clone();
+                        targets.push(SearchTarget::Markdown {
+                            entry_ix,
+                            markdown,
+                            source,
+                        });
+                    }
                 }
             }
         }
