@@ -1421,10 +1421,7 @@ impl MarkdownElement {
     /// Registers a callback invoked when a mermaid diagram's zoom level changes.
     /// Consumers that scroll the markdown can use this to keep the diagram's
     /// position anchored while it grows or shrinks.
-    pub fn on_mermaid_zoom(
-        mut self,
-        handler: impl Fn(&mut Window, &mut App) + 'static,
-    ) -> Self {
+    pub fn on_mermaid_zoom(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_mermaid_zoom = Some(Rc::new(handler));
         self
     }

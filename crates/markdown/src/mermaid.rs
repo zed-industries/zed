@@ -560,9 +560,7 @@ fn on_mermaid_zoom_scroll(
             // Only notify when the zoom actually changed. A no-op zoom (e.g.
             // clamped at the min/max) must not pause tail-following, since that
             // would disable following while still at the bottom.
-            if zoom_changed
-                && let Some(on_zoom) = &on_zoom
-            {
+            if zoom_changed && let Some(on_zoom) = &on_zoom {
                 on_zoom(window, cx);
             }
         }
@@ -868,11 +866,7 @@ fn render_mermaid_overlay_controls(
                 on_zoom,
             ))
         })
-        .child(render_mermaid_copy_button(
-            source_offset,
-            code,
-            markdown,
-        ))
+        .child(render_mermaid_copy_button(source_offset, code, markdown))
 }
 
 /// A "Zoom NNN%" readout paired with a reset button, styled like the adjacent
@@ -907,9 +901,7 @@ fn render_mermaid_zoom_indicator(
                     markdown.set_mermaid_zoom_level(source_offset, 1.0, cx);
                     markdown.mermaid_zoom_level(source_offset) != current_zoom
                 });
-                if zoom_changed
-                    && let Some(on_zoom) = &on_zoom
-                {
+                if zoom_changed && let Some(on_zoom) = &on_zoom {
                     on_zoom(window, cx);
                 }
             }),
