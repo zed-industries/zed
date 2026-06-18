@@ -41,7 +41,9 @@ actions!(
     ]
 );
 
-/// Debounce for query edits and streaming thread updates.
+/// Debounce for streaming thread updates, which can fire once per streamed
+/// chunk. Query edits are handled immediately instead (see the query editor
+/// subscription in `ThreadSearchBar::new`).
 pub(super) const SEARCH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(150);
 
 /// Search hits can be painted on either markdown or past-message editors.
@@ -181,7 +183,9 @@ impl ThreadSearchBar {
                     event,
                     EditorEvent::Edited { .. } | EditorEvent::BufferEdited
                 ) {
-                    this.schedule_update_matches(window, cx);
+                    // Re-scan immediately so typing feels responsive
+                    this._update_matches_task = None;
+                    this.update_matches(window, cx);
                 }
             },
         );
