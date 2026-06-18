@@ -258,6 +258,16 @@ impl BenchDispatcher {
         }
     }
 
+    /// Runs all main-thread tasks that are queued right now, without waiting for
+    /// background work or timers to finish.
+    pub fn run_ready_main_tasks(&self) -> bool {
+        assert!(
+            self.is_main_thread(),
+            "run_ready_main_tasks must be called on the benchmark main thread"
+        );
+        self.drain_main_queue()
+    }
+
     /// Cancels all pending timers so timers armed by one benchmark can't fire
     /// during a later benchmark sharing this process-lifetime dispatcher.
     ///
@@ -378,6 +388,38 @@ mod tests {
 
     use super::*;
     use crate::{BackgroundExecutor, ForegroundExecutor};
+
+    #[test]
+    fn run_ready_main_tasks_does_not_wait_for_background_handoffs() {
+        let dispatcher = Arc::new(BenchDispatcher::new());
+        let background = BackgroundExecutor::new(dispatcher.clone());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        background
+            .spawn(async move {
+                thread::sleep(Duration::from_millis(10));
+                sender.send(()).ok();
+            })
+            .detach();
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    receiver.await.ok();
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        assert!(dispatcher.run_ready_main_tasks());
+        assert!(!completed.load(Ordering::SeqCst));
+
+        dispatcher.run_until_idle();
+        assert!(completed.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn run_until_idle_completes_background_to_main_handoffs() {
