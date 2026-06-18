@@ -1,9 +1,9 @@
 use anyhow::Result;
+use gpui::Action;
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
-    uniform_list,
+    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, ScrollStrategy,
+    Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
 use project::Project;
@@ -18,6 +18,7 @@ use util::ResultExt;
 use workspace::ModalView;
 use zed_actions::editor::{MoveDown, MoveUp};
 
+mod footer;
 mod head;
 pub mod highlighted_match_with_paths;
 mod persistence;
@@ -26,9 +27,9 @@ mod preview;
 mod render;
 mod shape;
 
-use crate::shape::PositionAndShape;
 use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
+pub use footer::PickerAction;
 pub use preview::MatchLocation;
 pub use preview::Preview;
 pub use preview::PreviewSource;
@@ -113,75 +114,6 @@ pub enum PickerEditorPosition {
     Start,
     /// Render the editor at the end of the picker. Usually the bottom
     End,
-}
-
-/// Line in the Actions menu on the default footer.
-pub enum PickerAction {
-    Header(SharedString),
-    Separator,
-    Entry {
-        label: SharedString,
-        action: Box<dyn Action>,
-        toggled: Option<bool>,
-    },
-}
-
-impl PickerAction {
-    pub fn button(label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
-        Self::Entry {
-            label: label.into(),
-            action,
-            toggled: None,
-        }
-    }
-
-    /// A non-clickable section title.
-    pub fn header(label: impl Into<SharedString>) -> Self {
-        Self::Header(label.into())
-    }
-
-    /// A divider between groups of entries.
-    pub fn separator() -> Self {
-        Self::Separator
-    }
-
-    /// Make it possible to turn the previous item on and off
-    pub fn toggled(mut self, toggled: bool) -> Self {
-        if let Self::Entry { toggled: t, .. } = &mut self {
-            *t = Some(toggled);
-        }
-        self
-    }
-
-    fn add_to_menu(&self, menu: ContextMenu, focus_handle: &FocusHandle) -> ContextMenu {
-        match self {
-            crate::PickerAction::Header(label) => menu.header(label),
-            crate::PickerAction::Separator => menu.separator(),
-            crate::PickerAction::Entry {
-                label,
-                action,
-                toggled: Some(toggled),
-            } => {
-                let dispatched = action.boxed_clone();
-                let handler_focus = focus_handle.clone();
-                menu.toggleable_entry(
-                    label,
-                    *toggled,
-                    ui::IconPosition::End,
-                    Some(action.boxed_clone()),
-                    move |window, cx| {
-                        window.focus(&handler_focus, cx);
-                        window.dispatch_action(dispatched.boxed_clone(), cx);
-                    },
-                )
-            }
-            crate::PickerAction::Entry {
-                label,
-                action,
-                toggled: None,
-            } => menu.action(label, action.boxed_clone()),
-        }
-    }
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -379,7 +311,7 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
-    ) -> Vec<PickerAction> {
+    ) -> Vec<footer::PickerAction> {
         Vec::new()
     }
 

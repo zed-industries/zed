@@ -1,26 +1,21 @@
-use std::rc::Rc;
-
-use gpui::{AnyElement, Focusable, canvas, px};
+use gpui::{canvas, px};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, ButtonCommon, Clickable, Color, Context, ContextMenu, Disableable,
-    DocumentationAside, DocumentationSide, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, IntoElement, KeyBinding, Label, LabelCommon, LabelSize, ListItem,
-    ListItemSpacing, ParentElement, PopoverMenu, Render, ScrollAxes, Scrollbars, SelectableButton,
-    Styled, StyledExt, Toggleable, Tooltip, Window, WithScrollbar, div, h_flex, rems_from_px,
-    utils::WithRemSize, v_flex,
+    ActiveTheme, Color, Context, Disableable, DocumentationAside, DocumentationSide, FluentBuilder,
+    InteractiveElement, IntoElement, Label, LabelCommon, ListItem, ListItemSpacing, ParentElement,
+    Render, ScrollAxes, Scrollbars, Styled, StyledExt, Window, WithScrollbar, div, h_flex,
+    rems_from_px, utils::WithRemSize, v_flex,
 };
 
-use crate::persistence;
 use crate::shape::Shape;
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, SetPreviewBelow,
-    SetPreviewRight, ToggleActionsMenu,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview,
     head::Head,
     preview::Layout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
 };
+use crate::{persistence, preview};
 
 pub mod window_controls;
 
@@ -79,7 +74,11 @@ impl<D: PickerDelegate> Render for Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
-    fn render_results(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_results(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let window_size = window.viewport_size();
         let rem_size = window.rem_size();
@@ -266,163 +265,6 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn finish_any_completed_resize(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<'_, Picker<D>>,
-    ) {
-        if let Shape::Resizing(pos) = self.shape
-            && !cx.has_active_drag()
-        {
-            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
-            persistence::store_shape_for_this_layout(
-                D::name(),
-                self.preview_layout(),
-                centered,
-                window,
-                cx,
-            );
-            self.shape = Shape::HorizontallyCentered(centered);
-            if let Some(preview) = &mut self.preview {
-                preview.adjust_to_new_size(window, cx);
-            }
-        }
-    }
-}
-
-impl<D: PickerDelegate> Picker<D> {
-    fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if let Some(footer) = self.delegate.render_footer(window, cx) {
-            return Some(footer);
-        }
-        self.render_default_footer(window, cx)
-    }
-
-    fn render_default_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let actions = self.delegate.actions_menu(window, cx);
-        if self.preview.is_none() && actions.is_empty() {
-            return None;
-        }
-
-        let focus_handle = self.focus_handle(cx);
-
-        Some(
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .justify_between()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(div().when(self.preview.is_some(), |this| {
-                    this.child(self.render_preview_controls(window, cx))
-                }))
-                .when(!actions.is_empty(), |this| {
-                    this.child(self.render_actions_button(actions.into(), focus_handle, window, cx))
-                })
-                .into_any_element(),
-        )
-    }
-
-    fn render_preview_controls(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
-        let right_focus_handle = focus_handle.clone();
-        let below_focus_handle = focus_handle.clone();
-        let current = self.preview_layout().unwrap_or(Layout::Hidden);
-        let preview_visible = current != Layout::Hidden;
-
-        h_flex()
-            .gap_1()
-            .child(
-                ui::ButtonLike::new("picker-preview-toggle")
-                    .child(
-                        Label::new("Preview")
-                            .color(if preview_visible {
-                                Color::Accent
-                            } else {
-                                Color::Default
-                            })
-                            .size(LabelSize::Small),
-                    )
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
-                    ),
-            )
-            .child(
-                IconButton::new("picker-preview-right", IconName::DiffSplit)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(current == Layout::Right)
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Preview to the Right",
-                            &SetPreviewRight,
-                            &right_focus_handle,
-                            cx,
-                        )
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.set_preview_layout(Layout::Right, window, cx)
-                    })),
-            )
-            .child(
-                IconButton::new("picker-preview-below", IconName::DiffUnified)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(current == Layout::Below)
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Preview Below",
-                            &SetPreviewBelow,
-                            &below_focus_handle,
-                            cx,
-                        )
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.set_preview_layout(Layout::Below, window, cx)
-                    })),
-            )
-    }
-
-    fn render_actions_button(
-        &self,
-        actions: Rc<[crate::PickerAction]>,
-        focus_handle: gpui::FocusHandle,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let _ = cx;
-        PopoverMenu::new("picker-actions-menu")
-            .with_handle(self.actions_menu_handle.clone())
-            .attach(gpui::Anchor::TopRight)
-            .anchor(gpui::Anchor::BottomRight)
-            .trigger(
-                ui::ButtonLike::new("picker-actions-trigger")
-                    .child(Label::new("Actions…").size(LabelSize::Small))
-                    .child(
-                        KeyBinding::for_action_in(&ToggleActionsMenu, &focus_handle, cx)
-                            .size(rems_from_px(12.)),
-                    )
-                    .selected_style(ui::ButtonStyle::Tinted(ui::TintColor::Accent)),
-            )
-            .menu(move |window, cx| {
-                let actions = Rc::clone(&actions);
-                let focus_handle = focus_handle.clone();
-                Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                    menu = menu.context(focus_handle.clone());
-                    for item in actions.iter() {
-                        menu = item.add_to_menu(menu, &focus_handle);
-                    }
-                    menu
-                }))
-            })
-    }
-
     fn render_with_preview_below(
         &self,
         preview: &Preview,
@@ -434,21 +276,25 @@ impl<D: PickerDelegate> Picker<D> {
             v_flex()
                 .h(self
                     .shape
-                    .height(Some(Layout::Below), &self.size_bounds, window))
+                    .height(Some(preview::Layout::Below), &self.size_bounds, window))
                 .child(
                     div()
-                        .h(self
-                            .shape
-                            .results_height(Layout::Below, &self.size_bounds, window))
+                        .h(self.shape.results_height(
+                            preview::Layout::Below,
+                            &self.size_bounds,
+                            window,
+                        ))
                         .overflow_hidden()
                         .child(self.render_results(window, cx)),
                 )
-                .child(self.render_resize(Middle(preview.layout), window, cx))
+                .child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
                 .child(
                     div()
-                        .h(self
-                            .shape
-                            .preview_height(Layout::Below, &self.size_bounds, window))
+                        .h(self.shape.preview_height(
+                            preview::Layout::Below,
+                            &self.size_bounds,
+                            window,
+                        ))
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .child(preview.render(cx)),
@@ -494,5 +340,28 @@ impl<D: PickerDelegate> Picker<D> {
                         .child(preview.render(cx)),
                 ),
         )
+    }
+
+    fn finish_any_completed_resize(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Picker<D>>,
+    ) {
+        if let Shape::Resizing(pos) = self.shape
+            && !cx.has_active_drag()
+        {
+            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
+            persistence::store_shape_for_this_layout(
+                D::name(),
+                self.preview_layout(),
+                centered,
+                window,
+                cx,
+            );
+            self.shape = Shape::HorizontallyCentered(centered);
+            if let Some(preview) = &mut self.preview {
+                preview.adjust_to_new_size(window, cx);
+            }
+        }
     }
 }
