@@ -9098,6 +9098,7 @@ dependencies = [
  "anyhow",
  "client",
  "gpui",
+ "log",
  "release_channel",
  "smol",
  "util",
