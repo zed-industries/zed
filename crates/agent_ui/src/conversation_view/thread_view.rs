@@ -1,6 +1,7 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     agent_configuration::configure_context_server_modal::default_markdown_style,
+    conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
     open_abs_path_at_point,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
@@ -576,18 +577,9 @@ pub struct ThreadView {
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
     pub session_capabilities: SharedSessionCapabilities,
-    /// Tracks which tool calls have their content/output expanded.
-    /// Used for showing/hiding tool call results, terminal output, etc.
-    pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
     collapsed_sandbox_network_details: HashSet<acp::ToolCallId>,
-    pub expanded_thinking_blocks: HashSet<(usize, usize)>,
-    auto_expanded_thinking_block: Option<(usize, usize)>,
-    user_toggled_thinking_blocks: HashSet<(usize, usize)>,
-    /// Tracks which context compaction entries (by entry index) have their
-    /// summary expanded.
-    expanded_compactions: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -634,6 +626,8 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
+    pub(crate) thread_search_bar: Option<Entity<super::thread_search_bar::ThreadSearchBar>>,
+    pub(crate) thread_search_visible: bool,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -964,14 +958,9 @@ impl ThreadView {
             token_limit_callout_dismissed: false,
             last_token_limit_telemetry: None,
             thread_feedback: Default::default(),
-            expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
             collapsed_sandbox_network_details: HashSet::default(),
-            expanded_thinking_blocks: HashSet::default(),
-            auto_expanded_thinking_block: None,
-            user_toggled_thinking_blocks: HashSet::default(),
-            expanded_compactions: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -1008,6 +997,8 @@ impl ThreadView {
             generating_indicator_in_list: false,
             skill_loading_issues: Vec::new(),
             dismissed_skill_loading_issues: HashSet::default(),
+            thread_search_bar: None,
+            thread_search_visible: false,
         };
 
         this.sync_generating_indicator(cx);
@@ -1190,16 +1181,22 @@ impl ThreadView {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_edit_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                    self.entry_view_state.update(cx, |state, _cx| {
+                        state.expand_tool_call(tool_call_id.clone());
+                    });
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                    self.entry_view_state.update(cx, |state, _cx| {
+                        state.expand_tool_call(tool_call_id.clone());
+                    });
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.expanded_tool_calls.remove(tool_call_id);
+                self.entry_view_state.update(cx, |state, _cx| {
+                    state.collapse_tool_call(tool_call_id);
+                });
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
@@ -3681,7 +3678,10 @@ impl ThreadView {
     ) -> AnyElement {
         let is_compacting = compaction.is_in_progress();
         let summary = compaction.summary.clone();
-        let is_expanded = self.expanded_compactions.contains(&entry_ix);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_compaction_expanded(entry_ix);
 
         let id = format!("context-compaction-{entry_ix}");
         let header_label = match compaction.status {
@@ -3715,8 +3715,8 @@ impl ThreadView {
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(
-                            move |this, _event: &ClickEvent, _window, cx| {
-                                this.toggle_compaction_expansion(entry_ix, cx);
+                            move |this, _event: &ClickEvent, window, cx| {
+                                this.toggle_compaction_expansion(entry_ix, window, cx);
                             },
                         ))
                     }),
@@ -3761,8 +3761,14 @@ impl ThreadView {
                                         .full_width()
                                         .on_click(
                                             cx.listener(
-                                                move |this, _event: &ClickEvent, _window, cx| {
-                                                    this.expanded_compactions.remove(&entry_ix);
+                                                move |this, _event: &ClickEvent, window, cx| {
+                                                    this.entry_view_state.update(
+                                                        cx,
+                                                        |state, _cx| {
+                                                            state.collapse_compaction(entry_ix);
+                                                        },
+                                                    );
+                                                    this.refresh_thread_search(window, cx);
                                                     cx.notify();
                                                 },
                                             ),
@@ -3774,10 +3780,16 @@ impl ThreadView {
             .into_any()
     }
 
-    fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
-        if !self.expanded_compactions.remove(&entry_ix) {
-            self.expanded_compactions.insert(entry_ix);
-        }
+    fn toggle_compaction_expansion(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, _cx| {
+            state.toggle_compaction_expansion(entry_ix);
+        });
+        self.refresh_thread_search(window, cx);
         cx.notify();
     }
 
@@ -6300,6 +6312,85 @@ impl ThreadView {
         }
     }
 
+    fn refresh_thread_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.thread_search_visible {
+            return;
+        }
+        if let Some(bar) = self.thread_search_bar.clone() {
+            bar.update(cx, |bar, cx| bar.update_matches(window, cx));
+        }
+    }
+
+    pub(crate) fn toggle_search(
+        &mut self,
+        _: &crate::ToggleSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread_search_bar.is_none() {
+            let thread = self.thread.clone();
+            let view = cx.entity().downgrade();
+            let on_activate =
+                Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
+                    // Avoid re-entering `ThreadView` when search navigation is forwarded
+                    // from a `ThreadView` action handler.
+                    let view = view.clone();
+                    cx.defer(move |cx| {
+                        view.update(cx, |this, cx| {
+                            this.list_state.scroll_to(gpui::ListOffset {
+                                item_ix: entry_ix,
+                                offset_in_item: gpui::px(0.),
+                            });
+                            cx.notify();
+                        })
+                        .ok();
+                    });
+                });
+            let search_bar = cx.new(|cx| {
+                ThreadSearchBar::new(
+                    thread,
+                    self.entry_view_state.clone(),
+                    on_activate,
+                    window,
+                    cx,
+                )
+            });
+            self._subscriptions.push(cx.subscribe_in(
+                &search_bar,
+                window,
+                |this, _bar, event, window, cx| {
+                    if matches!(event, ThreadSearchBarEvent::Dismissed) {
+                        this.thread_search_visible = false;
+                        this.message_editor.focus_handle(cx).focus(window, cx);
+                        cx.notify();
+                    }
+                },
+            ));
+            self.thread_search_bar = Some(search_bar);
+        }
+
+        // Re-focus an open bar unless it already owns focus.
+        let search_bar_focused = self
+            .thread_search_bar
+            .as_ref()
+            .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
+
+        if self.thread_search_visible && search_bar_focused {
+            if let Some(bar) = &self.thread_search_bar {
+                bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+            }
+            self.thread_search_visible = false;
+            self.message_editor.focus_handle(cx).focus(window, cx);
+            cx.notify();
+        } else {
+            self.thread_search_visible = true;
+            if let Some(bar) = self.thread_search_bar.clone() {
+                bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
+            }
+            cx.notify();
+        }
+    }
+
     pub fn open_thread_as_markdown(
         &self,
         workspace: Entity<Workspace>,
@@ -6444,104 +6535,35 @@ impl ThreadView {
     }
 
     pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-
-        if !matches!(
-            thinking_display,
-            ThinkingBlockDisplay::Auto | ThinkingBlockDisplay::Preview
-        ) {
-            return;
-        }
-
-        let key = {
-            let thread = self.thread.read(cx);
+        let thread = self.thread.clone();
+        let changed = self.entry_view_state.update(cx, |state, cx| {
+            let thread = thread.read(cx);
             if thread.status() != ThreadStatus::Generating {
-                return;
+                return false;
             }
-            let entries = thread.entries();
-            let last_ix = entries.len().saturating_sub(1);
-            match entries.get(last_ix) {
-                Some(AgentThreadEntry::AssistantMessage(msg)) => match msg.chunks.last() {
-                    Some(AssistantMessageChunk::Thought { .. }) => {
-                        Some((last_ix, msg.chunks.len() - 1))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        };
-
-        if let Some(key) = key {
-            if self.auto_expanded_thinking_block != Some(key) {
-                self.auto_expanded_thinking_block = Some(key);
-                self.expanded_thinking_blocks.insert(key);
-                cx.notify();
-            }
-        } else if self.auto_expanded_thinking_block.is_some() {
-            if thinking_display == ThinkingBlockDisplay::Auto {
-                if let Some(key) = self.auto_expanded_thinking_block {
-                    if !self.user_toggled_thinking_blocks.contains(&key) {
-                        self.expanded_thinking_blocks.remove(&key);
-                    }
-                }
-            }
-            self.auto_expanded_thinking_block = None;
+            state.auto_expand_streaming_thought(thread, cx)
+        });
+        if changed {
             cx.notify();
         }
     }
 
-    pub(crate) fn clear_auto_expand_tracking(&mut self) {
-        self.auto_expanded_thinking_block = None;
+    pub(crate) fn clear_auto_expand_tracking(&mut self, cx: &mut Context<Self>) {
+        self.entry_view_state.update(cx, |state, _cx| {
+            state.clear_auto_expand_tracking();
+        });
     }
 
-    fn toggle_thinking_block_expansion(&mut self, key: (usize, usize), cx: &mut Context<Self>) {
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-
-        match thinking_display {
-            ThinkingBlockDisplay::Auto => {
-                let is_open = self.expanded_thinking_blocks.contains(&key)
-                    || self.user_toggled_thinking_blocks.contains(&key);
-
-                if is_open {
-                    self.expanded_thinking_blocks.remove(&key);
-                    self.user_toggled_thinking_blocks.remove(&key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::Preview => {
-                let is_user_expanded = self.user_toggled_thinking_blocks.contains(&key);
-                let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
-
-                if is_user_expanded {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                    self.expanded_thinking_blocks.remove(&key);
-                } else if is_in_expanded_set {
-                    self.user_toggled_thinking_blocks.insert(key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::AlwaysExpanded => {
-                if self.user_toggled_thinking_blocks.contains(&key) {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                } else {
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::AlwaysCollapsed => {
-                if self.user_toggled_thinking_blocks.contains(&key) {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                    self.expanded_thinking_blocks.remove(&key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-        }
-
+    fn toggle_thinking_block_expansion(
+        &mut self,
+        key: (usize, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, cx| {
+            state.toggle_thinking_block_expansion(key, cx);
+        });
+        self.refresh_thread_search(window, cx);
         cx.notify();
     }
 
@@ -6558,29 +6580,10 @@ impl ThreadView {
 
         let key = (entry_ix, chunk_ix);
 
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-        let is_user_toggled = self.user_toggled_thinking_blocks.contains(&key);
-        let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
-
-        let (is_open, is_constrained) = match thinking_display {
-            ThinkingBlockDisplay::Auto => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                (is_open, false)
-            }
-            ThinkingBlockDisplay::Preview => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                let is_constrained = is_in_expanded_set && !is_user_toggled;
-                (is_open, is_constrained)
-            }
-            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled, false),
-            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled, false),
-        };
-
-        let should_auto_scroll = self.auto_expanded_thinking_block == Some(key);
-
-        let scroll_handle = self
-            .entry_view_state
-            .read(cx)
+        let entry_view_state = self.entry_view_state.read(cx);
+        let (is_open, is_constrained) = entry_view_state.thinking_block_state(key, cx);
+        let should_auto_scroll = entry_view_state.is_auto_expanded_thinking_block(key);
+        let scroll_handle = entry_view_state
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
 
@@ -6624,14 +6627,12 @@ impl ThreadView {
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
                             .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(
-                                move |this, _event: &ClickEvent, _window, cx| {
-                                    this.toggle_thinking_block_expansion(key, cx);
-                                },
-                            )),
+                            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                                this.toggle_thinking_block_expansion(key, window, cx);
+                            })),
                     )
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        this.toggle_thinking_block_expansion(key, cx);
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                        this.toggle_thinking_block_expansion(key, window, cx);
                     })),
             )
             .when(is_open, |this| {
@@ -7012,7 +7013,10 @@ impl ThreadView {
             cx,
         );
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_call_expanded(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
@@ -7049,12 +7053,11 @@ impl ThreadView {
                 .visible_on_hover(&header_group)
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
-                    move |this, _event, _window, cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
+                    move |this, _event, window, cx| {
+                        this.entry_view_state.update(cx, |state, _cx| {
+                            state.toggle_tool_call_expansion(&id);
+                        });
+                        this.refresh_thread_search(window, cx);
                         cx.notify();
                     }
                 })),
@@ -7463,7 +7466,10 @@ impl ThreadView {
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let mut is_open = self.expanded_tool_calls.contains(&tool_call.id);
+        let mut is_open = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_call_expanded(&tool_call.id);
 
         is_open |= needs_confirmation;
 
@@ -7692,8 +7698,14 @@ impl ThreadView {
                                         .style(ButtonStyle::Outlined)
                                         .icon_color(Color::Muted)
                                         .on_click(cx.listener({
-                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                this.expanded_tool_calls.remove(&tool_call_id);
+                                            move |this: &mut Self,
+                                                  _,
+                                                  window,
+                                                  cx: &mut Context<Self>| {
+                                                this.entry_view_state.update(cx, |state, _cx| {
+                                                    state.collapse_tool_call(&tool_call_id);
+                                                });
+                                                this.refresh_thread_search(window, cx);
                                                 cx.notify();
                                             }
                                         })),
@@ -7796,15 +7808,18 @@ impl ThreadView {
                                                             let id = tool_call.id.clone();
                                                             move |this: &mut Self,
                                                                   _,
-                                                                  _,
+                                                                  window,
                                                                   cx: &mut Context<Self>| {
-                                                                if is_open {
-                                                                    this.expanded_tool_calls
-                                                                        .remove(&id);
-                                                                } else {
-                                                                    this.expanded_tool_calls
-                                                                        .insert(id.clone());
-                                                                }
+                                                                this.entry_view_state.update(
+                                                                    cx,
+                                                                    |state, _cx| {
+                                                                        state
+                                                                            .toggle_tool_call_expansion(
+                                                                                &id,
+                                                                            );
+                                                                    },
+                                                                );
+                                                                this.refresh_thread_search(window, cx);
                                                                 cx.notify();
                                                             }
                                                         })),
@@ -9494,7 +9509,10 @@ impl ThreadView {
             })
             .is_some();
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_call_expanded(&tool_call.id);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
@@ -9675,15 +9693,13 @@ impl ThreadView {
                                     )
                                     .on_click(cx.listener({
                                         let tool_call_id = tool_call.id.clone();
-                                        move |this, _, _, cx| {
-                                            if this.expanded_tool_calls.contains(&tool_call_id) {
-                                                this.expanded_tool_calls.remove(&tool_call_id);
-                                            } else {
-                                                this.expanded_tool_calls
-                                                    .insert(tool_call_id.clone());
-                                            }
+                                        move |this, _, window, cx| {
                                             let expanded =
-                                                this.expanded_tool_calls.contains(&tool_call_id);
+                                                this.entry_view_state.update(cx, |state, _cx| {
+                                                    state.toggle_tool_call_expansion(&tool_call_id);
+                                                    state.is_tool_call_expanded(&tool_call_id)
+                                                });
+                                            this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
                                             cx.notify();
                                         }
@@ -10966,6 +10982,101 @@ impl Render for ThreadView {
                     this.cancel_generation(cx);
                 }
             }))
+            .on_action(cx.listener(
+                |this, _: &super::thread_search_bar::DismissThreadSearch, window, cx| {
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+                    }
+                    this.thread_search_visible = false;
+                    this.message_editor.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                },
+            ))
+            // Esc can arrive as `editor::Cancel` from the query editor.
+            .on_action(
+                cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+                    }
+                    this.thread_search_visible = false;
+                    this.message_editor.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                }),
+            )
+            .on_action(cx.listener(
+                |this, action: &super::thread_search_bar::SelectNextThreadMatch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.select_next_match(action, window, cx));
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &super::thread_search_bar::SelectPreviousThreadMatch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.select_prev_match(action, window, cx));
+                    }
+                },
+            ))
+            .on_action(
+                cx.listener(|this, _: &search::ToggleCaseSensitive, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| {
+                            bar.toggle_case_sensitive(&search::ToggleCaseSensitive, window, cx)
+                        });
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &search::ToggleWholeWord, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| {
+                            bar.toggle_whole_word(&search::ToggleWholeWord, window, cx)
+                        });
+                    }
+                }),
+            )
+            .on_action(cx.listener(|this, _: &search::ToggleRegex, window, cx| {
+                if !this.thread_search_visible {
+                    cx.propagate();
+                    return;
+                }
+                if let Some(bar) = this.thread_search_bar.clone() {
+                    bar.update(cx, |bar, cx| {
+                        bar.toggle_regex(&search::ToggleRegex, window, cx)
+                    });
+                }
+            }))
+            .on_action(
+                cx.listener(|this, action: &search::FocusSearch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.focus_search(action, window, cx));
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
                 if let Some(parent_session_id) = this.thread.read(cx).parent_session_id().cloned() {
                     this.server_view
@@ -10994,6 +11105,7 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::scroll_output_to_bottom))
             .on_action(cx.listener(Self::scroll_output_to_previous_message))
             .on_action(cx.listener(Self::scroll_output_to_next_message))
+            .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
                 this.toggle_fast_mode(window, cx);
             }))
@@ -11163,6 +11275,12 @@ impl Render for ThreadView {
             }))
             .size_full()
             .children(self.render_subagent_titlebar(cx))
+            .when_some(
+                self.thread_search_visible
+                    .then(|| self.thread_search_bar.clone())
+                    .flatten(),
+                |this, bar| this.child(bar),
+            )
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))
