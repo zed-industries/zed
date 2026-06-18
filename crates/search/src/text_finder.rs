@@ -2,7 +2,7 @@ use std::{ops::Range, sync::atomic::Ordering};
 
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Task, WeakEntity, actions,
+    Modifiers, Subscription, Task, WeakEntity, actions,
 };
 use language::Buffer;
 use picker::Picker;
@@ -24,6 +24,7 @@ actions!(text_finder, [ToProjectSearch,]);
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
+    _subscription: Subscription,
 }
 
 pub fn init(cx: &mut App) {
@@ -220,7 +221,7 @@ impl TextFinder {
         })
     }
 
-    fn new(delegate: Delegate, window: &mut Window, cx: &mut App) -> Self {
+    fn new(delegate: Delegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let project = delegate.project(cx).clone();
         let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
         let picker_weak = picker.downgrade();
@@ -229,10 +230,14 @@ impl TextFinder {
             picker.delegate.focus_handle = picker_focus_handle.clone();
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
         });
+        let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+            cx.emit(DismissEvent);
+        });
 
         Self {
             picker,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
+            _subscription: subscription,
         }
     }
 
