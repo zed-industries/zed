@@ -21,6 +21,18 @@ use workspace::Workspace;
 
 use crate::message_editor::{MessageEditor, MessageEditorEvent, SharedSessionCapabilities};
 
+/// Maps an entry index through the removal of `removed` (a contiguous range of
+/// entries), returning `None` if the index referred to a removed entry.
+fn reindex_after_removal(index: usize, removed: &Range<usize>) -> Option<usize> {
+    if index < removed.start {
+        Some(index)
+    } else if index < removed.end {
+        None
+    } else {
+        Some(index - removed.len())
+    }
+}
+
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
@@ -407,7 +419,32 @@ impl EntryViewState {
     }
 
     pub fn remove(&mut self, range: Range<usize>) {
-        self.entries.drain(range);
+        self.entries.drain(range.clone());
+
+        self.expanded_compactions = self
+            .expanded_compactions
+            .iter()
+            .filter_map(|&entry_ix| reindex_after_removal(entry_ix, &range))
+            .collect();
+        self.expanded_thinking_blocks = self
+            .expanded_thinking_blocks
+            .iter()
+            .filter_map(|&(entry_ix, chunk_ix)| {
+                reindex_after_removal(entry_ix, &range).map(|entry_ix| (entry_ix, chunk_ix))
+            })
+            .collect();
+        self.user_toggled_thinking_blocks = self
+            .user_toggled_thinking_blocks
+            .iter()
+            .filter_map(|&(entry_ix, chunk_ix)| {
+                reindex_after_removal(entry_ix, &range).map(|entry_ix| (entry_ix, chunk_ix))
+            })
+            .collect();
+        self.auto_expanded_thinking_block =
+            self.auto_expanded_thinking_block
+                .and_then(|(entry_ix, chunk_ix)| {
+                    reindex_after_removal(entry_ix, &range).map(|entry_ix| (entry_ix, chunk_ix))
+                });
     }
 
     pub fn agent_ui_font_size_changed(&mut self, cx: &mut App) {
@@ -669,6 +706,23 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use workspace::{MultiWorkspace, PathList};
+
+    #[test]
+    fn test_reindex_after_removal() {
+        use super::reindex_after_removal;
+
+        // Entries before the removed range keep their index.
+        assert_eq!(reindex_after_removal(0, &(2..4)), Some(0));
+        assert_eq!(reindex_after_removal(1, &(2..4)), Some(1));
+        // Entries inside the removed range are dropped.
+        assert_eq!(reindex_after_removal(2, &(2..4)), None);
+        assert_eq!(reindex_after_removal(3, &(2..4)), None);
+        // Entries after the removed range slide down by its length.
+        assert_eq!(reindex_after_removal(4, &(2..4)), Some(2));
+        assert_eq!(reindex_after_removal(5, &(2..4)), Some(3));
+        // An empty removal range leaves indices untouched.
+        assert_eq!(reindex_after_removal(3, &(2..2)), Some(3));
+    }
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {
