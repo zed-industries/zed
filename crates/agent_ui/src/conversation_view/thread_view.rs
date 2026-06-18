@@ -9215,7 +9215,12 @@ impl ThreadView {
         };
 
         let label: SharedString = if let Some(abs_path) = is_file {
-            if let Some(project_path) = project
+            // Split off an optional `#L<line>` fragment so the path still resolves.
+            let (abs_path, fragment) = abs_path
+                .split_once('#')
+                .map_or((abs_path, None), |(path, fragment)| (path, Some(fragment)));
+
+            let path_label = if let Some(project_path) = project
                 .read(cx)
                 .project_path_for_absolute_path(&Path::new(abs_path), cx)
                 && let Some(worktree) = project
@@ -9227,9 +9232,13 @@ impl ThreadView {
                     .full_path(&project_path.path)
                     .to_string_lossy()
                     .to_string()
-                    .into()
             } else {
-                abs_path.to_string().into()
+                abs_path.to_string()
+            };
+
+            match fragment {
+                Some(fragment) => format!("{path_label}#{fragment}").into(),
+                None => path_label.into(),
             }
         } else {
             uri.clone()
