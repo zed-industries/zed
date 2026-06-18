@@ -694,7 +694,7 @@ impl Markdown {
         }
     }
 
-    pub fn source(&self) -> &str {
+    pub fn source(&self) -> &SharedString {
         &self.source
     }
 
@@ -762,7 +762,7 @@ impl Markdown {
     }
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
-        if source == self.source() {
+        if &source == self.source() {
             return;
         }
         self.source = source;

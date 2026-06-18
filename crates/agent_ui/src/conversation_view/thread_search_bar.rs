@@ -13,7 +13,7 @@ use gpui::{
     SharedString, Subscription, Task, TextStyle, WeakEntity, Window, actions, relative, rems,
 };
 use markdown::Markdown;
-use multi_buffer::{Anchor, MultiBufferOffset};
+use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
 use settings::Settings as _;
@@ -59,6 +59,33 @@ struct ThreadMatch {
     entry_ix: usize,
     target: MatchTarget,
     source_range: Range<usize>,
+}
+
+enum SearchTarget {
+    Editor {
+        entry_ix: usize,
+        editor: Entity<Editor>,
+        snapshot: MultiBufferSnapshot,
+    },
+    Markdown {
+        entry_ix: usize,
+        markdown: Entity<Markdown>,
+        source: SharedString,
+    },
+}
+
+enum ScannedTarget {
+    Editor {
+        entry_ix: usize,
+        editor: Entity<Editor>,
+        ranges: Vec<Range<usize>>,
+        anchor_ranges: Vec<Range<Anchor>>,
+    },
+    Markdown {
+        entry_ix: usize,
+        markdown: Entity<Markdown>,
+        ranges: Vec<Range<usize>>,
+    },
 }
 
 struct MatchPosition {
@@ -118,6 +145,7 @@ pub struct ThreadSearchBar {
     on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)>,
     is_active: bool,
     _update_matches_task: Option<Task<()>>,
+    _search_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -192,6 +220,7 @@ impl ThreadSearchBar {
             on_activate_match,
             is_active: false,
             _update_matches_task: None,
+            _search_task: None,
             _subscriptions: vec![editor_subscription, thread_subscription],
         }
     }
@@ -288,29 +317,17 @@ impl ThreadSearchBar {
         let (query, err_msg) = self.build_query(cx);
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
         self.query_error_message = err_msg;
-        for weak in self.highlighted_markdowns.drain(..) {
-            if let Some(md) = weak.upgrade() {
-                md.update(cx, |md, cx| md.clear_search_highlights(cx));
-            }
-        }
-        for weak in self.highlighted_editors.drain(..) {
-            if let Some(editor) = weak.upgrade() {
-                editor.update(cx, |editor, cx| {
-                    editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
-                });
-            }
-        }
-        self.matches.clear();
-        self.active_match = None;
 
         let Some(query) = query else {
+            self.clear_results(cx);
             cx.notify();
             return;
         };
 
-        // Past user messages render through `MessageEditor`, not markdown.
+        let mut targets: Vec<SearchTarget> = Vec::new();
         let entry_count = self.thread.read(cx).entries().len();
         for entry_ix in 0..entry_count {
+            // Past user messages render through `MessageEditor`, not markdown.
             let is_user_message = self
                 .thread
                 .read(cx)
@@ -326,45 +343,14 @@ impl ThreadSearchBar {
                     .entry(entry_ix)
                     .and_then(|entry| entry.message_editor())
                     .map(|message_editor| message_editor.read(cx).editor().clone());
-                let Some(editor_entity) = editor_entity else {
+                let Some(editor) = editor_entity else {
                     continue;
                 };
-
-                let snapshot = editor_entity.read(cx).buffer().read(cx).snapshot(cx);
-                let text = snapshot.text();
-                let ranges = query.search_str(&text);
-                if ranges.is_empty() {
-                    continue;
-                }
-                let anchor_ranges: Vec<Range<Anchor>> = ranges
-                    .iter()
-                    .map(|range| {
-                        snapshot.anchor_before(MultiBufferOffset(range.start))
-                            ..snapshot.anchor_after(MultiBufferOffset(range.end))
-                    })
-                    .collect();
-
-                let weak_editor = editor_entity.downgrade();
-                for (ix, range) in ranges.iter().enumerate() {
-                    self.matches.push(ThreadMatch {
-                        entry_ix,
-                        target: MatchTarget::Editor {
-                            editor: weak_editor.clone(),
-                            anchor_range: anchor_ranges[ix].clone(),
-                            editor_match_ix: ix,
-                        },
-                        source_range: range.clone(),
-                    });
-                }
-                self.highlighted_editors.push(weak_editor);
-
-                editor_entity.update(cx, |editor, cx| {
-                    editor.highlight_background(
-                        HighlightKey::BufferSearchHighlights,
-                        &anchor_ranges,
-                        |_index, theme| theme.colors().search_match_background,
-                        cx,
-                    );
+                let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                targets.push(SearchTarget::Editor {
+                    entry_ix,
+                    editor,
+                    snapshot,
                 });
             } else {
                 let markdowns = self
@@ -378,11 +364,131 @@ impl ThreadSearchBar {
                     })
                     .unwrap_or_default();
                 for markdown in markdowns {
-                    let source = markdown.read(cx).source();
-                    let ranges = query.search_str(source);
-                    if ranges.is_empty() {
-                        continue;
+                    let source = markdown.read(cx).source().clone();
+                    targets.push(SearchTarget::Markdown {
+                        entry_ix,
+                        markdown,
+                        source,
+                    });
+                }
+            }
+        }
+
+        if targets.is_empty() {
+            self.clear_results(cx);
+            cx.notify();
+            return;
+        }
+
+        self._search_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let scanned = cx
+                .background_spawn(async move {
+                    targets
+                        .into_iter()
+                        .filter_map(|target| match target {
+                            SearchTarget::Editor {
+                                entry_ix,
+                                editor,
+                                snapshot,
+                            } => {
+                                let ranges = query.search_str(&snapshot.text());
+                                if ranges.is_empty() {
+                                    return None;
+                                }
+                                let anchor_ranges = ranges
+                                    .iter()
+                                    .map(|range| {
+                                        snapshot.anchor_before(MultiBufferOffset(range.start))
+                                            ..snapshot.anchor_after(MultiBufferOffset(range.end))
+                                    })
+                                    .collect();
+                                Some(ScannedTarget::Editor {
+                                    entry_ix,
+                                    editor,
+                                    ranges,
+                                    anchor_ranges,
+                                })
+                            }
+                            SearchTarget::Markdown {
+                                entry_ix,
+                                markdown,
+                                source,
+                            } => {
+                                let ranges = query.search_str(&source);
+                                if ranges.is_empty() {
+                                    return None;
+                                }
+                                Some(ScannedTarget::Markdown {
+                                    entry_ix,
+                                    markdown,
+                                    ranges,
+                                })
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.apply_search_results(
+                    scanned,
+                    previous_active_match,
+                    previous_active_match_ix,
+                    window,
+                    cx,
+                );
+            })
+            .ok();
+        }));
+    }
+
+    fn apply_search_results(
+        &mut self,
+        scanned: Vec<ScannedTarget>,
+        previous_active_match: Option<MatchPosition>,
+        previous_active_match_ix: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_match_highlights(cx);
+        self.matches.clear();
+        self.active_match = None;
+
+        for target in scanned {
+            match target {
+                ScannedTarget::Editor {
+                    entry_ix,
+                    editor,
+                    ranges,
+                    anchor_ranges,
+                } => {
+                    let weak_editor = editor.downgrade();
+                    for (ix, (range, anchor_range)) in ranges.iter().zip(&anchor_ranges).enumerate()
+                    {
+                        self.matches.push(ThreadMatch {
+                            entry_ix,
+                            target: MatchTarget::Editor {
+                                editor: weak_editor.clone(),
+                                anchor_range: anchor_range.clone(),
+                                editor_match_ix: ix,
+                            },
+                            source_range: range.clone(),
+                        });
                     }
+                    self.highlighted_editors.push(weak_editor);
+                    editor.update(cx, |editor, cx| {
+                        editor.highlight_background(
+                            HighlightKey::BufferSearchHighlights,
+                            &anchor_ranges,
+                            |_index, theme| theme.colors().search_match_background,
+                            cx,
+                        );
+                    });
+                }
+                ScannedTarget::Markdown {
+                    entry_ix,
+                    markdown,
+                    ranges,
+                } => {
                     let weak = markdown.downgrade();
                     for (ix, range) in ranges.iter().enumerate() {
                         self.matches.push(ThreadMatch {
@@ -579,6 +685,20 @@ impl ThreadSearchBar {
     }
 
     fn clear_highlights_impl(&mut self, cx: &mut App) {
+        self.clear_results(cx);
+        self.is_active = false;
+        self._update_matches_task = None;
+    }
+
+    /// Drops all painted highlights, recorded matches, and any in-flight scan.
+    fn clear_results(&mut self, cx: &mut App) {
+        self.clear_match_highlights(cx);
+        self.matches.clear();
+        self.active_match = None;
+        self._search_task = None;
+    }
+
+    fn clear_match_highlights(&mut self, cx: &mut App) {
         for weak in self.highlighted_markdowns.drain(..) {
             if let Some(md) = weak.upgrade() {
                 md.update(cx, |md, cx| md.clear_search_highlights(cx));
@@ -591,10 +711,6 @@ impl ThreadSearchBar {
                 });
             }
         }
-        self.matches.clear();
-        self.active_match = None;
-        self.is_active = false;
-        self._update_matches_task = None;
     }
 
     pub(super) fn toggle_case_sensitive(

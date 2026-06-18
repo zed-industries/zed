@@ -6330,12 +6330,11 @@ impl ThreadView {
         if self.thread_search_bar.is_none() {
             let thread = self.thread.clone();
             let view = cx.entity().downgrade();
-            let view_for_activation = view.clone();
             let on_activate =
                 Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
                     // Avoid re-entering `ThreadView` when search navigation is forwarded
                     // from a `ThreadView` action handler.
-                    let view = view_for_activation.clone();
+                    let view = view.clone();
                     cx.defer(move |cx| {
                         view.update(cx, |this, cx| {
                             this.list_state.scroll_to(gpui::ListOffset {
