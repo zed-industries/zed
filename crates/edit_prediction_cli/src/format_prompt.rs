@@ -8,7 +8,6 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use gpui::AsyncApp;
 use std::ops::Range;
-use std::path::Path;
 use std::sync::Arc;
 use zeta_prompt::{
     ZetaFormat, ZetaPromptInput, format_edit_history_within_budget, format_expected_output,
@@ -364,12 +363,6 @@ impl TeacherPrompt {
 /// output a sequence of marker-bounded edits targeting any of it.
 pub struct TeacherJumpsPrompt;
 
-struct RelatedFileCursor {
-    file_ix: usize,
-    excerpt_ix: usize,
-    offset_in_excerpt: usize,
-}
-
 impl TeacherJumpsPrompt {
     pub(crate) const USER_CURSOR_MARKER: &str = "<|user_cursor|>";
     pub(crate) const NO_EDITS: &str = "NO_EDITS";
@@ -384,7 +377,10 @@ impl TeacherJumpsPrompt {
             .as_ref()
             .context("example is missing prompt inputs")?;
         let marker_table = hashed_regions::build_marker_table(prompt_inputs);
-        let cursor = Self::locate_cursor_in_related_files(example, prompt_inputs)?;
+        let cursor = hashed_regions::locate_cursor_in_related_files(prompt_inputs).context(
+            "cursor position is not covered by any related-file excerpt of the cursor file; \
+             teacher-jumps requires current-file context retrieval (e.g. `ep context --type=current-file,...`)",
+        )?;
 
         let edit_history = Self::format_edit_history(&prompt_inputs);
         let context = Self::format_context(
@@ -459,86 +455,6 @@ impl TeacherJumpsPrompt {
         });
 
         Ok((patch, actual_cursor))
-    }
-
-    /// Map the cursor (an offset within `cursor_excerpt`) to an offset within
-    /// the related-file excerpt that covers it. Related files are the single
-    /// source of truth for rendering and edit addressing; `cursor_excerpt` is
-    /// only used to derive the cursor position.
-    fn locate_cursor_in_related_files(
-        example: &Example,
-        prompt_inputs: &ZetaPromptInput,
-    ) -> Result<RelatedFileCursor> {
-        let related_files = prompt_inputs
-            .related_files
-            .as_deref()
-            .context("prompt inputs are missing related files")?;
-        let excerpt_start_row = prompt_inputs
-            .excerpt_start_row
-            .context("prompt inputs are missing excerpt_start_row")?;
-        let cursor_offset = prompt_inputs.cursor_offset_in_excerpt;
-        let excerpt_prefix = prompt_inputs
-            .cursor_excerpt
-            .get(..cursor_offset)
-            .context("cursor offset is out of bounds of the cursor excerpt")?;
-        let cursor_row = excerpt_start_row + excerpt_prefix.matches('\n').count() as u32;
-        let cursor_column = cursor_offset - excerpt_prefix.rfind('\n').map_or(0, |pos| pos + 1);
-
-        let cursor_path = example.spec.cursor_path.as_ref();
-        for (file_ix, file) in related_files.iter().enumerate() {
-            if Self::related_file_patch_path(cursor_path, file.path.as_ref()) != cursor_path {
-                continue;
-            }
-            for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
-                if cursor_row < excerpt.row_range.start || cursor_row > excerpt.row_range.end {
-                    continue;
-                }
-                let row_in_excerpt = (cursor_row - excerpt.row_range.start) as usize;
-                let Some(line_start) = line_start_offset(&excerpt.text, row_in_excerpt) else {
-                    continue;
-                };
-                let line_len = excerpt.text[line_start..]
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .len();
-                if cursor_column > line_len {
-                    continue;
-                }
-                return Ok(RelatedFileCursor {
-                    file_ix,
-                    excerpt_ix,
-                    offset_in_excerpt: line_start + cursor_column,
-                });
-            }
-        }
-
-        Err(anyhow!(
-            "cursor position is not covered by any related-file excerpt of the cursor file; \
-             teacher-jumps requires current-file context retrieval (e.g. `ep context --type=current-file,...`)"
-        ))
-    }
-
-    fn related_file_patch_path(cursor_path: &Path, related_path: &Path) -> std::path::PathBuf {
-        // Related-file paths carry a worktree-root prefix that `cursor_path`
-        // lacks. If stripping it yields the cursor path exactly, this *is*
-        // the cursor file; checking this first handles the case where the
-        // root name coincides with the cursor path's first component (e.g.
-        // cursor `jaq/src/main.rs` in a worktree rooted at `jaq/`).
-        let stripped: std::path::PathBuf = related_path.iter().skip(1).collect();
-        if stripped == cursor_path {
-            return stripped;
-        }
-        let cursor_first_component = cursor_path.components().next();
-        let related_first_component = related_path.components().next();
-        if related_first_component.is_some()
-            && cursor_first_component != related_first_component
-            && related_path.components().count() > 1
-        {
-            stripped
-        } else {
-            related_path.to_path_buf()
-        }
     }
 
     fn format_edit_history(prompt_inputs: &ZetaPromptInput) -> String {
@@ -687,7 +603,7 @@ impl TeacherJumpsPrompt {
         example: &Example,
         prompt_inputs: &ZetaPromptInput,
         marker_table: &[SnippetMarkers],
-        cursor: &RelatedFileCursor,
+        cursor: &hashed_regions::RelatedFileCursor,
     ) -> Result<String> {
         let related_files = prompt_inputs
             .related_files
