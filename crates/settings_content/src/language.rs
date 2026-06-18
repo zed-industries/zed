@@ -612,6 +612,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
+    /// Additional characters to treat as part of a word for word-based
+    /// editor operations, such as double-click word selection.
+    ///
+    /// Default: []
+    pub word_characters: Option<HashSet<char>>,
     /// Whether to enable word diff highlighting in the editor.
     ///
     /// When enabled, changed words within modified lines are highlighted

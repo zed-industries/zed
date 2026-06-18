@@ -500,7 +500,12 @@ impl Editor {
 
             if only_carets {
                 for selection in &mut selections {
-                    let (word_range, _) = buffer.surrounding_word(selection.start, None);
+                    let settings = buffer.language_settings_at(selection.start, cx);
+                    let (word_range, _) = buffer.surrounding_word_with_extra_word_characters(
+                        selection.start,
+                        None,
+                        Some(&settings.word_characters),
+                    );
                     selection.start = word_range.start;
                     selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;
@@ -677,10 +682,20 @@ impl Editor {
                 if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
                     // manually select word at selection
                     if ["string_content", "inline"].contains(&node.kind()) {
-                        let (word_range, _) = buffer.surrounding_word(old_range.start, None);
+                        let settings = buffer.language_settings_at(old_range.start, cx);
+                        let (word_range, _) = buffer.surrounding_word_with_extra_word_characters(
+                            old_range.start,
+                            None,
+                            Some(&settings.word_characters),
+                        );
                         // ignore if word is already selected
                         if !word_range.is_empty() && old_range != word_range {
-                            let (last_word_range, _) = buffer.surrounding_word(old_range.end, None);
+                            let (last_word_range, _) = buffer
+                                .surrounding_word_with_extra_word_characters(
+                                    old_range.end,
+                                    None,
+                                    Some(&settings.word_characters),
+                                );
                             // only select word if start and end point belongs to same word
                             if word_range == last_word_range {
                                 selected_larger_node = true;
@@ -1266,7 +1281,12 @@ impl Editor {
                 let position = display_map
                     .clip_point(position, Bias::Left)
                     .to_offset(&display_map, Bias::Left);
-                let (range, _) = buffer.surrounding_word(position, None);
+                let settings = buffer.language_settings_at(position, cx);
+                let (range, _) = buffer.surrounding_word_with_extra_word_characters(
+                    position,
+                    None,
+                    Some(&settings.word_characters),
+                );
                 start = buffer.anchor_before(range.start);
                 end = buffer.anchor_before(range.end);
                 mode = SelectMode::Word(start..end);
@@ -1364,11 +1384,19 @@ impl Editor {
                         .clip_point(position, Bias::Left)
                         .to_offset(&display_map, Bias::Left);
                     let original_range = original_range.to_offset(buffer);
+                    let settings = buffer.language_settings_at(offset, cx);
 
-                    let head_offset = if buffer.is_inside_word(offset, None)
-                        || original_range.contains(&offset)
+                    let head_offset = if buffer.is_inside_word_with_extra_word_characters(
+                        offset,
+                        None,
+                        Some(&settings.word_characters),
+                    ) || original_range.contains(&offset)
                     {
-                        let (word_range, _) = buffer.surrounding_word(offset, None);
+                        let (word_range, _) = buffer.surrounding_word_with_extra_word_characters(
+                            offset,
+                            None,
+                            Some(&settings.word_characters),
+                        );
                         if word_range.start < original_range.start {
                             word_range.start
                         } else {
@@ -2197,7 +2225,12 @@ impl Editor {
 
             if only_carets {
                 for selection in &mut selections {
-                    let (word_range, _) = buffer.surrounding_word(selection.start, None);
+                    let settings = buffer.language_settings_at(selection.start, cx);
+                    let (word_range, _) = buffer.surrounding_word_with_extra_word_characters(
+                        selection.start,
+                        None,
+                        Some(&settings.word_characters),
+                    );
                     selection.start = word_range.start;
                     selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;

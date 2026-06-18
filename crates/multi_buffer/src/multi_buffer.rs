@@ -3998,15 +3998,27 @@ impl MultiBufferSnapshot {
         position: T,
         scope_context: Option<CharScopeContext>,
     ) -> bool {
+        self.is_inside_word_with_extra_word_characters(position, scope_context, None)
+    }
+
+    pub fn is_inside_word_with_extra_word_characters<T: ToOffset>(
+        &self,
+        position: T,
+        scope_context: Option<CharScopeContext>,
+        extra_word_characters: Option<&HashSet<char>>,
+    ) -> bool {
         let position = position.to_offset(self);
         let classifier = self
             .char_classifier_at(position)
             .scope_context(scope_context);
-        let next_char_kind = self.chars_at(position).next().map(|c| classifier.kind(c));
+        let next_char_kind = self
+            .chars_at(position)
+            .next()
+            .map(|c| classifier.kind_with_extra_word_characters(c, extra_word_characters));
         let prev_char_kind = self
             .reversed_chars_at(position)
             .next()
-            .map(|c| classifier.kind(c));
+            .map(|c| classifier.kind_with_extra_word_characters(c, extra_word_characters));
         prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
     }
 
@@ -4014,6 +4026,15 @@ impl MultiBufferSnapshot {
         &self,
         start: T,
         scope_context: Option<CharScopeContext>,
+    ) -> (Range<MultiBufferOffset>, Option<CharKind>) {
+        self.surrounding_word_with_extra_word_characters(start, scope_context, None)
+    }
+
+    pub fn surrounding_word_with_extra_word_characters<T: ToOffset>(
+        &self,
+        start: T,
+        scope_context: Option<CharScopeContext>,
+        extra_word_characters: Option<&HashSet<char>>,
     ) -> (Range<MultiBufferOffset>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
@@ -4023,12 +4044,21 @@ impl MultiBufferSnapshot {
         let classifier = self.char_classifier_at(start).scope_context(scope_context);
 
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(|c| classifier.kind(c)),
-            next_chars.peek().copied().map(|c| classifier.kind(c)),
+            prev_chars
+                .peek()
+                .copied()
+                .map(|c| classifier.kind_with_extra_word_characters(c, extra_word_characters)),
+            next_chars
+                .peek()
+                .copied()
+                .map(|c| classifier.kind_with_extra_word_characters(c, extra_word_characters)),
         );
 
         for ch in prev_chars {
-            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind_with_extra_word_characters(ch, extra_word_characters))
+                == word_kind
+                && ch != '\n'
+            {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -4036,7 +4066,10 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind_with_extra_word_characters(ch, extra_word_characters))
+                == word_kind
+                && ch != '\n'
+            {
                 end += ch.len_utf8();
             } else {
                 break;

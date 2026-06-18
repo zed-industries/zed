@@ -2199,6 +2199,28 @@ mod tests {
             cx,
         );
 
+        // word separators
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.wordSeparators": "`~!@#$%^&*()=+[{]}\\|;:'\",.<>/? " }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "word_characters": [
+                "-"
+              ]
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
         // persist settings that were present
         check_vscode_import(
             &mut store,

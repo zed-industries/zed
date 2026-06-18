@@ -1489,6 +1489,11 @@
   "modeline_lines": 5,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
+  // Additional characters to treat as part of a word for word-based editor operations,
+  // such as double-click word selection.
+  //
+  // For example, add "-" to select "foo-bar" as a single word.
+  "word_characters": [],
   // Whether to enable word diff highlighting in the editor.
   //
   // When enabled, changed words within modified lines are highlighted

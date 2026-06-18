@@ -161,6 +161,8 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Additional characters to treat as part of a word for word-based editor operations.
+    pub word_characters: HashSet<char>,
     /// Whether to enable word diff highlighting in the editor.
     ///
     /// When enabled, changed words within modified lines are highlighted
@@ -801,6 +803,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
+                word_characters: settings.word_characters.unwrap(),
                 word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }

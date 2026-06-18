@@ -4065,6 +4065,15 @@ impl BufferSnapshot {
         start: T,
         scope_context: Option<CharScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
+        self.surrounding_word_with_extra_word_characters(start, scope_context, None)
+    }
+
+    pub fn surrounding_word_with_extra_word_characters<T: ToOffset>(
+        &self,
+        start: T,
+        scope_context: Option<CharScopeContext>,
+        extra_word_characters: Option<&HashSet<char>>,
+    ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).take(128).peekable();
@@ -4072,12 +4081,21 @@ impl BufferSnapshot {
 
         let classifier = self.char_classifier_at(start).scope_context(scope_context);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(|c| classifier.kind(c)),
-            next_chars.peek().copied().map(|c| classifier.kind(c)),
+            prev_chars
+                .peek()
+                .copied()
+                .map(|c| classifier.kind_with_extra_word_characters(c, extra_word_characters)),
+            next_chars
+                .peek()
+                .copied()
+                .map(|c| classifier.kind_with_extra_word_characters(c, extra_word_characters)),
         );
 
         for ch in prev_chars {
-            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind_with_extra_word_characters(ch, extra_word_characters))
+                == word_kind
+                && ch != '\n'
+            {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -4085,7 +4103,10 @@ impl BufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind_with_extra_word_characters(ch, extra_word_characters))
+                == word_kind
+                && ch != '\n'
+            {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -6078,7 +6099,32 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
+        self.kind_with_extra_word_characters_and_punctuation(c, ignore_punctuation, None)
+    }
+
+    pub fn kind_with_extra_word_characters(
+        &self,
+        c: char,
+        extra_word_characters: Option<&HashSet<char>>,
+    ) -> CharKind {
+        self.kind_with_extra_word_characters_and_punctuation(
+            c,
+            self.ignore_punctuation,
+            extra_word_characters,
+        )
+    }
+
+    fn kind_with_extra_word_characters_and_punctuation(
+        &self,
+        c: char,
+        ignore_punctuation: bool,
+        extra_word_characters: Option<&HashSet<char>>,
+    ) -> CharKind {
         if c.is_alphanumeric() || c == '_' {
+            return CharKind::Word;
+        }
+
+        if extra_word_characters.is_some_and(|characters| characters.contains(&c)) {
             return CharKind::Word;
         }
 

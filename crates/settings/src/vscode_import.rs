@@ -1,6 +1,6 @@
 use crate::*;
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::Rgba;
 use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
@@ -127,6 +127,15 @@ impl VsCodeSettings {
 
     fn read_enum<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
         self.content.get(key).and_then(Value::as_str).and_then(f)
+    }
+
+    fn word_characters_from_word_separators(&self) -> Option<HashSet<char>> {
+        let separators = self.read_str("editor.wordSeparators")?;
+        Some(
+            ('!'..='~')
+                .filter(|&c| !c.is_alphanumeric() && c != '_' && !separators.contains(c))
+                .collect(),
+        )
     }
 
     fn read_fonts(&self, key: &str) -> (Option<FontFamilyName>, Option<Vec<FontFamilyName>>) {
@@ -626,6 +635,7 @@ impl VsCodeSettings {
                         .flat_map(|n| n.as_u64().map(|n| n as usize))
                         .collect()
                 }),
+            word_characters: self.word_characters_from_word_separators(),
             word_diff_enabled: None,
         }
     }

@@ -4153,6 +4153,24 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     });
 }
 
+#[gpui::test]
+fn test_surrounding_word_with_extra_word_characters(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("foo-bar baz", cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    assert_eq!(snapshot.surrounding_word(4, None).0, 4..7);
+    assert_eq!(
+        snapshot
+            .surrounding_word_with_extra_word_characters(
+                4,
+                None,
+                Some(&['-'].into_iter().collect())
+            )
+            .0,
+        0..7
+    );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     use util::RandomCharIter;

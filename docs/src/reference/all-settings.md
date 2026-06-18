@@ -2952,6 +2952,7 @@ The following settings can be overridden for each specific language:
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
+- [`word_characters`](#word-characters)
 - [`use_autoclose`](#use-autoclose)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
@@ -3267,7 +3268,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -4072,6 +4072,25 @@ List of `integer` column numbers
 **Options**
 
 `integer` values
+
+## Word Characters
+
+- Description: Additional characters to treat as part of a word for word-based
+  editor operations, such as double-click word selection.
+- Setting: `word_characters`
+- Default: `[]`
+
+**Options**
+
+List of single-character strings.
+
+Example:
+
+```json [settings]
+{
+  "word_characters": ["-"]
+}
+```
 
 ## Tasks
 
