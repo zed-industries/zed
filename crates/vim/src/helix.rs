@@ -162,23 +162,26 @@ impl Vim {
                     }
 
                     let (new_head, goal) = match motion {
-                        // gg lands at col 0; with a count, at that line's col 0.
+                        // gg lands at col 0. With a count, at that buffer line's col 0.
                         Motion::StartOfDocument => {
-                            let col0_head = DisplayPoint::new(current_head.row(), 0);
-                            motion
-                                .move_point(
-                                    map,
-                                    col0_head,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((current_head, selection.goal))
+                            let buffer_row = if let Some(n) = times {
+                                (n - 1) as u32
+                            } else {
+                                0
+                            };
+                            let point = map.point_to_display_point(
+                                Point::new(buffer_row, 0),
+                                Bias::Left,
+                            );
+                            (point, SelectionGoal::None)
                         }
-                        // ge always extends to col 0 of the last line; counts are ignored.
+                        // ge always extends to col 0 of the last line. Counts are ignored.
                         Motion::EndOfDocument => {
-                            let point = map
-                                .clip_point(DisplayPoint::new(map.max_point().row(), 0), Bias::Left);
+                            let last_buffer_row = map.buffer_snapshot().max_point().row;
+                            let point = map.point_to_display_point(
+                                Point::new(last_buffer_row, 0),
+                                Bias::Left,
+                            );
                             (point, SelectionGoal::None)
                         }
                         // EndOfLine positions after the last character, but in
@@ -505,33 +508,34 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::StartOfDocument => {
-                // gg lands at column 0. With a count, goes to that line at col 0;
+                // gg lands at column 0. With a count, goes to that buffer line at col 0.
                 self.update_editor(cx, |_, editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window, cx);
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
+                            let buffer_row = if let Some(n) = times {
+                                (n - 1) as u32
                             } else {
-                                movement::left(map, selection.head())
+                                0
                             };
-                            let col0_cursor = DisplayPoint::new(cursor.row(), 0);
-                            let (point, goal) = motion
-                                .move_point(map, col0_cursor, goal, times, &text_layout_details)
-                                .unwrap_or((col0_cursor, goal));
-                            selection.collapse_to(point, goal)
+                            let point = map.point_to_display_point(
+                                Point::new(buffer_row, 0),
+                                Bias::Left,
+                            );
+                            selection.collapse_to(point, SelectionGoal::None)
                         })
                     });
                 });
             }
             Motion::EndOfDocument => {
-                // ge always goes to column 0 of the last line; counts are ignored.
+                // ge always goes to column 0 of the last line. Counts are ignored.
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
-                            let point = map
-                                .clip_point(DisplayPoint::new(map.max_point().row(), 0), Bias::Left);
+                            let last_buffer_row = map.buffer_snapshot().max_point().row;
+                            let point = map.point_to_display_point(
+                                Point::new(last_buffer_row, 0),
+                                Bias::Left,
+                            );
                             selection.collapse_to(point, SelectionGoal::None)
                         })
                     });
@@ -4111,6 +4115,40 @@ mod test {
               line three"},
             Mode::HelixNormal,
         );
+
+        // v gg extends the selection backward to col 0 of the first line
+        cx.set_state(
+            indoc! {"
+            line one
+            ˇline two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("v g g");
+        cx.assert_state(
+            indoc! {"
+            «ˇline one
+            l»ine two
+            line three"},
+            Mode::HelixSelect,
+        );
+
+        // gg in select mode with a reversed selection extends further backward
+        cx.set_state(
+            indoc! {"
+            line one
+            line «ˇtwo»
+            line three"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("g g");
+        cx.assert_state(
+            indoc! {"
+            «ˇline one
+            line two»
+            line three"},
+            Mode::HelixSelect,
+        );
     }
 
     #[gpui::test]
@@ -4163,6 +4201,40 @@ mod test {
             line two
             ˇline three"},
             Mode::HelixNormal,
+        );
+
+        // v ge extends the selection to col 0 of the last line
+        cx.set_state(
+            indoc! {"
+            ˇline one
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("v g e");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            line two
+            lˇ»ine three"},
+            Mode::HelixSelect,
+        );
+
+        // ge in select mode with a reversed selection extends forward to the last line
+        cx.set_state(
+            indoc! {"
+            line one
+            line «ˇtwo»
+            line three"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("g e");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line tw«o
+            lˇ»ine three"},
+            Mode::HelixSelect,
         );
     }
 }
