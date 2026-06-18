@@ -115,11 +115,11 @@ pub struct SandboxedTerminalToolInput {
         `https://` URLs rather than `git@`/`ssh://`."
     )]
     #[cfg_attr(
-        target_os = "linux",
-        doc = "\nNOTE: on Linux the sandbox cannot restrict network access to specific \
-        hosts. Any value here grants the command unrestricted outbound network access \
-        (exactly like `allow_all_hosts`), and the user is asked to approve access to \
-        all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
+        any(target_os = "linux", target_os = "windows"),
+        doc = "\nNOTE: on Linux and Windows the sandbox cannot restrict network access to \
+        specific hosts. Any value here grants the command unrestricted outbound network \
+        access (exactly like `allow_all_hosts`), and the user is asked to approve access \
+        to all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
         directly when per-host restriction isn't available."
     )]
     #[serde(default)]
@@ -168,6 +168,15 @@ pub struct SandboxedTerminalToolInput {
     /// `allow_fs_write_all`); use this only when the command needs behavior
     /// the sandbox can't grant on a per-permission basis. Requesting it
     /// triggers a user approval prompt.
+    #[cfg_attr(
+        target_os = "windows",
+        doc = "\nOn Windows, running unsandboxed also switches the shell. Sandboxed \
+        commands run under WSL's Linux bash; an unsandboxed command instead runs in the \
+        host's default shell — Git Bash (or scoop's bash) when one is installed, otherwise \
+        PowerShell/cmd. Path conventions change accordingly (e.g. `C:\\...` or `/c/...` \
+        rather than WSL's `/mnt/c/...`), so a command written for the sandboxed shell may \
+        behave differently here."
+    )]
     #[serde(default)]
     pub unsandboxed: Option<bool>,
     /// A short justification for why this command needs the sandbox
