@@ -19,7 +19,8 @@ pub use settings::{
     AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
     EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordCharacters,
+    WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -161,7 +162,7 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
-    /// Additional characters to treat as part of a word for word-based editor operations.
+    /// Additional characters to treat as part of a word for selection operations.
     pub word_characters: HashSet<char>,
     /// Whether to enable word diff highlighting in the editor.
     ///
@@ -803,7 +804,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
-                word_characters: settings.word_characters.unwrap(),
+                word_characters: settings.word_characters.unwrap().0,
                 word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
@@ -931,8 +932,47 @@ pub struct JsxTagAutoCloseSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_language_word_characters_override_global_word_characters(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.word_characters =
+                        Some(WordCharacters(['-'].into_iter().collect()));
+                    settings.project.all_languages.languages.0.insert(
+                        "Rust".into(),
+                        LanguageSettingsContent {
+                            word_characters: Some(WordCharacters(['\''].into_iter().collect())),
+                            ..Default::default()
+                        },
+                    );
+                    settings.project.all_languages.languages.0.insert(
+                        "Plain Text".into(),
+                        LanguageSettingsContent {
+                            word_characters: Some(WordCharacters(HashSet::default())),
+                            ..Default::default()
+                        },
+                    );
+                });
+            });
+
+            let global_settings = LanguageSettings::resolve(None, None, cx);
+            assert_eq!(global_settings.word_characters, ['-'].into_iter().collect());
+
+            let rust_settings =
+                LanguageSettings::resolve(None, Some(&LanguageName::new("Rust")), cx);
+            assert_eq!(rust_settings.word_characters, ['\''].into_iter().collect());
+
+            let plain_text_settings =
+                LanguageSettings::resolve(None, Some(&LanguageName::new("Plain Text")), cx);
+            assert!(plain_text_settings.word_characters.is_empty());
+        });
+    }
 
     #[gpui::test]
     fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {

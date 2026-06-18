@@ -349,9 +349,20 @@ impl Editor {
                 MultiBufferOffset(query_match.start())..MultiBufferOffset(query_match.end())
             };
 
-            let is_partial_word_match = select_next_state.wordwise
-                && (buffer.is_inside_word(offset_range.start, None)
-                    || buffer.is_inside_word(offset_range.end, None));
+            let is_partial_word_match = if select_next_state.wordwise {
+                let settings = buffer.language_settings_at(offset_range.start, cx);
+                buffer.is_inside_word_with_extra_word_characters(
+                    offset_range.start,
+                    None,
+                    Some(&settings.word_characters),
+                ) || buffer.is_inside_word_with_extra_word_characters(
+                    offset_range.end,
+                    None,
+                    Some(&settings.word_characters),
+                )
+            } else {
+                false
+            };
 
             let is_initial_selection = MultiBufferOffset(query_match.start())
                 == initial_selection.start
@@ -440,10 +451,22 @@ impl Editor {
                     let offset_range =
                         end_offset - query_match.end()..end_offset - query_match.start();
 
-                    if !select_prev_state.wordwise
-                        || (!buffer.is_inside_word(offset_range.start, None)
-                            && !buffer.is_inside_word(offset_range.end, None))
-                    {
+                    let is_partial_word_match = if select_prev_state.wordwise {
+                        let settings = buffer.language_settings_at(offset_range.start, cx);
+                        buffer.is_inside_word_with_extra_word_characters(
+                            offset_range.start,
+                            None,
+                            Some(&settings.word_characters),
+                        ) || buffer.is_inside_word_with_extra_word_characters(
+                            offset_range.end,
+                            None,
+                            Some(&settings.word_characters),
+                        )
+                    } else {
+                        false
+                    };
+
+                    if !is_partial_word_match {
                         next_selected_range = Some(offset_range);
                         break;
                     }
@@ -2157,10 +2180,22 @@ impl Editor {
                     let offset_range =
                         start_offset + query_match.start()..start_offset + query_match.end();
 
-                    if !select_next_state.wordwise
-                        || (!buffer.is_inside_word(offset_range.start, None)
-                            && !buffer.is_inside_word(offset_range.end, None))
-                    {
+                    let is_partial_word_match = if select_next_state.wordwise {
+                        let settings = buffer.language_settings_at(offset_range.start, cx);
+                        buffer.is_inside_word_with_extra_word_characters(
+                            offset_range.start,
+                            None,
+                            Some(&settings.word_characters),
+                        ) || buffer.is_inside_word_with_extra_word_characters(
+                            offset_range.end,
+                            None,
+                            Some(&settings.word_characters),
+                        )
+                    } else {
+                        false
+                    };
+
+                    if !is_partial_word_match {
                         let idx = selections
                             .partition_point(|selection| selection.end <= offset_range.start);
                         let overlaps = selections

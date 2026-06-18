@@ -116,6 +116,22 @@ impl EditPredictionProvider {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct WordCharacters(pub HashSet<char>);
+
+impl merge_from::MergeFrom for WordCharacters {
+    fn merge_from(&mut self, other: &Self) {
+        *self = other.clone();
+    }
+}
+
+impl From<HashSet<char>> for WordCharacters {
+    fn from(value: HashSet<char>) -> Self {
+        Self(value)
+    }
+}
+
 /// The contents of the edit prediction settings.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
@@ -612,11 +628,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
-    /// Additional characters to treat as part of a word for word-based
-    /// editor operations, such as double-click word selection.
+    /// Additional characters to treat as part of a word for selection operations,
+    /// such as double-click word selection.
     ///
     /// Default: []
-    pub word_characters: Option<HashSet<char>>,
+    pub word_characters: Option<WordCharacters>,
     /// Whether to enable word diff highlighting in the editor.
     ///
     /// When enabled, changed words within modified lines are highlighted

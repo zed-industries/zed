@@ -1489,7 +1489,7 @@
   "modeline_lines": 5,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
-  // Additional characters to treat as part of a word for word-based editor operations,
+  // Additional characters to treat as part of a word for selection operations,
   // such as double-click word selection.
   //
   // For example, add "-" to select "foo-bar" as a single word.

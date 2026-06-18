@@ -4075,8 +4075,8 @@ List of `integer` column numbers
 
 ## Word Characters
 
-- Description: Additional characters to treat as part of a word for word-based
-  editor operations, such as double-click word selection.
+- Description: Additional characters to treat as part of a word for selection
+  operations, such as double-click word selection.
 - Setting: `word_characters`
 - Default: `[]`
 

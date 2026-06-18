@@ -15,7 +15,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
@@ -30,6 +30,7 @@ use language::{
     LanguageToolchainStore, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
+        WordCharacters,
     },
     tree_sitter_python,
 };
@@ -10593,6 +10594,26 @@ async fn test_select_next(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_next_uses_configured_word_characters_for_match_boundaries(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.word_characters =
+            Some(WordCharacters(['-'].into_iter().collect::<HashSet<_>>()));
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇfoo-bar foo-bar-baz foo-bar");
+    cx.update_editor(|editor, window, cx| editor.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«foo-barˇ» foo-bar-baz foo-bar");
+
+    cx.update_editor(|editor, window, cx| editor.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«foo-barˇ» foo-bar-baz «foo-barˇ»");
+}
+
+#[gpui::test]
 async fn test_select_all_matches(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -10668,6 +10689,22 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
         e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
     });
     cx.assert_editor_state("«fooˇ»\n«FOOˇ»\n«Fooˇ»");
+}
+
+#[gpui::test]
+async fn test_select_all_matches_uses_configured_word_characters_for_match_boundaries(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.word_characters =
+            Some(WordCharacters(['-'].into_iter().collect::<HashSet<_>>()));
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("fˇoo-bar foo-bar-baz foo-bar");
+    cx.update_editor(|editor, window, cx| editor.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«foo-barˇ» foo-bar-baz «foo-barˇ»");
 }
 
 #[gpui::test]

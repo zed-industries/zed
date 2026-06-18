@@ -129,12 +129,13 @@ impl VsCodeSettings {
         self.content.get(key).and_then(Value::as_str).and_then(f)
     }
 
-    fn word_characters_from_word_separators(&self) -> Option<HashSet<char>> {
+    fn word_characters_from_word_separators(&self) -> Option<WordCharacters> {
         let separators = self.read_str("editor.wordSeparators")?;
         Some(
             ('!'..='~')
                 .filter(|&c| !c.is_alphanumeric() && c != '_' && !separators.contains(c))
-                .collect(),
+                .collect::<HashSet<_>>()
+                .into(),
         )
     }
 
