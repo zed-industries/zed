@@ -50,12 +50,17 @@ impl FsWatcher {
 
     fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
         let registration_path = path.clone();
-        if let Some(registration) =
-            register_existing_path(path, self.tx.clone(), self.pending_path_events.clone())?
-        {
-            self.registrations
-                .lock()
-                .insert(registration_path, registration);
+        match register_existing_path(
+            path.clone(),
+            self.tx.clone(),
+            self.pending_path_events.clone(),
+        )? {
+            Some(registration) => {
+                self.registrations
+                    .lock()
+                    .insert(registration_path, registration);
+            }
+            None => self.add_pending_path(path),
         }
         Ok(())
     }
