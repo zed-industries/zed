@@ -117,13 +117,8 @@ impl ZedAiOnboarding {
 
     fn vip_stamp(cx: &App) -> impl IntoElement {
         div().absolute().bottom_1().right_1().child(
-            Vector::new(
-                // TODO: Use a different vector for VIP stamps.
-                VectorName::BusinessStamp,
-                rems_from_px(156.),
-                rems_from_px(60.),
-            )
-            .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.8))),
+            Vector::new(VectorName::VipStamp, rems_from_px(156.), rems_from_px(60.))
+                .color(Color::Custom(cx.theme().colors().text.alpha(0.8))),
         )
     }
 
@@ -465,6 +460,10 @@ impl Component for ZedAiOnboarding {
                 single_example(
                     "Business Plan",
                     onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
+                ),
+                single_example(
+                    "VIP Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedVip), false),
                 ),
                 single_example(
                     "Student Plan",
