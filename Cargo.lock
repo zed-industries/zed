@@ -22423,6 +22423,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "ui_input",
  "url",
  "util",
  "uuid",
