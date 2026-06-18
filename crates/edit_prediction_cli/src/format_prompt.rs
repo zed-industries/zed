@@ -7,9 +7,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::AsyncApp;
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
@@ -352,27 +349,6 @@ impl TeacherPrompt {
 /// output a sequence of marker-bounded edits targeting any of it.
 pub struct TeacherJumpsPrompt;
 
-struct ParsedSpanEdit {
-    snippet_ix: usize,
-    range: Range<usize>,
-    new_text: String,
-    cursor_offset_in_new_text: Option<usize>,
-}
-
-/// A unit of edit addressing when parsing model output: one related-file
-/// excerpt, or several excerpts of the same file merged because their row
-/// ranges touch. Contiguous excerpts render seamlessly in the prompt (no
-/// `...` separator between them), so the model can't see the boundary and
-/// may legitimately span a single edit across it.
-struct ParseSnippet<'a> {
-    file_ix: usize,
-    first_excerpt_ix: usize,
-    last_excerpt_ix: usize,
-    end_row: u32,
-    text: Cow<'a, str>,
-    markers: Vec<(String, usize)>,
-}
-
 struct RelatedFileCursor {
     file_ix: usize,
     excerpt_ix: usize,
@@ -431,15 +407,10 @@ impl TeacherJumpsPrompt {
             .as_ref()
             .context("example is missing prompt inputs")?;
 
-        let marker_table = hashed_regions::build_marker_table(prompt_inputs);
-        let snippets = Self::merge_contiguous_snippets(prompt_inputs, marker_table)?;
-        let mut marker_index: HashMap<&str, (usize, usize)> = HashMap::new();
-        for (snippet_ix, snippet) in snippets.iter().enumerate() {
-            for (id, offset) in &snippet.markers {
-                marker_index.insert(id.as_str(), (snippet_ix, *offset));
-            }
-        }
-
+        // The teacher emits reasoning plus a sequence of markdown code fences,
+        // one per edit, each a marker-bounded span. Extract the spans from the
+        // fences, then hand off to the shared hash-region patch assembler that
+        // the student parser also uses.
         let codeblocks: Vec<String> = extract_all_codeblocks(response)
             .into_iter()
             .filter(|block| block.contains(hashed_regions::MARKER_TAG_PREFIX))
@@ -450,234 +421,29 @@ impl TeacherJumpsPrompt {
             ));
         }
 
-        let mut edits = Vec::new();
+        let mut spans = Vec::with_capacity(codeblocks.len());
         for codeblock in &codeblocks {
-            let (start_id, end_id, raw_new_span) = hashed_regions::extract_marker_span(codeblock)?;
-            let &(start_snippet, start_byte) = marker_index
-                .get(start_id.as_str())
-                .with_context(|| format!("unknown start marker `{start_id}`"))?;
-            let &(end_snippet, end_byte) = marker_index
-                .get(end_id.as_str())
-                .with_context(|| format!("unknown end marker `{end_id}`"))?;
-
-            if start_snippet != end_snippet {
-                return Err(anyhow!(
-                    "markers `{start_id}` and `{end_id}` belong to different context snippets \
-                     that are not contiguous excerpts of the same file"
-                ));
-            }
-            // Equal offsets are allowed: adjacent markers (the seam between
-            // two merged contiguous excerpts) bound an empty span, which
-            // expresses a pure insertion at that point.
-            if start_byte > end_byte {
-                return Err(anyhow!(
-                    "start marker `{start_id}` must come before end marker `{end_id}`"
-                ));
-            }
-
-            let snippet_text = snippets[start_snippet].text.as_ref();
-            let old_span = &snippet_text[start_byte..end_byte];
-
-            let cursor_in_span = raw_new_span.find(Self::USER_CURSOR_MARKER);
-            let mut new_span = raw_new_span.replace(Self::USER_CURSOR_MARKER, "");
-            if old_span.is_empty() {
-                // Insertion at a marker position, which is always a line
-                // start: inserted content must be complete lines.
-                if !new_span.is_empty() && !new_span.ends_with('\n') {
-                    new_span.push('\n');
-                }
-            } else {
-                if old_span.ends_with('\n') && !new_span.ends_with('\n') && !new_span.is_empty() {
-                    new_span.push('\n');
-                }
-                if !old_span.ends_with('\n') && new_span.ends_with('\n') {
-                    new_span.pop();
-                }
-            }
-
-            // A replacement whose line diff against the original span ends in
-            // a pure deletion usually means the model quit writing before
-            // reaching the end marker, not that it intends to delete the
-            // omitted tail. The prompt instructs that genuine tail deletions
-            // be expressed with an end marker placed beyond the deleted code
-            // so output ends with reproduced context, so a compliant
-            // prediction never ends mid-span in a deletion. Accepting one
-            // would silently drop code, so reject the whole response. Unlike
-            // a verbatim-prefix check, this also catches truncation combined
-            // with a real edit earlier in the span. Small trailing deletions
-            // are tolerated because they may be genuine end-of-snippet
-            // deletions with no marker available beyond them; whole-span
-            // deletions (empty replacement) express unambiguous intent and
-            // are always allowed.
-            if !new_span.is_empty()
-                && let Some(dropped) = detect_trailing_deletion(old_span, &new_span)
-            {
-                return Err(anyhow!(
-                    "edit span `{start_id}`..`{end_id}` looks truncated: the replacement \
-                     stops before the end marker, which would silently delete:\n{dropped}"
-                ));
-            }
-
-            edits.push(ParsedSpanEdit {
-                snippet_ix: start_snippet,
-                range: start_byte..end_byte,
-                new_text: new_span,
-                cursor_offset_in_new_text: cursor_in_span,
-            });
+            spans.push(hashed_regions::extract_marker_span(codeblock)?);
         }
 
-        // Emit one diff section per edited snippet, in the order snippets
-        // first appear in the model's edit sequence.
-        let mut snippet_order: Vec<usize> = Vec::new();
-        for edit in &edits {
-            if !snippet_order.contains(&edit.snippet_ix) {
-                snippet_order.push(edit.snippet_ix);
-            }
-        }
+        let (patch, cursor) = hashed_regions::build_patch_from_spans(
+            prompt_inputs,
+            &spans,
+            Self::USER_CURSOR_MARKER,
+        )?;
 
-        let mut diff_output = String::new();
-        let mut actual_cursor = None;
+        let actual_cursor = cursor.map(|cursor| {
+            ActualCursor::from_editable_region(
+                &cursor.path,
+                cursor.cursor_offset_in_new_text,
+                &cursor.new_text,
+                &cursor.old_text,
+                0,
+                cursor.start_row as usize,
+            )
+        });
 
-        for &snippet_ix in &snippet_order {
-            let snippet = &snippets[snippet_ix];
-            let mut snippet_edits: Vec<&ParsedSpanEdit> = edits
-                .iter()
-                .filter(|edit| edit.snippet_ix == snippet_ix)
-                .collect();
-            snippet_edits.sort_by_key(|edit| edit.range.start);
-            for window in snippet_edits.windows(2) {
-                if window[1].range.start < window[0].range.end {
-                    return Err(anyhow!("edits overlap within the same context snippet"));
-                }
-            }
-
-            let old_text = snippet.text.as_ref();
-            let (path, start_row) = Self::snippet_path_and_start_row(
-                example,
-                prompt_inputs,
-                snippet.file_ix,
-                snippet.first_excerpt_ix,
-            )?;
-
-            let mut new_text = String::new();
-            let mut position = 0;
-            let mut cursor_in_new_text = None;
-            for edit in &snippet_edits {
-                new_text.push_str(&old_text[position..edit.range.start]);
-                if let Some(cursor_offset) = edit.cursor_offset_in_new_text {
-                    cursor_in_new_text = Some(new_text.len() + cursor_offset);
-                }
-                new_text.push_str(&edit.new_text);
-                position = edit.range.end;
-            }
-            new_text.push_str(&old_text[position..]);
-
-            let diff =
-                language::unified_diff_with_context(old_text, &new_text, start_row, start_row, 3);
-            if !diff.is_empty() {
-                let path_str = path.to_string_lossy();
-                writeln!(diff_output, "--- a/{path_str}")?;
-                writeln!(diff_output, "+++ b/{path_str}")?;
-                diff_output.push_str(&diff);
-                if !diff_output.ends_with('\n') {
-                    diff_output.push('\n');
-                }
-            }
-
-            if actual_cursor.is_none() {
-                if let Some(cursor_offset) = cursor_in_new_text {
-                    actual_cursor = Some(ActualCursor::from_editable_region(
-                        &path,
-                        cursor_offset,
-                        &new_text,
-                        old_text,
-                        0,
-                        start_row as usize,
-                    ));
-                }
-            }
-        }
-
-        Ok((diff_output, actual_cursor))
-    }
-
-    /// Group the marker table into parse snippets, merging excerpts of the
-    /// same file whose row ranges touch. The marker table is ordered by
-    /// (file, excerpt), matching the prompt rendering order.
-    fn merge_contiguous_snippets(
-        prompt_inputs: &ZetaPromptInput,
-        marker_table: Vec<SnippetMarkers>,
-    ) -> Result<Vec<ParseSnippet<'_>>> {
-        let related_files = prompt_inputs
-            .related_files
-            .as_deref()
-            .context("prompt inputs are missing related files")?;
-        let mut snippets: Vec<ParseSnippet> = Vec::new();
-        for snippet in marker_table {
-            let file = related_files
-                .get(snippet.file_ix)
-                .context("related file index out of range")?;
-            let excerpt = file
-                .excerpts
-                .get(snippet.excerpt_ix)
-                .context("related excerpt index out of range")?;
-            if let Some(last) = snippets.last_mut()
-                && last.file_ix == snippet.file_ix
-                && last.last_excerpt_ix + 1 == snippet.excerpt_ix
-                && last.end_row == excerpt.row_range.start
-            {
-                let text = last.text.to_mut();
-                // The prompt renders a newline between adjacent excerpts
-                // when the first doesn't end with one, so the model saw one
-                // there.
-                if !text.is_empty() && !text.ends_with('\n') {
-                    text.push('\n');
-                }
-                let base = text.len();
-                text.push_str(&excerpt.text);
-                last.markers.extend(
-                    snippet
-                        .markers
-                        .into_iter()
-                        .map(|(id, offset)| (id, base + offset)),
-                );
-                last.last_excerpt_ix = snippet.excerpt_ix;
-                last.end_row = excerpt.row_range.end;
-            } else {
-                snippets.push(ParseSnippet {
-                    file_ix: snippet.file_ix,
-                    first_excerpt_ix: snippet.excerpt_ix,
-                    last_excerpt_ix: snippet.excerpt_ix,
-                    end_row: excerpt.row_range.end,
-                    text: Cow::Borrowed(excerpt.text.as_ref()),
-                    markers: snippet.markers,
-                });
-            }
-        }
-        Ok(snippets)
-    }
-
-    fn snippet_path_and_start_row(
-        example: &Example,
-        prompt_inputs: &ZetaPromptInput,
-        file_ix: usize,
-        excerpt_ix: usize,
-    ) -> Result<(std::path::PathBuf, u32)> {
-        let related_files = prompt_inputs
-            .related_files
-            .as_deref()
-            .context("prompt inputs are missing related files")?;
-        let file = related_files
-            .get(file_ix)
-            .context("related file index out of range")?;
-        let excerpt = file
-            .excerpts
-            .get(excerpt_ix)
-            .context("related excerpt index out of range")?;
-        Ok((
-            Self::related_file_patch_path(example.spec.cursor_path.as_ref(), file.path.as_ref()),
-            excerpt.row_range.start,
-        ))
+        Ok((patch, actual_cursor))
     }
 
     /// Map the cursor (an offset within `cursor_excerpt`) to an offset within
@@ -999,70 +765,6 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     result.push_str("\n`````");
 
     Some(result)
-}
-
-/// Detects a span replacement that ends in a pure deletion of the span's
-/// tail, the signature of a model that stopped writing before reaching its
-/// end marker.
-///
-/// Returns the deleted tail if the line diff between `old_span` and
-/// `new_span` ends with a deletion-only group that reaches the last line of
-/// `old_span` and drops more than `MAX_TRAILING_DELETED_LINES` non-blank
-/// lines.
-fn detect_trailing_deletion(old_span: &str, new_span: &str) -> Option<String> {
-    const MAX_TRAILING_DELETED_LINES: usize = 3;
-
-    fn flag_if_large(deleted_tail: &str) -> Option<String> {
-        let non_blank_deleted = deleted_tail
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count();
-        (non_blank_deleted > MAX_TRAILING_DELETED_LINES)
-            .then(|| deleted_tail.trim_end().to_string())
-    }
-
-    // A verbatim prefix is checked at the byte level so that a replacement
-    // stopping mid-line is caught too; the line diff below would see that as
-    // a trailing replace group rather than a pure deletion.
-    if old_span.starts_with(new_span) {
-        return flag_if_large(&old_span[new_span.len()..]);
-    }
-
-    // With zero context lines, hunks contain only `-` and `+` lines, and
-    // within a hunk deletions precede insertions, so a diff whose final line
-    // is a deletion ends with a deletion-only group.
-    let diff = language::unified_diff_with_context(old_span, new_span, 0, 0, 0);
-    let lines: Vec<&str> = diff.lines().collect();
-    let mut deletion_start = lines.len();
-    while deletion_start > 0 && lines[deletion_start - 1].starts_with('-') {
-        deletion_start -= 1;
-    }
-    let deleted: Vec<&str> = lines[deletion_start..]
-        .iter()
-        .map(|line| line.strip_prefix('-').unwrap_or(line))
-        .collect();
-    if deleted.is_empty() {
-        return None;
-    }
-
-    // The trailing `-` run is preceded by its hunk header exactly when the
-    // hunk is deletion-only (a replacement group would interpose `+` lines).
-    let header = lines.get(deletion_start.checked_sub(1)?)?;
-    let old_range_start: usize = header
-        .strip_prefix("@@ -")?
-        .split(',')
-        .next()?
-        .parse()
-        .ok()?;
-
-    // Only flag deletions that reach the end of the span; a deletion in the
-    // middle is followed by reproduced context, so the model demonstrably
-    // kept writing past it.
-    if old_range_start + deleted.len() - 1 != old_span.lines().count() {
-        return None;
-    }
-
-    flag_if_large(&deleted.join("\n"))
 }
 
 /// Extract all top-level fenced codeblocks from `text`, in order.
