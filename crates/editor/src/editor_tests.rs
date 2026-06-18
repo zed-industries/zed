@@ -37,7 +37,6 @@ use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
-use menu::Confirm as MenuConfirm;
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
