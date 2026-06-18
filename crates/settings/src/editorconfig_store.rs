@@ -391,3 +391,37 @@ impl EditorconfigStore {
             .unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_empty_editorconfig_values() {
+        let editorconfig = "\
+root = true
+
+[*]
+dotnet_naming_style.s_camelcase.required_prefix = s_
+dotnet_naming_style.s_camelcase.required_suffix =
+dotnet_naming_style.s_camelcase.word_separator =
+dotnet_naming_style.s_camelcase.capitalization = camel_case
+";
+
+        let editorconfig = editorconfig
+            .parse::<Editorconfig>()
+            .expect("editorconfig with empty values should parse");
+
+        assert!(editorconfig.is_root);
+        let [section] = editorconfig.sections.as_slice() else {
+            panic!("expected one section, got {}", editorconfig.sections.len());
+        };
+        assert_eq!(section.props().len(), 4);
+        assert!(section.props().iter().any(|(key, value)| {
+            key == "dotnet_naming_style.s_camelcase.required_suffix" && value.to_string().is_empty()
+        }));
+        assert!(section.props().iter().any(|(key, value)| {
+            key == "dotnet_naming_style.s_camelcase.word_separator" && value.to_string().is_empty()
+        }));
+    }
+}
