@@ -5,13 +5,14 @@ pub mod responses;
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
-    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
     http::{HeaderMap, HeaderValue},
 };
 pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future, time::Duration};
+use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;
 
@@ -341,6 +342,34 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+
+    /// Whether this model supports server-side compaction via the
+    /// `context_management` request parameter. OpenAI doesn't publish a
+    /// support matrix, but the GPT-5.5 guide notes compaction is a feature
+    /// shared with GPT-5.4, and the compaction docs exercise the GPT-5.3
+    /// Codex line, so we treat everything from GPT-5.3 onward as supported.
+    ///
+    /// <https://developers.openai.com/api/docs/guides/compaction>
+    pub fn supports_compaction(&self) -> bool {
+        match self {
+            Self::FivePointThreeCodex
+            | Self::FivePointFourNano
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
+            Self::Four
+            | Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::Custom { .. } => false,
+        }
     }
 
     /// Whether OpenAI's Priority processing tier is available for this model.
@@ -684,8 +713,6 @@ pub enum RequestError {
         body: String,
         headers: HeaderMap<HeaderValue>,
     },
-    #[error("response headers from {provider}'s API timed out after {timeout:?}")]
-    ResponseHeaderTimeout { provider: String, timeout: Duration },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -760,15 +787,15 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
         ))
@@ -905,10 +932,6 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
 
                 Self::from_http_status(provider.into(), status_code, body, retry_after)
             }
-            RequestError::ResponseHeaderTimeout { provider, timeout } => Self::HttpSend {
-                provider: provider.into(),
-                error: anyhow!("response headers timed out after {timeout:?}"),
-            },
             RequestError::Other(e) => Self::Other(e),
         }
     }

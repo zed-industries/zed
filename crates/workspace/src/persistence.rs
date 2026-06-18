@@ -356,6 +356,13 @@ pub fn read_serialized_multi_workspaces(
             let active_workspace = state
                 .active_workspace_id
                 .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
+                // If the persisted active workspace can't be matched (e.g. its
+                // pointer was lost or its row was pruned), fall back to the
+                // first workspace that actually has paths rather than blindly
+                // taking index 0, so a stray scratch/empty workspace isn't
+                // restored as the focused window. Only if none have paths do we
+                // fall back to the first entry.
+                .or_else(|| group.iter().position(|ws| !ws.paths.is_empty()))
                 .or(Some(0))
                 .and_then(|index| group.into_iter().nth(index))?;
             Some(model::SerializedMultiWorkspace {

@@ -6,14 +6,14 @@ use deepseek::DEEPSEEK_API_URL;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -43,6 +43,7 @@ struct RawToolCall {
 pub struct DeepSeekSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 pub struct DeepSeekLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
@@ -210,6 +211,30 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://platform.deepseek.com/api_keys",
+                    "Paste your DeepSeek API key",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
+    }
 }
 
 pub struct DeepSeekLanguageModel {
@@ -228,9 +253,12 @@ impl DeepSeekLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<deepseek::StreamResponse>>>> {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = DeepSeekLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -239,8 +267,13 @@ impl DeepSeekLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request =
-                deepseek::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = deepseek::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -383,6 +416,7 @@ pub fn into_deepseek(
                 }
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
+                MessageContent::Compaction(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),

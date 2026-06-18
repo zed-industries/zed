@@ -175,6 +175,18 @@ impl Editor {
         cx.notify();
     }
 
+    /// Make all diff hunks render with the "unstaged" appearance, regardless
+    /// of whether they have a secondary hunk. Intended for views whose diffs
+    /// aren't related to the git index (e.g. agent diffs).
+    pub fn set_render_diff_hunks_as_unstaged(
+        &mut self,
+        render_as_unstaged: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.render_diff_hunks_as_unstaged = render_as_unstaged;
+        cx.notify();
+    }
+
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
@@ -230,6 +242,7 @@ impl Editor {
 
     pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
         self.temporary_diff_override = false;
+        self.render_diff_hunks_as_unstaged = false;
         self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_collapsed(cx);

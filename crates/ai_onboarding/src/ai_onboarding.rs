@@ -376,7 +376,13 @@ impl Component for ZedAiOnboarding {
         "Agent New User Onboarding"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "The onboarding surface shown to new agent panel users, \
+        guiding them through signing in to Zed and selecting a plan \
+        before they can start using the agent."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         fn onboarding(
             sign_in_status: SignInStatus,
             plan: Option<Plan>,
@@ -402,41 +408,39 @@ impl Component for ZedAiOnboarding {
                 .into_any_element()
         }
 
-        Some(
-            v_flex()
-                .min_w_0()
-                .gap_4()
-                .children(vec![
-                    single_example(
-                        "Not Signed-in",
-                        onboarding(SignInStatus::SignedOut, None, false),
-                    ),
-                    single_example(
-                        "Young Account",
-                        onboarding(SignInStatus::SignedIn, None, true),
-                    ),
-                    single_example(
-                        "Free Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
-                    ),
-                    single_example(
-                        "Pro Trial",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
-                    ),
-                    single_example(
-                        "Pro Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
-                    ),
-                    single_example(
-                        "Business Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
-                    ),
-                    single_example(
-                        "Student Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedStudent), false),
-                    ),
-                ])
-                .into_any_element(),
-        )
+        v_flex()
+            .min_w_0()
+            .gap_4()
+            .children(vec![
+                single_example(
+                    "Not Signed-in",
+                    onboarding(SignInStatus::SignedOut, None, false),
+                ),
+                single_example(
+                    "Young Account",
+                    onboarding(SignInStatus::SignedIn, None, true),
+                ),
+                single_example(
+                    "Free Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
+                ),
+                single_example(
+                    "Pro Trial",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
+                ),
+                single_example(
+                    "Pro Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
+                ),
+                single_example(
+                    "Business Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
+                ),
+                single_example(
+                    "Student Plan",
+                    onboarding(SignInStatus::SignedIn, Some(Plan::ZedStudent), false),
+                ),
+            ])
+            .into_any_element()
     }
 }
