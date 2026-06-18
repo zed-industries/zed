@@ -6346,7 +6346,7 @@ impl ThreadView {
                         .ok();
                     });
                 });
-            let bar = cx.new(|cx| {
+            let search_bar = cx.new(|cx| {
                 ThreadSearchBar::new(
                     thread,
                     self.entry_view_state.clone(),
@@ -6355,24 +6355,27 @@ impl ThreadView {
                     cx,
                 )
             });
-            let dismiss_sub = cx.subscribe_in(&bar, window, |this, _bar, event, window, cx| {
-                if matches!(event, ThreadSearchBarEvent::Dismissed) {
-                    this.thread_search_visible = false;
-                    this.message_editor.focus_handle(cx).focus(window, cx);
-                    cx.notify();
-                }
-            });
-            self._subscriptions.push(dismiss_sub);
-            self.thread_search_bar = Some(bar);
+            self._subscriptions.push(cx.subscribe_in(
+                &search_bar,
+                window,
+                |this, _bar, event, window, cx| {
+                    if matches!(event, ThreadSearchBarEvent::Dismissed) {
+                        this.thread_search_visible = false;
+                        this.message_editor.focus_handle(cx).focus(window, cx);
+                        cx.notify();
+                    }
+                },
+            ));
+            self.thread_search_bar = Some(search_bar);
         }
 
         // Re-focus an open bar unless it already owns focus.
-        let bar_focused = self
+        let search_bar_focused = self
             .thread_search_bar
             .as_ref()
             .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
 
-        if self.thread_search_visible && bar_focused {
+        if self.thread_search_visible && search_bar_focused {
             if let Some(bar) = &self.thread_search_bar {
                 bar.update(cx, |bar, cx| bar.clear_highlights(cx));
             }
