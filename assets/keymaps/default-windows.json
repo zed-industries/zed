@@ -480,17 +480,6 @@
     },
   },
   {
-    "context": "TextPicker || (TextPicker > Picker > Editor) || (TextPicker > Picker > menu)",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-alt-p": "text_finder::ToProjectSearch",
-      "ctrl-j": "pane::SplitDown",
-      "ctrl-k": "pane::SplitUp",
-      "ctrl-h": "pane::SplitLeft",
-      "ctrl-l": "pane::SplitRight",
-    },
-  },
-  {
     "context": "Pane",
     "use_key_equivalents": true,
     "bindings": {
@@ -1156,9 +1145,10 @@
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
-      "ctrl-alt-right": "picker::SetPreviewRight",
-      "ctrl-alt-down": "picker::SetPreviewBelow",
-      "ctrl-alt-up": "picker::SetPreviewHidden",
+      // Picker bindings (TogglePreview, SetPreviewRight/Below/Hidden,
+      // ToggleActionsMenu) live in keymaps/specific-overrides.json, which is
+      // loaded after the base keymap so they win over conflicting base-keymap
+      // Editor bindings.
     },
   },
   {
@@ -1181,17 +1171,6 @@
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-i": "search::ToggleIncludeIgnored",
-    },
-  },
-  {
-    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-shift-p": "file_finder::SelectPrevious",
-      "ctrl-j": "pane::SplitDown",
-      "ctrl-k": "pane::SplitUp",
-      "ctrl-h": "pane::SplitLeft",
-      "ctrl-l": "pane::SplitRight",
     },
   },
   {
