@@ -9,13 +9,13 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use ui::{CopyButton, ScrollAxes, Scrollbars, TintColor, WithScrollbar, prelude::*};
+use ui::{CopyButton, ScrollAxes, Scrollbars, TintColor, Tooltip, WithScrollbar, prelude::*};
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, ParsedMarkdown};
+use super::{CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -543,18 +543,28 @@ fn mermaid_zoom_ticks(delta: ScrollDelta) -> f32 {
 fn on_mermaid_zoom_scroll(
     markdown: Entity<Markdown>,
     source_offset: usize,
+    on_zoom: Option<MermaidZoomCallback>,
 ) -> impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static {
-    move |event, _window, cx| {
+    move |event, window, cx| {
         if !(event.modifiers.control || event.modifiers.platform) {
             return;
         }
         let scroll_ticks = mermaid_zoom_ticks(event.delta);
         if scroll_ticks != 0.0 {
-            markdown.update(cx, |markdown, cx| {
+            let zoom_changed = markdown.update(cx, |markdown, cx| {
                 let current_zoom = markdown.mermaid_zoom_level(source_offset);
                 let new_zoom = current_zoom + scroll_ticks * MERMAID_ZOOM_STEP;
                 markdown.set_mermaid_zoom_level(source_offset, new_zoom, cx);
+                markdown.mermaid_zoom_level(source_offset) != current_zoom
             });
+            // Only notify when the zoom actually changed. A no-op zoom (e.g.
+            // clamped at the min/max) must not pause tail-following, since that
+            // would disable following while still at the bottom.
+            if zoom_changed
+                && let Some(on_zoom) = &on_zoom
+            {
+                on_zoom(window, cx);
+            }
         }
         cx.stop_propagation();
     }
@@ -569,6 +579,7 @@ pub(crate) fn render_mermaid_diagram(
     showing_code: bool,
     zoom: f32,
     copy_button_visibility: CopyButtonVisibility,
+    on_zoom: Option<MermaidZoomCallback>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -596,10 +607,14 @@ pub(crate) fn render_mermaid_diagram(
                 });
                 let base_size = mermaid_base_size(render_image, rasterized_scale);
                 let display_size = mermaid_display_size(base_size, zoom);
-                let body =
-                    mermaid_scroll_container(markdown.clone(), source_offset, &scroll_handle)
-                        .child(image_element.w(display_size.width).h(display_size.height))
-                        .into_any_element();
+                let body = mermaid_scroll_container(
+                    markdown.clone(),
+                    source_offset,
+                    &scroll_handle,
+                    on_zoom.clone(),
+                )
+                .child(image_element.w(display_size.width).h(display_size.height))
+                .into_any_element();
                 with_mermaid_horizontal_scrollbar(source_offset, &scroll_handle, body, window, cx)
             };
 
@@ -613,10 +628,12 @@ pub(crate) fn render_mermaid_diagram(
                 })
                 .child(body)
                 .when(show_interactive, |container| {
-                    container.child(render_mermaid_copy_button(
+                    container.child(render_mermaid_overlay_controls(
                         source_offset,
                         code.to_string(),
+                        (!showing_code && zoom != 1.0).then_some(zoom),
                         markdown,
+                        on_zoom,
                     ))
                 })
                 .into_any_element()
@@ -626,10 +643,12 @@ pub(crate) fn render_mermaid_diagram(
             container
                 .child(render_mermaid_code_view(&parsed.contents.contents))
                 .when(show_interactive, |container| {
-                    container.child(render_mermaid_copy_button(
+                    container.child(render_mermaid_overlay_controls(
                         source_offset,
                         code.to_string(),
+                        None,
                         markdown,
+                        on_zoom,
                     ))
                 })
                 .into_any_element()
@@ -639,9 +658,6 @@ pub(crate) fn render_mermaid_diagram(
             if let Some((fallback, fallback_scale)) =
                 cached.and_then(|cached| cached.fallback_image.clone())
             {
-                let pulse = Animation::new(Duration::from_secs(2))
-                    .repeat()
-                    .with_easing(pulsating_between(0.6, 1.0));
                 let fallback_element =
                     img(ImageSource::Render(fallback.clone())).with_fallback(|| {
                         div()
@@ -653,17 +669,21 @@ pub(crate) fn render_mermaid_diagram(
                 });
                 let base_size = mermaid_base_size(&fallback, fallback_scale);
                 let display_size = mermaid_display_size(base_size, zoom);
-                let inner =
-                    mermaid_scroll_container(markdown.clone(), source_offset, &scroll_handle)
-                        .child(
-                            fallback_element
-                                .w(display_size.width)
-                                .h(display_size.height),
-                        )
-                        .with_animation("mermaid-fallback-pulse", pulse, |element, delta| {
-                            element.opacity(delta)
-                        })
-                        .into_any_element();
+                // The fallback is the prior raster shown at the new size while
+                // the sharper one renders; keep it static so swapping rasters
+                // (e.g. on zoom) is seamless rather than flashing.
+                let inner = mermaid_scroll_container(
+                    markdown.clone(),
+                    source_offset,
+                    &scroll_handle,
+                    on_zoom.clone(),
+                )
+                .child(
+                    fallback_element
+                        .w(display_size.width)
+                        .h(display_size.height),
+                )
+                .into_any_element();
                 let body = with_mermaid_horizontal_scrollbar(
                     source_offset,
                     &scroll_handle,
@@ -672,12 +692,21 @@ pub(crate) fn render_mermaid_diagram(
                     cx,
                 );
                 container
+                    .when(show_interactive, |container| {
+                        container.child(render_mermaid_tab_header(
+                            source_offset,
+                            showing_code,
+                            markdown.clone(),
+                        ))
+                    })
                     .child(body)
                     .when(show_interactive, |container| {
-                        container.child(render_mermaid_copy_button(
+                        container.child(render_mermaid_overlay_controls(
                             source_offset,
                             code.to_string(),
+                            (zoom != 1.0).then_some(zoom),
                             markdown,
+                            on_zoom,
                         ))
                     })
                     .into_any_element()
@@ -700,10 +729,12 @@ pub(crate) fn render_mermaid_diagram(
                         ),
                     )
                     .when(show_interactive, |container| {
-                        container.child(render_mermaid_copy_button(
+                        container.child(render_mermaid_overlay_controls(
                             source_offset,
                             code.to_string(),
+                            None,
                             markdown,
+                            on_zoom,
                         ))
                     })
                     .into_any_element()
@@ -719,6 +750,7 @@ fn mermaid_scroll_container(
     markdown: Entity<Markdown>,
     source_offset: usize,
     scroll_handle: &ScrollHandle,
+    on_zoom: Option<MermaidZoomCallback>,
 ) -> Stateful<Div> {
     let mut container = div()
         .id(ElementId::named_usize(
@@ -728,7 +760,7 @@ fn mermaid_scroll_container(
         .w_full()
         .overflow_x_scroll()
         .track_scroll(scroll_handle)
-        .on_scroll_wheel(on_mermaid_zoom_scroll(markdown, source_offset));
+        .on_scroll_wheel(on_mermaid_zoom_scroll(markdown, source_offset, on_zoom));
     // Without this, gpui maps vertical wheel deltas onto the x axis for
     // x-only scroll containers (see `paint_scroll_listener` in gpui's div),
     // hijacking plain vertical scrolls. Restricting to the actual axis lets
@@ -813,6 +845,77 @@ fn render_mermaid_tab_header(
         )
 }
 
+/// The overlay controls anchored to the top-right corner of a diagram: an
+/// optional "Zoom NNN%" readout with a reset button (shown only while zoomed
+/// away from the natural size) followed by the hover-revealed copy button.
+fn render_mermaid_overlay_controls(
+    source_offset: usize,
+    code: String,
+    zoom: Option<f32>,
+    markdown: Entity<Markdown>,
+    on_zoom: Option<MermaidZoomCallback>,
+) -> impl IntoElement {
+    h_flex()
+        .absolute()
+        .top_1()
+        .right_1()
+        .gap_0p5()
+        .when_some(zoom, |this, zoom| {
+            this.child(render_mermaid_zoom_indicator(
+                source_offset,
+                zoom,
+                markdown.clone(),
+                on_zoom,
+            ))
+        })
+        .child(render_mermaid_copy_button(
+            source_offset,
+            code,
+            markdown,
+        ))
+}
+
+/// A "Zoom NNN%" readout paired with a reset button, styled like the adjacent
+/// copy button. Shown only while the diagram is zoomed away from its natural
+/// size, so it doubles as an affordance that the zoom can be reset.
+fn render_mermaid_zoom_indicator(
+    source_offset: usize,
+    zoom: f32,
+    markdown: Entity<Markdown>,
+    on_zoom: Option<MermaidZoomCallback>,
+) -> impl IntoElement {
+    let percentage = (zoom * 100.0).round() as i32;
+
+    h_flex()
+        .gap_0p5()
+        .child(
+            Label::new(format!("Zoom {percentage}%"))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(
+            IconButton::new(
+                ElementId::named_usize("mermaid-zoom-reset", source_offset),
+                IconName::RotateCcw,
+            )
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Reset Zoom"))
+            .on_click(move |_event, window, cx| {
+                let zoom_changed = markdown.update(cx, |markdown, cx| {
+                    let current_zoom = markdown.mermaid_zoom_level(source_offset);
+                    markdown.set_mermaid_zoom_level(source_offset, 1.0, cx);
+                    markdown.mermaid_zoom_level(source_offset) != current_zoom
+                });
+                if zoom_changed
+                    && let Some(on_zoom) = &on_zoom
+                {
+                    on_zoom(window, cx);
+                }
+            }),
+        )
+}
+
 fn render_mermaid_copy_button(
     source_offset: usize,
     code: String,
@@ -820,30 +923,28 @@ fn render_mermaid_copy_button(
 ) -> impl IntoElement {
     let id = ElementId::named_usize("copy-mermaid-code", source_offset);
 
-    div().absolute().top_1().right_1().justify_end().child(
-        CopyButton::new(id.clone(), code.clone())
-            .visible_on_hover("code_block")
-            .custom_on_click({
-                move |_window, cx| {
-                    let id = id.clone();
-                    markdown.update(cx, |this, cx| {
-                        this.copied_code_blocks.insert(id.clone());
-                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-                        cx.spawn(async move |this, cx| {
-                            cx.background_executor().timer(Duration::from_secs(2)).await;
-                            cx.update(|cx| {
-                                this.update(cx, |this, cx| {
-                                    this.copied_code_blocks.remove(&id);
-                                    cx.notify();
-                                })
+    CopyButton::new(id.clone(), code.clone())
+        .visible_on_hover("code_block")
+        .custom_on_click({
+            move |_window, cx| {
+                let id = id.clone();
+                markdown.update(cx, |this, cx| {
+                    this.copied_code_blocks.insert(id.clone());
+                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(Duration::from_secs(2)).await;
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.copied_code_blocks.remove(&id);
+                                cx.notify();
                             })
-                            .ok();
                         })
-                        .detach();
-                    });
-                }
-            }),
-    )
+                        .ok();
+                    })
+                    .detach();
+                });
+            }
+        })
 }
 
 fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
@@ -860,8 +961,8 @@ mod tests {
         ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
     };
     use crate::{
-        CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
-        MarkdownStyle, WrapButtonVisibility,
+        CodeBlockRenderer, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown, MarkdownElement,
+        MarkdownOptions, MarkdownStyle, WrapButtonVisibility,
     };
     use collections::HashMap;
     use gpui::{
@@ -1313,10 +1414,12 @@ mod tests {
             );
         });
 
+        let half_debounce = MERMAID_ZOOM_DEBOUNCE / 2;
+
         markdown.update(cx, |markdown, cx| {
             markdown.set_mermaid_zoom_level(source_offset, 1.5, cx)
         });
-        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.executor().advance_clock(half_debounce);
         cx.run_until_parked();
         markdown.read_with(cx, |markdown, _| {
             let cached = markdown.mermaid_state.cache.get(&contents).unwrap();
@@ -1330,7 +1433,7 @@ mod tests {
         markdown.update(cx, |markdown, cx| {
             markdown.set_mermaid_zoom_level(source_offset, 2.0, cx)
         });
-        cx.executor().advance_clock(Duration::from_millis(700));
+        cx.executor().advance_clock(half_debounce);
         cx.run_until_parked();
         markdown.read_with(cx, |markdown, _| {
             let cached = markdown.mermaid_state.cache.get(&contents).unwrap();
@@ -1340,7 +1443,8 @@ mod tests {
             );
         });
 
-        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.executor()
+            .advance_clock(half_debounce + Duration::from_millis(1));
         cx.run_until_parked();
         markdown.read_with(cx, |markdown, _| {
             let cached = markdown.mermaid_state.cache.get(&contents).unwrap();

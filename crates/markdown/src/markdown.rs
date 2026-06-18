@@ -56,7 +56,7 @@ const MERMAID_MAX_ZOOM: f32 = 2.0;
 /// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
 /// can easily return to the default size.
 const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
-const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_secs(1);
+const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
@@ -64,6 +64,9 @@ type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
+/// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
+/// the reset button), so a scroll container can keep the diagram anchored.
+pub type MermaidZoomCallback = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -1315,6 +1318,7 @@ pub struct MarkdownElement {
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
+    on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
@@ -1339,6 +1343,7 @@ impl MarkdownElement {
             code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
+            on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
@@ -1410,6 +1415,17 @@ impl MarkdownElement {
         handler: impl Fn(Range<usize>, bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_checkbox_toggle = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a callback invoked when a mermaid diagram's zoom level changes.
+    /// Consumers that scroll the markdown can use this to keep the diagram's
+    /// position anchored while it grows or shrinks.
+    pub fn on_mermaid_zoom(
+        mut self,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_mermaid_zoom = Some(Rc::new(handler));
         self
     }
 
@@ -2279,6 +2295,7 @@ impl Element for MarkdownElement {
                                         showing_code,
                                         zoom,
                                         copy_button_visibility,
+                                        self.on_mermaid_zoom.clone(),
                                         window,
                                         cx,
                                     ),

@@ -596,6 +596,19 @@ impl ListState {
         }
     }
 
+    /// Pause tail-following, freezing the list at its current scroll
+    /// position. Unlike [`Self::set_follow_mode`] with [`FollowMode::Normal`],
+    /// this keeps the list in `Tail` mode, so it will resume following
+    /// automatically once the view returns to the bottom. No-op when the list
+    /// isn't currently following.
+    ///
+    /// Useful when something other than the user grows an item (e.g. zooming a
+    /// diagram) and the current position should stay put rather than snapping
+    /// to the end.
+    pub fn pause_following_tail(&self) {
+        self.0.borrow_mut().follow_state.stop_following();
+    }
+
     /// Returns whether the list is currently actively following the
     /// tail (snapping to the end on each layout).
     pub fn is_following_tail(&self) -> bool {
@@ -2269,6 +2282,116 @@ mod test {
         assert_eq!(offset.item_ix, 7);
         assert_eq!(offset.offset_in_item, px(40.));
         assert!(state.is_following_tail());
+    }
+
+    #[gpui::test]
+    fn test_pause_following_tail_reengages_when_still_at_bottom(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // 10 items × 50px = 500px total, 200px viewport.
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+        state.set_follow_mode(FollowMode::Tail);
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert!(state.is_following_tail());
+
+        // Pausing while the view is still at the bottom (e.g. a no-op zoom)
+        // must not strand follow-tail: the next layout has to re-engage so the
+        // invariant "at the bottom + new content => visible" is preserved.
+        state.pause_following_tail();
+        assert!(!state.is_following_tail());
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+        assert!(
+            state.is_following_tail(),
+            "pausing while at the bottom must re-engage follow-tail on the next layout"
+        );
+    }
+
+    #[gpui::test]
+    fn test_pause_following_tail_freezes_off_bottom(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // 10 items, 200px viewport. Item height is adjustable to simulate a
+        // diagram block growing/shrinking on zoom.
+        let item_height = Rc::new(Cell::new(50usize));
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
+
+        struct TestView {
+            state: ListState,
+            item_height: Rc<Cell<usize>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let height = self.item_height.get();
+                list(self.state.clone(), move |_, _, _| {
+                    div().h(px(height as f32)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                item_height: item_height.clone(),
+            })
+        });
+        state.set_follow_mode(FollowMode::Tail);
+
+        // At the bottom: 500px content, 200px viewport → top at item 6.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert_eq!(state.logical_scroll_top().item_ix, 6);
+        assert!(state.is_following_tail());
+
+        // Pause, then grow items (a zoom-in that pushes content below the fold).
+        // The frozen top must stay put rather than snapping to the new end, and
+        // following stays paused since we're no longer at the bottom.
+        state.pause_following_tail();
+        item_height.set(80);
+        state.remeasure();
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 6);
+        assert_eq!(offset.offset_in_item, px(0.));
+        assert!(
+            !state.is_following_tail(),
+            "a paused list must not re-engage while the frozen top is off the bottom"
+        );
+
+        // Shrink back (zoom-out) so the frozen top once again reaches the
+        // bottom: follow-tail must re-engage on its own.
+        item_height.set(50);
+        state.remeasure();
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+        assert!(
+            state.is_following_tail(),
+            "returning to the bottom must restore follow-tail"
+        );
     }
 
     #[gpui::test]
