@@ -1195,6 +1195,11 @@ impl SearchableItem for MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        debug_assert!(
+            matches
+                .windows(2)
+                .all(|ranges| (ranges[0].start, ranges[0].end) <= (ranges[1].start, ranges[1].end))
+        );
         let old_highlights = self.markdown.read(cx).search_highlights();
         let changed = old_highlights != matches;
         self.markdown.update(cx, |markdown, cx| {

@@ -13,9 +13,9 @@ use std::{
     time::Duration,
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::SandboxFallbackDecision;
-use crate::sandboxing::{NetworkRequest, sandboxing_enabled};
+use crate::sandboxing::{NetworkRequest, sandboxing_enabled_for_project};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -365,7 +365,8 @@ async fn run_terminal_tool(
             crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
         let authorize =
             event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-        let sandboxing = input.sandbox.is_some() && sandboxing_enabled(cx);
+        let sandboxing =
+            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
         let is_local_project = project.read(cx).is_local();
         Result::<_, String>::Ok((working_dir, authorize, sandboxing, is_local_project))
     })?;
@@ -489,8 +490,9 @@ async fn run_terminal_tool(
             None
         } else if event_stream.sandbox_fallback_granted_for_thread() {
             // The user allowed unsandboxed execution for the rest of this
-            // thread after an earlier sandbox failure (Linux only).
-            #[cfg(target_os = "linux")]
+            // thread after an earlier sandbox failure (Linux and Windows, which
+            // share the `authorize_sandbox_fallback` flow).
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
                 sandbox_not_applied =
                     Some(acp_thread::SandboxNotAppliedReason::DisabledForThisThread);
@@ -598,9 +600,104 @@ async fn run_terminal_tool(
         None
     };
 
-    // When sandboxing was active but we ran without a sandbox, tell the agent
-    // so it can account for the weaker isolation. The message is self-contained
-    // per reason, so every affected command communicates the state.
+    let output_byte_limit = if selection.is_enabled() {
+        None
+    } else {
+        Some(COMMAND_OUTPUT_LIMIT)
+    };
+
+    // Create the terminal. On Windows the WSL sandbox can only report whether
+    // it set up the environment once `wsl.exe` actually runs (its probe is
+    // async), so — unlike Linux's up-front `can_create_sandbox` loop above —
+    // the sandbox-creation fallback happens here, around `create_terminal`. The
+    // user gets the same choices via `authorize_sandbox_fallback` (retry / run
+    // unsandboxed once / for this thread / always / deny), and a chosen
+    // "run unsandboxed" is recorded in `sandbox_not_applied` exactly as on
+    // Linux so the model and UI are told the command ran without a sandbox.
+    #[cfg(target_os = "windows")]
+    let terminal = {
+        let mut retries = 0usize;
+        let mut effective_wrap = sandbox_wrap.clone();
+        loop {
+            let error = match environment
+                .create_terminal(
+                    input.command.clone(),
+                    extra_env.clone(),
+                    working_dir.clone(),
+                    output_byte_limit,
+                    effective_wrap.clone(),
+                    cx,
+                )
+                .await
+            {
+                Ok(terminal) => break terminal,
+                Err(error) => error,
+            };
+
+            // Only an *environment*-unavailable failure of the WSL sandbox is a
+            // sandbox-creation problem the user can act on. A bad request (a
+            // missing writable path, mixed distros) — or any failure once we're
+            // already running unsandboxed — goes straight back to the model.
+            let Some(message) = effective_wrap.as_ref().and_then(|_| {
+                error
+                    .downcast_ref::<sandbox::windows_wsl::WslSandboxUnavailable>()
+                    .map(|unavailable| unavailable.message().to_string())
+            }) else {
+                return Err(format!("{error:#}"));
+            };
+            let sandbox_error = acp_thread::LinuxWslSandboxError::Other(message);
+            log::warn!("Failed to create a WSL sandbox for an agent terminal command: {error:?}");
+
+            let decision = cx
+                .update(|cx| {
+                    event_stream.authorize_sandbox_fallback(
+                        Some(input.command.clone()),
+                        sandbox_error.user_facing_message(),
+                        retries,
+                        cx,
+                    )
+                })
+                .await;
+            match decision {
+                Ok(SandboxFallbackDecision::Retry) => {
+                    // WSL probe failures aren't cached, so retrying re-probes
+                    // the current environment (e.g. after installing `bwrap`).
+                    retries += 1;
+                }
+                Ok(SandboxFallbackDecision::RunUnsandboxed) => {
+                    sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(
+                        sandbox_error,
+                    ));
+                    effective_wrap = None;
+                }
+                Ok(SandboxFallbackDecision::Deny) | Err(_) => {
+                    return Ok(format!(
+                        "Command cancelled: the sandbox could not be created ({}) and the \
+                         user declined to run it without one.",
+                        sandbox_error.user_facing_message()
+                    ));
+                }
+            }
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let terminal = environment
+        .create_terminal(
+            input.command.clone(),
+            extra_env,
+            working_dir.clone(),
+            output_byte_limit,
+            sandbox_wrap.clone(),
+            cx,
+        )
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+
+    // When sandboxing was active but the command ran without a sandbox (a
+    // settings opt-out, a thread grant, or a sandbox-creation failure the user
+    // chose to run through), tell the agent so it can account for the weaker
+    // isolation. Computed here — after the Windows fallback above may have set
+    // the reason — so every affected command communicates the state.
     let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
         acp_thread::SandboxNotAppliedReason::DisabledForever => {
             "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
@@ -618,24 +715,6 @@ async fn run_terminal_tool(
             error.user_facing_message()
         ),
     });
-
-    let output_byte_limit = if selection.is_enabled() {
-        None
-    } else {
-        Some(COMMAND_OUTPUT_LIMIT)
-    };
-
-    let terminal = environment
-        .create_terminal(
-            input.command.clone(),
-            extra_env,
-            working_dir,
-            output_byte_limit,
-            sandbox_wrap,
-            cx,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
     let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
@@ -715,14 +794,15 @@ fn resolve_write_paths(
     if raw_paths.is_empty() {
         return Vec::new();
     }
+    let project = project.read(cx);
+    let windows_paths = project.path_style(cx).is_windows();
     let base = working_dir.map(Path::to_path_buf).or_else(|| {
         project
-            .read(cx)
             .worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
     });
-    join_write_paths(raw_paths, base.as_deref())
+    join_write_paths(raw_paths, base.as_deref(), windows_paths)
 }
 
 /// Pure path-joining step of [`resolve_write_paths`], split out so it can be
@@ -732,10 +812,27 @@ fn resolve_write_paths(
 /// subtree-containment checks and the user-facing approval prompt operate on
 /// the same path the sandbox will ultimately enforce. Relative paths with no
 /// base, and paths that traverse above the filesystem root, are dropped.
-fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
+///
+/// On Windows, raw paths the model expressed in WSL terms (a `/mnt/<drive>/...`
+/// automount path, or a WSL-absolute `/home/...` path) are mapped back to the
+/// form the sandbox machinery expects before normalization.
+fn join_write_paths(
+    raw_paths: &[String],
+    base: Option<&Path>,
+    windows_paths: bool,
+) -> Vec<PathBuf> {
     raw_paths
         .iter()
         .filter_map(|raw| {
+            if windows_paths {
+                if let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
+                    return Some(path);
+                }
+                if let Some(path) = wsl_absolute_path(raw) {
+                    return Some(path);
+                }
+            }
+
             let path = Path::new(raw);
             let absolute = if path.is_absolute() {
                 path.to_path_buf()
@@ -745,6 +842,34 @@ fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
             util::paths::normalize_lexically(&absolute).ok()
         })
         .collect()
+}
+
+fn wsl_drive_mount_path_to_windows_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    let remainder = raw.strip_prefix("/mnt/")?;
+    let (drive, rest) = remainder
+        .split_once('/')
+        .map_or((remainder, ""), |(drive, rest)| (drive, rest));
+    let mut drive_chars = drive.chars();
+    let drive = drive_chars.next()?.to_ascii_uppercase();
+    if !drive.is_ascii_alphabetic() || drive_chars.next().is_some() {
+        return None;
+    }
+
+    let mut windows_path = format!("{drive}:\\");
+    if !rest.is_empty() {
+        windows_path.push_str(&rest.replace('/', "\\"));
+    }
+    Some(PathBuf::from(windows_path))
+}
+
+fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    if raw.starts_with('/') && !raw.starts_with("//") {
+        Some(PathBuf::from(raw))
+    } else {
+        None
+    }
 }
 
 /// Convert a (validated) network request into the access mode enforced by the
@@ -902,6 +1027,24 @@ fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection
     }
 }
 
+/// Explanation appended to the model-facing result when a sandboxed command
+/// fails because it tried to use WSL's Windows interop (see
+/// [`wsl_interop_blocked`]).
+const WSL_INTEROP_BLOCKED_NOTE: &str = "This command tried to launch a Windows \
+executable, which the sandbox blocks: WSL Windows interop is disabled so \
+sandboxed commands can't escape to the Windows host. The noisy `WSL ... ERROR` \
+lines below are from that blocked attempt, not a bug in the command. If you \
+genuinely need to run a Windows program, re-run with `unsandboxed: true`.";
+
+/// Whether terminal output contains the kernel-style diagnostics WSL prints
+/// when a Windows executable is launched inside our pid-namespaced sandbox
+/// (interop init fails to parse `/proc/1/stat`, which is now `bwrap`). These
+/// markers don't appear for ordinary Linux commands.
+#[cfg(target_os = "windows")]
+fn wsl_interop_blocked(content: &str) -> bool {
+    content.contains("UtilGetPpid") || content.contains("Failed to parse: /proc/1/stat")
+}
+
 fn process_content(
     output: acp::TerminalOutputResponse,
     command: &str,
@@ -912,6 +1055,15 @@ fn process_content(
     let content = output.output.trim();
     let content = select_terminal_output_lines(content, selection);
     let is_empty = content.is_empty();
+
+    // On Windows, recognize the kernel-style diagnostics WSL prints when a
+    // command tries to launch a Windows executable inside the sandbox (where
+    // interop is deliberately disabled). They're noise the model can't act on,
+    // so we explain what actually happened.
+    #[cfg(target_os = "windows")]
+    let interop_blocked = wsl_interop_blocked(&content);
+    #[cfg(not(target_os = "windows"))]
+    let interop_blocked = false;
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
@@ -954,6 +1106,11 @@ fn process_content(
                 } else {
                     content
                 }
+            }
+            Some(exit_code) if interop_blocked => {
+                format!(
+                    "Command \"{command}\" failed with exit code {exit_code}. {WSL_INTEROP_BLOCKED_NOTE}\n\n{content}"
+                )
             }
             Some(exit_code) => {
                 if is_empty {
@@ -2599,6 +2756,7 @@ mod tests {
                 "file.txt".to_string(),
             ],
             Some(base.as_path()),
+            cfg!(windows),
         );
         assert_eq!(
             joined,
@@ -2619,8 +2777,42 @@ mod tests {
         } else {
             "/abs/keep"
         };
-        let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
+        let joined = join_write_paths(
+            &[abs.to_string(), "relative/drop".to_string()],
+            None,
+            cfg!(windows),
+        );
         assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_join_write_paths_converts_wsl_drive_mounts_on_windows() {
+        let joined = join_write_paths(
+            &["/mnt/c/example/write-root".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("C:\\example\\write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_only_converts_wsl_drive_mounts_for_windows_paths() {
+        let joined = join_write_paths(
+            &["/mnt/c/example/write-root".to_string()],
+            Some(Path::new("/project")),
+            false,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/mnt/c/example/write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_preserves_wsl_absolute_paths_on_windows() {
+        let joined = join_write_paths(
+            &["/home/example".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/home/example")]);
     }
 
     #[test]
@@ -2643,6 +2835,7 @@ mod tests {
                 },
             ],
             Some(base.as_path()),
+            cfg!(windows),
         );
         let expected_escape = if cfg!(windows) {
             PathBuf::from("C:\\escape")
