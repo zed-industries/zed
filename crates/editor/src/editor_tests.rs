@@ -29511,6 +29511,107 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_find_all_references_preview_survives_uncommitted_diff_load(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                preview_tabs.enabled = Some(true);
+                preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
+                preview_tabs.enable_preview_from_multibuffer = Some(false);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.executor().run_until_parked();
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(navigated, Navigated::Yes);
+
+    let references_editor = cx.update_workspace(|workspace, _, cx| {
+        workspace
+            .active_pane()
+            .read(cx)
+            .active_item()
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+    let (preview_item_id, active_item_id) = cx.update_workspace(|workspace, _, cx| {
+        let active_pane = workspace.active_pane().read(cx);
+        (
+            active_pane.preview_item_id(),
+            active_pane.active_item().unwrap().item_id(),
+        )
+    });
+    assert_eq!(preview_item_id, Some(active_item_id));
+
+    cx.executor().run_until_parked();
+
+    let has_diff = cx.update_workspace(|_, _, cx| {
+        let multi_buffer = references_editor.read(cx).buffer().clone();
+        let multi_buffer = multi_buffer.read(cx);
+        multi_buffer.all_buffers_iter().any(|buffer| {
+            let buffer_id = buffer.read(cx).remote_id();
+            multi_buffer.diff_for(buffer_id).is_some()
+        })
+    });
+    assert!(
+        has_diff,
+        "references multibuffer should load uncommitted diffs"
+    );
+
+    let (preview_item_id, active_item_id) = cx.update_workspace(|workspace, _, cx| {
+        let active_pane = workspace.active_pane().read(cx);
+        (
+            active_pane.preview_item_id(),
+            active_pane.active_item().unwrap().item_id(),
+        )
+    });
+    assert_eq!(preview_item_id, Some(active_item_id));
+}
+
 #[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

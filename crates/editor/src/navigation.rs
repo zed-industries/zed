@@ -2206,6 +2206,11 @@ impl Editor {
             }
         });
 
+        if allow_preview && !was_existing && PreviewTabsSettings::get_global(cx).enabled {
+            let multibuffer = editor.read(cx).buffer().clone();
+            multibuffer.update(cx, |multibuffer, cx| multibuffer.refresh_preview(cx));
+        }
+
         let item = Box::new(editor.clone());
 
         let pane = if split {
