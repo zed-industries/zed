@@ -2756,6 +2756,37 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_word_selection_motions_use_configured_word_characters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.word_characters =
+            Some(WordCharacters(['-'].into_iter().collect::<HashSet<_>>()));
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("foo-bar baz", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ])
+        });
+        editor.select_to_next_word_end(&SelectToNextWordEnd, window, cx);
+        assert_selection_ranges("«foo-barˇ» baz", editor, cx);
+
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 7)
+            ])
+        });
+        editor.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
+        assert_selection_ranges("«ˇfoo-bar» baz", editor, cx);
+    });
+}
+
+#[gpui::test]
 fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

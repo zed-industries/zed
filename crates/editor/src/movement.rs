@@ -12,6 +12,7 @@ use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
 
+use collections::HashSet;
 use std::{ops::Range, sync::Arc};
 
 /// Defines search strategy for items in `movement` module.
@@ -264,6 +265,14 @@ pub fn line_end(
 /// Returns a position of the previous word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    previous_word_start_with_extra_word_characters(map, point, None)
+}
+
+pub fn previous_word_start_with_extra_word_characters(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    extra_word_characters: Option<&HashSet<char>>,
+) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
@@ -280,7 +289,9 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
         }
         is_first_iteration = false;
 
-        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
+        (classifier.kind_with_extra_word_characters(left, extra_word_characters)
+            != classifier.kind_with_extra_word_characters(right, extra_word_characters)
+            && !classifier.is_whitespace(right))
             || left == '\n'
     })
 }
@@ -439,6 +450,14 @@ pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) ->
 /// Returns a position of the next word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    next_word_end_with_extra_word_characters(map, point, None)
+}
+
+pub fn next_word_end_with_extra_word_characters(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    extra_word_characters: Option<&HashSet<char>>,
+) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
     let mut is_first_iteration = true;
@@ -454,7 +473,9 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
         }
         is_first_iteration = false;
 
-        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
+        (classifier.kind_with_extra_word_characters(left, extra_word_characters)
+            != classifier.kind_with_extra_word_characters(right, extra_word_characters)
+            && !classifier.is_whitespace(left))
             || right == '\n'
     })
 }

@@ -414,10 +414,30 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer = display_snapshot.buffer_snapshot();
+        let word_characters = self
+            .selections
+            .all::<MultiBufferOffset>(&display_snapshot)
+            .into_iter()
+            .map(|selection| {
+                buffer
+                    .language_settings_at(selection.head(), cx)
+                    .word_characters
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        let mut word_characters = word_characters.iter();
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
+                let word_characters = word_characters.next();
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start_with_extra_word_characters(
+                        map,
+                        head,
+                        word_characters,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -472,9 +492,28 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer = display_snapshot.buffer_snapshot();
+        let word_characters = self
+            .selections
+            .all::<MultiBufferOffset>(&display_snapshot)
+            .into_iter()
+            .map(|selection| {
+                buffer
+                    .language_settings_at(selection.head(), cx)
+                    .word_characters
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        let mut word_characters = word_characters.iter();
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                let word_characters = word_characters.next();
+                (
+                    movement::next_word_end_with_extra_word_characters(map, head, word_characters),
+                    SelectionGoal::None,
+                )
             });
         })
     }
