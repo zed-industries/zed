@@ -13,6 +13,7 @@ pub struct QaSummaryData {
 pub struct PredictionSummaryInput<'a> {
     pub score: &'a PredictionScore,
     pub qa: Option<QaSummaryData>,
+    pub retrieved_context_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -56,6 +57,36 @@ pub struct SummaryJson {
     pub total_correctly_deleted_chars: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_discarded_chars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_lines_precision: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_lines_recall: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_lines_f1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_lines_tp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_lines_fp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_lines_fn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_files_precision: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_files_recall: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_files_f1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_files_tp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_files_fp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_files_fn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_retrieved_context_bytes: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_retrieved_context_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieved_context_examples: Option<usize>,
 }
 
 pub fn compute_summary<'a>(
@@ -91,6 +122,21 @@ pub fn compute_summary<'a>(
     let mut discarded_chars_count: usize = 0;
     let mut recall_rate_sum: f64 = 0.0;
     let mut recall_rate_count: usize = 0;
+    let mut editable_context_lines_precision_sum: f64 = 0.0;
+    let mut editable_context_lines_recall_sum: f64 = 0.0;
+    let mut editable_context_lines_f1_sum: f64 = 0.0;
+    let mut editable_context_files_precision_sum: f64 = 0.0;
+    let mut editable_context_files_recall_sum: f64 = 0.0;
+    let mut editable_context_files_f1_sum: f64 = 0.0;
+    let mut editable_context_coverage_count: usize = 0;
+    let mut editable_context_lines_tp: usize = 0;
+    let mut editable_context_lines_fp: usize = 0;
+    let mut editable_context_lines_fn: usize = 0;
+    let mut editable_context_files_tp: usize = 0;
+    let mut editable_context_files_fp: usize = 0;
+    let mut editable_context_files_fn: usize = 0;
+    let mut retrieved_context_bytes_total: usize = 0;
+    let mut retrieved_context_bytes_count: usize = 0;
 
     for prediction in predictions {
         let score = prediction.score;
@@ -148,6 +194,26 @@ pub fn compute_summary<'a>(
         if let Some(recall_rate) = score.recall_rate {
             recall_rate_sum += recall_rate;
             recall_rate_count += 1;
+        }
+        if let Some(retrieved_context_bytes) = prediction.retrieved_context_bytes {
+            retrieved_context_bytes_total += retrieved_context_bytes;
+            retrieved_context_bytes_count += 1;
+        }
+
+        if let Some(coverage) = &score.editable_context_coverage {
+            editable_context_lines_precision_sum += coverage.lines_precision;
+            editable_context_lines_recall_sum += coverage.lines_recall;
+            editable_context_lines_f1_sum += coverage.lines_f1;
+            editable_context_files_precision_sum += coverage.files_precision;
+            editable_context_files_recall_sum += coverage.files_recall;
+            editable_context_files_f1_sum += coverage.files_f1;
+            editable_context_coverage_count += 1;
+            editable_context_lines_tp += coverage.lines_tp;
+            editable_context_lines_fp += coverage.lines_fp;
+            editable_context_lines_fn += coverage.lines_fn;
+            editable_context_files_tp += coverage.files_tp;
+            editable_context_files_fp += coverage.files_fp;
+            editable_context_files_fn += coverage.files_fn;
         }
 
         if let Some(exact_match) = score.cursor_exact_match {
@@ -252,6 +318,82 @@ pub fn compute_summary<'a>(
         None
     };
 
+    let avg_editable_context_lines_precision = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_precision_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let avg_editable_context_lines_recall = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_recall_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let avg_editable_context_lines_f1 = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_f1_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let editable_context_lines_tp = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_tp)
+    } else {
+        None
+    };
+    let editable_context_lines_fp = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_fp)
+    } else {
+        None
+    };
+    let editable_context_lines_fn = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_fn)
+    } else {
+        None
+    };
+    let avg_editable_context_files_precision = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_precision_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let avg_editable_context_files_recall = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_recall_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let avg_editable_context_files_f1 = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_f1_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let editable_context_files_tp = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_tp)
+    } else {
+        None
+    };
+    let editable_context_files_fp = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_fp)
+    } else {
+        None
+    };
+    let editable_context_files_fn = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_fn)
+    } else {
+        None
+    };
+    let avg_retrieved_context_bytes = if retrieved_context_bytes_count > 0 {
+        Some(retrieved_context_bytes_total as f64 / retrieved_context_bytes_count as f64)
+    } else {
+        None
+    };
+    let total_retrieved_context_bytes = if retrieved_context_bytes_count > 0 {
+        Some(retrieved_context_bytes_total)
+    } else {
+        None
+    };
+    let retrieved_context_examples = if retrieved_context_bytes_count > 0 {
+        Some(retrieved_context_bytes_count)
+    } else {
+        None
+    };
+
     SummaryJson {
         total_examples: total_scores,
         avg_delta_chr_f,
@@ -289,5 +431,20 @@ pub fn compute_summary<'a>(
         total_kept_chars,
         total_correctly_deleted_chars,
         total_discarded_chars,
+        avg_editable_context_lines_precision,
+        avg_editable_context_lines_recall,
+        avg_editable_context_lines_f1,
+        editable_context_lines_tp,
+        editable_context_lines_fp,
+        editable_context_lines_fn,
+        avg_editable_context_files_precision,
+        avg_editable_context_files_recall,
+        avg_editable_context_files_f1,
+        editable_context_files_tp,
+        editable_context_files_fp,
+        editable_context_files_fn,
+        avg_retrieved_context_bytes,
+        total_retrieved_context_bytes,
+        retrieved_context_examples,
     }
 }

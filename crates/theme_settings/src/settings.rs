@@ -56,9 +56,13 @@ pub struct ThemeSettings {
     agent_ui_font_size: Option<Pixels>,
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
+    git_commit_buffer_font_size: Option<Pixels>,
     /// The font family to use for rendering in the markdown preview.
     /// Falls back to the UI font family if unset.
     markdown_preview_font_family: Option<SharedString>,
+    /// The font family to use for code in the markdown preview.
+    /// Falls back to the buffer font family if unset.
+    markdown_preview_code_font_family: Option<SharedString>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
@@ -114,6 +118,11 @@ impl Global for AgentUiFontSize {}
 pub struct AgentBufferFontSize(Pixels);
 
 impl Global for AgentBufferFontSize {}
+
+#[derive(Default)]
+pub struct GitCommitBufferFontSize(Pixels);
+
+impl Global for GitCommitBufferFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -407,12 +416,28 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
+    pub fn git_commit_buffer_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<GitCommitBufferFontSize>()
+            .map(|size| size.0)
+            .or(self.git_commit_buffer_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.buffer_font_size(cx))
+    }
+
     /// Returns the font family to use in the markdown preview,
     /// falling back to the UI font family when unset.
     pub fn markdown_preview_font_family(&self) -> &SharedString {
         self.markdown_preview_font_family
             .as_ref()
             .unwrap_or(&self.ui_font.family)
+    }
+
+    /// Returns the font family to use for code in the markdown preview,
+    /// falling back to the buffer font family when unset.
+    pub fn markdown_preview_code_font_family(&self) -> &SharedString {
+        self.markdown_preview_code_font_family
+            .as_ref()
+            .unwrap_or(&self.buffer_font.family)
     }
 
     /// Returns the buffer font size, read from the settings.
@@ -445,6 +470,10 @@ impl ThemeSettings {
     /// Use [`Self::agent_buffer_font_size`] to get the real font size.
     pub fn agent_buffer_font_size_settings(&self) -> Option<Pixels> {
         self.agent_buffer_font_size
+    }
+
+    pub fn git_commit_buffer_font_size_settings(&self) -> Option<Pixels> {
+        self.git_commit_buffer_font_size
     }
 
     /// Returns the buffer's line height.
@@ -598,6 +627,22 @@ pub fn reset_agent_buffer_font_size(cx: &mut App) {
     }
 }
 
+pub fn adjust_git_commit_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let git_commit_buffer_font_size = ThemeSettings::get_global(cx).git_commit_buffer_font_size(cx);
+    let adjusted_size = cx
+        .try_global::<GitCommitBufferFontSize>()
+        .map_or(git_commit_buffer_font_size, |adjusted_size| adjusted_size.0);
+    cx.set_global(GitCommitBufferFontSize(clamp_font_size(f(adjusted_size))));
+    cx.refresh_windows();
+}
+
+pub fn reset_git_commit_buffer_font_size(cx: &mut App) {
+    if cx.has_global::<GitCommitBufferFontSize>() {
+        cx.remove_global::<GitCommitBufferFontSize>();
+        cx.refresh_windows();
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -647,8 +692,13 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
+            git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content
                 .markdown_preview_font_family
+                .as_ref()
+                .map(|f| f.0.clone().into()),
+            markdown_preview_code_font_family: content
+                .markdown_preview_code_font_family
                 .as_ref()
                 .map(|f| f.0.clone().into()),
             markdown_preview_theme: content
