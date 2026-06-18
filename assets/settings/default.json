@@ -104,6 +104,16 @@
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary",
   },
+  // Markdown preview settings
+  "markdown_preview": {
+    // Whether to limit the width of the rendered markdown content. When
+    // enabled, content is constrained to `max_width` and centered
+    // horizontally within the preview pane.
+    "limit_content_width": true,
+    // The maximum width, in pixels, of the rendered markdown content when
+    // limit_content_width is enabled.
+    "max_width": 800,
+  },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //
   // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
