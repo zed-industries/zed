@@ -749,7 +749,7 @@ impl PickerDelegate for Delegate {
         let m = self.matches.get(self.selected_index)?;
         Some(picker::PreviewUpdate::from_buffer(
             m.buffer.clone(),
-            picker::PreviewHighlight {
+            picker::MatchLocation {
                 anchor_range: m.anchor_range.clone(),
                 range: m.range.clone(),
             },

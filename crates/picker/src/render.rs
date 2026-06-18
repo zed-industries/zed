@@ -26,19 +26,7 @@ pub mod window_controls;
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Shape::Resizing(pos) = self.shape
-            && !cx.has_active_drag()
-        {
-            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
-            persistence::store_shape_for_this_layout(
-                D::name(),
-                self.preview_layout(),
-                centered,
-                window,
-                cx,
-            );
-            self.shape = Shape::HorizontallyCentered(centered);
-        }
+        self.finish_any_completed_resize(window, cx);
 
         let content = match &self.preview {
             Some(
@@ -275,6 +263,29 @@ impl<D: PickerDelegate> Picker<D> {
                 .justify_end()
                 .child(render_aside(aside, cx))
                 .child(menu)
+        }
+    }
+
+    fn finish_any_completed_resize(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Picker<D>>,
+    ) {
+        if let Shape::Resizing(pos) = self.shape
+            && !cx.has_active_drag()
+        {
+            let centered = Shape::centered_and_relative(pos, self.preview_layout(), window);
+            persistence::store_shape_for_this_layout(
+                D::name(),
+                self.preview_layout(),
+                centered,
+                window,
+                cx,
+            );
+            self.shape = Shape::HorizontallyCentered(centered);
+            if let Some(preview) = &mut self.preview {
+                preview.adjust_to_new_size(window, cx);
+            }
         }
     }
 }

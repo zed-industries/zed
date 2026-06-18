@@ -26,10 +26,11 @@ mod preview;
 mod render;
 mod shape;
 
+use crate::shape::PositionAndShape;
 use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
+pub use preview::MatchLocation;
 pub use preview::Preview;
-pub use preview::PreviewHighlight;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
 pub use ui_input::ErasedEditor;

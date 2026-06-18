@@ -2,7 +2,6 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use editor::display_map::ToDisplayPoint;
 use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, Window};
@@ -46,17 +45,24 @@ impl Preview {
     }
 
     pub fn update(&mut self, update: Update, window: &mut Window, cx: &mut impl AppContext) {
-        // self.content since this will become a match to support non editor previews
+        // self.content since this will become a match to support non editor or composite previews
         self.content.update(cx, |content, cx| {
             content.update(update, window, cx);
         });
     }
 
     pub fn render(&self, cx: &mut App) -> impl IntoElement {
-        // self.content since this will become a match to support non editor previews
         let layout = self.layout;
         self.content.update(cx, |content, cx| {
             content.render(layout, cx).into_any_element()
+        })
+    }
+
+    /// Called after a resize to let the preview do resizing logic
+    /// like scrolling
+    pub fn adjust_to_new_size(&self, window: &mut Window, cx: &mut App) {
+        self.content.update(cx, |content, cx| {
+            content.scroll_to_focus_match(window, cx);
         })
     }
 }
@@ -75,14 +81,10 @@ pub enum PreviewSource {
     Buffer(Entity<Buffer>),
 }
 
-/// Describes a location within the previewed buffer that should be highlighted
-/// and scrolled into view.
-pub struct PreviewHighlight {
-    /// The location of the match, used to highlight the match and place the
-    /// cursor.
+pub struct MatchLocation {
+    /// The location of the match (for highlighting)
     pub anchor_range: Range<language::Anchor>,
-    /// The location of the match as an offset, used to select the matched text
-    /// so the editor scrolls to it.
+    /// The location of the match as an offset (for scrolling)
     pub range: Range<usize>,
 }
 
@@ -91,7 +93,7 @@ pub struct Update {
     /// Where to source the buffer to preview.
     pub source: PreviewSource,
     /// The location to highlight and scroll to, if any.
-    pub highlight: Option<PreviewHighlight>,
+    pub match_location: Option<MatchLocation>,
 }
 
 impl Update {
@@ -99,15 +101,15 @@ impl Update {
     pub fn from_path(abs_path: PathBuf) -> Self {
         Self {
             source: PreviewSource::Path(abs_path),
-            highlight: None,
+            match_location: None,
         }
     }
 
     /// Preview `buffer`, highlighting and scrolling to `highlight`.
-    pub fn from_buffer(buffer: Entity<Buffer>, highlight: PreviewHighlight) -> Self {
+    pub fn from_buffer(buffer: Entity<Buffer>, highlight: MatchLocation) -> Self {
         Self {
             source: PreviewSource::Buffer(buffer),
-            highlight: Some(highlight),
+            match_location: Some(highlight),
         }
     }
 }
@@ -140,7 +142,7 @@ impl EditorPreview {
             editor.disable_diagnostics(cx);
             editor.disable_expand_excerpt_buttons(cx);
             editor.disable_mouse_wheel_zoom();
-            editor.set_show_gutter(false, cx);
+            editor.set_show_gutter(true, cx); // needed for line numbers
             editor.set_show_line_numbers(true, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_bookmarks(false, cx);
@@ -166,7 +168,10 @@ impl EditorPreview {
     }
 
     fn update(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
-        let Update { source, highlight } = update;
+        let Update {
+            source,
+            match_location: highlight,
+        } = update;
 
         match source {
             PreviewSource::Path(abs_path) => {
@@ -182,7 +187,7 @@ impl EditorPreview {
     fn update_from_path(
         &mut self,
         abs_path: PathBuf,
-        highlight: Option<PreviewHighlight>,
+        highlight: Option<MatchLocation>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -216,7 +221,7 @@ impl EditorPreview {
     fn finish_update(
         &mut self,
         buffer: Entity<Buffer>,
-        highlight: Option<PreviewHighlight>,
+        highlight: Option<MatchLocation>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -238,16 +243,17 @@ impl EditorPreview {
                 return;
             };
 
-            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-            let (Some(start_anchor), Some(end_anchor)) = (
-                multi_buffer_snapshot.anchor_in_excerpt(highlight.anchor_range.start),
-                multi_buffer_snapshot.anchor_in_excerpt(highlight.anchor_range.end),
-            ) else {
+            let mb = multi_buffer.read(cx).snapshot(cx);
+            let Some(range) = mb
+                .anchor_in_excerpt(highlight.anchor_range.start)
+                .zip(mb.anchor_in_excerpt(highlight.anchor_range.end))
+                .map(|(start, end)| start..end)
+            else {
                 return;
             };
 
             editor.highlight_rows::<SearchMatchLineHighlight>(
-                start_anchor..start_anchor,
+                range.clone(),
                 cx.theme().colors().editor_active_line_background,
                 RowHighlightOptions::default(),
                 cx,
@@ -255,31 +261,43 @@ impl EditorPreview {
 
             editor.highlight_background(
                 HighlightKey::PickerPreview,
-                &[start_anchor..end_anchor],
+                &[range.clone()],
                 |_, theme| theme.colors().search_match_background,
                 cx,
             );
+        });
+        self.scroll_to_focus_match(window, cx);
+    }
 
-            // The editor forbids vertical scrolling so the user can't scroll the
-            // preview themselves. That also blocks programmatic autoscroll, so we
-            // compute the scroll position ourselves and apply it while temporarily
-            // lifting the restriction.
+    // TODO!(yara) wire this up to run when dragging is done
+    /// Keep the scroll as far left as possible while showing the match.
+    /// Vertically center the match as much as possible
+    fn scroll_to_focus_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview_editor.update(cx, |editor, cx| {
             let display_snapshot = editor.display_snapshot(cx);
-            let start_point = start_anchor.to_display_point(&display_snapshot);
-            let end_point = end_anchor.to_display_point(&display_snapshot);
+            let buffer_snapshot = display_snapshot.buffer_snapshot();
+            let search_range = buffer_snapshot.anchor_before(multi_buffer::MultiBufferOffset(0))
+                ..buffer_snapshot.anchor_after(buffer_snapshot.len());
 
-            // Vertically center the match.
-            let target_row = start_point.row().0 as f64;
+            // There is at most one highlighted match in the preview, so take the
+            // first background highlight range as the match to focus.
+            let Some((range, _)) = editor
+                .background_highlights_in_range(search_range, &display_snapshot, cx.theme())
+                .into_iter()
+                .next()
+            else {
+                return;
+            };
+
+            let target_row = range.start.row().0 as f64;
             let centered_y = editor
                 .visible_line_count()
                 .map_or(target_row, |visible_lines| {
                     (target_row - (visible_lines - 1.) / 2.).max(0.)
                 });
 
-            // Scroll horizontally as far left as possible while keeping the match
-            // visible, so the editor doesn't drift right over time.
-            let start_column = start_point.column() as f64;
-            let end_column = end_point.column() as f64;
+            let start_column = range.start.column() as f64;
+            let end_column = range.end.column() as f64;
             let centered_x = editor.visible_column_count().map_or(0., |visible_columns| {
                 let min_x_for_end = (end_column - visible_columns + 1.).max(0.);
                 min_x_for_end.min(start_column)
@@ -288,6 +306,6 @@ impl EditorPreview {
             editor.scroll_manager.set_forbid_vertical_scroll(false);
             editor.set_scroll_position(gpui::Point::new(centered_x, centered_y), window, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
-        });
+        })
     }
 }
