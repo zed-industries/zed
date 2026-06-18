@@ -270,6 +270,7 @@ fn flatten_document_symbols(
         output.push(OutlineItem {
             depth,
             range,
+            selection_range: selection_range.clone(),
             source_range_for_text,
             text: text.into(),
             highlight_ranges: Vec::new(),
@@ -327,7 +328,7 @@ fn enriched_symbol_text(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use text::Unclipped;
+    use text::{OffsetRangeExt, Point, Unclipped};
 
     fn make_symbol(
         name: &str,
@@ -422,22 +423,42 @@ mod tests {
         assert_eq!(items[0].depth, 0);
         assert_eq!(items[0].text, "struct Foo");
         assert_eq!(items[0].name_ranges, vec![7..10]);
+        assert_eq!(
+            items[0].selection_range.to_point(&snapshot),
+            Point::new(0, 7)..Point::new(0, 10)
+        );
 
         assert_eq!(items[1].depth, 1);
         assert_eq!(items[1].text, "bar");
         assert_eq!(items[1].name_ranges, vec![0..3]);
+        assert_eq!(
+            items[1].selection_range.to_point(&snapshot),
+            Point::new(1, 4)..Point::new(1, 7)
+        );
 
         assert_eq!(items[2].depth, 1);
         assert_eq!(items[2].text, "baz");
         assert_eq!(items[2].name_ranges, vec![0..3]);
+        assert_eq!(
+            items[2].selection_range.to_point(&snapshot),
+            Point::new(2, 4)..Point::new(2, 7)
+        );
 
         assert_eq!(items[3].depth, 0);
         assert_eq!(items[3].text, "impl Foo");
         assert_eq!(items[3].name_ranges, vec![5..8]);
+        assert_eq!(
+            items[3].selection_range.to_point(&snapshot),
+            Point::new(5, 5)..Point::new(5, 8)
+        );
 
         assert_eq!(items[4].depth, 1);
         assert_eq!(items[4].text, "fn new");
         assert_eq!(items[4].name_ranges, vec![3..6]);
+        assert_eq!(
+            items[4].selection_range.to_point(&snapshot),
+            Point::new(6, 7)..Point::new(6, 10)
+        );
     }
 
     #[gpui::test]

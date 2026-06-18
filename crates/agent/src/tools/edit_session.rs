@@ -102,11 +102,7 @@ impl std::fmt::Display for EditSessionOutput {
                 if diff.is_empty() {
                     write!(f, "No edits were made.")
                 } else {
-                    write!(
-                        f,
-                        "Edited {}:\n\n```diff\n{diff}\n```",
-                        input_path.display()
-                    )
+                    write!(f, "Edited {} successfully", input_path.display())
                 }
             }
             EditSessionOutput::Error {
