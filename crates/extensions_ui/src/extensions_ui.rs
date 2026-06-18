@@ -1780,6 +1780,10 @@ impl DevExtensionRebuildPickerDelegate {
 impl PickerDelegate for DevExtensionRebuildPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "dev-extension-rebuild"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }

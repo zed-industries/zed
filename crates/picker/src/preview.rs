@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
-use gpui::{AppContext, Context, Entity, Window};
+use gpui::{AppContext, Context, Entity, TaskExt, Window};
 use language::{Buffer, HighlightedText};
 use project::Project;
 use ui::{ActiveTheme, IntoElement};
@@ -295,7 +295,7 @@ impl EditorPreview {
 
             editor.highlight_rows::<SearchMatchLineHighlight>(
                 range.clone(),
-                cx.theme().colors().editor_active_line_background,
+                |cx| cx.theme().colors().editor_active_line_background,
                 RowHighlightOptions::default(),
                 cx,
             );

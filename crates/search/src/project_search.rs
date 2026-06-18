@@ -242,7 +242,7 @@ pub struct ProjectSearch {
     pub match_ranges: Vec<Range<Anchor>>,
     pub(crate) active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
-    search_id: usize,
+    pub search_id: usize,
     search_state: SearchState,
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,

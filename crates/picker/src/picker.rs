@@ -1092,7 +1092,7 @@ impl<D: PickerDelegate> Picker<D> {
                 }),
             )
             .with_sizing_behavior(sizing_behavior)
-            .flex_grow()
+            .flex_grow_1()
             .py_1()
             .track_scroll(&scroll_handle)
             .into_any_element(),

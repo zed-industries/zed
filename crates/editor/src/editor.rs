@@ -933,7 +933,7 @@ pub struct Editor {
     /// Whenever you want to modify the scroll position of the editor, you should
     /// usually use the existing available APIs as opposed to directly interacting
     /// with the scroll manager.
-    pub(crate) scroll_manager: ScrollManager,
+    pub scroll_manager: ScrollManager,
     /// When inline assist editors are linked, they all render cursors because
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,

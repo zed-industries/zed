@@ -149,7 +149,7 @@ impl<D: PickerDelegate> Picker<D> {
                     v_flex()
                         .id("element-container")
                         .relative()
-                        .flex_grow()
+                        .flex_grow_1()
                         .min_h_0()
                         .when_some(
                             self.shape.results_max_height(
@@ -163,8 +163,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
                         .when(self.show_scrollbar, |this| {
-                            let base_scrollbar_config =
-                                Scrollbars::new(ScrollAxes::Vertical).width_sm();
+                            let base_scrollbar_config = Scrollbars::new(ScrollAxes::Vertical);
 
                             this.map(|this| match &self.element_container {
                                 ElementContainer::List(state) => this.custom_scrollbars(
@@ -184,7 +183,7 @@ impl<D: PickerDelegate> Picker<D> {
             .when(self.delegate.match_count() == 0, |el| {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
-                        v_flex().flex_grow().py_2().child(
+                        v_flex().flex_grow_1().py_2().child(
                             ListItem::new("empty_state")
                                 .inset(true)
                                 .spacing(ListItemSpacing::Sparse)

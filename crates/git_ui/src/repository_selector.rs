@@ -1,7 +1,6 @@
 use crate::git_status_icon;
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
-use itertools::Itertools;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::Repository};
 use std::sync::Arc;
