@@ -1109,6 +1109,12 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         preview.layout = layout;
+        if let Some(previously_resized) = persistence::try_load_shape(D::name(), layout, cx)
+            .log_err()
+            .flatten()
+        {
+            self.shape = previously_resized;
+        }
         self.delegate
             .preview_layout_changed(matches!(layout, preview::Layout::Right));
         cx.notify();

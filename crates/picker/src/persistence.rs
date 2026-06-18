@@ -38,12 +38,12 @@ pub(crate) fn store_shape_for_this_layout(
 
 pub(crate) fn try_load_shape(
     picker_delegate: &'static str,
-    preview_layout: Option<preview::Layout>,
+    preview_layout: impl Into<Option<preview::Layout>>,
     cx: &App,
 ) -> anyhow::Result<Option<Shape>> {
     let Some(shape) = KeyValueStore::global(cx)
         .scoped(PICKERS_NAMESPACE)
-        .read(&shape_key(picker_delegate, preview_layout))
+        .read(&shape_key(picker_delegate, preview_layout.into()))
         .context("Could not read picker shape from KeyValueStore")?
     else {
         return Ok(None);
