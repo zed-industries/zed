@@ -10,8 +10,9 @@ use url::Url;
 pub struct RemoteUrl(Url);
 
 // Detect the `user@` prefix of an SCP-like remote (e.g. `git@host:path`). The
-// username may contain anything but the `:`/`/` that delimit host and path, so
-// match by exclusion rather than an allowlist that misses names like `first.last`.
+// username may contain anything but the `@`/`:`/`/` that delimit the user,
+// host, and path, so match by exclusion rather than an allowlist that misses
+// names like `first.last`.
 static USERNAME_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[^/@:]+@").expect("Failed to create USERNAME_REGEX"));
 
