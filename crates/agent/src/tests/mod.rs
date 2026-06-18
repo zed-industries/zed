@@ -281,6 +281,19 @@ fn always_allow_tools(cx: &mut TestAppContext) {
     });
 }
 
+/// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
+/// variant exposed to the model as `terminal`. Tests that register
+/// `TerminalTool` directly need this because sandboxing is enabled by default
+/// for staff (and in debug builds), in which case `Thread::enabled_tools`
+/// would otherwise expose `SandboxedTerminalTool` under that name instead.
+fn disable_sandboxing(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.sandbox_permissions.disabled = true;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+}
+
 #[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
@@ -2215,6 +2228,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2494,6 +2508,7 @@ async fn collect_events_until_stop(
 async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2562,6 +2577,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     // Tests that cancellation properly kills all running terminal tools when multiple are active.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(MultiTerminalEnvironment::new());
@@ -2672,6 +2688,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     // cancel button) properly reports user stopped via the was_stopped_by_user path.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2763,6 +2780,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     // Tests that when a timeout is configured and expires, the tool result indicates timeout.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {

@@ -51,16 +51,18 @@ pub(crate) fn run_tests() -> Workflow {
         check_style(),
         should_run_tests
             .and_not_in_merge_queue()
-            .then(clippy(Platform::Windows, None)),
+            .then(clippy(Platform::Windows, None, true)),
         should_run_tests
             .and_always()
-            .then(clippy(Platform::Linux, None)),
+            .then(clippy(Platform::Linux, None, true)),
         should_run_tests
             .and_not_in_merge_queue()
-            .then(clippy(Platform::Mac, None)),
-        should_run_tests
-            .and_not_in_merge_queue()
-            .then(clippy(Platform::Mac, Some(Arch::X86_64))),
+            .then(clippy(Platform::Mac, None, true)),
+        should_run_tests.and_not_in_merge_queue().then(clippy(
+            Platform::Mac,
+            Some(Arch::X86_64),
+            true,
+        )),
         should_run_tests
             .and_not_in_merge_queue()
             .then(run_platform_tests(Platform::Windows)),
@@ -90,7 +92,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_check_licences
             .and_not_in_merge_queue()
             .then(check_licenses()),
-        should_check_scripts.and_always().then(check_scripts()),
+        should_check_scripts.and_always().then(check_scripts(true)),
     ];
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
@@ -295,6 +297,9 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
         .runs_on(runners::LINUX_SMALL)
         .with_repository_owner_guard()
         .outputs(outputs)
+        .when(target == OrchestrateTarget::ZedRepo, |this| {
+            this.add_step(steps::harden_runner())
+        })
         .add_step(steps::checkout_repo().with_deep_history_on_non_main())
         .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
@@ -428,6 +433,7 @@ fn check_style() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_pnpm())
@@ -467,6 +473,7 @@ fn check_dependencies() -> NamedJob {
     named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_cargo_machete())
@@ -498,6 +505,7 @@ fn check_wasm() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -513,6 +521,7 @@ fn check_workspace_binaries() -> NamedJob {
     named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -525,7 +534,7 @@ fn check_workspace_binaries() -> NamedJob {
     ))
 }
 
-pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
+pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> NamedJob {
     let target = arch.map(|arch| match (platform, arch) {
         (Platform::Mac, Arch::X86_64) => "x86_64-apple-darwin",
         (Platform::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
@@ -538,6 +547,9 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
     };
     let mut job = release_job(&[])
         .runs_on(runner)
+        .when(harden && platform == Platform::Linux, |this| {
+            this.add_step(steps::harden_runner())
+        })
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_cargo_config(platform))
         .when(
@@ -565,14 +577,14 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
-    run_platform_tests_impl(platform, true)
+    run_platform_tests_impl(platform, true, true)
 }
 
 pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
-    run_platform_tests_impl(platform, false)
+    run_platform_tests_impl(platform, false, false)
 }
 
-fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJob {
+fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bool) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -595,6 +607,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                              --health-retries 10",
                         ),
                 )
+            })
+            .when(harden && platform == Platform::Linux, |this| {
+                this.add_step(steps::harden_runner())
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
@@ -693,6 +708,7 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
             .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
@@ -716,6 +732,7 @@ fn miri_scheduler() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -736,6 +753,7 @@ fn doctests() -> NamedJob {
     named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
@@ -751,6 +769,7 @@ fn check_licenses() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
+            .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::script("./script/check-licenses"))
@@ -758,7 +777,7 @@ fn check_licenses() -> NamedJob {
     )
 }
 
-pub(crate) fn check_scripts() -> NamedJob {
+pub(crate) fn check_scripts(harden: bool) -> NamedJob {
     fn download_actionlint() -> Step<Run> {
         named::bash(
             "bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)",
@@ -790,6 +809,7 @@ pub(crate) fn check_scripts() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
+            .when(harden, |this| this.add_step(steps::harden_runner()))
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
