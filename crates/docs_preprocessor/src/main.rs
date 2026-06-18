@@ -7,6 +7,7 @@ use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::{LazyLock, OnceLock};
 
@@ -678,6 +679,19 @@ fn handle_postprocessing() -> Result<()> {
         .as_table_mut()
         .expect("output is table");
     let zed_html = output.remove("zed-html").expect("zed-html output defined");
+    let redirects = zed_html
+        .get("redirect")
+        .and_then(|redirects| redirects.as_table())
+        .map(|redirects| {
+            redirects
+                .iter()
+                .filter_map(|(source, destination)| {
+                    destination
+                        .as_str()
+                        .map(|destination| (source.clone(), destination.to_string()))
+                })
+                .collect::<Vec<_>>()
+        });
     let default_description = zed_html
         .get("default-description")
         .expect("Default description not found")
@@ -732,8 +746,15 @@ fn handle_postprocessing() -> Result<()> {
     }
 
     zlog::info!(logger => "Processing {} `.html` files", files.len());
+    let site_url = ctx
+        .config
+        .get("book.site-url")
+        .and_then(|site_url| site_url.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "/docs/".to_string());
+    write_ai_discovery_artifacts(&ctx.book, &ctx.root, &root_dir, &site_url)?;
     let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
-    for file in files {
+    for file in &files {
         let contents = std::fs::read_to_string(&file)?;
         let mut meta_description = None;
         let mut meta_title = None;
@@ -769,13 +790,16 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = contents.replace("#noindex#", noindex);
+        let contents = add_markdown_alternate_link(&contents, file, &root_dir, &site_url);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
             })
             .to_string();
-        // let contents = contents.replace("#title#", &meta_title);
         std::fs::write(file, contents)?;
+    }
+    if let Some(redirects) = redirects {
+        write_pages_redirects(&root_dir, &redirects)?;
     }
     return Ok(());
 
@@ -798,6 +822,245 @@ fn handle_postprocessing() -> Result<()> {
             .trim()
             .to_string()
     }
+}
+
+#[derive(Debug)]
+struct DocsPage {
+    title: String,
+    source_path: PathBuf,
+}
+
+fn write_ai_discovery_artifacts(
+    book: &Book,
+    book_root: &Path,
+    destination: &Path,
+    site_url: &str,
+) -> Result<()> {
+    let pages = docs_pages(book);
+    copy_markdown_sources(book_root, destination, site_url, &pages)?;
+    write_llms_txt(destination, site_url, &pages)?;
+    write_sitemap_xml(destination, site_url, &pages)?;
+    Ok(())
+}
+
+fn docs_pages(book: &Book) -> Vec<DocsPage> {
+    let mut pages = Vec::new();
+    for item in book.iter() {
+        let BookItem::Chapter(chapter) = item else {
+            continue;
+        };
+        let Some(source_path) = chapter.source_path.as_ref() else {
+            continue;
+        };
+        if source_path == Path::new("SUMMARY.md") {
+            continue;
+        }
+        pages.push(DocsPage {
+            title: chapter.name.clone(),
+            source_path: source_path.clone(),
+        });
+    }
+    pages
+}
+
+fn copy_markdown_sources(
+    book_root: &Path,
+    destination: &Path,
+    site_url: &str,
+    pages: &[DocsPage],
+) -> Result<()> {
+    let source_root = book_root.join("src");
+    for page in pages {
+        let source = source_root.join(&page.source_path);
+        let destination = destination.join(&page.source_path);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create markdown destination {}", parent.display())
+            })?;
+        }
+        let contents = std::fs::read_to_string(&source)
+            .with_context(|| format!("failed to read markdown source {}", source.display()))?;
+        std::fs::write(
+            &destination,
+            add_llms_markdown_directive(&contents, site_url),
+        )
+        .with_context(|| {
+            format!(
+                "failed to write markdown source {} to {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    }
+    let getting_started = destination.join("getting-started.md");
+    if getting_started.exists() {
+        std::fs::copy(&getting_started, destination.join("index.md"))
+            .context("failed to write index.md markdown alias")?;
+    }
+    Ok(())
+}
+
+fn write_llms_txt(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Result<()> {
+    let mut contents = String::new();
+    contents.push_str("# Zed Docs\n\n");
+    contents.push_str("> Official Zed documentation pages with same-origin Markdown links.\n\n");
+    contents.push_str("## Docs\n\n");
+    for page in pages {
+        contents.push_str("- [");
+        contents.push_str(&page.title);
+        contents.push_str("](");
+        contents.push_str(&absolute_docs_url(site_url, &page.source_path));
+        contents.push_str(")\n");
+    }
+    std::fs::write(destination.join("llms.txt"), contents).context("failed to write llms.txt")?;
+    Ok(())
+}
+
+fn write_sitemap_xml(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Result<()> {
+    let mut contents = String::new();
+    contents.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    contents.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+    for page in pages {
+        contents.push_str("  <url><loc>");
+        contents.push_str(&xml_escape(&absolute_docs_url(
+            site_url,
+            &page.source_path.with_extension("html"),
+        )));
+        contents.push_str("</loc></url>\n");
+    }
+    contents.push_str("</urlset>\n");
+    std::fs::write(destination.join("sitemap.xml"), contents)
+        .context("failed to write sitemap.xml")?;
+    Ok(())
+}
+
+fn write_pages_redirects(destination: &Path, redirects: &[(String, String)]) -> Result<()> {
+    let Some(deploy_root) = destination.parent() else {
+        return Ok(());
+    };
+    let mut contents = String::new();
+    for (source, destination) in redirects {
+        write_redirect_line(&mut contents, &format!("/docs{source}"), destination);
+        if let Some(extensionless_source) = strip_html_suffix(source) {
+            write_redirect_line(
+                &mut contents,
+                &format!("/docs{extensionless_source}"),
+                &strip_html_suffix(destination).unwrap_or_else(|| destination.to_string()),
+            );
+        }
+        if let Some(markdown_source) = html_path_to_markdown(source) {
+            if let Some(markdown_destination) = html_path_to_markdown(destination) {
+                write_redirect_line(
+                    &mut contents,
+                    &format!("/docs{markdown_source}"),
+                    &markdown_destination,
+                );
+            }
+        }
+    }
+    std::fs::write(deploy_root.join("_redirects"), contents)
+        .context("failed to write Cloudflare Pages _redirects")?;
+    Ok(())
+}
+
+fn write_redirect_line(contents: &mut String, source: &str, destination: &str) {
+    contents.push_str(source);
+    contents.push(' ');
+    contents.push_str(destination);
+    contents.push_str(" 301\n");
+}
+
+fn strip_html_suffix(path: &str) -> Option<String> {
+    let (path, fragment) = split_fragment(path);
+    let path = path.strip_suffix(".html")?;
+    Some(format!("{path}{fragment}"))
+}
+
+fn html_path_to_markdown(path: &str) -> Option<String> {
+    let (path, fragment) = split_fragment(path);
+    if !path.starts_with("/docs/") && path != "/docs" && !path.ends_with(".html") {
+        return None;
+    }
+    let markdown_path = path.strip_suffix(".html").unwrap_or(path);
+    Some(format!("{markdown_path}.md{fragment}"))
+}
+
+fn split_fragment(path: &str) -> (&str, &str) {
+    match path.find('#') {
+        Some(index) => (&path[..index], &path[index..]),
+        None => (path, ""),
+    }
+}
+
+fn add_markdown_alternate_link(
+    contents: &str,
+    html_file: &Path,
+    root_dir: &Path,
+    site_url: &str,
+) -> String {
+    let Ok(relative_path) = html_file.strip_prefix(root_dir) else {
+        return contents.to_string();
+    };
+    let markdown_path = relative_path.with_extension("md");
+    if !root_dir.join(&markdown_path).exists() {
+        return contents.to_string();
+    }
+    let markdown_url = docs_url(site_url, &markdown_path);
+    let link = format!(
+        "        <link rel=\"alternate\" type=\"text/markdown\" href=\"{}\">\n",
+        markdown_url
+    );
+    contents.replacen("</head>", &(link + "    </head>"), 1)
+}
+
+fn add_llms_markdown_directive(contents: &str, site_url: &str) -> String {
+    let directive = format!(
+        "> For the complete documentation index and Markdown links, see [llms.txt]({}).\n\n",
+        docs_url(site_url, Path::new("llms.txt"))
+    );
+    if let Some(rest) = contents.strip_prefix("---\n") {
+        if let Some(frontmatter_end) = rest.find("\n---\n") {
+            let split_at = "---\n".len() + frontmatter_end + "\n---\n".len();
+            let mut output = String::with_capacity(contents.len() + directive.len());
+            output.push_str(&contents[..split_at]);
+            output.push('\n');
+            output.push_str(&directive);
+            output.push_str(&contents[split_at..]);
+            return output;
+        }
+    }
+
+    let mut output = String::with_capacity(contents.len() + directive.len());
+    output.push_str(&directive);
+    output.push_str(contents);
+    output
+}
+
+fn docs_url(site_url: &str, path: &Path) -> String {
+    let mut url = site_url.to_string();
+    if !url.ends_with('/') {
+        url.push('/');
+    }
+    url.push_str(&path.to_string_lossy().replace('\\', "/"));
+    url
+}
+
+fn absolute_docs_url(site_url: &str, path: &Path) -> String {
+    let url = docs_url(site_url, path);
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url
+    } else {
+        format!("https://zed.dev{}", url)
+    }
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn title_regex() -> &'static Regex {

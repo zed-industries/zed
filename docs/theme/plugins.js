@@ -160,7 +160,7 @@ const copyMarkdown = () => {
       changeButtonIcon("fa fa-spinner fa-spin", 0); // Don't auto-restore spinner
 
       const pagePath = getCurrentPagePath();
-      const rawUrl = `https://raw.githubusercontent.com/zed-industries/zed/main/docs/src/${pagePath}`;
+      const rawUrl = `/docs/${pagePath}`;
 
       const response = await fetch(rawUrl);
       if (!response.ok) {
