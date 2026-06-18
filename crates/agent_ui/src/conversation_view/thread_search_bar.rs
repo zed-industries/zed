@@ -455,14 +455,6 @@ impl ThreadSearchBar {
                         });
                     }
                     self.highlighted_editors.push(weak_editor);
-                    editor.update(cx, |editor, cx| {
-                        editor.highlight_background(
-                            HighlightKey::BufferSearchHighlights,
-                            &anchor_ranges,
-                            |_index, theme| theme.colors().search_match_background,
-                            cx,
-                        );
-                    });
                 }
                 ScannedTarget::Markdown {
                     entry_ix,
