@@ -23,7 +23,7 @@ Agent paths decide how agentic work runs in Zed.
 - [External Agents](./external-agents.md): ACP-integrated agents that run through their own process and configuration.
 - [Terminal Threads](./terminal-threads.md): terminal-backed threads for running an agent CLI or TUI directly in Zed.
 
-The [Threads Sidebar](./parallel-agents.md#threads-sidebar) is where you organize agent work. You can run multiple agent threads and Terminal Threads at once, each using a different agent and working against different projects.
+The [Threads Sidebar](./parallel-agents.md#threads-sidebar) is where you organize agent work. You can run multiple agent threads and Terminal Threads at once, each using a different agent and working against different projects. For how projects, Zed worktrees, Git worktrees, and branches fit together, see [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
 
 See [Agents](./agents.md) for a comparison.
 
@@ -41,7 +41,7 @@ Zed has several AI-powered workflows:
 - [Parallel Agents](./parallel-agents.md): run multiple threads across projects and worktrees.
 - [Inline Assistant](./inline-assistant.md): transform a selection in place.
 - [Edit Prediction](./edit-prediction.md): accept AI completions while you type.
-- [Git commit generation](../git.md#ai-support-in-git): generate commit messages from the Git panel.
+- [Git commit generation](../git/staging-and-committing.md#ai-commit-message): generate commit messages from the Git panel.
 
 ## Configure AI {#configure-ai}
 
