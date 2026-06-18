@@ -50,6 +50,7 @@ pub(crate) fn render_sandbox_settings_page(
     let add_path_input = render_add_path_input(cx);
 
     let empty_border = cx.theme().colors().border_variant;
+    let sandbox_enabled = !permissions.allow_unsandboxed;
 
     v_flex()
         .id("sandbox-settings-page")
@@ -68,6 +69,22 @@ pub(crate) fn render_sandbox_settings_page(
                     .mt_0p5(),
             ),
         )
+        .child(
+            SwitchField::new(
+                "sandbox-enabled",
+                Some("Enable Sandbox"),
+                Some(
+                    "Wrap agent-run terminal commands in an OS-level sandbox. When off, commands run with Zed's own permissions."
+                        .into(),
+                ),
+                sandbox_enabled,
+                move |state, _window, cx| {
+                    set_sandbox_enabled(*state == ToggleState::Selected, cx);
+                },
+            )
+            .tab_index(0),
+        )
+        .when(sandbox_enabled, |this| this
         .when_some(validation_error, |this, error| {
             this.child(
                 Banner::new()
@@ -138,27 +155,6 @@ pub(crate) fn render_sandbox_settings_page(
                     empty_border,
                 )),
         )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_3()
-                .child(SettingsSectionHeader::new("Sandbox").no_padding(true))
-                .child(
-                    SwitchField::new(
-                        "sandbox-allow-unsandboxed",
-                        Some("Allow Unsandboxed Terminal Commands"),
-                        Some(
-                            "Turn off the OS sandbox for agent terminal commands. The agent uses \
-                             the regular terminal tool instead of the sandboxed one."
-                                .into(),
-                        ),
-                        permissions.allow_unsandboxed,
-                        move |state, _window, cx| {
-                            set_allow_unsandboxed(*state == ToggleState::Selected, cx);
-                        },
-                    )
-                    .tab_index(0),
-                ),
         )
         .into_any_element()
 }
@@ -412,6 +408,14 @@ fn update_sandbox_permissions(
     });
 }
 
+fn set_sandbox_enabled(value: bool, cx: &mut App) {
+    // The UI presents an "enabled" switch, but the stored setting is the
+    // inverse (`allow_unsandboxed`).
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.allow_unsandboxed = Some(!value);
+    });
+}
+
 fn set_allow_all_hosts(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_all_hosts = Some(value);
@@ -421,12 +425,6 @@ fn set_allow_all_hosts(value: bool, cx: &mut App) {
 fn set_allow_fs_write_all(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_fs_write_all = Some(value);
-    });
-}
-
-fn set_allow_unsandboxed(value: bool, cx: &mut App) {
-    update_sandbox_permissions(cx, move |permissions| {
-        permissions.allow_unsandboxed = Some(value);
     });
 }
 
