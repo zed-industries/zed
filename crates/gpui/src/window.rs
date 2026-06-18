@@ -3827,7 +3827,14 @@ impl Window {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
-        self.paint_glyph_transformed(origin, font_id, glyph_id, font_size, color, TransformationMatrix::unit())
+        self.paint_glyph_transformed(
+            origin,
+            font_id,
+            glyph_id,
+            font_size,
+            color,
+            TransformationMatrix::unit(),
+        )
     }
 
     pub(crate) fn paint_glyph_transformed(
@@ -3947,7 +3954,13 @@ impl Window {
         glyph_id: GlyphId,
         font_size: Pixels,
     ) -> Result<()> {
-        self.paint_emoji_transformed(origin, font_id, glyph_id, font_size, TransformationMatrix::unit())
+        self.paint_emoji_transformed(
+            origin,
+            font_id,
+            glyph_id,
+            font_size,
+            TransformationMatrix::unit(),
+        )
     }
 
     pub(crate) fn paint_emoji_transformed(
