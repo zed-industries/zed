@@ -396,8 +396,8 @@ impl BookmarkStore {
                     }
                 };
 
-                rows.sort_unstable_by(|a, b| a.row.cmp(&b.row));
-                rows.dedup_by(|a, b| a.row == b.row);
+                rows.sort_unstable_by_key(|a| a.row);
+                rows.dedup_by_key(|a| a.row);
 
                 if rows.is_empty() {
                     None
