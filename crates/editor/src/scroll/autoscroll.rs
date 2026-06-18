@@ -290,6 +290,18 @@ impl Editor {
             strategy,
         ));
 
+        // Auto-height editors don't scroll their own viewport, so ask a
+        // scrollable ancestor to bring the target into view.
+        if matches!(self.mode, EditorMode::AutoHeight { .. }) {
+            let margin = line_height * self.scroll_manager.vertical_scroll_margin as f32;
+            let top = bounds.top() + line_height * target_top as f32 - margin;
+            let bottom = bounds.top() + line_height * target_bottom as f32 + margin;
+            window.request_autoscroll(Bounds::from_corners(
+                gpui::point(bounds.left(), top),
+                gpui::point(bounds.right(), bottom),
+            ));
+        }
+
         let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
         (NeedsHorizontalAutoscroll(true), was_scrolled)
     }

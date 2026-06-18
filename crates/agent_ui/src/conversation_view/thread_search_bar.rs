@@ -7,7 +7,10 @@ use acp_thread::{
     ToolCallContent,
 };
 use collections::HashMap;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle, HighlightKey, SelectionEffects};
+use editor::{
+    Editor, EditorElement, EditorEvent, EditorStyle, HighlightKey, SelectionEffects,
+    scroll::Autoscroll,
+};
 use gpui::{
     Action, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext,
     SharedString, Subscription, Task, TextStyle, WeakEntity, Window, actions, relative, rems,
@@ -572,7 +575,7 @@ impl ThreadSearchBar {
             let anchor_range = anchor_range.clone();
             editor.update(cx, |editor, cx| {
                 editor.change_selections(
-                    SelectionEffects::no_scroll().from_search(true),
+                    SelectionEffects::scroll(Autoscroll::fit()).from_search(true),
                     window,
                     cx,
                     |selections| selections.select_anchor_ranges([anchor_range]),
