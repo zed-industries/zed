@@ -742,10 +742,10 @@ impl Vim {
                     .map(|selection| selection.start.row)
                     .collect();
 
-                let mut auto_indent_edits = Vec::new();
-                let mut plain_edits = Vec::new();
+                let mut edits = Vec::new();
+                let mut syntax_aware_inserted_rows = Vec::new();
 
-                for row in selection_start_rows {
+                for (rows_inserted, row) in selection_start_rows.into_iter().enumerate() {
                     let auto_indent_mode = snapshot
                         .language_settings_at(Point::new(row, 0), cx)
                         .auto_indent;
@@ -755,19 +755,43 @@ impl Vim {
                         snapshot.indent_and_comment_for_line(MultiBufferRow(row), cx)
                     };
                     let start_of_line = Point::new(row, 0);
-                    let edit = (start_of_line..start_of_line, indent + "\n");
-                    if auto_indent_mode == AutoIndentMode::None {
-                        plain_edits.push(edit);
-                    } else {
-                        auto_indent_edits.push(edit);
+                    edits.push((start_of_line..start_of_line, indent + "\n"));
+
+                    if auto_indent_mode == AutoIndentMode::SyntaxAware {
+                        syntax_aware_inserted_rows.push(row + rows_inserted as u32);
                     }
                 }
 
-                if !plain_edits.is_empty() {
-                    editor.edit(plain_edits, cx);
+                if !edits.is_empty() {
+                    editor.edit(edits, cx);
                 }
-                if !auto_indent_edits.is_empty() {
-                    editor.edit_with_autoindent(auto_indent_edits, cx);
+
+                if !syntax_aware_inserted_rows.is_empty() {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let suggested_indents =
+                        snapshot.suggested_indents(syntax_aware_inserted_rows.iter().copied(), cx);
+                    let mut indent_edits = Vec::new();
+
+                    for row in syntax_aware_inserted_rows {
+                        let row = MultiBufferRow(row);
+                        let Some(suggested_indent) = suggested_indents.get(&row) else {
+                            continue;
+                        };
+                        let existing_indent = snapshot.indent_size_for_line(row);
+
+                        if *suggested_indent == existing_indent {
+                            continue;
+                        }
+
+                        let start = Point::new(row.0, 0);
+                        let end = Point::new(row.0, existing_indent.len);
+                        let indent = suggested_indent.chars().collect::<String>();
+                        indent_edits.push((start..end, indent));
+                    }
+
+                    if !indent_edits.is_empty() {
+                        editor.edit(indent_edits, cx);
+                    }
                 }
 
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -1718,6 +1742,26 @@ mod test {
                 ˇ
                 fn test() {
                     println!();
+                }"},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_above_uses_syntax_indent_before_closing_delimiter(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn main() {
+                ˇ}"},
+            Mode::Normal,
+            indoc! {"
+                fn main() {
+                    ˇ
                 }"},
             Mode::Insert,
         );
