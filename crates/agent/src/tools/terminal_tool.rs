@@ -474,6 +474,13 @@ async fn run_terminal_tool(
     // create the sandbox it aborts. As the consumer we may still run the command
     // without a sandbox (when the user has opted into that), but we record
     // *why* in `sandbox_not_applied` so we can warn the user and tell the agent.
+    // Only the Linux/Windows sandbox-creation fallbacks (and the matching
+    // "for this thread" grant) ever reassign this, so on other platforms the
+    // binding stays `None` and wouldn't need `mut`.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "windows")),
+        allow(unused_mut)
+    )]
     let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         let sandbox_permissions = cx.update(|cx| {
@@ -482,13 +489,7 @@ async fn run_terminal_tool(
                 .clone()
         });
 
-        if sandbox_permissions.allow_unsandboxed {
-            // Unsandboxed execution is permanently allowed in settings: skip
-            // the sandbox machinery entirely and run the command the same way
-            // the unsandboxed terminal tool does.
-            sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::DisabledForever);
-            None
-        } else if event_stream.sandbox_fallback_granted_for_thread() {
+        if event_stream.sandbox_fallback_granted_for_thread() {
             // The user allowed unsandboxed execution for the rest of this
             // thread after an earlier sandbox failure (Linux and Windows, which
             // share the `authorize_sandbox_fallback` flow).
@@ -699,11 +700,6 @@ async fn run_terminal_tool(
     // isolation. Computed here — after the Windows fallback above may have set
     // the reason — so every affected command communicates the state.
     let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
-        acp_thread::SandboxNotAppliedReason::DisabledForever => {
-            "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
-             enabled in settings."
-                .to_string()
-        }
         acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
             "Note: this command ran WITHOUT an OS sandbox because you allowed unsandboxed \
              execution for the rest of this thread."

@@ -148,7 +148,8 @@ pub(crate) fn render_sandbox_settings_page(
                         "sandbox-allow-unsandboxed",
                         Some("Allow Unsandboxed Terminal Commands"),
                         Some(
-                            "Run terminal commands without the OS sandbox."
+                            "Turn off the OS sandbox for agent terminal commands. The agent uses \
+                             the regular terminal tool instead of the sandboxed one."
                                 .into(),
                         ),
                         permissions.allow_unsandboxed,
