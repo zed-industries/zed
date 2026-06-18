@@ -6,6 +6,7 @@ use crate::{
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
+use block2::RcBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
@@ -1379,6 +1380,8 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
+        use objc2_foundation::{NSInteger, NSString};
+
         // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
         // focus (and therefore Space) defaults to Cancel, leaving the middle button of
         // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard. Move
@@ -1398,23 +1401,23 @@ impl PlatformWindow for MacWindow {
             PromptLevel::Warning => NSAlertStyle::Warning,
             PromptLevel::Info => NSAlertStyle::Informational,
         });
-        let message = objc2_foundation::NSString::from_str(msg);
+        let message = NSString::from_str(msg);
         alert.setMessageText(message.as_ref());
 
         if let Some(detail) = detail {
-            let detail_text = objc2_foundation::NSString::from_str(detail);
+            let detail_text = NSString::from_str(detail);
             alert.setInformativeText(detail_text.as_ref());
         }
 
         let mut initial_focus_button: Option<Retained<Objc2NSButton>> = None;
         for (ix, answer) in answers.iter().enumerate() {
-            let title = objc2_foundation::NSString::from_str(answer.label());
+            let title = NSString::from_str(answer.label());
             let button = alert.addButtonWithTitle(&title);
-            button.setTag(ix as objc2_foundation::NSInteger);
+            button.setTag(ix as NSInteger);
 
             if answer.is_cancel() {
-                if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
-                    let key = objc2_foundation::NSString::from_str(&key.to_string());
+                if let Some(key) = core::char::from_u32(crate::events::ESCAPE_KEY as u32) {
+                    let key = NSString::from_str(&key.to_string());
                     button.setKeyEquivalent(&key);
                 }
             } else if Some(ix) == initial_focus_ix {
@@ -1429,7 +1432,7 @@ impl PlatformWindow for MacWindow {
         let (done_tx, done_rx) = oneshot::channel();
         let done_tx = Cell::new(Some(done_tx));
 
-        let block = block2::RcBlock::new(move |answer: objc2_foundation::NSInteger| {
+        let block = RcBlock::new(move |answer: NSInteger| {
             if let Some(done_tx) = done_tx.take() {
                 let _ = done_tx.send(answer.try_into().unwrap());
             }
