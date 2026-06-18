@@ -167,61 +167,43 @@ fn expand_changed_word_selection(
     use_subword: bool,
     always_advance: bool,
 ) -> Option<MotionKind> {
-    let is_in_word = || {
-        let classifier = map
-            .buffer_snapshot()
-            .char_classifier_at(selection.start.to_point(map));
+    let classifier = map
+        .buffer_snapshot()
+        .char_classifier_at(selection.start.to_point(map));
 
-        map.buffer_chars_at(selection.head().to_offset(map, Bias::Left))
-            .next()
-            .map(|(c, _)| !classifier.is_whitespace(c))
-            .unwrap_or_default()
-    };
-    if is_in_word() {
+    let is_in_word = map
+        .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
+        .next()
+        .map(|(c, _)| !classifier.is_whitespace(c))
+        .unwrap_or_default();
+
+    if is_in_word {
+        let advance_end = |point, times, always_advance| {
+            if use_subword {
+                motion::next_subword_end(map, point, ignore_punctuation, times, false)
+            } else {
+                motion::next_word_end(map, point, ignore_punctuation, times, false, always_advance)
+            }
+        };
+
         let next_char = map
             .buffer_chars_at(
                 motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
             )
             .next();
+
         if let Some((next, _)) = next_char
             && next != ' '
         {
-            if use_subword {
-                selection.end =
-                    motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
-            } else {
-                selection.end = motion::next_word_end(
-                    map,
-                    selection.end,
-                    ignore_punctuation,
-                    1,
-                    false,
-                    always_advance,
-                );
-            }
+            selection.end = advance_end(selection.end, 1, always_advance);
         }
+
         if let Some(times) = times
             && times > 1
         {
-            if use_subword {
-                selection.end = motion::next_subword_end(
-                    map,
-                    selection.end,
-                    ignore_punctuation,
-                    times - 1,
-                    false,
-                );
-            } else {
-                selection.end = motion::next_word_end(
-                    map,
-                    selection.end,
-                    ignore_punctuation,
-                    times - 1,
-                    false,
-                    true,
-                );
-            }
+            selection.end = advance_end(selection.end, times - 1, true);
         }
+
         selection.end = motion::next_char(map, selection.end, false);
         Some(MotionKind::Inclusive)
     } else {
