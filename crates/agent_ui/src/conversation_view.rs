@@ -6973,6 +6973,102 @@ pub(crate) mod tests {
         );
     }
 
+    /// `f3`/`shift-f3` are bound in the broad `AcpThread` context (like buffer
+    /// search's pane-level `cmd-g`), so they must navigate matches even when
+    /// focus is outside the search bar.
+    #[gpui::test]
+    async fn test_thread_search_navigates_from_outside_search_bar(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            search::init(cx);
+            let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut default_bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(default_bindings);
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana banana banana, multiple banana mentions in this reply.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let initial_count = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            initial_count >= 2,
+            "test precondition: need ≥ 2 matches, got {}",
+            initial_count,
+        );
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0)
+        );
+
+        // Move focus out of the search bar, back into the thread view itself.
+        let thread_focus = thread_view.read_with(cx, |view, cx| view.focus_handle(cx));
+        cx.update(|window, cx| window.focus(&thread_focus, cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let bar_focused = bar.read_with(cx, |bar, cx| {
+                bar.query_editor
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            });
+            assert!(!bar_focused, "search bar must not be focused for this test");
+        });
+
+        cx.simulate_keystrokes("f3");
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(1),
+            "f3 from outside the bar should advance to the next match",
+        );
+
+        cx.simulate_keystrokes("shift-f3");
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0),
+            "shift-f3 from outside the bar should return to the previous match",
+        );
+    }
+
     #[gpui::test]
     async fn test_message_editing_cancel(cx: &mut TestAppContext) {
         init_test(cx);

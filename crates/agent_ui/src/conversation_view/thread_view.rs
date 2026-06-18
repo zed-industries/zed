@@ -11009,6 +11009,10 @@ impl Render for ThreadView {
             )
             .on_action(cx.listener(
                 |this, action: &super::thread_search_bar::SelectNextThreadMatch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
                     if let Some(bar) = this.thread_search_bar.clone() {
                         bar.update(cx, |bar, cx| bar.select_next_match(action, window, cx));
                     }
@@ -11016,6 +11020,10 @@ impl Render for ThreadView {
             ))
             .on_action(cx.listener(
                 |this, action: &super::thread_search_bar::SelectPreviousThreadMatch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
                     if let Some(bar) = this.thread_search_bar.clone() {
                         bar.update(cx, |bar, cx| bar.select_prev_match(action, window, cx));
                     }
