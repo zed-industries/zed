@@ -499,7 +499,11 @@ impl PickerDelegate for Delegate {
                 .trigger(
                     IconButton::new("text-finder-filter", IconName::Sliders)
                         .icon_size(IconSize::Small)
-                        .toggle_state(any_active)
+                        .icon_color(if any_active {
+                            Color::Accent
+                        } else {
+                            Color::Default
+                        })
                         .tooltip(Tooltip::text("Search Options")),
                 )
                 .menu({
