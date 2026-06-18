@@ -24,6 +24,7 @@ use workspace::{
 };
 
 use crate::git_panel::show_error_toast;
+use crate::worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
 use zed_actions::{
     CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, SwitchWorktree,
 };
@@ -281,30 +282,6 @@ enum WorktreeEntry {
     },
 }
 
-#[derive(Clone)]
-struct RemoteBranchName {
-    remote_name: String,
-    branch_name: String,
-}
-
-impl RemoteBranchName {
-    fn parse(name: &str) -> Option<Self> {
-        let name = name.strip_prefix("refs/remotes/").unwrap_or(name);
-        let (remote_name, branch_name) = name.split_once('/')?;
-        if remote_name.is_empty() || branch_name.is_empty() {
-            return None;
-        }
-        Some(Self {
-            remote_name: remote_name.to_string(),
-            branch_name: branch_name.to_string(),
-        })
-    }
-
-    fn display_name(&self) -> String {
-        format!("{}/{}", self.remote_name, self.branch_name)
-    }
-}
-
 struct WorktreePickerDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Vec<GitWorktree>,
@@ -427,26 +404,19 @@ impl Render for DeleteWorktreeTooltip {
 
 impl WorktreePickerDelegate {
     fn build_fixed_entries(&self) -> Vec<WorktreeEntry> {
-        let mut entries = Vec::new();
-
-        if self.has_multiple_repositories {
-            entries.push(WorktreeEntry::CreateFromCurrentBranch);
-        } else if let Some(ref default_branch) = self.default_branch {
-            let is_different = self
-                .current_branch_name
-                .as_ref()
-                .is_none_or(|current| current != &default_branch.branch_name);
-            entries.push(WorktreeEntry::CreateFromDefaultBranch {
-                default_branch: default_branch.clone(),
-            });
-            if is_different {
-                entries.push(WorktreeEntry::CreateFromCurrentBranch);
+        worktree_create_targets(
+            self.has_multiple_repositories,
+            self.default_branch.clone(),
+            self.current_branch_name.as_deref(),
+        )
+        .into_iter()
+        .map(|target| match target {
+            WorktreeCreateTarget::CurrentBranch => WorktreeEntry::CreateFromCurrentBranch,
+            WorktreeCreateTarget::DefaultBranch(default_branch) => {
+                WorktreeEntry::CreateFromDefaultBranch { default_branch }
             }
-        } else {
-            entries.push(WorktreeEntry::CreateFromCurrentBranch);
-        }
-
-        entries
+        })
+        .collect()
     }
 
     fn all_repo_worktrees(&self) -> &[GitWorktree] {
@@ -702,15 +672,14 @@ impl WorktreePickerDelegate {
 
     fn remove_worktree_from_window(
         &mut self,
-        ix: usize,
+        worktree_path: &Path,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        let Some(WorktreeEntry::Worktree { worktree, .. }) = self.matches.get(ix) else {
+        if self.deleting_worktree_paths.contains(worktree_path) {
             return;
-        };
-        let Some(workspace_to_remove) =
-            self.workspace_for_open_worktree(&worktree.path, window, cx)
+        }
+        let Some(workspace_to_remove) = self.workspace_for_open_worktree(worktree_path, window, cx)
         else {
             return;
         };
@@ -1103,13 +1072,10 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .into_any_element(),
             ),
             WorktreeEntry::CreateFromCurrentBranch => {
-                let branch_label = if self.has_multiple_repositories {
-                    "current branches".to_string()
-                } else {
-                    self.current_branch_name
-                        .clone()
-                        .unwrap_or_else(|| "HEAD".to_string())
-                };
+                let branch_label = WorktreeCreateTarget::CurrentBranch.branch_label(
+                    self.has_multiple_repositories,
+                    self.current_branch_name.as_deref(),
+                );
 
                 let label = format!("Create new worktree based on {branch_label}");
 
@@ -1123,8 +1089,12 @@ impl PickerDelegate for WorktreePickerDelegate {
                 Some(item.into_any_element())
             }
             WorktreeEntry::CreateFromDefaultBranch { default_branch } => {
-                let default_branch_name = default_branch.display_name();
-                let label = format!("Create new worktree based on {default_branch_name}");
+                let branch_label = WorktreeCreateTarget::DefaultBranch(default_branch.clone())
+                    .branch_label(
+                        self.has_multiple_repositories,
+                        self.current_branch_name.as_deref(),
+                    );
+                let label = format!("Create new worktree based on {branch_label}");
 
                 let item = create_new_list_item(
                     "create-from-main".to_string().into(),
@@ -1314,22 +1284,29 @@ impl PickerDelegate for WorktreePickerDelegate {
                                         })),
                                 );
 
-                            let remove_from_window_button = IconButton::new(
-                                ("remove-worktree-from-window", ix),
-                                IconName::Close,
-                            )
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Worktree from Window"))
-                            .on_click(cx.listener(move |picker, _, window, cx| {
-                                picker.delegate.remove_worktree_from_window(ix, window, cx);
-                            }));
-
                             this.end_slot(
                                 h_flex()
                                     .gap_0p5()
                                     .child(open_in_new_window_button)
                                     .when(can_remove_from_window, |this| {
-                                        this.child(remove_from_window_button)
+                                        let worktree_path = worktree.path.clone();
+                                        this.child(
+                                            IconButton::new(
+                                                ("remove-worktree-from-window", ix),
+                                                IconName::Close,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Remove Worktree from Window"))
+                                            .on_click(
+                                                cx.listener(move |picker, _, window, cx| {
+                                                    picker.delegate.remove_worktree_from_window(
+                                                        &worktree_path,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        )
                                     })
                                     .when(can_delete, |this| this.child(delete_button)),
                             )
@@ -2211,7 +2188,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
         worktree_picker.update(&mut cx, |worktree_picker, cx| {
             worktree_picker.picker.update(cx, |picker, _| {
                 assert!(
@@ -2228,7 +2204,7 @@ mod tests {
             worktree_picker.picker.update(cx, |picker, cx| {
                 picker
                     .delegate
-                    .remove_worktree_from_window(index, window, cx);
+                    .remove_worktree_from_window(&worktree_path, window, cx);
             })
         });
         cx.run_until_parked();

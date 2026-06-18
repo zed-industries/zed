@@ -41,6 +41,7 @@ use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
+use gpui_util::ResultExt;
 use objc::{
     class,
     declare::ClassDecl,
@@ -71,7 +72,6 @@ use std::{
     },
     time::Duration,
 };
-use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -291,15 +291,6 @@ unsafe fn build_classes() {
             decl.add_method(
                 sel!(characterIndexForPoint:),
                 character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
-            );
-
-            // Undocumented SPI, also implemented by Chromium's content view. This
-            // lets full size content windows mark our Metal view as app owned title
-            // bar content, avoiding AppKit's title bar click-delay behavior.
-            decl.add_method(
-                sel!(_opaqueRectForWindowMoveWhenInTitlebar),
-                opaque_rect_for_window_move_when_in_titlebar
-                    as extern "C" fn(&Object, Sel) -> NSRect,
             );
             decl.register()
         };
@@ -2850,25 +2841,6 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
-}
-
-extern "C" fn opaque_rect_for_window_move_when_in_titlebar(this: &Object, _: Sel) -> NSRect {
-    unsafe {
-        let window: id = msg_send![this, window];
-        if window == nil {
-            return NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
-        }
-
-        let style_mask: NSWindowStyleMask = msg_send![window, styleMask];
-        if style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
-            // Declare the entire view as opaque content for window move purposes
-            // when using a custom titlebar, so AppKit doesn't wait for double click
-            // disambiguation before delivering clicks to titlebar controls.
-            msg_send![this, bounds]
-        } else {
-            NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
-        }
-    }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {

@@ -362,6 +362,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.supports_fast_mode
     }
 
+    fn supports_server_side_compaction(&self) -> bool {
+        self.model.supports_server_side_compaction
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_effort_levels

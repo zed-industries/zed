@@ -78,7 +78,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -702,6 +702,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_create_worktree);
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
+        client.add_entity_request_handler(Self::handle_worktree_created_at);
         client.add_entity_request_handler(Self::handle_get_head_sha);
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
@@ -2851,6 +2852,26 @@ impl GitStore {
             .await??;
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_worktree_created_at(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitWorktreeCreatedAt>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitWorktreeCreatedAtResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let worktree_path = PathBuf::from(envelope.payload.worktree_path);
+
+        let created_at = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.worktree_created_at(worktree_path)
+            })
+            .await??;
+
+        Ok(proto::GitWorktreeCreatedAtResponse {
+            created_at: created_at.map(Into::into),
+        })
     }
 
     async fn handle_get_head_sha(
@@ -7497,6 +7518,34 @@ impl Repository {
         )
     }
 
+    /// Returns the creation time of a linked worktree's git metadata
+    /// directory. See [`GitRepository::worktree_created_at`]. For remote
+    /// projects the stat runs on the remote host, where the worktree's
+    /// filesystem lives.
+    pub fn worktree_created_at(
+        &mut self,
+        worktree_path: PathBuf,
+    ) -> oneshot::Receiver<Result<Option<SystemTime>>> {
+        let id = self.id;
+        self.send_job("worktree_created_at", None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.worktree_created_at(worktree_path).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitWorktreeCreatedAt {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            worktree_path: worktree_path.to_string_lossy().to_string(),
+                        })
+                        .await?;
+                    Ok(response.created_at.map(SystemTime::from))
+                }
+            }
+        })
+    }
+
     pub fn create_worktree_detached(
         &mut self,
         path: PathBuf,
@@ -8581,7 +8630,6 @@ impl Repository {
 
                 let has_head = prev_snapshot.head_commit.is_some();
 
-                let stash_entries = backend.stash_entries().await?;
                 let changed_path_statuses = cx
                     .background_spawn(async move {
                         let mut changed_paths =
@@ -8638,11 +8686,6 @@ impl Repository {
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
-                    if this.snapshot.stash_entries != stash_entries {
-                        cx.emit(RepositoryEvent::StashEntriesChanged);
-                        this.snapshot.stash_entries = stash_entries;
-                    }
-
                     if !changed_path_statuses.is_empty() {
                         cx.emit(RepositoryEvent::StatusesChanged);
                         this.snapshot
@@ -8750,7 +8793,7 @@ impl Repository {
                 // directory. For now we just return `GitAccess::Yes` so that
                 // remoting continues working as expected.
                 RepositoryState::Remote(..) => GitAccess::Yes,
-                RepositoryState::Local(state) => match state.backend.status(&[]).await {
+                RepositoryState::Local(state) => match state.backend.check_access().await {
                     Ok(_) => GitAccess::Yes,
                     Err(_) => GitAccess::No,
                 },
@@ -9894,12 +9937,7 @@ async fn compute_snapshot(
     };
     let head_commit_future = {
         let backend = backend.clone();
-        async move {
-            match backend.head_sha().await {
-                Some(head_sha) => backend.show(head_sha).await.log_err(),
-                None => None,
-            }
-        }
+        async move { backend.show("HEAD".to_string()).await.ok() }
     };
     let worktrees_future = {
         let backend = backend.clone();
@@ -9921,8 +9959,9 @@ async fn compute_snapshot(
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
 
-    let remote_origin_url = backend.remote_url("origin").await;
-    let remote_upstream_url = backend.remote_url("upstream").await;
+    let mut remote_urls = backend.remote_urls().await;
+    let remote_origin_url = remote_urls.remove("origin");
+    let remote_upstream_url = remote_urls.remove("upstream");
 
     log::debug!("fetched remotes");
 
