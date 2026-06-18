@@ -9,9 +9,9 @@ use std::{
     },
 };
 
-use ::util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
+use gpui_util::{ResultExt, get_windows_system_shell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -467,11 +467,10 @@ impl Platform for WindowsPlatform {
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process =
-                    ::util::command::new_std_command(::util::shell::get_windows_system_shell())
-                        .arg("-command")
-                        .arg(script)
-                        .spawn();
+                let restart_process = new_std_command(get_windows_system_shell())
+                    .arg("-command")
+                    .arg(script)
+                    .spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
@@ -1186,8 +1185,8 @@ fn file_save_dialog(
             .context("failed to canonicalize directory")
             .log_err()
     {
-        let full_path = SanitizedPath::new(&full_path);
-        let full_path_string = full_path.to_string();
+        let full_path = dunce::simplified(&full_path);
+        let full_path_string = full_path.display().to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
         unsafe {

@@ -246,7 +246,7 @@ impl OutlineViewDelegate {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.highlight_rows::<OutlineRowHighlights>(
                     outline_item.range.start..outline_item.range.end,
-                    cx.theme().colors().editor_highlighted_line_background,
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
                     RowHighlightOptions {
                         autoscroll: true,
                         ..Default::default()
@@ -377,7 +377,7 @@ impl PickerDelegate for OutlineViewDelegate {
 
         self.active_editor.update(cx, |active_editor, cx| {
             let highlight = active_editor
-                .highlighted_rows::<OutlineRowHighlights>()
+                .highlighted_rows::<OutlineRowHighlights>(cx)
                 .next();
             if let Some((rows, _)) = highlight {
                 active_editor.change_selections(

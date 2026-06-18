@@ -26,7 +26,7 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool, time::SystemTime};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -586,6 +586,37 @@ impl GitRepository for FakeGitRepository {
             }
 
             Ok(all)
+        }
+        .boxed()
+    }
+
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>> {
+        let fs = self.fs.clone();
+        async move {
+            if fs.metadata(&worktree_path).await?.is_none() {
+                return Ok(None);
+            }
+            let dot_git_path = worktree_path.join(".git");
+            let git_file = fs
+                .load(&dot_git_path)
+                .await
+                .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+            let git_dir = git_file
+                .strip_prefix("gitdir:")
+                .context("worktree .git file missing gitdir pointer")?
+                .trim();
+            let git_dir = worktree_path.join(git_dir);
+            let metadata = fs
+                .metadata(&git_dir)
+                .await?
+                .with_context(|| format!("missing worktree git dir {}", git_dir.display()))?;
+            // FakeFs assigns directories a monotonically increasing mtime at
+            // creation and never updates it afterwards, so a directory's
+            // mtime doubles as its creation time.
+            Ok(Some(metadata.mtime.0))
         }
         .boxed()
     }
