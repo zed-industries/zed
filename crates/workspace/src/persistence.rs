@@ -1705,9 +1705,15 @@ impl WorkspaceDb {
             }
         }
 
-        if let RemoteConnectionOptions::Docker(options) = options {
-            use_podman = Some(options.use_podman);
-            remote_env = serde_json::to_string(&options.remote_env).ok();
+        match options {
+            RemoteConnectionOptions::Ssh(_) => (),
+            RemoteConnectionOptions::Wsl(_) => (),
+            RemoteConnectionOptions::Docker(options) => {
+                use_podman = Some(options.use_podman);
+                remote_env = serde_json::to_string(&options.remote_env).ok();
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => (),
         }
 
         Self::get_or_create_remote_connection_query(

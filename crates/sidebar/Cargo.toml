@@ -13,6 +13,7 @@ path = "src/sidebar.rs"
 
 [features]
 default = []
+test-support = ["remote/test-support"]
 
 [dependencies]
 acp_thread.workspace = true

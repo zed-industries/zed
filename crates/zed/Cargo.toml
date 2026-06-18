@@ -27,6 +27,7 @@ test-support = [
     "recent_projects/test-support",
     "repl/test-support",
     "title_bar/test-support",
+    "sidebar/test-support",
 ]
 visual-tests = [
     "gpui/test-support",
@@ -271,6 +272,7 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
+sidebar = { workspace = true, features = ["test-support"] }
 
 
 

@@ -2027,7 +2027,13 @@ fn icon_for_project_group(key: &ProjectGroupKey) -> IconName {
 
 pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
     match options {
-        None => IconName::Screen,
+        None => {
+            if util::flatpak::is_running_in_sandbox() {
+                IconName::Linux
+            } else {
+                IconName::Screen
+            }
+        }
         Some(options) => match options {
             RemoteConnectionOptions::Ssh(_) => IconName::Server,
             RemoteConnectionOptions::Wsl(_) => IconName::Linux,

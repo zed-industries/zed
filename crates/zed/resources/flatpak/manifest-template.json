@@ -15,7 +15,7 @@
     "--socket=wayland",
     "--socket=fallback-x11",
     "--socket=pulseaudio",
-    "--filesystem=host"
+    "--env=ZED_UPDATE_EXPLANATION=Please use Flatpak to update zed"
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin"

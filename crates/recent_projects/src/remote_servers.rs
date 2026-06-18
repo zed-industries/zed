@@ -565,6 +565,7 @@ impl gpui::Render for ProjectPicker {
                     connection_string: connection_string.clone(),
                     paths: Default::default(),
                     nickname: nickname.clone(),
+                    is_host: false,
                     is_wsl: false,
                     is_devcontainer: false,
                 }
@@ -573,6 +574,7 @@ impl gpui::Render for ProjectPicker {
                     connection_string: distro_name.clone(),
                     paths: Default::default(),
                     nickname: None,
+                    is_host: false,
                     is_wsl: true,
                     is_devcontainer: false,
                 }
@@ -1601,6 +1603,7 @@ impl RemoteServerProjects {
                 connection_options.nickname.clone(),
                 false,
                 false,
+                false,
                 window,
                 cx,
             )
@@ -1675,6 +1678,7 @@ impl RemoteServerProjects {
             RemoteConnectionPrompt::new(
                 connection_options.distro_name.clone(),
                 None,
+                false,
                 true,
                 false,
                 window,
@@ -2589,6 +2593,7 @@ impl RemoteServerProjects {
                         connection_string: connection.host.to_string().into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
+                        is_host: false,
                         is_wsl: false,
                         is_devcontainer: false,
                     }
@@ -2598,6 +2603,7 @@ impl RemoteServerProjects {
                         connection_string: connection.distro_name.clone().into(),
                         paths: Default::default(),
                         nickname: None,
+                        is_host: false,
                         is_wsl: true,
                         is_devcontainer: false,
                     }
@@ -2928,6 +2934,7 @@ impl RemoteServerProjects {
                     connection_string: connection_string.into(),
                     paths: Default::default(),
                     nickname,
+                    is_host: false,
                     is_wsl: false,
                     is_devcontainer: false,
                 }

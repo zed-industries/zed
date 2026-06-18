@@ -2271,10 +2271,19 @@ impl Sidebar {
         ix: usize,
         host: Option<&RemoteConnectionOptions>,
     ) -> Option<AnyElement> {
-        let remote_icon_per_type = match host? {
-            RemoteConnectionOptions::Wsl(_) => IconName::Linux,
-            RemoteConnectionOptions::Docker(_) => IconName::Box,
-            _ => IconName::Server,
+        let remote_icon_per_type = match host {
+            None => {
+                if util::flatpak::is_running_in_sandbox() {
+                    IconName::Linux
+                } else {
+                    return None;
+                }
+            }
+            Some(&RemoteConnectionOptions::Ssh(_)) => IconName::Server,
+            Some(&RemoteConnectionOptions::Wsl(_)) => IconName::Linux,
+            Some(&RemoteConnectionOptions::Docker(_)) => IconName::Box,
+            #[cfg(any(test, feature = "test-support"))]
+            Some(&RemoteConnectionOptions::Mock(_)) => IconName::Server,
         };
 
         Some(
