@@ -49,8 +49,6 @@ actions!(
     [
         /// Confirms the selected completion in the picker.
         ConfirmCompletion,
-        /// Switches between no preview, preview below, and preview right.
-        ToggleLayout,
         /// Shows the preview to the right of the results.
         SetPreviewRight,
         /// Shows the preview below the results.
@@ -844,16 +842,6 @@ impl<D: PickerDelegate> Picker<D> {
         } else {
             cx.propagate()
         }
-    }
-
-    fn toggle_layout(&mut self, _: &ToggleLayout, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(preview) = &mut self.preview else {
-            return;
-        };
-        preview.layout = preview.layout.next();
-        self.delegate
-            .preview_layout_changed(matches!(preview.layout, preview::Layout::Right));
-        cx.notify();
     }
 
     fn set_preview_right(

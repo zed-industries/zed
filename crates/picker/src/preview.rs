@@ -30,15 +30,6 @@ pub(crate) enum Layout {
     Below,
     Right,
 }
-impl Layout {
-    pub(crate) fn next(&self) -> Layout {
-        match self {
-            Layout::Hidden => Layout::Right,
-            Layout::Right => Layout::Below,
-            Layout::Below => Layout::Hidden,
-        }
-    }
-}
 
 impl Default for Layout {
     fn default() -> Self {

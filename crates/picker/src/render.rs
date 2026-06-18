@@ -15,8 +15,8 @@ use ui::{
 use crate::persistence;
 use crate::shape::Shape;
 use crate::{
-    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, ToggleActionsMenu,
-    ToggleLayout,
+    ElementContainer, Picker, PickerDelegate, PickerEditorPosition, Preview, SetPreviewBelow,
+    SetPreviewRight, ToggleActionsMenu,
     head::Head,
     preview::Layout,
     render::window_controls::{Bottom, Left, LeftCorner, Middle, Right, RightCorner},
@@ -136,7 +136,6 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
-            .on_action(cx.listener(Self::toggle_layout))
             .on_action(cx.listener(Self::set_preview_right))
             .on_action(cx.listener(Self::set_preview_below))
             .on_action(cx.listener(Self::set_preview_hidden))
@@ -323,6 +322,8 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let right_focus_handle = focus_handle.clone();
+        let below_focus_handle = focus_handle.clone();
         let current = self.preview_layout().unwrap_or(Layout::Hidden);
         let preview_visible = current != Layout::Hidden;
 
@@ -339,10 +340,6 @@ impl<D: PickerDelegate> Picker<D> {
                             })
                             .size(LabelSize::Small),
                     )
-                    .child(
-                        KeyBinding::for_action_in(&ToggleLayout, &focus_handle, cx)
-                            .size(rems_from_px(12.)),
-                    )
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
                     ),
@@ -351,7 +348,14 @@ impl<D: PickerDelegate> Picker<D> {
                 IconButton::new("picker-preview-right", IconName::DiffSplit)
                     .icon_size(IconSize::Small)
                     .toggle_state(current == Layout::Right)
-                    .tooltip(Tooltip::text("Preview to the Right"))
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Preview to the Right",
+                            &SetPreviewRight,
+                            &right_focus_handle,
+                            cx,
+                        )
+                    })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.set_preview_layout(Layout::Right, window, cx)
                     })),
@@ -360,7 +364,14 @@ impl<D: PickerDelegate> Picker<D> {
                 IconButton::new("picker-preview-below", IconName::DiffUnified)
                     .icon_size(IconSize::Small)
                     .toggle_state(current == Layout::Below)
-                    .tooltip(Tooltip::text("Preview Below"))
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Preview Below",
+                            &SetPreviewBelow,
+                            &below_focus_handle,
+                            cx,
+                        )
+                    })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.set_preview_layout(Layout::Below, window, cx)
                     })),

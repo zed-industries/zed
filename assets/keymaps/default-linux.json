@@ -477,7 +477,7 @@
     },
   },
   {
-    "context": "TextPicker",
+    "context": "TextPicker || (TextPicker > Picker > Editor) || (TextPicker > Picker > menu)",
     "bindings": {
       "ctrl-alt-p": "text_finder::ToProjectSearch",
       "ctrl-j": "pane::SplitDown",
@@ -1149,6 +1149,9 @@
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "ctrl-alt-right": "picker::SetPreviewRight",
+      "ctrl-alt-down": "picker::SetPreviewBelow",
+      "ctrl-alt-up": "picker::SetPreviewHidden",
     },
   },
   {
@@ -1168,7 +1171,6 @@
     "context": "FileFinder || (FileFinder > Picker > Editor)",
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
-      "ctrl-shift-a": "picker::ToggleLayout",
       "ctrl-shift-i": "search::ToggleIncludeIgnored",
     },
   },
