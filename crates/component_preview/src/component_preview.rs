@@ -520,7 +520,7 @@ impl ComponentPreview {
                             }
                         }),
                     )
-                    .flex_grow()
+                    .flex_grow_1()
                     .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                     .into_any_element()
                 },

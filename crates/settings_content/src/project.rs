@@ -87,6 +87,30 @@ pub struct ProjectSettingsContent {
     pub disable_ai: Option<SaturatingBool>,
 }
 
+/// When to scan content of linked directories.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanSymlinksSetting {
+    /// Always scan symlinked directories
+    Always,
+    /// Only scan symlinked directories when they've been expanded in the workspace
+    #[default]
+    Expanded,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
@@ -119,6 +143,11 @@ pub struct WorktreeSettingsContent {
     ///  "docker-compose.*.yml",
     /// ]
     pub file_scan_inclusions: Option<Vec<String>>,
+
+    /// When to scan content of linked directories.
+    ///
+    /// Default: expanded
+    pub scan_symlinks: Option<ScanSymlinksSetting>,
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]

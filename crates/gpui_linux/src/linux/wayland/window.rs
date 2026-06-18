@@ -598,6 +598,30 @@ impl WaylandWindowStatePtr {
                 force_render,
                 ..Default::default()
             });
+            self.update_ime_enabled();
+        }
+    }
+
+    fn update_ime_enabled(&self) {
+        let mut state = self.state.borrow_mut();
+        if !state.active {
+            return;
+        }
+        let client = state.client.clone();
+        let ime_enabled = state
+            .input_handler
+            .as_mut()
+            .map(|input_handler| input_handler.query_accepts_text_input())
+            .unwrap_or(true);
+        drop(state);
+        if Some(ime_enabled) == client.ime_enabled() {
+            return;
+        }
+
+        if ime_enabled {
+            client.enable_ime();
+        } else {
+            client.disable_ime();
         }
     }
 
@@ -945,9 +969,7 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(selection) = input_handler.marked_text_range() {
-                bounds = input_handler.bounds_for_range(selection.start..selection.start);
-            }
+            bounds = input_handler.ime_candidate_bounds();
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
         bounds

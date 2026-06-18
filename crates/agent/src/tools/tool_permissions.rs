@@ -132,15 +132,50 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     // skills tree (and so different but equivalent path representations
     // match). The lexical check above intentionally runs first, so a
     // symlinked `~/.agents/skills` root can't broaden the allowlist to every
-    // path under the symlink target.
+    // path under the symlink target. A linked immediate skill directory is
+    // allowed separately, but only for paths that stay under that skill target.
     let canonical_path = fs.canonicalize(&normalized_path).await.ok()?;
     let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
 
-    if canonical_path.starts_with(&canonical_skills_dir) {
+    if canonical_path.starts_with(&canonical_skills_dir)
+        || is_in_linked_global_skill_dir(
+            &normalized_path,
+            &canonical_path,
+            &canonical_skills_dir,
+            fs,
+        )
+        .await
+    {
         Some(canonical_path)
     } else {
         None
     }
+}
+
+async fn is_in_linked_global_skill_dir(
+    path: &Path,
+    canonical_path: &Path,
+    canonical_skills_dir: &Path,
+    fs: &dyn Fs,
+) -> bool {
+    let skills_dir = normalize_path(&agent_skills::global_skills_dir());
+    let Ok(relative_path) = path.strip_prefix(&skills_dir) else {
+        return false;
+    };
+    let Some(Component::Normal(skill_dir_name)) = relative_path.components().next() else {
+        return false;
+    };
+
+    let skill_dir = skills_dir.join(skill_dir_name);
+    let Ok(canonical_skill_dir) = fs.canonicalize(&skill_dir).await else {
+        return false;
+    };
+
+    !canonical_skill_dir.starts_with(canonical_skills_dir)
+        && canonical_path.starts_with(&canonical_skill_dir)
+        && fs
+            .is_file(&skill_dir.join(agent_skills::SKILL_FILE_NAME))
+            .await
 }
 
 fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
@@ -474,9 +509,11 @@ pub fn authorize_with_sensitive_settings(
         Some(SensitiveSettingsKind::Global) => {
             event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
         }
-        Some(SensitiveSettingsKind::AgentSkills) => {
-            event_stream.authorize_always_prompt(format!("{title} (agent skills)"), context, cx)
-        }
+        Some(SensitiveSettingsKind::AgentSkills) => event_stream.authorize_always_prompt(
+            format!("{title} (agent skills)"),
+            context.for_agent_skills(),
+            cx,
+        ),
         None => event_stream.authorize(title, context, cx),
     }
 }
@@ -726,7 +763,8 @@ pub fn authorize_file_edit(
                     let context = ToolPermissionContext::new(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
-                    );
+                    )
+                    .for_agent_skills();
                     event_stream.authorize_always_prompt(
                         format!("{title} (agent skills)"),
                         context,
@@ -922,6 +960,94 @@ mod tests {
             .expect("global skill file should resolve");
 
         assert_eq!(resolved, skill_file);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_global_skill_path_allows_symlinked_skill_dir(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.insert_tree(
+            path!("/external/my-skill"),
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: test\n---",
+                "references": { "guide.md": "details" }
+            }),
+        )
+        .await;
+        fs.create_dir(&skills_dir)
+            .await
+            .expect("global skills directory should be created");
+        fs.create_symlink(
+            &skills_dir.join("my-skill"),
+            PathBuf::from(path!("/external/my-skill")),
+        )
+        .await
+        .expect("skill directory should be symlinked");
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("references")
+            .join("guide.md");
+        let resolved = resolve_global_skill_path(&input_path, fs.as_ref())
+            .await
+            .expect("symlinked global skill resource should resolve");
+
+        assert_eq!(
+            resolved,
+            PathBuf::from(path!("/external/my-skill/references/guide.md"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_global_skill_path_rejects_escape_from_symlinked_skill_dir(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.insert_tree(
+            path!("/external/my-skill"),
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: test\n---",
+            }),
+        )
+        .await;
+        fs.insert_tree(path!("/private"), json!({ "secret.txt": "secret" }))
+            .await;
+        fs.create_symlink(
+            &PathBuf::from(path!("/external/my-skill/secret")),
+            PathBuf::from(path!("/private")),
+        )
+        .await
+        .expect("nested symlink should be created");
+        fs.create_dir(&skills_dir)
+            .await
+            .expect("global skills directory should be created");
+        fs.create_symlink(
+            &skills_dir.join("my-skill"),
+            PathBuf::from(path!("/external/my-skill")),
+        )
+        .await
+        .expect("skill directory should be symlinked");
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("secret")
+            .join("secret.txt");
+
+        assert!(
+            resolve_global_skill_path(&input_path, fs.as_ref())
+                .await
+                .is_none(),
+            "nested symlinks inside a symlinked skill must not broaden global skill access",
+        );
     }
 
     #[gpui::test]

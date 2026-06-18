@@ -1,0 +1,84 @@
+# Pings Slack when one of our community / open-source triage automations fails, so we
+# notice breakages (a retired model, an API change, a bad deploy) without watching the
+# Actions tab. This is a deliberately curated list, NOT every workflow in the repo — add
+# a workflow below only if it's part of the community/triage tooling we actively babysit.
+name: Notify Slack on community automation failure
+
+on:
+  workflow_run:
+    workflows:
+      - "Comment on potential duplicate bug/crash reports"
+      - "Track duplicate bot effectiveness"
+      - "Community PR Board"
+      - "PR Board Meta Fields Refresh"
+      - "PR Issue Labeler"
+    types: [completed]
+
+jobs:
+  notify-slack:
+    if: >-
+      github.repository_owner == 'zed-industries'
+      && github.event.workflow_run.conclusion == 'failure'
+    runs-on: namespace-profile-2x4-ubuntu-2404
+
+    steps:
+      - name: Build Slack message payload
+        env:
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          WF_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          # A handful of interchangeable laments; one is drawn at random per failure.
+          quips=(
+            "Quoth the runner: nevermore."
+            "Darkness there, and nothing more."
+            "A tell-tale red beats beneath the logs."
+            "Once more the pendulum descends."
+            "It grew weak and weary, and then no more."
+            "Deep into the stack trace peering."
+          )
+          quip="${quips[$((RANDOM % ${#quips[@]}))]}"
+
+          jq -n \
+            --arg name "$WF_NAME" \
+            --arg url "$WF_URL" \
+            --arg quip "$quip" \
+            '{
+              "text": "Oh no — \"\($name)\" has failed.",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Oh no, <@U09Q4QHE1GA>! \($quip) \"*\($name)*\" has failed — <\($url)|see the run>."
+                  }
+                }
+              ]
+            }' > payload.json
+
+          cat payload.json
+
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_COMMUNITY_AUTOMATION_FAILURE }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::error::SLACK_WEBHOOK_COMMUNITY_AUTOMATION_FAILURE secret is not set"
+            exit 1
+          fi
+
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @payload.json)
+
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+
+          echo "Slack API response status: $HTTP_STATUS"
+          echo "Slack API response body: $HTTP_BODY"
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::error::Slack notification failed with status $HTTP_STATUS: $HTTP_BODY"
+            exit 1
+          fi
+
+          echo "Slack notification sent successfully"

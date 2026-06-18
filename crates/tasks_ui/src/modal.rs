@@ -464,7 +464,7 @@ impl PickerDelegate for TasksModalDelegate {
                     .iter()
                     .map(|tag| format!("\n#{}", tag))
                     .collect::<Vec<_>>()
-                    .join("")
+                    .concat()
                     .as_str(),
             );
         }
