@@ -13,8 +13,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, fallible_options,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, MarkdownPreviewSettingsContent, ParseStatus,
+    ProjectTerminalSettingsContent, RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -60,6 +60,10 @@ pub struct ProjectSettingsContent {
     pub lsp: LspSettingsMap,
 
     pub terminal: Option<ProjectTerminalSettingsContent>,
+
+    /// The settings for the markdown preview. Can be overridden per project via
+    /// `.zed/settings.json`, falling back to the user-level values.
+    pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
 
     /// Configuration for Debugger-related features
     #[serde(default)]

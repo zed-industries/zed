@@ -178,9 +178,6 @@ pub struct SettingsContent {
     /// The settings for the image viewer.
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
-    /// The settings for the markdown preview.
-    pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
-
     pub repl: Option<ReplSettingsContent>,
 
     /// Whether or not to enable Helix mode.
@@ -1112,6 +1109,57 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<f32>,
+    /// The margin around the rendered markdown preview content.
+    ///
+    /// Accepts either a number (pixels) or a CSS-like length string:
+    /// `16`, `"16px"`, `"1rem"`, or `"5%"`. Percentages are relative to the
+    /// preview width and are clamped to a maximum of 40%.
+    ///
+    /// Default: 16
+    pub margin: Option<MarkdownPreviewMargin>,
+    /// Style overrides for headings (h1–h6) in the markdown preview.
+    pub headings: Option<HeadingStylesContent>,
+}
+
+/// A markdown preview margin: either a fixed pixel value (a bare number) or a
+/// CSS-like length string such as `"5%"`, `"16px"`, or `"1rem"`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[serde(untagged)]
+pub enum MarkdownPreviewMargin {
+    /// A fixed size in pixels.
+    Pixels(f32),
+    /// A CSS-like length string: `"<n>%"`, `"<n>px"`, or `"<n>rem"`.
+    Length(String),
+}
+
+/// Per-level heading style overrides for the markdown preview.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct HeadingStylesContent {
+    pub h1: Option<HeadingStyleContent>,
+    pub h2: Option<HeadingStyleContent>,
+    pub h3: Option<HeadingStyleContent>,
+    pub h4: Option<HeadingStyleContent>,
+    pub h5: Option<HeadingStyleContent>,
+    pub h6: Option<HeadingStyleContent>,
+}
+
+/// Style overrides for a single markdown heading level.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct HeadingStyleContent {
+    /// The font size, in rems, for this heading level.
+    ///
+    /// When unset, the built-in size for this level is used.
+    pub font_size: Option<f32>,
+    /// The text color for this heading level, as a hex string (e.g. "#ff7f50").
+    ///
+    /// When unset, the heading color from the active theme is used.
+    pub color: Option<String>,
+    /// The font weight for this heading level, from 100 (thin) to 900 (black).
+    ///
+    /// When unset, the heading weight from the active theme is used.
+    pub font_weight: Option<FontWeightContent>,
 }
 
 /// The settings for the image viewer.

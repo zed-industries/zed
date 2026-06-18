@@ -1127,6 +1127,63 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 `boolean` values
 
+## Markdown Preview
+
+- Description: Settings for the Markdown preview. Can be overridden per project via `.zed/settings.json`, falling back to the user-level values.
+- Setting: `markdown_preview`
+- Default:
+
+```json [settings]
+{
+  "markdown_preview": {
+    "limit_content_width": true,
+    "max_width": 800,
+    "margin": 16,
+    "headings": {}
+  }
+}
+```
+
+**Options**
+
+### Limit Content Width
+
+- Description: Whether to limit the width of the rendered content. When enabled, content is constrained to `max_width` and centered horizontally within the preview pane.
+- Setting: `limit_content_width`
+- Default: `true`
+
+### Max Width
+
+- Description: The maximum width, in pixels, of the rendered content when `limit_content_width` is enabled.
+- Setting: `max_width`
+- Default: `800`
+
+### Margin
+
+- Description: The margin around the rendered preview content. A bare number is interpreted as pixels; you can also pass a CSS-like string (`"16px"`, `"1rem"`, or `"5%"`). Percentages are relative to the preview width and are clamped to a maximum of 40%.
+- This is outer padding applied on all sides of the preview pane, around the `max_width`-constrained content; the two settings combine (margin first, then the content is capped at `max_width` and centered within it).
+- Setting: `margin`
+- Default: `16` (pixels)
+
+### Headings
+
+- Description: Per-level heading style overrides. Each of `h1` through `h6` accepts an optional `font_size` (in rems), `color`, and `font_weight`. Omitted values fall back to the built-in size and the active theme's heading color and weight.
+- `color` must be a hex string: `"#rgb"`, `"#rrggbb"`, or with an alpha channel `"#rgba"` / `"#rrggbbaa"` (for example, red is `"#ff0000"` or `"#f00"`). Named colors such as `"red"` are not supported; an unrecognized value is ignored and the theme's heading color is used instead.
+- `font_weight` is a number from `100` (thin) to `900` (black), for example `400` (normal) or `700` (bold).
+- Setting: `headings`
+- Default: `{}`
+
+```json [settings]
+{
+  "markdown_preview": {
+    "headings": {
+      "h1": { "font_size": 2.0, "color": "#ff7f50", "font_weight": 700 },
+      "h2": { "font_size": 1.4 }
+    }
+  }
+}
+```
+
 ## Minimap
 
 - Description: Settings related to the editor's minimap, which provides an overview of your document.

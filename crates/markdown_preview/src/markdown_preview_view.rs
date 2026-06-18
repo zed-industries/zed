@@ -21,7 +21,7 @@ use markdown::{
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath};
-use settings::{SeedQuerySetting, Settings};
+use settings::{SeedQuerySetting, Settings, SettingsLocation};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
@@ -715,6 +715,19 @@ impl MarkdownPreviewView {
         ThemeRegistry::global(cx).get(&theme_name.0).ok()
     }
 
+    /// The settings location of the previewed buffer, used to resolve markdown
+    /// preview settings with per-project (`.zed/settings.json`) overrides,
+    /// falling back to user settings.
+    fn preview_settings_location(&self, cx: &App) -> Option<ProjectPath> {
+        let editor = self.active_editor.as_ref()?.editor.read(cx);
+        let buffer = editor.buffer().read(cx).as_singleton()?;
+        let file = buffer.read(cx).file()?;
+        Some(ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
+    }
+
     fn render_markdown_element(
         &self,
         preview_theme: &Option<Arc<Theme>>,
@@ -734,16 +747,33 @@ impl MarkdownPreviewView {
             }
         }
 
+        let project_path = self.preview_settings_location(cx);
+        let settings_location = project_path.as_ref().map(|path| SettingsLocation {
+            worktree_id: path.worktree_id,
+            path: path.path.as_ref(),
+        });
+        let heading_overrides = MarkdownPreviewSettings::get(settings_location, cx)
+            .headings
+            .clone();
+
         let markdown_style = if let Some(theme) = preview_theme {
             MarkdownStyle::themed_with_overrides(
                 MarkdownFont::Preview,
                 theme.colors(),
                 theme.syntax(),
+                &heading_overrides,
                 window,
                 cx,
             )
         } else {
-            MarkdownStyle::themed(MarkdownFont::Preview, window, cx)
+            MarkdownStyle::themed_with_overrides(
+                MarkdownFont::Preview,
+                cx.theme().colors(),
+                &cx.theme().syntax().clone(),
+                &heading_overrides,
+                window,
+                cx,
+            )
         };
 
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
@@ -1127,6 +1157,16 @@ impl Render for MarkdownPreviewView {
             .as_ref()
             .map(|theme| theme.colors().editor_background)
             .unwrap_or_else(|| cx.theme().colors().editor_background);
+
+        let project_path = self.preview_settings_location(cx);
+        let settings_location = project_path.as_ref().map(|path| SettingsLocation {
+            worktree_id: path.worktree_id,
+            path: path.path.as_ref(),
+        });
+        let preview_settings = MarkdownPreviewSettings::get(settings_location, cx);
+        let preview_margin = preview_settings.margin;
+        let max_width = preview_settings.max_width;
+
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -1150,12 +1190,11 @@ impl Render for MarkdownPreviewView {
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .p_4()
+                    .p(preview_margin)
                     .child({
                         let markdown_element =
                             self.render_markdown_element(&preview_theme, window, cx);
                         let markdown = self.markdown.clone();
-                        let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
                         let content = right_click_menu("markdown-preview-context-menu")
                             .trigger(move |_, _, _| markdown_element)
                             .menu(move |window, cx| {

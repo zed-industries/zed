@@ -104,7 +104,8 @@
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary",
   },
-  // Markdown preview settings
+  // Markdown preview settings. Can be overridden per project in
+  // .zed/settings.json, falling back to these user-level values.
   "markdown_preview": {
     // Whether to limit the width of the rendered markdown content. When
     // enabled, content is constrained to `max_width` and centered
@@ -113,6 +114,15 @@
     // The maximum width, in pixels, of the rendered markdown content when
     // limit_content_width is enabled.
     "max_width": 800,
+    // The margin around the rendered preview content. Either a number (pixels)
+    // or a CSS-like string: "16px", "1rem", or "5%". Percentages are relative
+    // to the preview width and clamped to a maximum of 40%.
+    "margin": 16,
+    // Per-level heading style overrides. Each of "h1"–"h6" accepts an optional
+    // "font_size" (in rems), "color" (a hex string, e.g. "#ff7f50"), and
+    // "font_weight" (100–900). Omitted values fall back to the built-in size and
+    // the active theme's heading color and weight.
+    "headings": {},
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //

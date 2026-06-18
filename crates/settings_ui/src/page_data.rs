@@ -9685,6 +9685,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         json_path: Some("markdown_preview.limit_content_width"),
                         pick: |settings_content| {
                             settings_content
+                                .project
                                 .markdown_preview
                                 .as_ref()?
                                 .limit_content_width
@@ -9692,6 +9693,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         },
                         write: |settings_content, value, _| {
                             settings_content
+                                .project
                                 .markdown_preview
                                 .get_or_insert_default()
                                 .limit_content_width = value;
@@ -9701,6 +9703,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                 },
                 pick_discriminant: |settings_content| {
                     let enabled = settings_content
+                        .project
                         .markdown_preview
                         .as_ref()?
                         .limit_content_width
@@ -9718,6 +9721,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             json_path: Some("markdown_preview.max_width"),
                             pick: |settings_content| {
                                 settings_content
+                                    .project
                                     .markdown_preview
                                     .as_ref()?
                                     .max_width
@@ -9725,6 +9729,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             },
                             write: |settings_content, value, _| {
                                 settings_content
+                                    .project
                                     .markdown_preview
                                     .get_or_insert_default()
                                     .max_width = value;

@@ -92,6 +92,40 @@ pub struct HeadingLevelStyles {
     pub h6: Option<TextStyleRefinement>,
 }
 
+impl HeadingLevelStyles {
+    fn for_level(&self, level: pulldown_cmark::HeadingLevel) -> Option<&TextStyleRefinement> {
+        match level {
+            pulldown_cmark::HeadingLevel::H1 => self.h1.as_ref(),
+            pulldown_cmark::HeadingLevel::H2 => self.h2.as_ref(),
+            pulldown_cmark::HeadingLevel::H3 => self.h3.as_ref(),
+            pulldown_cmark::HeadingLevel::H4 => self.h4.as_ref(),
+            pulldown_cmark::HeadingLevel::H5 => self.h5.as_ref(),
+            pulldown_cmark::HeadingLevel::H6 => self.h6.as_ref(),
+        }
+    }
+}
+
+/// Resolved per-level heading style overrides supplied by the markdown preview
+/// settings. A `None` field defers to the built-in style: `font_size` to the
+/// per-level default, `color` and `font_weight` to the theme.
+#[derive(Clone, Debug, Default)]
+pub struct HeadingStyles {
+    pub h1: HeadingStyle,
+    pub h2: HeadingStyle,
+    pub h3: HeadingStyle,
+    pub h4: HeadingStyle,
+    pub h5: HeadingStyle,
+    pub h6: HeadingStyle,
+}
+
+/// A resolved style override for a single heading level.
+#[derive(Clone, Debug, Default)]
+pub struct HeadingStyle {
+    pub font_size: Option<AbsoluteLength>,
+    pub color: Option<Hsla>,
+    pub font_weight: Option<FontWeight>,
+}
+
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
@@ -154,7 +188,7 @@ impl MarkdownStyle {
     pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
         let colors = cx.theme().colors();
         let syntax = cx.theme().syntax().clone();
-        Self::themed_with_overrides(font, colors, &syntax, window, cx)
+        Self::themed_with_overrides(font, colors, &syntax, &HeadingStyles::default(), window, cx)
     }
 
     /// Like [`Self::themed`], but takes explicit [`ThemeColors`] and
@@ -164,6 +198,7 @@ impl MarkdownStyle {
         font: MarkdownFont,
         colors: &theme::ThemeColors,
         syntax: &Arc<SyntaxTheme>,
+        heading_overrides: &HeadingStyles,
         window: &Window,
         cx: &App,
     ) -> Self {
@@ -307,46 +342,49 @@ impl MarkdownStyle {
         };
 
         if is_preview {
-            style.with_preview_overrides(ui_font_size, colors)
+            style.with_preview_overrides(ui_font_size, colors, heading_overrides)
         } else {
             style
         }
     }
 
-    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
+    fn with_preview_overrides(
+        mut self,
+        ui_font_size: Pixels,
+        colors: &theme::ThemeColors,
+        heading_overrides: &HeadingStyles,
+    ) -> Self {
         let body_font_size = ui_font_size * 0.92;
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
 
         self.base_text_style.color = colors.text_muted.blend(colors.text.opacity(0.25));
         self.inline_code.color = Some(colors.text);
-        self.heading.text.color = Some(colors.text);
+
+        // Heading color and weight are applied per-level (below) rather than via a
+        // blanket `self.heading.text.color`. The blanket style is merged onto the
+        // text-run stack in `push_markdown_heading`, so a blanket color would
+        // clobber any per-heading override coming from settings.
+        let heading_style = |overrides: &HeadingStyle, default_size: f32| {
+            Some(TextStyleRefinement {
+                font_size: Some(
+                    overrides
+                        .font_size
+                        .unwrap_or_else(|| rems(default_size).into()),
+                ),
+                color: Some(overrides.color.unwrap_or(colors.text)),
+                font_weight: overrides.font_weight,
+                ..Default::default()
+            })
+        };
 
         self.heading_level_styles = Some(HeadingLevelStyles {
-            h1: Some(TextStyleRefinement {
-                font_size: Some(rems(1.45).into()),
-                ..Default::default()
-            }),
-            h2: Some(TextStyleRefinement {
-                font_size: Some(rems(1.3).into()),
-                ..Default::default()
-            }),
-            h3: Some(TextStyleRefinement {
-                font_size: Some(rems(1.1).into()),
-                ..Default::default()
-            }),
-            h4: Some(TextStyleRefinement {
-                font_size: Some(rems(1.01).into()),
-                ..Default::default()
-            }),
-            h5: Some(TextStyleRefinement {
-                font_size: Some(rems(0.95).into()),
-                ..Default::default()
-            }),
-            h6: Some(TextStyleRefinement {
-                font_size: Some(rems(0.85).into()),
-                ..Default::default()
-            }),
+            h1: heading_style(&heading_overrides.h1, 1.45),
+            h2: heading_style(&heading_overrides.h2, 1.3),
+            h3: heading_style(&heading_overrides.h3, 1.1),
+            h4: heading_style(&heading_overrides.h4, 1.01),
+            h5: heading_style(&heading_overrides.h5, 0.95),
+            h6: heading_style(&heading_overrides.h6, 0.85),
         });
 
         self.heading_border_color = Some(colors.border_variant);
@@ -1411,8 +1449,12 @@ impl MarkdownElement {
             TextAlign::Right => heading.text_right(),
         };
 
-        let mut heading_style = self.style.heading.clone();
-        let heading_text_style = heading_style.text_style().clone();
+        let heading_style = self.style.heading.clone();
+        let heading_text_style = heading_text_run_style(
+            &self.style.heading,
+            self.style.heading_level_styles.as_ref(),
+            level,
+        );
         heading.style().refine(&heading_style);
 
         builder.push_text_style(TextStyleRefinement {
@@ -2777,6 +2819,23 @@ fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>
         .into_any_element()
 }
 
+/// Computes the text style pushed onto the builder's text-style stack for a
+/// heading. The per-level override is merged here (in addition to being applied
+/// to the heading `div` in [`apply_heading_style`]) because the rendered text
+/// runs take their color from this style; the heading `div`'s text style only
+/// drives the inherited glyph size, not the run color.
+fn heading_text_run_style(
+    base_heading: &StyleRefinement,
+    level_styles: Option<&HeadingLevelStyles>,
+    level: pulldown_cmark::HeadingLevel,
+) -> TextStyleRefinement {
+    let mut text_style = base_heading.text.clone();
+    if let Some(level_style) = level_styles.and_then(|styles| styles.for_level(level)) {
+        text_style.refine(level_style);
+    }
+    text_style
+}
+
 fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
@@ -2808,19 +2867,8 @@ fn apply_heading_style(
         heading = heading.pb_1().border_b_1().border_color(border_color);
     }
 
-    if let Some(styles) = custom_styles {
-        let style_opt = match level {
-            pulldown_cmark::HeadingLevel::H1 => &styles.h1,
-            pulldown_cmark::HeadingLevel::H2 => &styles.h2,
-            pulldown_cmark::HeadingLevel::H3 => &styles.h3,
-            pulldown_cmark::HeadingLevel::H4 => &styles.h4,
-            pulldown_cmark::HeadingLevel::H5 => &styles.h5,
-            pulldown_cmark::HeadingLevel::H6 => &styles.h6,
-        };
-
-        if let Some(style) = style_opt {
-            heading.style().text = style.clone();
-        }
+    if let Some(style) = custom_styles.and_then(|styles| styles.for_level(level)) {
+        heading.style().text = style.clone();
     }
 
     heading
@@ -3932,6 +3980,41 @@ mod tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
+    }
+
+    #[test]
+    fn heading_run_style_includes_per_level_color() {
+        use gpui::{Hsla, rgb};
+
+        let red = Hsla::from(rgb(0xff0000));
+        let level_styles = HeadingLevelStyles {
+            h2: Some(TextStyleRefinement {
+                color: Some(red),
+                font_size: Some(rems(2.0).into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // The per-level color and size must survive into the style pushed onto
+        // the text-run stack; otherwise the rendered heading ignores the
+        // configured color (the run color comes from this style, not the div).
+        let style = heading_text_run_style(
+            &StyleRefinement::default(),
+            Some(&level_styles),
+            pulldown_cmark::HeadingLevel::H2,
+        );
+        assert_eq!(style.color, Some(red));
+        assert_eq!(style.font_size, Some(rems(2.0).into()));
+
+        // A level without an override contributes no color, so rendering defers
+        // to the surrounding base text style.
+        let style = heading_text_run_style(
+            &StyleRefinement::default(),
+            Some(&level_styles),
+            pulldown_cmark::HeadingLevel::H1,
+        );
+        assert_eq!(style.color, None);
     }
 
     #[gpui::test]
