@@ -521,7 +521,7 @@ pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
     callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
-    path: Arc<std::path::Path>,
+    path: Arc<SanitizedPath>,
     mode: WatcherMode,
 }
 
@@ -532,8 +532,8 @@ struct PathRegistrationState {
 
 struct WatcherState {
     watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
-    native_path_registrations: HashMap<Arc<std::path::Path>, PathRegistrationState>,
-    poll_path_registrations: HashMap<Arc<std::path::Path>, PathRegistrationState>,
+    native_path_registrations: HashMap<Arc<SanitizedPath>, PathRegistrationState>,
+    poll_path_registrations: HashMap<Arc<SanitizedPath>, PathRegistrationState>,
     cooldown_until: Option<Instant>,
     last_registration: WatcherRegistrationId,
 }
@@ -547,7 +547,7 @@ impl WatcherState {
     fn path_registrations(
         &mut self,
         mode: WatcherMode,
-    ) -> &mut HashMap<Arc<std::path::Path>, PathRegistrationState> {
+    ) -> &mut HashMap<Arc<SanitizedPath>, PathRegistrationState> {
         match mode {
             WatcherMode::Native => &mut self.native_path_registrations,
             WatcherMode::Poll => &mut self.poll_path_registrations,
@@ -557,7 +557,7 @@ impl WatcherState {
     fn remove_registration(
         &mut self,
         id: WatcherRegistrationId,
-    ) -> Option<(Arc<std::path::Path>, WatcherMode)> {
+    ) -> Option<(Arc<SanitizedPath>, WatcherMode)> {
         let registration_state = self.watchers.remove(&id)?;
         let path_registrations = self.path_registrations(registration_state.mode);
         let path_state = path_registrations.get_mut(&registration_state.path)?;
@@ -608,6 +608,7 @@ impl GlobalWatcher {
         mode: WatcherMode,
         cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<Option<WatcherRegistrationId>> {
+        let path = SanitizedPath::from_arc(path);
         let mut state = self.state.lock();
         let (path_already_covered, path_already_registered) = {
             let registrations_for_mode = state.path_registrations(mode);
@@ -623,10 +624,10 @@ impl GlobalWatcher {
             }
 
             drop(state);
-            match self.watch(&path, mode) {
+            match self.watch(path.as_path(), mode) {
                 Ok(()) => {}
                 Err(error) if mode == WatcherMode::Native && is_max_files_watch_error(&error) => {
-                    self.start_native_watch_limit_cooldown(&path);
+                    self.start_native_watch_limit_cooldown(path.as_path());
                     return Ok(None);
                 }
                 Err(error) => return Err(error),
@@ -703,7 +704,9 @@ impl GlobalWatcher {
                 };
                 let mut ids = Vec::new();
                 for path in &event.paths {
-                    for ancestor in path.ancestors() {
+                    let sanitized = SanitizedPath::new(path);
+                    for ancestor in sanitized.as_path().ancestors() {
+                        let ancestor = SanitizedPath::unchecked_new(ancestor);
                         if let Some(registration) = path_registrations.get(ancestor) {
                             ids.extend_from_slice(&registration.watcher_ids);
                         }
@@ -742,7 +745,7 @@ impl GlobalWatcher {
             return;
         };
         drop(state);
-        self.unwatch(&path, mode).log_err();
+        self.unwatch(path.as_path(), mode).log_err();
     }
 
     fn watch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
@@ -835,15 +838,16 @@ impl GlobalWatcher {
 }
 
 fn path_already_covered(
-    path: &Path,
-    path_registrations: &HashMap<Arc<std::path::Path>, PathRegistrationState>,
+    path: &SanitizedPath,
+    path_registrations: &HashMap<Arc<SanitizedPath>, PathRegistrationState>,
     mode: WatcherMode,
 ) -> bool {
     (mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
         && path
+            .as_path()
             .ancestors()
             .skip(1)
-            .any(|ancestor| path_registrations.contains_key(ancestor))
+            .any(|ancestor| path_registrations.contains_key(SanitizedPath::unchecked_new(ancestor)))
 }
 
 fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
@@ -1120,6 +1124,35 @@ mod tests {
                 "/repo/b".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn event_dispatches_when_reported_path_has_verbatim_prefix() {
+        // `notify` (and Windows APIs generally) can report a changed path using the
+        // verbatim `\\?\` long-path form even when the directory was registered
+        // without it.
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(backend), None);
+        let fired = Arc::new(Mutex::new(Vec::new()));
+        {
+            let fired = fired.clone();
+            watcher
+                .add(
+                    Arc::<Path>::from(Path::new("C:\\repo\\src")),
+                    WatcherMode::Native,
+                    move |_| fired.lock().push(()),
+                )
+                .expect("add watch")
+                .expect("watch registered");
+        }
+
+        watcher.dispatch(
+            WatcherMode::Native,
+            Ok(modify_event("\\\\?\\C:\\repo\\src\\main.rs")),
+        );
+
+        assert_eq!(fired.lock().len(), 1);
     }
 
     #[test]
