@@ -43,12 +43,18 @@
         "sed -i -e '/@release_info@/{r flatpak/release-info/$CHANNEL' -e 'd}' /app/share/metainfo/$APP_ID.metainfo.xml",
         "install -Dm755 bin/zed /app/bin/zed",
         "install -Dm755 libexec/zed-editor /app/libexec/zed-editor",
+        "gunzip -c zed-remote-server.gz > zed-remote-server && install -Dm755 zed-remote-server /app/libexec/zed-remote-server",
         "install -Dm755 lib/* -t /app/lib"
       ],
       "sources": [
         {
           "type": "archive",
           "path": "./target/release/$ARCHIVE"
+        },
+        {
+          "type": "file",
+          "path": "./target/$REMOTE_SERVER_ARCHIVE",
+          "dest-filename": "zed-remote-server.gz"
         },
         {
           "type": "dir",

@@ -248,6 +248,9 @@ impl RemoteConnectionModal {
                 RemoteConnectionOptions::Docker(options) => {
                     (options.name.clone(), None, false, false, true)
                 }
+                RemoteConnectionOptions::FlatpakHost(_) => {
+                    ("Host".to_string(), None, true, false, false)
+                }
                 #[cfg(any(test, feature = "test-support"))]
                 RemoteConnectionOptions::Mock(options) => {
                     (format!("mock-{}", options.id), None, false, false, false)

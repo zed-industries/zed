@@ -3,6 +3,9 @@ use remote_server::Commands;
 use std::io::Write as _;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+mod pty_wrapper;
+
 #[derive(Parser)]
 #[command(disable_version_flag = true)]
 struct Cli {
@@ -19,6 +22,10 @@ struct Cli {
     /// Used for loading the environment from the project.
     #[arg(long, hide = true)]
     printenv: bool,
+    /// Used for shell/terminal commands, creates a new unclaimed PTY for the child process.
+    #[cfg(unix)]
+    #[arg(long, hide = true, allow_hyphen_values = true)]
+    pty_wrapper: Option<Vec<String>>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -37,6 +44,16 @@ fn main() -> anyhow::Result<()> {
     if cli.printenv {
         util::shell_env::print_env();
         return Ok(());
+    }
+
+    if let Some(command) = cli.pty_wrapper {
+        match pty_wrapper::main(command) {
+            Ok(res) => std::process::exit(res),
+            Err(err) => {
+                std::io::stderr().write_fmt(format_args!("{err:#}\n")).ok();
+                std::process::exit(125);
+            }
+        }
     }
 
     if let Some(command) = cli.command {

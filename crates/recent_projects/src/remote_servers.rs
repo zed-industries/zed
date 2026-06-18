@@ -413,6 +413,11 @@ impl ProjectPicker {
                 connection_string: "".into(),
                 nickname: None,
             },
+            RemoteConnectionOptions::FlatpakHost(_) => ProjectPickerData::Ssh {
+                // Not implemented as a project picker at this time
+                connection_string: "".into(),
+                nickname: None,
+            },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => ProjectPickerData::Ssh {
                 connection_string: format!("mock-{}", options.id).into(),

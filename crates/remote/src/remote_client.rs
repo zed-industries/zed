@@ -6,6 +6,7 @@ use crate::{
     proxy::ProxyLaunchError,
     transport::{
         docker::{DockerConnectionOptions, DockerExecConnection},
+        flatpak::{FlatpakConnectionOptions, FlatpakHostConnection},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -37,10 +38,11 @@ use rpc::{
 };
 use semver::Version;
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     fmt,
     ops::ControlFlow,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
@@ -1276,6 +1278,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::FlatpakHost(opts) => {
+                            FlatpakHostConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                         #[cfg(any(test, feature = "test-support"))]
                         RemoteConnectionOptions::Mock(opts) => match cx.update(|cx| {
                             cx.default_global::<crate::transport::mock::MockConnectionRegistry>()
@@ -1323,6 +1330,7 @@ pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
     Docker(DockerConnectionOptions),
+    FlatpakHost(FlatpakConnectionOptions),
     #[cfg(any(test, feature = "test-support"))]
     Mock(crate::transport::mock::MockConnectionOptions),
 }
@@ -1342,6 +1350,7 @@ impl RemoteConnectionOptions {
                     opts.name.clone()
                 }
             }
+            RemoteConnectionOptions::FlatpakHost(_) => "Local Host".to_string(),
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
@@ -1360,8 +1369,26 @@ impl RemoteConnectionOptions {
                     "docker"
                 }
             }
+            RemoteConnectionOptions::FlatpakHost(_) => "flatpak-host",
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => "mock",
+        }
+    }
+
+    /// Convert the input path into a path suitable for this kind of Connection.
+    ///
+    /// Most [RemoteConnection] operate on the same paths that come out of the file
+    /// chooser, but remotes that cross sandbox boundaries typically need to refer to
+    /// files by a different path than what the user initially requested or has access
+    /// to. This function does that translation.
+    pub async fn to_remote_path<'a>(&self, path: &'a Path) -> Result<Cow<'a, Path>> {
+        match self {
+            RemoteConnectionOptions::Ssh(_)
+            | RemoteConnectionOptions::Docker(_)
+            | RemoteConnectionOptions::Wsl(_) => Ok(Cow::from(path)),
+            RemoteConnectionOptions::FlatpakHost(opts) => opts.as_host_path(path).await,
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => Ok(Cow::Borrowed(path)),
         }
     }
 }
@@ -1566,6 +1593,12 @@ impl From<SshConnectionOptions> for RemoteConnectionOptions {
 impl From<WslConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: WslConnectionOptions) -> Self {
         RemoteConnectionOptions::Wsl(opts)
+    }
+}
+
+impl From<FlatpakConnectionOptions> for RemoteConnectionOptions {
+    fn from(opts: FlatpakConnectionOptions) -> Self {
+        RemoteConnectionOptions::FlatpakHost(opts)
     }
 }
 

@@ -22,6 +22,7 @@ pub enum RemoteConnectionIdentity {
         name: String,
         remote_user: String,
     },
+    FlatpakHost,
     #[cfg(any(test, feature = "test-support"))]
     Mock { id: u64 },
 }
@@ -51,6 +52,7 @@ impl RemoteConnectionIdentity {
                 name,
                 remote_user,
             } => format!("docker:{remote_user}@{name}:{container_id}"),
+            Self::FlatpakHost => "flatpak-host".to_string(),
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock { id } => format!("mock:{id}"),
         }
@@ -74,6 +76,7 @@ impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
                 name: options.name.clone(),
                 remote_user: options.remote_user.clone(),
             },
+            RemoteConnectionOptions::FlatpakHost(_) => Self::FlatpakHost,
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => Self::Mock { id: options.id },
         }

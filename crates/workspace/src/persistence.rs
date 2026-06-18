@@ -29,8 +29,9 @@ use project::{
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
-    DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
-    SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
+    DockerConnectionOptions, FlatpakConnectionOptions, RemoteConnectionIdentity,
+    RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    remote_connection_identity,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -1697,6 +1698,10 @@ impl WorkspaceDb {
                 name = Some(identity_name);
                 user = Some(remote_user);
             }
+            RemoteConnectionIdentity::FlatpakHost => {
+                kind = RemoteConnectionKind::FlatpakHost;
+                user = None;
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionIdentity::Mock { id } => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1710,6 +1715,9 @@ impl WorkspaceDb {
             RemoteConnectionOptions::Wsl(_) => (),
             RemoteConnectionOptions::Docker(options) => {
                 use_podman = Some(options.use_podman);
+                remote_env = serde_json::to_string(&options.remote_env).ok();
+            }
+            RemoteConnectionOptions::FlatpakHost(options) => {
                 remote_env = serde_json::to_string(&options.remote_env).ok();
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -1993,6 +2001,14 @@ impl WorkspaceDb {
                     use_podman: use_podman?,
                     remote_env,
                 }))
+            }
+            RemoteConnectionKind::FlatpakHost => {
+                let remote_env: BTreeMap<String, String> = remote_env
+                    .and_then(|env| serde_json::from_str(&env).ok())
+                    .unwrap_or_default();
+                Some(RemoteConnectionOptions::FlatpakHost(
+                    FlatpakConnectionOptions { remote_env },
+                ))
             }
         }
     }

@@ -37,6 +37,7 @@ pub(crate) enum RemoteConnectionKind {
     Ssh,
     Wsl,
     Docker,
+    FlatpakHost,
 }
 
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
@@ -162,6 +163,7 @@ impl RemoteConnectionKind {
             RemoteConnectionKind::Ssh => "ssh",
             RemoteConnectionKind::Wsl => "wsl",
             RemoteConnectionKind::Docker => "docker",
+            RemoteConnectionKind::FlatpakHost => "flatpak-host",
         }
     }
 
@@ -170,6 +172,7 @@ impl RemoteConnectionKind {
             "ssh" => Some(Self::Ssh),
             "wsl" => Some(Self::Wsl),
             "docker" => Some(Self::Docker),
+            "flatpak-host" => Some(Self::FlatpakHost),
             _ => None,
         }
     }

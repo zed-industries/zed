@@ -7,10 +7,14 @@ shopt -s extglob
 script/bundle-linux --flatpak
 archive_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
 archive=$(ls "target/release" | grep -E ${archive_match})
+# The remote server binary that script/bundle-linux produces alongside the
+# archive. It is bundled into the Flatpak so the host runs a matching server.
+remote_server_archive="zed-remote-server-linux-$(uname -m).gz"
 channel=$(<crates/zed/RELEASE_CHANNEL)
 
 export CHANNEL="$channel"
 export ARCHIVE="$archive"
+export REMOTE_SERVER_ARCHIVE="$remote_server_archive"
 if [[ "$channel" == "dev" ]]; then
     export APP_ID="dev.zed.ZedDev"
     export APP_NAME="Zed Devel"

@@ -133,6 +133,14 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
+    let paths: Vec<PathBuf> = {
+        let mut resolved_paths = Vec::with_capacity(paths.len());
+        for path in &paths {
+            resolved_paths.push(connection_options.to_remote_path(path).await?.to_path_buf());
+        }
+        resolved_paths
+    };
+
     let created_new_window = open_options.requesting_window.is_none();
 
     let (existing, open_visible) = find_existing_workspace(
@@ -320,6 +328,9 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
+                                RemoteConnectionOptions::FlatpakHost(_) => {
+                                    "Failed to connect to local host"
+                                }
                                 #[cfg(any(test, feature = "test-support"))]
                                 RemoteConnectionOptions::Mock(_) => {
                                     "Failed to connect to mock server"
@@ -380,6 +391,9 @@ pub async fn open_remote_project(
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
+                                }
+                                RemoteConnectionOptions::FlatpakHost(_) => {
+                                    "Failed to connect to local host"
                                 }
                                 #[cfg(any(test, feature = "test-support"))]
                                 RemoteConnectionOptions::Mock(_) => {

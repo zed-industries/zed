@@ -611,6 +611,7 @@ impl TitleBar {
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
                 (None, "Dev Container", IconName::Box)
             }
+            RemoteConnectionOptions::FlatpakHost(_) => (None, "Host", IconName::Screen),
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
         };

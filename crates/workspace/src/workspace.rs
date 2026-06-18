@@ -9745,6 +9745,7 @@ pub fn workspace_windows_for_location(
                 (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
                     a.container_id == b.container_id
                 }
+                (RemoteConnectionOptions::FlatpakHost(_), RemoteConnectionOptions::FlatpakHost(_)) => true,
                 #[cfg(any(test, feature = "test-support"))]
                 (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => {
                     a.id == b.id

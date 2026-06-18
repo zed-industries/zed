@@ -15100,7 +15100,9 @@ name = "remote"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "askpass",
+ "async-lock",
  "async-trait",
  "base64 0.22.1",
  "collections",

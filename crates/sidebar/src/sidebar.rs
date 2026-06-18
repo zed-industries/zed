@@ -2282,6 +2282,9 @@ impl Sidebar {
             Some(&RemoteConnectionOptions::Ssh(_)) => IconName::Server,
             Some(&RemoteConnectionOptions::Wsl(_)) => IconName::Linux,
             Some(&RemoteConnectionOptions::Docker(_)) => IconName::Box,
+            Some(&RemoteConnectionOptions::FlatpakHost(_)) => {
+                return None;
+            }
             #[cfg(any(test, feature = "test-support"))]
             Some(&RemoteConnectionOptions::Mock(_)) => IconName::Server,
         };
