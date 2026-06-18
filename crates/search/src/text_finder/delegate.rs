@@ -21,8 +21,8 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, FluentBuilder, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle,
-    Toggleable, Tooltip, prelude::*,
+    ButtonStyle, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
+    Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
@@ -59,11 +59,18 @@ use crate::{ProjectSearchView, SearchOption, SearchOptions};
 pub struct Delegate {
     pub(crate) project_search_view: Entity<ProjectSearchView>,
     pub(crate) focus_handle: FocusHandle,
+    /// Flat list of every match, in result order. This is the canonical list
+    /// handed off to the project search; [`Self::entries`] is a grouped view
+    /// derived from it for rendering.
     pub(crate) matches: Vec<SearchMatch>,
+    /// Display rows derived from [`Self::matches`]: a non-selectable header per
+    /// file, its matches, and separators between groups. Rebuilt via
+    /// [`Delegate::rebuild_entries`] whenever `matches` changes. `selected_index`
+    /// indexes into this list.
+    pub(crate) entries: Vec<Entry>,
     pub(crate) selected_index: usize,
     pub(crate) cancel_flag: Arc<AtomicBool>,
     pub(crate) text_finder_turning_into_project_search: Arc<AtomicBool>,
-
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
@@ -73,13 +80,16 @@ pub struct Delegate {
     /// When `is_ready` there is not a search in progress
     pub(crate) in_progress_search: InProgressSearch,
     pub(crate) unique_files: HashSet<ProjectPath>,
-    /// Whether the preview is currently shown to the side. Kept in sync by the
-    /// picker via [`PickerDelegate::set_horizontal_preview`], because the
-    /// delegate cannot read the picker entity while rendering.
-    pub(crate) preview_layout_is_horizontal: bool,
-    /// Handle for the search-options filter menu, so the picker stays open while
-    /// it has focus.
-    pub(crate) filter_menu_handle: PopoverMenuHandle<ContextMenu>,
+    /// Largest line number across [`Self::matches`], used to size the line-number
+    /// column so every row's number right-aligns to the widest one. Recomputed in
+    /// [`Delegate::rebuild_entries`].
+    pub(crate) max_line_number: u32,
+}
+
+pub(crate) enum Entry {
+    Header(ProjectPath),
+    Match(usize),
+    Separator,
 }
 
 async fn get_ongoing_search(
@@ -183,6 +193,7 @@ async fn stream_plunder_to_picker(
                 .unique_files
                 .extend(new_matches.iter().map(|m| m.path.clone()));
             delegate.matches.extend(new_matches);
+            delegate.rebuild_entries();
             cx.notify();
             ControlFlow::Continue(())
         });
@@ -293,6 +304,7 @@ impl Delegate {
                 project_search_view: project_search,
                 focus_handle: cx.focus_handle(),
                 matches: Vec::new(),
+                entries: Vec::new(),
                 selected_index: 0,
                 cancel_flag: Arc::new(AtomicBool::new(false)),
                 text_finder_turning_into_project_search: Arc::new(AtomicBool::new(false)),
@@ -303,8 +315,7 @@ impl Delegate {
                 imported_from_project_search,
                 in_progress_search,
                 unique_files: HashSet::default(),
-                preview_layout_is_horizontal: false,
-                filter_menu_handle: PopoverMenuHandle::default(),
+                max_line_number: 0,
             });
 
             this
@@ -334,6 +345,62 @@ impl Delegate {
         &self.project_search_view.read(cx).entity.read(cx).project
     }
 
+    /// Rebuilds the grouped [`Self::entries`] display list from the flat
+    /// [`Self::matches`]. Matches arrive grouped per file (one search result
+    /// per buffer), so consecutive matches share a path; we emit one header per
+    /// group and a separator before every group after the first.
+    ///
+    /// Selection is preserved across rebuilds: if a match was selected it stays
+    /// selected at its new row, otherwise we snap to the first selectable row.
+    pub(crate) fn rebuild_entries(&mut self) {
+        let previously_selected_match = match self.entries.get(self.selected_index) {
+            Some(Entry::Match(match_index)) => Some(*match_index),
+            _ => None,
+        };
+
+        let mut entries = Vec::with_capacity(self.matches.len());
+        let mut last_path: Option<&ProjectPath> = None;
+        for (match_index, search_match) in self.matches.iter().enumerate() {
+            if last_path != Some(&search_match.path) {
+                if last_path.is_some() {
+                    entries.push(Entry::Separator);
+                }
+                entries.push(Entry::Header(search_match.path.clone()));
+                last_path = Some(&search_match.path);
+            }
+            entries.push(Entry::Match(match_index));
+        }
+        self.entries = entries;
+        self.max_line_number = self
+            .matches
+            .iter()
+            .map(|search_match| search_match.line_number)
+            .max()
+            .unwrap_or(0);
+
+        self.selected_index = previously_selected_match
+            .and_then(|match_index| {
+                self.entries
+                    .iter()
+                    .position(|entry| matches!(entry, Entry::Match(other) if *other == match_index))
+            })
+            .or_else(|| self.first_selectable_index())
+            .unwrap_or(0);
+    }
+
+    fn first_selectable_index(&self) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|entry| matches!(entry, Entry::Match(_)))
+    }
+
+    fn selected_search_match(&self) -> Option<&SearchMatch> {
+        match self.entries.get(self.selected_index)? {
+            Entry::Match(match_index) => self.matches.get(*match_index),
+            Entry::Header(_) | Entry::Separator => None,
+        }
+    }
+
     /// Opens the selected match in a new split in `direction`, then dismisses.
     pub(crate) fn open_in_split(
         &mut self,
@@ -341,14 +408,14 @@ impl Delegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        let Some(selected_match) = self.matches.get(self.selected_index) else {
-            return;
-        };
-        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+        let Some(selected_match) = self.selected_search_match() else {
             return;
         };
         let path = selected_match.path.clone();
         let line_number = selected_match.line_number;
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+            return;
+        };
         let open_task = workspace.update(cx, |workspace, cx| {
             workspace.split_path_preview(path, false, Some(direction), window, cx)
         });
@@ -461,18 +528,14 @@ const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 
 impl PickerDelegate for Delegate {
-    type ListItem = ListItem;
+    type ListItem = AnyElement;
 
     fn name() -> &'static str {
         "text finder"
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search all files...".into()
-    }
-
-    fn has_another_open_menu(&self, window: &Window, cx: &App) -> bool {
-        self.filter_menu_handle.is_focused(window, cx) || self.filter_menu_handle.is_deployed()
+        "Search all files…".into()
     }
 
     fn search_filter(
@@ -482,73 +545,42 @@ impl PickerDelegate for Delegate {
     ) -> Option<AnyElement> {
         let active = self.search_options;
         let focus_handle = self.focus_handle.clone();
-        let any_active = active.intersects(
-            SearchOptions::CASE_SENSITIVE
-                | SearchOptions::WHOLE_WORD
-                | SearchOptions::REGEX
-                | SearchOptions::INCLUDE_IGNORED,
-        );
+        let picker = cx.entity();
         Some(
-            PopoverMenu::new("text-finder-filter-menu")
-                .with_handle(self.filter_menu_handle.clone())
-                .attach(gpui::Anchor::BottomRight)
-                .anchor(gpui::Anchor::TopLeft)
-                .trigger(
-                    IconButton::new("text-finder-filter", IconName::Sliders)
-                        .icon_size(IconSize::Small)
-                        .icon_color(if any_active {
-                            Color::Accent
-                        } else {
-                            Color::Default
-                        })
-                        .tooltip(Tooltip::text("Search Options")),
-                )
-                .menu({
-                    let picker = cx.entity();
-                    move |window, cx| {
-                        let picker = picker.clone();
+            h_flex()
+                .gap_1()
+                .children(
+                    [
+                        SearchOption::CaseSensitive,
+                        SearchOption::WholeWord,
+                        SearchOption::Regex,
+                        SearchOption::IncludeIgnored,
+                    ]
+                    .into_iter()
+                    .map(|option| {
+                        let options = option.as_options();
+                        let action = option.to_toggle_action();
+                        let label = option.label();
                         let focus_handle = focus_handle.clone();
-                        Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                            menu = menu.context(focus_handle.clone());
-                            for option in [
-                                SearchOption::CaseSensitive,
-                                SearchOption::WholeWord,
-                                SearchOption::Regex,
-                                SearchOption::IncludeIgnored,
-                            ] {
-                                let options = option.as_options();
-                                let is_active = active.contains(options);
-                                let picker = picker.clone();
-                                menu = menu.custom_entry(
-                                    move |_window, _cx| {
-                                        let color = if is_active {
-                                            Color::Accent
-                                        } else {
-                                            Color::Default
-                                        };
-                                        h_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .child(
-                                                Icon::new(option.icon())
-                                                    .size(IconSize::Small)
-                                                    .color(color),
-                                            )
-                                            .child(Label::new(option.label()).color(color))
-                                            .into_any_element()
-                                    },
-                                    move |window, cx| {
-                                        picker.update(cx, |picker, cx| {
-                                            picker.delegate.search_options.toggle(options);
-                                            picker.refresh(window, cx);
-                                        });
-                                    },
-                                );
-                            }
-                            menu
-                        }))
-                    }
-                })
+                        let picker = picker.clone();
+                        IconButton::new(
+                            ("text-finder-search-option", option as usize),
+                            option.icon(),
+                        )
+                        .icon_size(IconSize::Small)
+                        .shape(IconButtonShape::Square)
+                        .toggle_state(active.contains(options))
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action_in(label, action, &focus_handle, cx)
+                        })
+                        .on_click(move |_, window, cx| {
+                            picker.update(cx, |picker, cx| {
+                                picker.delegate.search_options.toggle(options);
+                                picker.refresh(window, cx);
+                            });
+                        })
+                    }),
+                )
                 .into_any_element(),
         )
     }
@@ -581,7 +613,11 @@ impl PickerDelegate for Delegate {
     }
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        self.entries.len()
+    }
+
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        matches!(self.entries.get(ix), Some(Entry::Match(_)))
     }
 
     fn selected_index(&self) -> usize {
@@ -627,6 +663,7 @@ impl PickerDelegate for Delegate {
                 return Task::ready(());
             }
             self.matches.clear();
+            self.entries.clear();
             self.unique_files.clear();
             self.selected_index = 0;
             self.active_query = None;
@@ -706,16 +743,16 @@ impl PickerDelegate for Delegate {
             }
         }
 
-        let Some(selected_match) = self.matches.get(self.selected_index) else {
-            return;
-        };
-
-        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+        let Some(selected_match) = self.selected_search_match() else {
             return;
         };
 
         let path = selected_match.path.clone();
         let line_number = selected_match.line_number;
+
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+            return;
+        };
 
         let open_task = workspace.update(cx, |workspace, cx| {
             workspace.open_path_preview(path, None, true, false, true, window, cx)
@@ -744,7 +781,7 @@ impl PickerDelegate for Delegate {
     }
 
     fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<picker::PreviewUpdate> {
-        let m = self.matches.get(self.selected_index)?;
+        let m = self.selected_search_match()?;
         Some(picker::PreviewUpdate::from_buffer(
             m.buffer.clone(),
             picker::MatchLocation {
@@ -761,105 +798,99 @@ impl PickerDelegate for Delegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let search_match = self.matches.get(ix)?;
-        let path = &search_match.path.path;
-        let path_style = self.project(cx).read(cx).path_style(cx);
-        let file_name = path
-            .file_name()
-            .map(|name| name.to_string())
-            .unwrap_or_default();
-        let directory = path
-            .parent()
-            .map(|parent| parent.display(path_style))
-            .map(|parent| SharedString::new(parent))
-            .unwrap_or_default();
-        let full_path = SharedString::new(path.display(path_style));
+        match self.entries.get(ix)? {
+            Entry::Separator => Some(
+                div()
+                    .py(DynamicSpacing::Base04.rems(cx))
+                    .child(Divider::horizontal())
+                    .into_any_element(),
+            ),
+            Entry::Header(path) => {
+                let path_style = self.project(cx).read(cx).path_style(cx);
+                let file_name = path
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_default();
+                let directory = path
+                    .path
+                    .parent()
+                    .map(|parent| parent.display(path_style))
+                    .map(SharedString::new)
+                    .unwrap_or_default();
+                let file_icon = ItemSettings::get_global(cx)
+                    .file_icons
+                    .then(|| FileIcons::get_icon(path.path.as_std_path(), cx))
+                    .flatten()
+                    .map(|icon| {
+                        Icon::from_path(icon)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                    });
 
-        let file_icon = ItemSettings::get_global(cx)
-            .file_icons
-            .then(|| FileIcons::get_icon(path.as_std_path(), cx))
-            .flatten()
-            .map(|icon| Icon::from_path(icon).color(Color::Muted));
-
-        let file_location = h_flex()
-            .id(("text-picker-path", ix))
-            .flex_1()
-            .min_w_0()
-            .overflow_hidden()
-            .child(Label::new(format!("{file_name} ")).color(Color::Muted))
-            .when(!directory.is_empty(), |this| {
-                this.child(Label::new(directory).color(Color::Muted).truncate_start())
-            });
-
-        // let rendered_line = if self.preview_layout_is_horizontal {
-        //     h_flex().gap_2().py_px().child(file_location)
-        // } else {
-        //     h_flex()
-        //         .w_full()
-        //         .gap_4()
-        //         .justify_between()
-        //         .font_buffer(cx)
-        //         .text_buffer(cx)
-        //         .when(!self.preview_layout_is_horizontal, |d| {
-        //             d.child(
-        //                 div()
-        //                     .flex_1()
-        //                     .min_w_0()
-        //                     .overflow_hidden()
-        //                     .text_ellipsis()
-        //                     .whitespace_nowrap()
-        //                     .child(render_matched_line(search_match, cx)),
-        //             )
-        //         })
-        //         .child(
-        //             h_flex()
-        //                 .w(relative(0.35))
-        //                 .flex_none()
-        //                 .gap_2()
-        //                 .child(file_location),
-        //         )
-        // };
-
-        let dot_separator = || {
-            Label::new("•")
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .alpha(0.5)
-        };
-
-        Some(
-            ListItem::new(ix)
-                .spacing(ListItemSpacing::Sparse)
-                .inset(true)
-                .toggle_state(selected)
-                .child(
-                    v_flex()
+                Some(
+                    h_flex()
                         .w_full()
                         .min_w_0()
+                        .px(DynamicSpacing::Base06.rems(cx))
+                        .py_1()
+                        .gap_1p5()
+                        .children(file_icon)
                         .child(
                             h_flex()
-                                .gap_2()
-                                .children(file_icon)
-                                .text_sm()
-                                .child(render_matched_line(search_match, cx)),
+                                .gap_1()
+                                .child(Label::new(file_name).size(LabelSize::Small))
+                                .when(!directory.is_empty(), |this| {
+                                    this.child(
+                                        Label::new(directory)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate_start(),
+                                    )
+                                }),
                         )
+                        .into_any_element(),
+                )
+            }
+            Entry::Match(match_index) => {
+                let search_match = self.matches.get(*match_index)?;
+                Some(
+                    ListItem::new(ix)
+                        .spacing(ListItemSpacing::Sparse)
+                        .inset(true)
+                        .toggle_state(selected)
                         .child(
                             h_flex()
                                 .w_full()
-                                .gap_1p5()
-                                .pl(IconSize::default().rems() + rems(0.5))
+                                .min_w_0()
+                                .gap_2p5()
+                                .text_sm()
                                 .child(
-                                    Label::new(search_match.line_number.to_string())
-                                        .color(Color::Muted),
+                                    h_flex()
+                                        .w(rems(
+                                            (self.max_line_number.max(1).ilog10() + 1) as f32 * 0.5,
+                                        ))
+                                        .justify_end()
+                                        .child(
+                                            Label::new(search_match.line_number.to_string()).color(
+                                                Color::Custom(
+                                                    cx.theme().colors().text_muted.opacity(0.5),
+                                                ),
+                                            ),
+                                        ),
                                 )
-                                .child(dot_separator())
-                                .child(Label::new(full_path).color(Color::Muted).truncate_start()),
-                        ),
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(render_matched_line(search_match, cx)),
+                                ),
+                        )
+                        .into_any_element(),
                 )
-                // .start_slot::<Icon>(file_icon)
-                // .end_slot::<Div>(line_number)
-                
-        )
+            }
+        }
     }
 }
 
@@ -911,6 +942,7 @@ async fn stream_results_to_picker(
 
                 if clear_existing {
                     delegate.matches.clear();
+                    delegate.entries.clear();
                     delegate.unique_files.clear();
                     delegate.selected_index = 0;
                     clear_existing = false;
@@ -920,11 +952,9 @@ async fn stream_results_to_picker(
                     .unique_files
                     .extend(batch_matches.iter().map(|m| &m.path).cloned());
                 delegate.matches.extend(batch_matches);
-
-                if delegate.selected_index >= delegate.matches.len() && !delegate.matches.is_empty()
-                {
-                    delegate.selected_index = 0;
-                }
+                // Rebuild the grouped view and resnap the selection onto a
+                // selectable row (the header/separator rows are not selectable).
+                delegate.rebuild_entries();
 
                 cx.notify();
             })

@@ -223,7 +223,7 @@ impl TextFinder {
 
     fn new(delegate: Delegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let project = delegate.project(cx).clone();
-        let picker = cx.new(|cx| Picker::uniform_list_with_preview(delegate, project, window, cx));
+        let picker = cx.new(|cx| Picker::list_with_preview(delegate, project, window, cx));
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
