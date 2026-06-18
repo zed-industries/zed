@@ -30,6 +30,7 @@ mod shape;
 use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
 pub use footer::PickerAction;
+pub use language::{HighlightedText, HighlightedTextBuilder};
 pub use preview::MatchLocation;
 pub use preview::Preview;
 pub use preview::PreviewSource;

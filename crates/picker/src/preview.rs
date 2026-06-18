@@ -5,7 +5,7 @@ use std::sync::Arc;
 use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, Window};
-use language::Buffer;
+use language::{Buffer, HighlightedText};
 use project::Project;
 use ui::{ActiveTheme, IntoElement};
 use util::rel_path::RelPath;
@@ -51,10 +51,10 @@ impl Preview {
         });
     }
 
-    pub fn render(&self, cx: &mut App) -> impl IntoElement {
+    pub fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let layout = self.layout;
         self.content.update(cx, |content, cx| {
-            content.render(layout, cx).into_any_element()
+            content.render(layout, window, cx).into_any_element()
         })
     }
 
@@ -67,7 +67,7 @@ impl Preview {
     }
 }
 
-/// Identifies the buffer a preview should show.
+/// Identifies what a preview should show.
 pub enum PreviewSource {
     /// The buffer is identified by its absolute path; the preview opens it.
     ///
@@ -79,6 +79,12 @@ pub enum PreviewSource {
     /// Used by pickers (like the text picker) that already hold the matched
     /// buffer.
     Buffer(Entity<Buffer>),
+    /// No buffer to show; display this message centered in the preview instead.
+    ///
+    /// Used by pickers that have a selection without a previewable buffer (like
+    /// the file finder's "create new file" entry). Built as a [`HighlightedText`]
+    /// so callers can emphasize parts of the message (e.g. a file path).
+    Message(HighlightedText),
 }
 
 pub struct MatchLocation {
@@ -105,6 +111,17 @@ impl Update {
         }
     }
 
+    /// Show `message` centered in the preview instead of a buffer.
+    ///
+    /// The message is a [`HighlightedText`], so parts of it (e.g. a file path)
+    /// can be emphasized.
+    pub fn message(message: HighlightedText) -> Self {
+        Self {
+            source: PreviewSource::Message(message),
+            match_location: None,
+        }
+    }
+
     /// Preview `buffer`, highlighting and scrolling to `highlight`.
     pub fn from_buffer(buffer: Entity<Buffer>, highlight: MatchLocation) -> Self {
         Self {
@@ -122,6 +139,8 @@ struct SearchMatchLineHighlight;
 pub struct EditorPreview {
     project: Entity<Project>,
     current_path: Option<Arc<RelPath>>,
+    /// When set show a text message instead of a preview
+    message: Option<HighlightedText>,
     preview_editor: Entity<Editor>,
 }
 
@@ -160,7 +179,12 @@ impl EditorPreview {
             project,
             preview_editor,
             current_path: None,
+            message: None,
         }
+    }
+
+    pub(crate) fn message(&self) -> Option<&HighlightedText> {
+        self.message.as_ref()
     }
 
     pub(crate) fn has_content(&self, cx: &App) -> bool {
@@ -175,13 +199,31 @@ impl EditorPreview {
 
         match source {
             PreviewSource::Path(abs_path) => {
+                self.message = None;
                 self.update_from_path(abs_path, highlight, window, cx);
             }
             PreviewSource::Buffer(buffer) => {
+                self.message = None;
                 self.finish_update(buffer, highlight, window, cx);
                 cx.notify();
             }
+            PreviewSource::Message(message) => {
+                self.show_message(message, cx);
+            }
         }
+    }
+
+    fn show_message(&mut self, message: HighlightedText, cx: &mut Context<Self>) {
+        self.current_path = None;
+        self.message = Some(message);
+        // The preview editor is read-only, so `Editor::clear` is a no-op here;
+        // clear the underlying multibuffer directly to drop any stale content.
+        self.preview_editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |multi_buffer, cx| {
+                multi_buffer.clear(cx);
+            });
+        });
+        cx.notify();
     }
 
     fn update_from_path(
@@ -217,7 +259,6 @@ impl EditorPreview {
         .detach_and_log_err(cx);
     }
 
-    /// TODO!(yara) we are not focussing the selection correctly.
     fn finish_update(
         &mut self,
         buffer: Entity<Buffer>,

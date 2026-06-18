@@ -1677,9 +1677,23 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn try_get_preview_data_for_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
         let m = self.matches.get(self.selected_index)?;
-        Some(picker::PreviewUpdate::from_path(
-            m.abs_path(&self.project, cx)?,
-        ))
+        match m {
+            Match::CreateNew(project_path) => {
+                let path_style = self.project.read(cx).path_style(cx);
+                let path_highlight = gpui::HighlightStyle {
+                    color: Some(cx.theme().colors().text_accent),
+                    ..Default::default()
+                };
+                let mut message = picker::HighlightedTextBuilder::default();
+                message.push_plain("Create new file ");
+                message.push_styled(project_path.path.display(path_style), path_highlight);
+                message.push_plain("?");
+                Some(picker::PreviewUpdate::message(message.build()))
+            }
+            _ => Some(picker::PreviewUpdate::from_path(
+                m.abs_path(&self.project, cx)?,
+            )),
+        }
     }
 
     fn render_match(
