@@ -2150,6 +2150,7 @@ dependencies = [
  "language",
  "language_model",
  "lsp",
+ "markdown",
  "multi_buffer",
  "project",
  "prompt_store",

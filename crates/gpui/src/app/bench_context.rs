@@ -409,13 +409,22 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             })
             .expect("cannot benchmark renderer for entity without a current window");
 
+        let dispatcher = self.background_executor.dispatcher().clone();
         let collector = FrameTraceScope::start();
 
         let mut benchmark = || {
+            dispatcher
+                .as_bench()
+                .expect("validated in BenchAppContext::build")
+                .run_ready_main_tasks();
             self.with_window(view.entity_id(), |window, cx| {
                 view.update(cx, |view, cx| update(view, window, cx));
             })
             .expect("cannot benchmark renderer for entity without a current window");
+            dispatcher
+                .as_bench()
+                .expect("validated in BenchAppContext::build")
+                .run_ready_main_tasks();
             // Submit the frame drawn by the update's effect flush, mirroring
             // production where every drawn frame is presented. With a headless
             // renderer this includes scene submission to the GPU.
