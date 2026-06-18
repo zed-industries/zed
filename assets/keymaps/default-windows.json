@@ -35,7 +35,6 @@
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::RerunSession",
-      "f6": "debugger::Pause",
       "f10": "debugger::StepOver",
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
@@ -600,6 +599,11 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      // Move focus between the major regions of the window (editor, open
+      // panels, status bar). Accessibility navigation; mirrors VS Code's
+      // "Focus Next/Previous Part".
+      "f6": "workspace::FocusNextPart",
+      "shift-f6": "workspace::FocusPreviousPart",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
       "ctrl-r": "projects::OpenRecent",
@@ -1063,6 +1067,16 @@
       "alt-l": "git::GenerateCommitMessage",
       "shift-escape": "git::ExpandCommitEditor",
       "alt-shift-escape": "git::ToggleFillCommitEditor",
+    },
+  },
+  {
+    // Pause the running program. Scoped to the debug panel being focused with a
+    // running thread so that F6 stays free for region navigation
+    // (workspace::FocusNextPart) everywhere else.
+    "context": "DebugPanel && debugger_running",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f6": "debugger::Pause",
     },
   },
   {

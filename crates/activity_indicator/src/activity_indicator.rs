@@ -671,6 +671,7 @@ impl Render for ActivityIndicator {
                         }
                     })
                     .label_size(LabelSize::Small)
+                    .tab_index(0isize)
                     .map(|this| match content.icon {
                         ActivityIcon::LoadingSpinner => this.loading(true),
                         ActivityIcon::Icon(icon_name) => this.start_icon(

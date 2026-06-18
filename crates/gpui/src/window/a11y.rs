@@ -150,6 +150,9 @@ pub(crate) struct A11y {
     /// The window's title, used to label the root node so assistive
     /// technology can tell windows apart.
     window_title: Option<SharedString>,
+    /// The focus id we most recently reported as having no accessibility node,
+    /// used to log at most once per focus change rather than every frame.
+    last_focus_without_node: Option<FocusId>,
 }
 
 impl A11y {
@@ -167,6 +170,23 @@ impl A11y {
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
             window_title,
+            last_focus_without_node: None,
+        }
+    }
+
+    /// Logs (once per focus change) that the focused element is not exposed to
+    /// assistive technology because it has no accessibility node. When this
+    /// happens, screen readers fall back to announcing the whole window instead
+    /// of the focused element. The fix is to give the element both an
+    /// `.id(...)` and a `.role(...)`.
+    pub(crate) fn note_focus_without_node(&mut self, focus_id: FocusId, reason: &str) {
+        if self.last_focus_without_node != Some(focus_id) {
+            self.last_focus_without_node = Some(focus_id);
+            log::info!(
+                "a11y: focused element ({focus_id:?}) has no accessibility node \
+                 ({reason}); assistive technology will announce the whole window \
+                 instead. Give it both an `.id(...)` and a `.role(...)` to expose it."
+            );
         }
     }
 
@@ -207,7 +227,16 @@ impl A11y {
             }
         }
         if self.nodes.has_node(node_id) {
+            // The focused element is properly exposed; reset the dedup so a
+            // later focus on a node-less element logs again.
+            self.last_focus_without_node = None;
             self.nodes.set_focus(node_id);
+        } else {
+            // The element registered a focus handle and an id, but never got a
+            // node because it has no role.
+            if let Some(focus_id) = self.focus_ids.get(&node_id).copied() {
+                self.note_focus_without_node(focus_id, "it has an id but no role");
+            }
         }
     }
 

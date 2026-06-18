@@ -74,6 +74,7 @@ impl Render for DiagnosticIndicator {
                 Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
                     .truncate(true)
+                    .tab_index(0isize)
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action(
                             tooltip,
@@ -93,6 +94,8 @@ impl Render for DiagnosticIndicator {
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
+                    .tab_index(0isize)
+                    .aria_label("Project Diagnostics")
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action("Project Diagnostics", &Deploy, cx)
                     })

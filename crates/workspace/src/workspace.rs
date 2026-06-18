@@ -253,6 +253,13 @@ actions!(
         ActivatePreviousPane,
         /// Activates the last pane in the workspace.
         ActivateLastPane,
+        /// Moves focus to the next major region of the window (editor, open
+        /// panels, status bar), cycling and wrapping around. Intended as a
+        /// discoverable, screen-reader-friendly way to navigate the window.
+        FocusNextPart,
+        /// Moves focus to the previous major region of the window. See
+        /// [`FocusNextPart`].
+        FocusPreviousPart,
         /// Switches to the next window.
         ActivateNextWindow,
         /// Switches to the previous window.
@@ -1373,6 +1380,7 @@ pub struct Workspace {
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
+    titlebar_focus_handle: FocusHandle,
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
     project: Entity<Project>,
@@ -1820,6 +1828,7 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
+            titlebar_focus_handle: cx.focus_handle(),
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
             left_dock,
@@ -7483,6 +7492,12 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &ActivateLastPane, window, cx| {
                 workspace.activate_last_pane(window, cx)
             }))
+            .on_action(cx.listener(|workspace, _: &FocusNextPart, window, cx| {
+                workspace.move_part_focus(true, window, cx);
+            }))
+            .on_action(cx.listener(|workspace, _: &FocusPreviousPart, window, cx| {
+                workspace.move_part_focus(false, window, cx);
+            }))
             .on_action(
                 cx.listener(|workspace, _: &ActivateNextWindow, _window, cx| {
                     workspace.activate_next_window(cx)
@@ -7962,7 +7977,7 @@ impl Workspace {
         dock: &Entity<Dock>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Div> {
+    ) -> Option<Stateful<Div>> {
         if self.zoomed_position == Some(position) {
             return None;
         }
@@ -7973,7 +7988,20 @@ impl Workspace {
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
 
+        // Expose each open dock as a landmark region so assistive technology
+        // can navigate to it, and so region navigation announces it.
+        let (dock_element_id, dock_label) = match position {
+            DockPosition::Left => ("left-dock", "Left dock"),
+            DockPosition::Right => ("right-dock", "Right dock"),
+            DockPosition::Bottom => ("bottom-dock", "Bottom dock"),
+        };
+        let dock_is_open = dock.read(cx).is_open();
+
         let mut container = div()
+            .id(dock_element_id)
+            .when(dock_is_open, |this| {
+                this.role(gpui::Role::Complementary).aria_label(dock_label)
+            })
             .flex()
             .overflow_hidden()
             .flex_none()
@@ -8026,6 +8054,109 @@ impl Workspace {
         }
 
         Some(container)
+    }
+
+    /// Returns the focus handles of the currently-visible major window regions
+    /// ("parts"), in a stable cyclic order: left dock, editor, right dock,
+    /// bottom dock, status bar. Closed docks are skipped. Used by
+    /// [`FocusNextPart`]/[`FocusPreviousPart`] so keyboard and screen-reader
+    /// users can move between regions without a mouse.
+    fn focusable_parts(&self, cx: &App) -> Vec<FocusHandle> {
+        fn dock_focus_handle(dock: &Entity<Dock>, cx: &App) -> Option<FocusHandle> {
+            let dock = dock.read(cx);
+            if !dock.is_open() {
+                return None;
+            }
+            Some(
+                dock.active_panel()
+                    .map(|panel| panel.panel_focus_handle(cx))
+                    .unwrap_or_else(|| dock.focus_handle(cx)),
+            )
+        }
+
+        let mut parts = Vec::new();
+        if self.titlebar_item.is_some() {
+            parts.push(self.titlebar_focus_handle.clone());
+        }
+        parts.extend(dock_focus_handle(&self.left_dock, cx));
+
+        let center_pane = self
+            .last_active_center_pane
+            .as_ref()
+            .and_then(|pane| pane.upgrade())
+            .unwrap_or_else(|| self.center.first_pane());
+        parts.push(center_pane.read(cx).focus_handle(cx));
+
+        parts.extend(dock_focus_handle(&self.right_dock, cx));
+        parts.extend(dock_focus_handle(&self.bottom_dock, cx));
+        parts.push(self.status_bar.read(cx).focus_handle(cx));
+        parts
+    }
+
+    /// Moves focus to the next (or previous) visible window region. See
+    /// [`FocusNextPart`].
+    fn move_part_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let parts = self.focusable_parts(cx);
+        if parts.is_empty() {
+            return;
+        }
+        let current = parts
+            .iter()
+            .position(|handle| handle.contains_focused(window, cx));
+        let next_index = match current {
+            Some(index) if forward => (index + 1) % parts.len(),
+            Some(index) => (index + parts.len() - 1) % parts.len(),
+            None => 0,
+        };
+        window.focus(&parts[next_index], cx);
+        cx.notify();
+    }
+
+    /// Moves focus between the interactive controls within the title bar
+    /// toolbar in response to arrow keys. Navigation is clamped to the title
+    /// bar so arrows move between items and stop at the ends (ARIA toolbar
+    /// semantics); Tab is still used to leave the toolbar.
+    fn move_titlebar_item_focus(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let previous = window.focused(cx);
+        if forward {
+            window.focus_next(cx);
+        } else {
+            window.focus_prev(cx);
+        }
+        let landed_in_titlebar = window
+            .focused(cx)
+            .is_some_and(|handle| self.titlebar_focus_handle.contains(&handle, window));
+        // If Tab navigation wandered out of the toolbar, restore the previous
+        // item so the ends of the toolbar act as stops rather than exits.
+        if !landed_in_titlebar && let Some(previous) = previous {
+            window.focus(&previous, cx);
+        }
+        cx.notify();
+    }
+
+    /// Renders the center pane group wrapped in a `Main` landmark so assistive
+    /// technology recognizes the editor as the main region and can navigate to
+    /// it (and so focusing it via region navigation announces "Editor").
+    fn render_center(
+        &self,
+        render_cx: &PaneRenderContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        div()
+            .id("editor-region")
+            .role(gpui::Role::Main)
+            .aria_label("Editor")
+            .size_full()
+            .child(
+                self.center
+                    .render(self.zoomed.as_ref(), render_cx, window, cx),
+            )
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -8662,7 +8793,41 @@ impl Render for Workspace {
             .items_start()
             .text_color(colors.text)
             .overflow_hidden()
-            .children(self.titlebar_item.clone())
+            // Wrap the title bar in a focusable landmark so region navigation
+            // (FocusNextPart) can reach the top bar's controls and assistive
+            // technology announces it as a banner. The contained controls form
+            // a tab group (an ARIA toolbar): once focus is inside, Tab steps
+            // through the controls and arrow keys move between them.
+            .when_some(self.titlebar_item.clone(), |this, item| {
+                this.child(
+                    div()
+                        .id("titlebar-region")
+                        .track_focus(&self.titlebar_focus_handle)
+                        .tab_group()
+                        .role(gpui::Role::Banner)
+                        .aria_label("Title bar")
+                        .on_key_down(cx.listener(
+                            |workspace, event: &gpui::KeyDownEvent, window, cx| {
+                                if event.keystroke.modifiers.modified() {
+                                    return;
+                                }
+                                match event.keystroke.key.as_str() {
+                                    "right" => {
+                                        workspace.move_titlebar_item_focus(true, window, cx);
+                                        cx.stop_propagation();
+                                    }
+                                    "left" => {
+                                        workspace.move_titlebar_item_focus(false, window, cx);
+                                        cx.stop_propagation();
+                                    }
+                                    _ => {}
+                                }
+                            },
+                        ))
+                        .w_full()
+                        .child(item),
+                )
+            })
             .on_modifiers_changed(move |_, _, cx| {
                 for &id in &notification_entities {
                     cx.notify(id);
@@ -8798,12 +8963,7 @@ impl Render for Workspace {
                                                                 .when_some(paddings.0, |this, p| {
                                                                     this.child(p.border_r_1())
                                                                 })
-                                                                .child(self.center.render(
-                                                                    self.zoomed.as_ref(),
-                                                                    &pane_render_context,
-                                                                    window,
-                                                                    cx,
-                                                                ))
+                                                                .child(self.render_center(&pane_render_context, window, cx))
                                                                 .when_some(
                                                                     paddings.1,
                                                                     |this, p| {
@@ -8864,12 +9024,7 @@ impl Render for Workspace {
                                                                                 )
                                                                             },
                                                                         )
-                                                                        .child(self.center.render(
-                                                                            self.zoomed.as_ref(),
-                                                                            &pane_render_context,
-                                                                            window,
-                                                                            cx,
-                                                                        ))
+                                                                        .child(self.render_center(&pane_render_context, window, cx))
                                                                         .when_some(
                                                                             paddings.1,
                                                                             |this, p| {
@@ -8932,12 +9087,7 @@ impl Render for Workspace {
                                                                                 )
                                                                             },
                                                                         )
-                                                                        .child(self.center.render(
-                                                                            self.zoomed.as_ref(),
-                                                                            &pane_render_context,
-                                                                            window,
-                                                                            cx,
-                                                                        ))
+                                                                        .child(self.render_center(&pane_render_context, window, cx))
                                                                         .when_some(
                                                                             paddings.1,
                                                                             |this, p| {
@@ -8984,12 +9134,7 @@ impl Render for Workspace {
                                                         .when_some(paddings.0, |this, p| {
                                                             this.child(p.border_r_1())
                                                         })
-                                                        .child(self.center.render(
-                                                            self.zoomed.as_ref(),
-                                                            &pane_render_context,
-                                                            window,
-                                                            cx,
-                                                        ))
+                                                        .child(self.render_center(&pane_render_context, window, cx))
                                                         .when_some(paddings.1, |this, p| {
                                                             this.child(p.border_l_1())
                                                         }),

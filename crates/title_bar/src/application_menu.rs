@@ -168,6 +168,7 @@ impl ApplicationMenu {
                         )
                         .style(ButtonStyle::Subtle)
                         .icon_size(IconSize::Small)
+                        .tab_index(0isize)
                         .aria_label("Application menu"),
                         Tooltip::text("Open Application Menu"),
                     )
@@ -201,7 +202,8 @@ impl ApplicationMenu {
                             menu_name,
                         )
                         .style(ButtonStyle::Subtle)
-                        .label_size(LabelSize::Small),
+                        .label_size(LabelSize::Small)
+                        .tab_index(0isize),
                     )
                     .with_handle(current_handle.clone()),
             )
@@ -238,6 +240,12 @@ impl ApplicationMenu {
             .iter()
             .position(|entry| entry.handle.is_deployed());
         let Some(current_index) = current_index else {
+            // No menu is open, so there is nothing to switch between. Let the
+            // arrow key continue to the title bar's toolbar navigation so it
+            // can move focus between title bar controls. Without this, the
+            // `left`/`right` bindings in the `ApplicationMenu` context would
+            // silently swallow the key as a no-op.
+            cx.propagate();
             return;
         };
 

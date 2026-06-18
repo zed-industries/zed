@@ -1357,6 +1357,7 @@ impl Render for PanelButtons {
                             let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
+                                .tab_index(0isize)
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
