@@ -55,9 +55,48 @@ enum MatchTarget {
     },
 }
 
+impl MatchTarget {
+    fn entity_id(&self) -> EntityId {
+        match self {
+            MatchTarget::Markdown { markdown, .. } => markdown.entity_id(),
+            MatchTarget::Editor { editor, .. } => editor.entity_id(),
+        }
+    }
+
+    /// Index of this hit within its painted entity (markdown- or editor-local).
+    fn match_ix(&self) -> usize {
+        match self {
+            MatchTarget::Markdown {
+                markdown_match_ix, ..
+            } => *markdown_match_ix,
+            MatchTarget::Editor {
+                editor_match_ix, ..
+            } => *editor_match_ix,
+        }
+    }
+}
+
 struct ThreadMatch {
     entry_ix: usize,
     target: MatchTarget,
+    source_range: Range<usize>,
+}
+
+impl ThreadMatch {
+    /// Stable identity used to re-locate the active match across a rescan.
+    fn key(&self) -> MatchKey {
+        MatchKey {
+            entry_ix: self.entry_ix,
+            entity_id: self.target.entity_id(),
+            source_range: self.source_range.clone(),
+        }
+    }
+}
+
+#[derive(PartialEq)]
+struct MatchKey {
+    entry_ix: usize,
+    entity_id: EntityId,
     source_range: Range<usize>,
 }
 
@@ -86,49 +125,6 @@ enum ScannedTarget {
         markdown: Entity<Markdown>,
         ranges: Vec<Range<usize>>,
     },
-}
-
-struct MatchPosition {
-    entry_ix: usize,
-    target: MatchPositionTarget,
-    source_range: Range<usize>,
-}
-
-enum MatchPositionTarget {
-    Markdown(EntityId),
-    Editor(EntityId),
-}
-
-impl MatchPosition {
-    fn new(m: &ThreadMatch) -> Self {
-        Self {
-            entry_ix: m.entry_ix,
-            target: match &m.target {
-                MatchTarget::Markdown { markdown, .. } => {
-                    MatchPositionTarget::Markdown(markdown.entity_id())
-                }
-                MatchTarget::Editor { editor, .. } => {
-                    MatchPositionTarget::Editor(editor.entity_id())
-                }
-            },
-            source_range: m.source_range.clone(),
-        }
-    }
-
-    fn matches(&self, m: &ThreadMatch) -> bool {
-        self.entry_ix == m.entry_ix
-            && self.source_range == m.source_range
-            && match (&self.target, &m.target) {
-                (
-                    MatchPositionTarget::Markdown(entity_id),
-                    MatchTarget::Markdown { markdown, .. },
-                ) => *entity_id == markdown.entity_id(),
-                (MatchPositionTarget::Editor(entity_id), MatchTarget::Editor { editor, .. }) => {
-                    *entity_id == editor.entity_id()
-                }
-                _ => false,
-            }
-    }
 }
 
 pub struct ThreadSearchBar {
@@ -310,9 +306,9 @@ impl ThreadSearchBar {
 
     pub(super) fn update_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let previous_active_match_ix = self.active_match;
-        let previous_active_match = previous_active_match_ix
+        let previous_active_key = previous_active_match_ix
             .and_then(|ix| self.matches.get(ix))
-            .map(MatchPosition::new);
+            .map(ThreadMatch::key);
 
         let (query, err_msg) = self.build_query(cx);
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
@@ -415,7 +411,7 @@ impl ThreadSearchBar {
             this.update_in(cx, |this, window, cx| {
                 this.apply_search_results(
                     scanned,
-                    previous_active_match,
+                    previous_active_key,
                     previous_active_match_ix,
                     window,
                     cx,
@@ -428,7 +424,7 @@ impl ThreadSearchBar {
     fn apply_search_results(
         &mut self,
         scanned: Vec<ScannedTarget>,
-        previous_active_match: Option<MatchPosition>,
+        previous_active_key: Option<MatchKey>,
         previous_active_match_ix: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -493,9 +489,9 @@ impl ThreadSearchBar {
         }
 
         if !self.matches.is_empty() {
-            let preserved_ix = previous_active_match
+            let preserved_ix = previous_active_key
                 .as_ref()
-                .and_then(|position| self.matches.iter().position(|m| position.matches(m)));
+                .and_then(|key| self.matches.iter().position(|m| &m.key() == key));
             let active_match_ix = preserved_ix
                 .or_else(|| previous_active_match_ix.filter(|ix| *ix < self.matches.len()))
                 .unwrap_or(0);
@@ -519,49 +515,32 @@ impl ThreadSearchBar {
         let entry_ix = m.entry_ix;
         let source_index = m.source_range.start;
         let target = m.target.clone();
+        // Markdown and editor entity ids never collide, so the active hit is
+        // simply the painted entity whose id equals the target's.
+        let target_entity_id = target.entity_id();
+        let target_match_ix = target.match_ix();
 
-        let (target_markdown_id, target_markdown_match_ix) = match &target {
-            MatchTarget::Markdown {
-                markdown,
-                markdown_match_ix,
-            } => (Some(markdown.entity_id()), Some(*markdown_match_ix)),
-            MatchTarget::Editor { .. } => (None, None),
-        };
         for weak in &self.highlighted_markdowns {
-            if let Some(md) = weak.upgrade() {
-                let is_target = Some(weak.entity_id()) == target_markdown_id;
-                md.update(cx, |md, cx| {
-                    if is_target {
-                        md.set_active_search_highlight(target_markdown_match_ix, cx);
-                        if scroll_to_match {
-                            md.request_autoscroll_to_source_index(source_index, cx);
-                        }
-                    } else {
-                        md.set_active_search_highlight(None, cx);
+            if let Some(markdown) = weak.upgrade() {
+                let active = (weak.entity_id() == target_entity_id).then_some(target_match_ix);
+                markdown.update(cx, |markdown, cx| {
+                    markdown.set_active_search_highlight(active, cx);
+                    if active.is_some() && scroll_to_match {
+                        markdown.request_autoscroll_to_source_index(source_index, cx);
                     }
                 });
             }
         }
 
         // Editor highlight colors are computed by index, so repaint on navigation.
-        let target_editor_id = match &target {
-            MatchTarget::Editor { editor, .. } => Some(editor.entity_id()),
-            MatchTarget::Markdown { .. } => None,
-        };
-        let target_editor_match_ix = match &target {
-            MatchTarget::Editor {
-                editor_match_ix, ..
-            } => Some(*editor_match_ix),
-            MatchTarget::Markdown { .. } => None,
-        };
         let mut per_editor: HashMap<EntityId, (WeakEntity<Editor>, Vec<Range<Anchor>>)> =
             HashMap::default();
-        for m in &self.matches {
+        for mat in &self.matches {
             if let MatchTarget::Editor {
                 editor,
                 anchor_range,
                 ..
-            } = &m.target
+            } = &mat.target
             {
                 let entry = per_editor
                     .entry(editor.entity_id())
@@ -573,11 +552,7 @@ impl ThreadSearchBar {
             let Some(editor) = weak_editor.upgrade() else {
                 continue;
             };
-            let active_ix = if Some(editor_id) == target_editor_id {
-                target_editor_match_ix
-            } else {
-                None
-            };
+            let active_ix = (editor_id == target_entity_id).then_some(target_match_ix);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background(
                     HighlightKey::BufferSearchHighlights,
