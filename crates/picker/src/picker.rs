@@ -93,7 +93,6 @@ pub struct Picker<D: PickerDelegate> {
     default_shape: shape::Centered,
     vertical_padding: shape::VerticalPadding,
     size_bounds: shape::SizeBounds,
-    widest_item: Option<usize>,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
     /// Whether the `Picker` is rendered as a self-contained modal.
@@ -455,7 +454,6 @@ impl<D: PickerDelegate> Picker<D> {
             shape: shape.unwrap_or_default(),
             default_shape: shape::Centered::default(),
             vertical_padding: shape::VerticalPadding::default(),
-            widest_item: None,
             show_scrollbar: false,
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
@@ -498,11 +496,6 @@ impl<D: PickerDelegate> Picker<D> {
     /// This applies to the results. If there is no preview that is the whole picker.
     pub fn minimum_results_width(mut self, width: impl Into<Rems>) -> Self {
         self.size_bounds.min_results.width = width.into();
-        self
-    }
-
-    pub fn widest_item(mut self, ix: Option<usize>) -> Self {
-        self.widest_item = ix;
         self
     }
 
@@ -1054,9 +1047,6 @@ impl<D: PickerDelegate> Picker<D> {
                 }),
             )
             .with_sizing_behavior(sizing_behavior)
-            .when_some(self.widest_item, |el, widest_item| {
-                el.with_width_from_item(Some(widest_item))
-            })
             .flex_grow()
             .py_1()
             .track_scroll(&scroll_handle)

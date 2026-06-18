@@ -111,7 +111,6 @@ enum BranchListStyle {
 }
 
 pub struct BranchList {
-    width: Rems,
     pub picker: Entity<Picker<BranchListDelegate>>,
     picker_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -158,6 +157,9 @@ impl BranchList {
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
+                .width(width)
+                .height(rems(24.))
+                .no_vertical_padding()
                 .show_scrollbar(true)
                 .modal(!embedded)
         });
@@ -215,7 +217,6 @@ impl BranchList {
         Self {
             picker,
             picker_focus_handle,
-            width,
             _subscriptions: subscriptions,
             embedded,
         }
@@ -298,7 +299,6 @@ impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("GitBranchSelector")
-            .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_filter))
@@ -1470,7 +1470,6 @@ mod tests {
                     BranchList {
                         picker,
                         picker_focus_handle,
-                        width: rems(34.),
                         _subscriptions: vec![_subscription],
                         embedded: false,
                     }

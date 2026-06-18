@@ -36,10 +36,7 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use ui::{
-    HighlightedLabel, IconButton, IconName, Indicator, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
-};
+use ui::{HighlightedLabel, Indicator, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},

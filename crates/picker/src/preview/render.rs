@@ -1,8 +1,6 @@
 use gpui::Action;
-use ui::{
-    ActiveTheme, App, Color, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
-    ParentElement, StatefulInteractiveElement, Styled, TextSize, Window, div, v_flex,
-};
+use ui::TextSize;
+use ui::prelude::*;
 
 use crate::ToMultiBuffer;
 
@@ -25,11 +23,7 @@ impl EditorPreview {
 }
 
 impl EditorPreview {
-    pub(crate) fn render_preview_right(
-        &self,
-        window: &mut Window,
-        cx: &App,
-    ) -> impl IntoElement {
+    pub(crate) fn render_preview_right(&self, window: &mut Window, cx: &App) -> impl IntoElement {
         v_flex()
             .size_full()
             .border_l_1()
@@ -49,6 +43,7 @@ impl EditorPreview {
         if self.has_content(cx) {
             div()
                 .flex_1()
+                .debug_bg_blue()
                 .overflow_hidden()
                 .child(self.editor_as_giant_button())
                 .into_any_element()

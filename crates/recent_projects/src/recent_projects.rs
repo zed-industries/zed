@@ -552,7 +552,6 @@ pub fn add_wsl_distro(
 
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
-    rem_width: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -581,6 +580,9 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
+                .width(rems(rem_width))
+                .height(rems(24.))
+                .no_vertical_padding()
                 .show_scrollbar(true)
         });
 
@@ -626,7 +628,6 @@ impl RecentProjects {
         .detach();
         Self {
             picker,
-            rem_width,
             _subscriptions: subscriptions,
         }
     }
@@ -803,7 +804,6 @@ impl Render for RecentProjects {
             .on_action(cx.listener(Self::handle_toggle_open_menu))
             .on_action(cx.listener(Self::handle_remove_selected))
             .on_action(cx.listener(Self::handle_add_to_workspace))
-            .w(rems(self.rem_width))
             .child(self.picker.clone())
     }
 }

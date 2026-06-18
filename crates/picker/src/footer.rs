@@ -1,19 +1,14 @@
 use std::rc::Rc;
 
 use gpui::{Action, FocusHandle, Focusable};
-use ui::{
-    ActiveTheme, AnyElement, ButtonCommon, Clickable, Color, Context, ContextMenu, FluentBuilder,
-    IconButton, IconName, IconSize, IntoElement, KeyBinding, Label, LabelCommon, LabelSize,
-    ParentElement, PopoverMenu, SelectableButton, SharedString, Styled, Toggleable, Tooltip,
-    Window, div, h_flex, rems_from_px,
-};
+use ui::{ContextMenu, Divider, FluentBuilder, KeyBinding, PopoverMenu, Tooltip, prelude::*};
 
 use crate::Picker;
 use crate::PickerDelegate;
 use crate::SetPreviewBelow;
 use crate::SetPreviewRight;
-use crate::TogglePreview;
 use crate::ToggleActionsMenu;
+use crate::TogglePreview;
 use crate::preview;
 
 /// Line in the Actions menu on the default footer.
@@ -141,17 +136,9 @@ impl<D: PickerDelegate> Picker<D> {
         h_flex()
             .gap_1()
             .child(
-                ui::ButtonLike::new("picker-preview-toggle")
-                    .child(
-                        Label::new("Preview")
-                            .color(if preview_visible {
-                                Color::Accent
-                            } else {
-                                Color::Default
-                            })
-                            .size(LabelSize::Small),
-                    )
-                    .child(
+                Button::new("picker-preview-toggle", "Preview")
+                    .when(preview_visible, |this| this.color(Color::Accent))
+                    .key_binding(
                         KeyBinding::for_action_in(&TogglePreview, &focus_handle, cx)
                             .size(rems_from_px(12.)),
                     )
@@ -170,38 +157,39 @@ impl<D: PickerDelegate> Picker<D> {
             // The layout buttons (preview to the right / below) are only relevant
             // once the preview is showing, so hide them while it's hidden.
             .when(preview_visible, |this| {
-                this.child(
-                    IconButton::new("picker-preview-right", IconName::DiffSplit)
-                        .icon_size(IconSize::Small)
-                        .toggle_state(current == preview::Layout::Right)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Preview to the Right",
-                                &SetPreviewRight,
-                                &right_focus_handle,
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.set_preview_layout(preview::Layout::Right, window, cx)
-                        })),
-                )
-                .child(
-                    IconButton::new("picker-preview-below", IconName::DiffUnified)
-                        .icon_size(IconSize::Small)
-                        .toggle_state(current == preview::Layout::Below)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Preview Below",
-                                &SetPreviewBelow,
-                                &below_focus_handle,
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.set_preview_layout(preview::Layout::Below, window, cx)
-                        })),
-                )
+                this.child(Divider::vertical())
+                    .child(
+                        IconButton::new("picker-preview-right", IconName::DiffSplit)
+                            .icon_size(IconSize::Small)
+                            .toggle_state(current == preview::Layout::Right)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Preview to the Right",
+                                    &SetPreviewRight,
+                                    &right_focus_handle,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_preview_layout(preview::Layout::Right, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("picker-preview-below", IconName::DiffUnified)
+                            .icon_size(IconSize::Small)
+                            .toggle_state(current == preview::Layout::Below)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Preview Below",
+                                    &SetPreviewBelow,
+                                    &below_focus_handle,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_preview_layout(preview::Layout::Below, window, cx)
+                            })),
+                    )
             })
     }
 
@@ -218,9 +206,8 @@ impl<D: PickerDelegate> Picker<D> {
             .attach(gpui::Anchor::TopRight)
             .anchor(gpui::Anchor::BottomRight)
             .trigger(
-                ui::ButtonLike::new("picker-actions-trigger")
-                    .child(Label::new("Actions…").size(LabelSize::Small))
-                    .child(
+                Button::new("picker-actions-trigger", "Actions…")
+                    .key_binding(
                         KeyBinding::for_action_in(&ToggleActionsMenu, &focus_handle, cx)
                             .size(rems_from_px(12.)),
                     )
