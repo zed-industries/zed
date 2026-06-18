@@ -447,19 +447,28 @@ async fn predict_anthropic(
             }
         };
 
-        let (actual_patch, actual_cursor) = match parser_provider {
+        let parse_result = match parser_provider {
             PredictionProvider::TeacherJumps(_)
             | PredictionProvider::TeacherJumpsNonBatching(_) => {
-                TeacherJumpsPrompt::parse(example, &actual_output)?
+                TeacherJumpsPrompt::parse(example, &actual_output)
             }
-            _ => TeacherPrompt::parse(example, &actual_output)?,
+            _ => TeacherPrompt::parse(example, &actual_output),
+        };
+        // A teacher response can parse as text yet describe an invalid edit
+        // (e.g. an edit span crossing non-contiguous snippets, or a truncated
+        // span). Record the rejection on the prediction instead of propagating
+        // it: the raw output is preserved for `parse-output`/inspection, and a
+        // single bad example no longer aborts an entire (already paid for) batch.
+        let (actual_patch, actual_cursor, error) = match parse_result {
+            Ok((patch, cursor)) => (Some(patch), cursor, None),
+            Err(err) => (None, None, Some(format!("{err:#}"))),
         };
 
         let prediction = ExamplePrediction {
-            actual_patch: Some(actual_patch),
+            actual_patch,
             actual_output,
             actual_cursor,
-            error: None,
+            error,
             provider: if batched {
                 match example.prompt.as_ref().map(|prompt| prompt.provider) {
                     Some(PredictionProvider::TeacherJumps(_)) => {
@@ -566,19 +575,25 @@ async fn predict_openai(
             }
         };
 
-        let (actual_patch, actual_cursor) = match parser_provider {
+        let parse_result = match parser_provider {
             PredictionProvider::TeacherJumps(_)
             | PredictionProvider::TeacherJumpsNonBatching(_) => {
-                TeacherJumpsPrompt::parse(example, &actual_output)?
+                TeacherJumpsPrompt::parse(example, &actual_output)
             }
-            _ => TeacherPrompt::parse(example, &actual_output)?,
+            _ => TeacherPrompt::parse(example, &actual_output),
+        };
+        // See `predict_anthropic`: an unparseable/invalid teacher edit is
+        // recorded as a per-prediction error rather than aborting the batch.
+        let (actual_patch, actual_cursor, error) = match parse_result {
+            Ok((patch, cursor)) => (Some(patch), cursor, None),
+            Err(err) => (None, None, Some(format!("{err:#}"))),
         };
 
         let prediction = ExamplePrediction {
-            actual_patch: Some(actual_patch),
+            actual_patch,
             actual_output,
             actual_cursor,
-            error: None,
+            error,
             provider: if batched {
                 match example.prompt.as_ref().map(|prompt| prompt.provider) {
                     Some(PredictionProvider::TeacherJumps(_)) => {
