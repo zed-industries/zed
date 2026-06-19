@@ -5,7 +5,7 @@ use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
-use language_model::LanguageModelToolResultContent;
+use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
@@ -261,7 +261,8 @@ impl ContextServerRegistry {
             }
             ContextServerStatus::Stopped
             | ContextServerStatus::Error(_)
-            | ContextServerStatus::AuthRequired => {
+            | ContextServerStatus::AuthRequired
+            | ContextServerStatus::ClientSecretRequired { .. } => {
                 if let Some(registered_server) = self.registered_servers.remove(server_id) {
                     if !registered_server.tools.is_empty() {
                         cx.emit(ContextServerRegistryEvent::ToolsChanged);
@@ -346,7 +347,7 @@ impl AnyAgentTool for ContextServerTool {
         let authorize =
             event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
 
-        cx.spawn(async move |_cx| {
+        cx.spawn(async move |cx| {
             let input = input
                 .recv()
                 .await
@@ -394,15 +395,50 @@ impl AnyAgentTool for ContextServerTool {
             }
 
             let mut llm_output = Vec::new();
+            let mut tool_call_content = Vec::new();
             let mut concatenated_text = String::new();
             for content in response.content {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
                         concatenated_text.push_str(&text);
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(text.clone())),
+                        )));
                         llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
-                    context_server::types::ToolResponseContent::Image { .. } => {
-                        log::warn!("Ignoring image content from tool response");
+                    context_server::types::ToolResponseContent::Image { data, mime_type } => {
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Image(acp::ImageContent::new(
+                                data.clone(),
+                                mime_type.clone(),
+                            )),
+                        )));
+                        let language_model_image = cx
+                            .background_spawn({
+                                let mime_type = mime_type.clone();
+                                async move {
+                                    LanguageModelImage::from_base64_image(&data, &mime_type)
+                                }
+                            })
+                            .await;
+                        match language_model_image {
+                            Ok(Some(image)) => {
+                                llm_output.push(LanguageModelToolResultContent::Image(image));
+                            }
+                            Ok(None) => {
+                                log::warn!(
+                                    "Skipping MCP tool response image with MIME type `{}` because it cannot be converted for language model input",
+                                    mime_type
+                                );
+                            }
+                            Err(error) => {
+                                log::warn!(
+                                    "Failed to convert MCP tool response image with MIME type `{}` for language model input: {:#}",
+                                    mime_type,
+                                    error
+                                );
+                            }
+                        }
                     }
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
@@ -414,6 +450,10 @@ impl AnyAgentTool for ContextServerTool {
                         log::warn!("Ignoring resource link content from tool response");
                     }
                 }
+            }
+            if !tool_call_content.is_empty() {
+                event_stream
+                    .update_fields(acp::ToolCallUpdateFields::new().content(tool_call_content));
             }
             let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {

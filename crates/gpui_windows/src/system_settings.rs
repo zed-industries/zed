@@ -3,7 +3,7 @@ use std::{
     ffi::{c_uint, c_void},
 };
 
-use ::util::ResultExt;
+use gpui_util::ResultExt;
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_ACTION,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
