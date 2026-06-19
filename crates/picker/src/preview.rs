@@ -260,13 +260,31 @@ impl EditorPreview {
     ) {
         self.current_path = buffer.read(cx).file().map(|file| file.path().clone());
 
-        // TODO!(yara) do not set full range. We are not allowing scrolling anyway
-        let full_range = [rope::Point::zero()..buffer.read(cx).max_point()];
+        const MIN_LINE_HEIGHT_PX: Pixels = px(6.0);
+        const MARGIN: u32 = 2; // scrolling can offset things;
+        let max_rows = (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
+
         self.preview_editor.update(cx, |editor, cx| {
+            let focus_row = highlight
+                .as_ref()
+                .map(|hl| {
+                    hl.anchor_range
+                        .start
+                        .to_point(&buffer.read(cx).text_snapshot())
+                        .row
+                })
+                .unwrap_or_default()
+                .min(max_rows);
+
             let multi_buffer = editor.buffer().clone();
             multi_buffer.update(cx, |multi_buffer, cx| {
                 multi_buffer.clear(cx);
-                multi_buffer.set_excerpts_for_buffer(buffer, full_range, 0, cx);
+                multi_buffer.set_excerpts_for_buffer(
+                    buffer,
+                    [Point::new(focus_row, 0)..Point::new(focus_row, 0)],
+                    max_rows,
+                    cx,
+                );
             });
 
             editor.clear_row_highlights::<SearchMatchLineHighlight>();
