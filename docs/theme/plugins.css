@@ -58,6 +58,12 @@ kbd.keybinding {
   text-align: center;
 }
 
+.page-action-icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
 @media (max-width: 720px) {
   .page-header {
     flex-direction: column;

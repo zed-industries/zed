@@ -156,7 +156,13 @@ const copyPageActions = () => {
 
   const insertPageActionButtons = () => {
     const contentRoot = getContentRoot();
-    if (!contentRoot || contentRoot.querySelector(".page-actions")) return;
+    if (
+      !contentRoot ||
+      contentRoot.querySelector(".page-actions") ||
+      !headerCopyMarkdownButton
+    ) {
+      return;
+    }
 
     const firstHeading = contentRoot.querySelector("h1");
     if (!firstHeading) return;
@@ -166,22 +172,12 @@ const copyPageActions = () => {
 
     const actions = document.createElement("div");
     actions.className = "page-actions";
-    actions.innerHTML = `
-      <button class="page-action" type="button" data-copy-page>
-        <i class="fa fa-copy"></i>
-        <span>Copy page</span>
-      </button>
-      <button class="page-action" type="button" data-copy-markdown>
-        <i class="fa fa-code"></i>
-        <span>Copy as Markdown</span>
-      </button>
-    `;
 
     firstHeading.insertAdjacentElement("beforebegin", header);
+    headerCopyMarkdownButton.classList.remove("icon-button", "ib-hidden-mobile");
+    headerCopyMarkdownButton.classList.add("page-action", "page-action-icon");
+    actions.append(headerCopyMarkdownButton);
     header.append(firstHeading, actions);
-
-    registerButton(actions.querySelector("[data-copy-page]"), "fa fa-copy");
-    registerButton(actions.querySelector("[data-copy-markdown]"), "fa fa-code");
   };
 
   const markdownPathForCurrentPage = () => {
@@ -225,53 +221,6 @@ const copyPageActions = () => {
     return url.pathname;
   };
 
-  const copyRenderedPage = async (button) => {
-    if (isLoading) return;
-
-    try {
-      isLoading = true;
-      changeButtonIcon(button, "fa fa-spinner fa-spin", 0);
-
-      const contentRoot = getContentRoot();
-      if (!contentRoot) {
-        throw new Error("Page content not found");
-      }
-
-      const clone = contentRoot.cloneNode(true);
-      clone
-        .querySelectorAll(
-          ".page-actions, .footer-buttons, .footer, .toc-container, script, style",
-        )
-        .forEach((element) => element.remove());
-
-      const hiddenContainer = document.createElement("div");
-      hiddenContainer.style.position = "fixed";
-      hiddenContainer.style.inset = "-9999px auto auto -9999px";
-      hiddenContainer.style.width = "1px";
-      hiddenContainer.style.height = "1px";
-      hiddenContainer.style.overflow = "hidden";
-      hiddenContainer.appendChild(clone);
-      document.body.appendChild(hiddenContainer);
-      const pageContent = clone.innerText.trim();
-      hiddenContainer.remove();
-
-      if (!pageContent) {
-        throw new Error("No page content found to copy");
-      }
-
-      await copyText(pageContent);
-
-      changeButtonIcon(button, "fa fa-check", 1000);
-      showToast("Page copied to clipboard!");
-    } catch (error) {
-      console.error("Error copying page:", error);
-      changeButtonIcon(button, "fa fa-exclamation-triangle", 2000);
-      showToast("Failed to copy page. Please try again.", false);
-    } finally {
-      isLoading = false;
-    }
-  };
-
   const fetchAndCopyMarkdown = async (button) => {
     // Prevent multiple simultaneous requests
     if (isLoading) return;
@@ -306,24 +255,19 @@ const copyPageActions = () => {
     fetchAndCopyMarkdown(headerCopyMarkdownButton),
   );
 
-  document
-    .querySelector("[data-copy-page]")
-    ?.addEventListener("click", (event) =>
-      copyRenderedPage(event.currentTarget),
-    );
-
-  document
-    .querySelector("[data-copy-markdown]")
-    ?.addEventListener("click", (event) =>
-      fetchAndCopyMarkdown(event.currentTarget),
-    );
+  insertPageActionButtons();
 };
 
-// Initialize functionality when DOM is loaded
-document.addEventListener("DOMContentLoaded", () => {
+const initializePlugins = () => {
   darkModeToggle();
   requestAnimationFrame(copyPageActions);
-});
+};
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializePlugins);
+} else {
+  initializePlugins();
+}
 
 // Collapsible sidebar navigation for entire sections
 // Note: Initial collapsed state is applied in index.hbs to prevent flicker
