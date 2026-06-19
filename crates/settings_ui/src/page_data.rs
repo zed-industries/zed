@@ -9654,7 +9654,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 3] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
@@ -9674,6 +9674,65 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Limit Markdown Preview Width",
+                    description: "Whether to constrain the markdown preview content to a maximum width, centering it when the pane is wider, for optimal readability.",
+                    field: Box::new(SettingField::<bool> {
+                        organization_override: None,
+                        json_path: Some("markdown_preview.limit_content_width"),
+                        pick: |settings_content| {
+                            settings_content
+                                .markdown_preview
+                                .as_ref()?
+                                .limit_content_width
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .markdown_preview
+                                .get_or_insert_default()
+                                .limit_content_width = value;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    let enabled = settings_content
+                        .markdown_preview
+                        .as_ref()?
+                        .limit_content_width
+                        .unwrap_or(true);
+                    Some(if enabled { 1 } else { 0 })
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Max Width",
+                        description: "Maximum content width in pixels. Content will be centered when the pane is wider than this value.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("markdown_preview.max_width"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .markdown_preview
+                                    .as_ref()?
+                                    .max_width
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .markdown_preview
+                                    .get_or_insert_default()
+                                    .max_width = value;
+                            },
+                        }),
+                        metadata: None,
+                    }],
+                ],
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Replace Emoji Shortcode",
