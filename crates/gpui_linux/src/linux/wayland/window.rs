@@ -404,8 +404,9 @@ impl WaylandWindowState {
     }
 
     pub fn is_transparent(&self) -> bool {
-        self.decorations == WindowDecorations::Client
-            || self.background_appearance != WindowBackgroundAppearance::Opaque
+        self.background_appearance != WindowBackgroundAppearance::Opaque
+            || (self.decorations == WindowDecorations::Client
+                && !matches!(self.surface_state, WaylandSurfaceState::LayerShell(_)))
     }
 
     fn update_subpixel_layout(&mut self) {
@@ -1621,10 +1622,9 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     );
 
     // Note that rounded corners make this rectangle API hard to work with.
-    // As this is common when using CSD, let's just disable this API.
-    if state.background_appearance == WindowBackgroundAppearance::Opaque
-        && state.decorations == WindowDecorations::Server
-    {
+    // As this is common when using CSD, avoid this API for normal
+    // client-decorated windows. Layer-shell surfaces do not have CSD chrome.
+    if opaque {
         // Promise the compositor that this region of the window surface
         // contains no transparent pixels. This allows the compositor to skip
         // updating whatever is behind the surface for better performance.
