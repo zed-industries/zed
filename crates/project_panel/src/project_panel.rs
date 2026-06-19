@@ -2524,14 +2524,19 @@ impl ProjectPanel {
                 let mut changes = Vec::new();
 
                 for (entry_id, worktree_id, _) in file_paths {
-                    let trashed_entry = panel
-                        .update(cx, |panel, cx| {
-                            panel
-                                .project
-                                .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                                .context("no such entry")
-                        })??
-                        .await?;
+                    // Delete entry independently, single fail will not abort the batch.
+                    let Some(task) = panel.update(cx, |panel, cx| {
+                        panel
+                            .project
+                            .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
+                    })?
+                    else {
+                        continue;
+                    };
+
+                    let Ok(trashed_entry) = task.await else {
+                        continue;
+                    };
 
                     // Keep track of trashed change so that we can then record
                     // all of the changes at once, such that undoing and redoing
