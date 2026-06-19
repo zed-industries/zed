@@ -827,7 +827,9 @@ fn handle_postprocessing() -> Result<()> {
 
 #[derive(Debug)]
 struct DocsPage {
+    section: String,
     title: String,
+    description: Option<String>,
     source_path: PathBuf,
     content: String,
 }
@@ -842,8 +844,12 @@ fn write_ai_discovery_artifacts(book: &Book, destination: &Path, site_url: &str)
 
 fn docs_pages(book: &Book) -> Vec<DocsPage> {
     let mut pages = Vec::new();
+    let mut section = "Docs".to_string();
     for item in book.iter() {
         let BookItem::Chapter(chapter) = item else {
+            if let BookItem::PartTitle(part_title) = item {
+                section.clone_from(part_title);
+            }
             continue;
         };
         let Some(source_path) = chapter.source_path.as_ref() else {
@@ -853,7 +859,9 @@ fn docs_pages(book: &Book) -> Vec<DocsPage> {
             continue;
         }
         pages.push(DocsPage {
+            section: section.clone(),
             title: chapter.name.clone(),
+            description: docs_page_description(&chapter.content),
             source_path: source_path.clone(),
             content: chapter.content.clone(),
         });
@@ -890,24 +898,78 @@ fn copy_markdown_sources(destination: &Path, site_url: &str, pages: &[DocsPage])
 }
 
 fn markdown_source_contents(contents: &str) -> String {
-    let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
-    meta_regex.replace(contents, "").trim_start().to_string()
+    front_matter_comment_regex()
+        .replace(contents, "")
+        .trim_start()
+        .to_string()
+}
+
+fn docs_page_description(contents: &str) -> Option<String> {
+    docs_page_metadata(contents).and_then(|metadata| {
+        metadata
+            .get("description")
+            .map(|description| {
+                description
+                    .trim()
+                    .trim_matches('"')
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|description| !description.is_empty())
+    })
+}
+
+fn docs_page_metadata(contents: &str) -> Option<HashMap<String, String>> {
+    let captures = front_matter_comment_regex().captures(contents)?;
+    serde_json::from_str(&captures[1]).ok()
+}
+
+fn front_matter_comment_regex() -> &'static Regex {
+    static FRONT_MATTER_COMMENT_REGEX: OnceLock<Regex> = OnceLock::new();
+    FRONT_MATTER_COMMENT_REGEX
+        .get_or_init(|| Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "([^\\n]*)")).unwrap())
 }
 
 fn write_llms_txt(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Result<()> {
     let mut contents = String::new();
     contents.push_str("# Zed Docs\n\n");
-    contents.push_str("> Official Zed documentation pages with same-origin Markdown links.\n\n");
-    contents.push_str("## Docs\n\n");
+    contents.push_str(
+        "> Official Zed documentation index with links to Markdown versions of each docs page.\n\n",
+    );
+    contents.push_str(
+        "Use these links for concise Markdown copies of Zed documentation pages. Each linked page mirrors the corresponding `/docs/*.html` page without site navigation or styling.\n\n",
+    );
+    let mut current_section = None;
     for page in pages {
+        if current_section != Some(page.section.as_str()) {
+            if current_section.is_some() {
+                contents.push('\n');
+            }
+            contents.push_str("## ");
+            contents.push_str(&markdown_text(&page.section));
+            contents.push_str("\n\n");
+            current_section = Some(page.section.as_str());
+        }
         contents.push_str("- [");
-        contents.push_str(&page.title);
+        contents.push_str(&markdown_text(&page.title));
         contents.push_str("](");
         contents.push_str(&absolute_docs_url(site_url, &page.source_path));
-        contents.push_str(")\n");
+        contents.push(')');
+        if let Some(description) = &page.description {
+            contents.push_str(": ");
+            contents.push_str(&markdown_text(description));
+        }
+        contents.push('\n');
     }
     std::fs::write(destination.join("llms.txt"), contents).context("failed to write llms.txt")?;
     Ok(())
+}
+
+fn markdown_text(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }
 
 fn write_sitemap_xml(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Result<()> {
