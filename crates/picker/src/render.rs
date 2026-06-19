@@ -1,4 +1,4 @@
-use gpui::{canvas, px};
+use gpui::canvas;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{

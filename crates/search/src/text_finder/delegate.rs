@@ -1,3 +1,25 @@
+//! The text_finder is a minimal modal interface to the project_search. It is
+//! targeted towards search for exploration. It can also be used as a filter
+//! step to the project_search.
+//!
+//! Basic interaction:
+//!
+//! Open text finder --- Open file ---> File tab
+//!
+//!                     (text_finder action)
+//! Open text finder --- ToProjectSearch ---> Project search tab
+//!
+//! Can also have a little loop where the user uses the ProjectSearch filters etc
+//! to refine the search:
+//!
+//!                     (project seach tab)
+//!                  (removes tab, opens modal)
+//! Project search tab --- ToTextFinder ---> Text finder modal
+//!                             ^                  |
+//!                             |             ToProjectSeach (adds tab,
+//!                             |                  |          closes modal)
+//!                             |                  V
+//!                             . --------  Project seach tab
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,8 +43,8 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    ButtonStyle, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
-    Tooltip, prelude::*,
+    Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable, Tooltip,
+    prelude::*,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
@@ -32,29 +54,6 @@ use workspace::item::ItemSettings;
 use super::SearchMatch;
 use crate::project_search::{ActiveSettings, ProjectSearch};
 use crate::{ProjectSearchView, SearchOption, SearchOptions};
-
-/// The text_finder is a minimal modal interface to the project_search. It is
-/// targeted towards search for exploration. It can also be used as a filter
-/// step to the project_search.
-///
-/// Basic interaction:
-///
-/// Open text finder --- Open file ---> File tab
-///
-///                     (text_finder action)
-/// Open text finder --- ToProjectSearch ---> Project search tab
-///
-/// Can also have a little loop where the user uses the ProjectSearch filters etc
-/// to refine the search:
-///
-///                     (project seach tab)
-///                  (removes tab, opens modal)
-/// Project search tab --- ToTextFinder ---> Text finder modal
-///                             ^                  |
-///                             |             ToProjectSeach (adds tab,
-///                             |                  |          closes modal)
-///                             |                  V
-///                             . --------  Project seach tab
 
 pub struct Delegate {
     pub(crate) project_search_view: Entity<ProjectSearchView>,
@@ -98,11 +97,10 @@ async fn get_ongoing_search(
 ) -> Option<SearchResults<SearchResult>> {
     let ongoing_search = project_search_view.update(cx, |view, cx| {
         view.entity.update(cx, |search, _| {
-            search.pending_search.take().map(|ongoing| {
+            search.pending_search.take().inspect(|_| {
                 search
                     .project_search_turning_into_text_finder
                     .store(true, Ordering::Relaxed);
-                ongoing
             })
         })
     })?;

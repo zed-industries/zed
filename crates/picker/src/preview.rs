@@ -23,17 +23,12 @@ pub struct Preview {
     pub(crate) layout: Layout,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Layout {
+    #[default]
     Hidden,
     Below,
     Right,
-}
-
-impl Default for Layout {
-    fn default() -> Self {
-        Self::Hidden
-    }
 }
 
 impl Preview {
@@ -130,9 +125,6 @@ impl Update {
         }
     }
 }
-
-/// TODO! rename relative position
-/// - wire up autosave for the editor
 
 struct SearchMatchLineHighlight;
 
@@ -302,7 +294,7 @@ impl EditorPreview {
 
             editor.highlight_background(
                 HighlightKey::PickerPreview,
-                &[range.clone()],
+                &[range],
                 |_, theme| theme.colors().search_match_background,
                 cx,
             );

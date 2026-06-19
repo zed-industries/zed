@@ -35,7 +35,6 @@ ui_input.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 multi_buffer.workspace = true
-log.workspace = true
 util.workspace = true
 
 [dev-dependencies]

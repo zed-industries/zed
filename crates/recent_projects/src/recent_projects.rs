@@ -2573,7 +2573,8 @@ mod tests {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .max_height(Some(px(240.).into()))
+                .height(Rems::from_pixels(px(240.0), window))
+                .no_vertical_padding()
         });
         draw(cx);
         (picker, cx)
