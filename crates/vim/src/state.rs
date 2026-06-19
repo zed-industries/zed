@@ -15,7 +15,8 @@ use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle,
+    WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
 
@@ -77,6 +78,15 @@ impl Mode {
 
     pub fn is_helix(&self) -> bool {
         matches!(self, Self::HelixNormal | Self::HelixSelect)
+    }
+
+    /// `HelixNormal` qualifies because its cursor is itself a one-character selection.
+    pub fn has_selection(&self) -> bool {
+        self.is_visual() || matches!(self, Self::HelixNormal)
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal | Self::HelixNormal)
     }
 }
 
@@ -171,7 +181,9 @@ pub struct HelixJumpLabel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelixJumpBehaviour {
     Move,
+    MoveToWordStart,
     Extend,
+    ExtendToWordStart,
 }
 
 #[derive(Default, Clone, Debug)]

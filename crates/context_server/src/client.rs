@@ -131,6 +131,7 @@ struct Notification<'a, T> {
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
+    #[serde(skip_serializing_if = "is_null_value")]
     params: T,
 }
 

@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use collections::HashMap;
 use editor::Editor;
-use gpui::{App, AppContext as _, Context, Entity, Task, Window};
+use gpui::{App, AppContext as _, Context, Entity, Task, TaskExt, Window};
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
 use workspace::Workspace;

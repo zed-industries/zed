@@ -20,7 +20,9 @@ gpui.workspace = true
 gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
+log.workspace = true
 menu.workspace = true
+num-format.workspace = true
 schemars.workspace = true
 serde.workspace = true
 smallvec.workspace = true
@@ -34,6 +36,9 @@ windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["log"]
 
 [features]
 default = []

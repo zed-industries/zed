@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use collections::HashMap;
 pub use ipc_channel::ipc;
@@ -65,6 +67,8 @@ pub enum CliRequest {
         env: Option<HashMap<String, String>>,
         user_data_dir: Option<String>,
         dev_container: bool,
+        #[serde(default)]
+        cwd: Option<PathBuf>,
     },
     SetOpenBehavior {
         behavior: CliBehaviorSetting,

@@ -33,7 +33,7 @@ use dap::{
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
     Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
+    NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
