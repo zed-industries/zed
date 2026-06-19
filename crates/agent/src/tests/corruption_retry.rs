@@ -1,8 +1,7 @@
 use super::*;
-use crate::thread::MAX_CORRUPTION_RETRY_ATTEMPTS;
+use crate::thread::{BASE_RETRY_DELAY, MAX_CORRUPTION_RETRY_ATTEMPTS};
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use pretty_assertions::assert_eq;
-use std::time::Duration;
 
 /// When the model ends a turn without calling `attempt_completion`,
 /// a MissingCompletionTool error should be injected and a retry triggered.
@@ -30,7 +29,7 @@ async fn test_missing_completion_tool_triggers_retry(cx: &mut TestAppContext) {
     fake_model.end_last_completion_stream();
 
     // Advance past the corruption retry delay
-    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.executor().advance_clock(BASE_RETRY_DELAY);
     cx.run_until_parked();
 
     // Second attempt: model properly calls attempt_completion
@@ -94,14 +93,14 @@ async fn test_missing_completion_tool_retries_exhausted(cx: &mut TestAppContext)
     // Simulate more rounds of missing attempt_completion than MAX_CORRUPTION_RETRY_ATTEMPTS.
     // Each round: model ends turn without attempt_completion → retry.
     // After MAX_CORRUPTION_RETRY_ATTEMPTS + 1, the error should propagate.
-    for _ in 0..MAX_CORRUPTION_RETRY_ATTEMPTS + 1 {
+    for _ in 0..=MAX_CORRUPTION_RETRY_ATTEMPTS {
         fake_model.send_last_completion_stream_text_chunk("I'm done!");
         fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
             StopReason::EndTurn,
         ));
         fake_model.end_last_completion_stream();
 
-        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
     }
 
@@ -236,7 +235,7 @@ async fn test_corruption_retry_attempt_counts(cx: &mut TestAppContext) {
         ));
         fake_model.end_last_completion_stream();
 
-        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
     }
 

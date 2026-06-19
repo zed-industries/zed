@@ -80,10 +80,22 @@ impl CorruptionSnapshot {
     }
 
     /// Truncate the captured output to the given byte budget.
+    ///
+    /// Uses `char_indices` to find a UTF-8 boundary so `split_off`
+    /// never panics on multi-byte characters.
     pub fn truncate_output(&mut self, max_bytes: usize) {
         if self.last_output.len() > max_bytes {
             let remainder = self.last_output.len() - max_bytes;
-            self.last_output = self.last_output.split_off(remainder);
+            // Find the nearest char boundary at or after `remainder`
+            // so split_off never splits inside a multi-byte codepoint.
+            let split_at = self
+                .last_output
+                .char_indices()
+                .skip_while(|(idx, _)| *idx < remainder)
+                .map(|(idx, _)| idx)
+                .next()
+                .unwrap_or(self.last_output.len());
+            self.last_output = self.last_output.split_off(split_at);
         }
     }
 

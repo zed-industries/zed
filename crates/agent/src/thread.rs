@@ -3489,7 +3489,15 @@ impl Thread {
             let max_bytes = CorruptionSnapshot::DEFAULT_MAX_OUTPUT_BYTES;
             if self.last_output_text.len() > max_bytes * 2 {
                 let start = self.last_output_text.len() - max_bytes;
-                self.last_output_text = self.last_output_text.split_off(start);
+                // Find the nearest char boundary at or after `start`
+                // so split_off never panics on multi-byte characters.
+                let split_at = self.last_output_text
+                    .char_indices()
+                    .skip_while(|(idx, _)| *idx < start)
+                    .map(|(idx, _)| idx)
+                    .next()
+                    .unwrap_or(self.last_output_text.len());
+                self.last_output_text = self.last_output_text.split_off(split_at);
             }
         }
 
