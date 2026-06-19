@@ -131,14 +131,6 @@ impl FeatureFlag for AgentSettingsUiFeatureFlag {
 }
 register_feature_flag!(AgentSettingsUiFeatureFlag);
 
-pub struct AutoWatchFeatureFlag;
-
-impl FeatureFlag for AutoWatchFeatureFlag {
-    const NAME: &'static str = "auto-watch-screens";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AutoWatchFeatureFlag);
-
 /// Wraps agent-run terminal commands in an OS-level sandbox where supported
 /// (currently macOS Seatbelt only). When off, terminal commands run with the
 /// agent's full ambient permissions, as they always have.
