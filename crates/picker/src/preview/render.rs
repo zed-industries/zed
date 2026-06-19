@@ -1,5 +1,4 @@
-use gpui::Action;
-use ui::TextSize;
+use gpui::{Action, StyledText};
 use ui::prelude::*;
 
 use crate::ToMultiBuffer;
@@ -50,16 +49,15 @@ impl EditorPreview {
         }
     }
 
-    fn render_empty(&self, window: &mut Window, cx: &App) -> impl IntoElement {
+    fn render_empty(&self, _window: &mut Window, cx: &App) -> impl IntoElement {
         let content = match self.message() {
-            Some(message) => {
-                let mut text_style = window.text_style();
-                text_style.color = Color::Muted.color(cx);
-                text_style.font_size = TextSize::Large.rems(cx).into();
-                message.to_styled_text(&text_style).into_any_element()
-            }
+            // `with_highlights` inherits the container's text style (set below),
+            // while keeping the message's own highlights (e.g. the file path in
+            // the file finder's "Create new file" entry).
+            Some(message) => StyledText::new(message.text.clone())
+                .with_highlights(message.highlights.iter().cloned())
+                .into_any_element(),
             None => Label::new("No results to preview")
-                .size(LabelSize::Large)
                 .color(Color::Muted)
                 .into_any_element(),
         };
@@ -67,6 +65,9 @@ impl EditorPreview {
             .size_full()
             .items_center()
             .justify_center()
+            .font_ui(cx)
+            .text_ui(cx)
+            .text_color(Color::Muted.color(cx))
             .child(content)
     }
 

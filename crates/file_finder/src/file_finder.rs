@@ -1817,7 +1817,7 @@ impl PickerDelegate for FileFinderDelegate {
                     ..Default::default()
                 };
                 let mut message = picker::HighlightedTextBuilder::default();
-                message.push_plain("Create new file ");
+                message.push_plain("Create file ");
                 message.push_styled(project_path.path.display(path_style), path_highlight);
                 message.push_plain("?");
                 Some(picker::PreviewUpdate::message(message.build()))
