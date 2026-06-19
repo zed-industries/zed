@@ -20,8 +20,8 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 mod footer;
 mod head;
-pub mod parts;
 pub mod highlighted_match_with_paths;
+pub mod parts;
 mod persistence;
 pub mod popover_menu;
 mod preview;
@@ -474,7 +474,6 @@ impl<D: PickerDelegate> Picker<D> {
                 .flatten()
                 .unwrap_or_default();
         };
-        // TODO!(yara) This must overwrite any shape from settings
         let shape = persistence::try_load_shape(D::name(), preview.as_ref().map(|p| p.layout), cx)
             .log_err()
             .flatten();
@@ -968,6 +967,10 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         let match_count = self.delegate.match_count();
+        if match_count == 0 && let Some(preview) = &mut self.preview {
+             preview.clear(cx)
+        }
+
         match &mut self.element_container {
             ElementContainer::List(state) => match scroll_behavior {
                 ScrollBehavior::RevealSelected => {

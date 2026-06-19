@@ -5,9 +5,10 @@ use std::sync::Arc;
 use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, TaskExt, Window};
-use language::{Buffer, HighlightedText};
+use language::{Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
 use project::Project;
-use ui::{ActiveTheme, IntoElement};
+use rope::Point;
+use ui::{ActiveTheme, IntoElement, Pixels, px};
 use util::rel_path::RelPath;
 
 pub mod render;
@@ -46,10 +47,10 @@ impl Preview {
         });
     }
 
-    pub fn render(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    pub fn render(&self, cx: &mut App) -> impl IntoElement {
         let layout = self.layout;
         self.content.update(cx, |content, cx| {
-            content.render(layout, window, cx).into_any_element()
+            content.render(layout, cx).into_any_element()
         })
     }
 
@@ -59,6 +60,11 @@ impl Preview {
         self.content.update(cx, |content, cx| {
             content.scroll_to_focus_match(window, cx);
         })
+    }
+
+    /// Empty the preview and show a placeholder message
+    pub(crate) fn clear(&self, cx: &mut App) {
+        self.content.update(cx, |content, _| content.clear())
     }
 }
 
@@ -167,20 +173,20 @@ impl EditorPreview {
             editor
         });
 
-        Self {
+        let mut this = Self {
             project,
             preview_editor,
             current_path: None,
             message: None,
-        }
+        };
+        this.clear(); // picker starts with no resutls.
+        this
     }
 
-    pub(crate) fn message(&self) -> Option<&HighlightedText> {
-        self.message.as_ref()
-    }
-
-    pub(crate) fn has_content(&self, cx: &App) -> bool {
-        !self.preview_editor.read(cx).is_empty(cx)
+    fn clear(&mut self) {
+        let mut message = HighlightedTextBuilder::default();
+        message.push_plain("No results to preview");
+        self.message = Some(message.build());
     }
 
     fn update(&mut self, update: Update, window: &mut Window, cx: &mut Context<Self>) {
@@ -191,31 +197,17 @@ impl EditorPreview {
 
         match source {
             PreviewSource::Path(abs_path) => {
-                self.message = None;
                 self.update_from_path(abs_path, highlight, window, cx);
             }
             PreviewSource::Buffer(buffer) => {
-                self.message = None;
-                self.finish_update(buffer, highlight, window, cx);
+                self.update_from_buffer(buffer, highlight, window, cx);
                 cx.notify();
             }
             PreviewSource::Message(message) => {
-                self.show_message(message, cx);
+                self.message = Some(message);
+                cx.notify();
             }
         }
-    }
-
-    fn show_message(&mut self, message: HighlightedText, cx: &mut Context<Self>) {
-        self.current_path = None;
-        self.message = Some(message);
-        // The preview editor is read-only, so `Editor::clear` is a no-op here;
-        // clear the underlying multibuffer directly to drop any stale content.
-        self.preview_editor.update(cx, |editor, cx| {
-            editor.buffer().update(cx, |multi_buffer, cx| {
-                multi_buffer.clear(cx);
-            });
-        });
-        cx.notify();
     }
 
     fn update_from_path(
@@ -243,7 +235,7 @@ impl EditorPreview {
         cx.spawn_in(window, async move |this, cx| {
             let buffer = open_task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.finish_update(buffer, highlight, window, cx);
+                this.update_from_buffer(buffer, highlight, window, cx);
                 cx.notify();
             })?;
             anyhow::Ok(())
@@ -251,13 +243,14 @@ impl EditorPreview {
         .detach_and_log_err(cx);
     }
 
-    fn finish_update(
+    fn update_from_buffer(
         &mut self,
         buffer: Entity<Buffer>,
         highlight: Option<MatchLocation>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.message = None; // show the preview editor
         self.current_path = buffer.read(cx).file().map(|file| file.path().clone());
 
         const MIN_LINE_HEIGHT_PX: Pixels = px(6.0);
