@@ -17,6 +17,8 @@ use std::time::Duration;
 use text::OffsetRangeExt as _;
 use util::ResultExt as _;
 
+use util::ResultExt as _;
+
 use crate::{
     CodeAction, LspAction, LspStore, LspStoreEvent, Project,
     lsp_command::{GetCodeLens, LspCommand as _},
@@ -304,7 +306,7 @@ impl LspStore {
     /// `(id, resolved_action)` pair is returned.
     ///
     /// All visibility / batching policy lives in the caller. Remote (proto)
-    /// resolves are not yet supported and currently yield `None`.
+    /// resolves are forwarded to the host via [`Self::resolve_code_action`].
     pub fn resolve_code_lens(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -339,6 +341,47 @@ impl LspStore {
             return Task::ready(None).shared();
         };
         let lens = lens.clone();
+        let action = cached.clone();
+
+        if self.upstream_client().is_some() {
+            if !self.check_if_capable_for_proto_request(buffer, GetCodeLens::can_resolve_lens, cx) {
+                return Task::ready(None).shared();
+            }
+            let resolve = self.resolve_code_action(buffer, action, cx);
+            let task = cx
+                .spawn(async move |lsp_store, cx| {
+                    let resolved = resolve
+                        .await
+                        .context("resolving remote code lens")
+                        .log_err()?;
+                    lsp_store
+                        .update(cx, |lsp_store, _| {
+                            let code_lens = lsp_store
+                                .lsp_data
+                                .get_mut(&buffer_id)
+                                .and_then(|data| data.code_lens.as_mut())?;
+                            code_lens.resolving.remove(&key);
+                            let action = code_lens
+                                .lens
+                                .get_mut(&server_id)
+                                .and_then(|cache| cache.get_mut(&lens_id))?;
+                            action.resolved = true;
+                            action.lsp_action = resolved.lsp_action;
+                            Some((lens_id, action.clone()))
+                        })
+                        .ok()
+                        .flatten()
+                })
+                .shared();
+            if let Some(code_lens) = self
+                .lsp_data
+                .get_mut(&buffer_id)
+                .and_then(|data| data.code_lens.as_mut())
+            {
+                code_lens.resolving.insert(key, task.clone());
+            }
+            return task;
+        }
 
         let Some(server) = self.language_server_for_id(server_id) else {
             return Task::ready(None).shared();
