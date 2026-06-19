@@ -288,6 +288,7 @@ fn render_tool_list_item(
                         tool_name,
                         "Tool Permissions",
                         None,
+                        true,
                         render_fn,
                         window,
                         cx,
@@ -976,8 +977,7 @@ fn render_user_pattern_row(
     let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(input_id)
+    SettingsInputField::new(input_id)
         .with_initial_text(pattern)
         .tab_index(0)
         .with_buffer_font()
@@ -1037,8 +1037,7 @@ fn render_add_pattern_input(
     let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(input_id)
+    SettingsInputField::new(input_id)
         .with_placeholder("Add regex pattern…")
         .tab_index(0)
         .with_buffer_font()
@@ -1422,12 +1421,6 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
-            // update_plan updates UI-visible planning state but does not use
-            // tool permission rules.
-            "update_plan",
-            // update_title updates UI-visible session metadata but
-            // does not use tool permission rules.
-            "update_title",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

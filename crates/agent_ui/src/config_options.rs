@@ -299,8 +299,9 @@ impl ConfigOptionSelector {
                     Picker::nonsearchable_list(delegate, window, picker_cx)
                 }
                 .show_scrollbar(true)
-                .width(rems(20.))
-                .max_height(Some(rems(20.).into()))
+                .minimum_results_width(rems(20.))
+                .height(rems(20.))
+                .no_vertical_padding()
             })
         };
 
@@ -364,9 +365,16 @@ impl ConfigOptionSelector {
             IconName::ChevronDown
         };
 
+        let value_name = self.current_value_name();
+        let display_name = if value_name.len() > 33 {
+            format!("{}…", &value_name[..32])
+        } else {
+            value_name
+        };
+
         Button::new(
             ElementId::Name(format!("config-option-{}", option.id.0).into()),
-            self.current_value_name(),
+            display_name,
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
@@ -551,6 +559,10 @@ impl ConfigOptionPickerDelegate {
 
 impl PickerDelegate for ConfigOptionPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "config options"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()

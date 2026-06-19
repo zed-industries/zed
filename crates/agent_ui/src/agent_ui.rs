@@ -290,6 +290,8 @@ actions!(
         ScrollOutputToPreviousMessage,
         /// Scroll the output to the next user message.
         ScrollOutputToNextMessage,
+        /// Toggles in-thread search over the current agent thread's contents.
+        ToggleSearch,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
@@ -556,7 +558,26 @@ pub fn init(
 ) {
     agent::ThreadStore::init_global(cx);
     prompt_store::init(cx);
-    skill_creator::init(cx);
+
+    cx.set_global(agent_skills::SkillsUpdatedHook(std::rc::Rc::new(|cx| {
+        let workspaces: Vec<_> = workspace::AppState::global(cx)
+            .workspace_store
+            .read(cx)
+            .workspaces()
+            .cloned()
+            .collect();
+
+        for workspace in workspaces {
+            workspace
+                .update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| panel.refresh_skills(cx));
+                    }
+                })
+                .ok();
+        }
+    })));
+
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
@@ -763,7 +784,7 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<ToggleEditPrediction>(),
         ];
 
-        let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
+        let manage_skills_action = [TypeId::of::<zed_actions::assistant::ManageSkills>()];
         let skill_creator_actions = [
             TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
             TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
@@ -818,16 +839,15 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `assistant: open rules library` — Rules are surfaced
-        // through the Skills UI now. Applied after the disable-ai /
-        // agent-enabled branches so it overrides the
-        // `show_namespace("assistant")` call above without affecting the
-        // rest of that namespace's actions.
+        // Hide `agent: manage skills` — skills are surfaced through the
+        // settings UI now. Applied after the disable-ai / agent-enabled
+        // branches so it overrides the `show_namespace("assistant")` call
+        // above without affecting the rest of that namespace's actions.
         if !disable_ai {
-            filter.hide_action_types(&open_rules_library_action);
+            filter.hide_action_types(&manage_skills_action);
             filter.show_action_types(skill_creator_actions.iter());
         } else {
-            filter.show_action_types(open_rules_library_action.iter());
+            filter.show_action_types(manage_skills_action.iter());
             filter.hide_action_types(&skill_creator_actions);
         }
     });
@@ -939,9 +959,14 @@ mod tests {
             play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
             single_file_review: false,
             model_parameters: vec![],
+            auto_compact: agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: agent_settings::AutoCompactThreshold::DEFAULT,
+            },
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
+            terminal_init_command: None,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,

@@ -71,6 +71,123 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// Threshold at which agent auto-compaction runs. See
+/// [`AutoCompactSettingsContent::threshold`] for the accepted formats.
+///
+/// The canonical textual form is stored verbatim so it can round-trip through
+/// the settings UI; it is serialized back as a JSON string for percentages and
+/// as a JSON integer for token counts.
+#[derive(Clone, Debug, PartialEq, Eq, MergeFrom)]
+pub struct AutoCompactThreshold(pub String);
+
+impl From<String> for AutoCompactThreshold {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<AutoCompactThreshold> for String {
+    fn from(value: AutoCompactThreshold) -> Self {
+        value.0
+    }
+}
+
+impl AsRef<str> for AutoCompactThreshold {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for AutoCompactThreshold {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.ends_with('%') {
+            serializer.serialize_str(&self.0)
+        } else if let Ok(tokens) = self.0.parse::<i64>() {
+            serializer.serialize_i64(tokens)
+        } else {
+            serializer.serialize_str(&self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AutoCompactThreshold {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ThresholdVisitor;
+
+        impl serde::de::Visitor<'_> for ThresholdVisitor {
+            type Value = AutoCompactThreshold;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter
+                    .write_str("a percentage string like \"90%\" or an integer number of tokens")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_owned()))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+
+            fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                Ok(AutoCompactThreshold(value.to_string()))
+            }
+        }
+
+        deserializer.deserialize_any(ThresholdVisitor)
+    }
+}
+
+impl JsonSchema for AutoCompactThreshold {
+    fn schema_name() -> Cow<'static, str> {
+        "AutoCompactThreshold".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "string",
+                    "pattern": "^\\d+(\\.\\d+)?%$"
+                },
+                {
+                    "type": "integer"
+                }
+            ]
+        })
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct AutoCompactSettingsContent {
+    /// Whether to automatically compact the agent's context when it grows too
+    /// large, summarizing earlier messages to free up room in the model's
+    /// context window.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// The threshold at which auto-compaction runs. This is one of:
+    ///
+    /// - A percentage string ending in `%`, e.g. `"90%"`, measured against the
+    ///   model's context window. `"90%"` compacts once the context is 90% full.
+    /// - A positive integer: compaction runs once that many tokens have been
+    ///   used. For example, `100000` compacts after 100,000 tokens are used.
+    /// - A negative integer: compaction runs once that many tokens remain in
+    ///   the context window. For example, `-20000` compacts once there are
+    ///   fewer than 20,000 tokens of headroom left in the context window.
+    ///
+    /// `0` is not a valid threshold.
+    ///
+    /// Default: "90%"
+    pub threshold: Option<AutoCompactThreshold>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -165,6 +282,10 @@ pub struct AgentSettingsContent {
     /// Default: []
     #[serde(default)]
     pub model_parameters: Vec<LanguageModelParameters>,
+    /// Settings for automatic agent context compaction, which summarizes
+    /// earlier messages to free up room in the model's context window once the
+    /// context grows too large.
+    pub auto_compact: Option<AutoCompactSettingsContent>,
     /// Whether to show thumb buttons for feedback in the agent panel.
     ///
     /// Default: true
@@ -177,6 +298,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    /// The command is sent to the shell as if typed, so it is interpreted by your
+    /// configured shell (including on Windows and remote/WSL projects).
+    /// An empty string disables this behavior.
+    ///
+    /// Default: ""
+    pub terminal_init_command: Option<String>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
     /// Default: automatic
@@ -322,10 +450,29 @@ impl AgentSettingsContent {
         }
     }
 
-    pub fn allow_sandbox_network(&mut self) {
+    pub fn allow_sandbox_all_hosts(&mut self) {
         self.sandbox_permissions
             .get_or_insert_default()
-            .allow_network = Some(true);
+            .allow_all_hosts = Some(true);
+    }
+
+    /// The persisted sandbox network host patterns, as written (callers own
+    /// parsing/validation).
+    pub fn sandbox_network_hosts(&self) -> &[String] {
+        self.sandbox_permissions
+            .as_ref()
+            .and_then(|permissions| permissions.network_hosts.as_ref())
+            .map(|hosts| hosts.0.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// Replace the persisted sandbox network host patterns. Callers compute
+    /// the new list (typically the old list plus newly granted hosts, pruned
+    /// of entries subsumed by wildcards) rather than appending blindly.
+    pub fn set_sandbox_network_hosts(&mut self, hosts: Vec<String>) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .network_hosts = Some(ExtendingVec(hosts));
     }
 
     pub fn allow_sandbox_fs_write_all(&mut self) {
@@ -338,6 +485,10 @@ impl AgentSettingsContent {
         self.sandbox_permissions
             .get_or_insert_default()
             .allow_unsandboxed = Some(true);
+    }
+
+    pub fn disable_sandbox(&mut self) {
+        self.sandbox_permissions.get_or_insert_default().disabled = Some(true);
     }
 
     pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
@@ -581,10 +732,16 @@ pub enum CustomAgentServerSettings {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SandboxPermissionsContent {
-    /// Whether sandboxed terminal commands may always use outbound network
-    /// access without prompting.
+    /// Whether sandboxed terminal commands may always reach any host over the
+    /// network without prompting.
     /// Default: false
-    pub allow_network: Option<bool>,
+    pub allow_all_hosts: Option<bool>,
+
+    /// Hosts that sandboxed terminal commands may always reach over the
+    /// network without prompting. Each entry is an exact hostname
+    /// (`github.com`) or a leading-`*.` subdomain wildcard (`*.npmjs.org`).
+    /// Default: []
+    pub network_hosts: Option<ExtendingVec<String>>,
 
     /// Whether sandboxed terminal commands may always write anywhere on the
     /// filesystem without prompting.
@@ -595,6 +752,11 @@ pub struct SandboxPermissionsContent {
     /// prompting when they request `unsandboxed: true`.
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
+
+    /// Whether terminal sandboxing is turned off entirely, so agent terminal
+    /// commands always run outside the sandbox.
+    /// Default: false
+    pub disabled: Option<bool>,
 
     /// Directory subtrees that sandboxed terminal commands may always write
     /// to without prompting. Paths written by Zed are absolute.
@@ -873,15 +1035,33 @@ mod tests {
         let mut settings = AgentSettingsContent::default();
         assert!(settings.sandbox_permissions.is_none());
 
-        settings.allow_sandbox_network();
+        settings.allow_sandbox_all_hosts();
+        assert_eq!(settings.sandbox_network_hosts(), &[] as &[String]);
+        settings
+            .set_sandbox_network_hosts(vec!["github.com".to_string(), "*.npmjs.org".to_string()]);
+        assert_eq!(
+            settings.sandbox_network_hosts(),
+            &["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
         settings.allow_sandbox_fs_write_all();
         settings.allow_sandbox_unsandboxed();
+        settings.disable_sandbox();
         settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
-        assert_eq!(sandbox_permissions.allow_network, Some(true));
+        assert_eq!(sandbox_permissions.allow_all_hosts, Some(true));
+        assert_eq!(
+            sandbox_permissions
+                .network_hosts
+                .as_ref()
+                .unwrap()
+                .0
+                .as_slice(),
+            &["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
         assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
         assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
+        assert_eq!(sandbox_permissions.disabled, Some(true));
         assert_eq!(
             sandbox_permissions
                 .write_paths

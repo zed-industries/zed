@@ -20,12 +20,15 @@ use language::{
 use release_channel::AppVersion;
 use text::{Anchor, Bias, Point};
 use ui::SharedString;
-use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
+use workspace::notifications::simple_message_notification::MessageNotification;
+use workspace::notifications::{NotificationId, show_app_notification};
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
+    ZetaFormat, excerpt_range_for_format, format_zeta_prompt, get_prefill,
+    parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -307,7 +310,27 @@ pub fn request_prediction_with_zeta(
                 cursor_offset_in_new_editable_region: cursor_offset_in_output,
             }) = output
             else {
-                return Ok((Some((request_id, None, model_version)), None));
+                let editable_range_in_excerpt =
+                    excerpt_range_for_format(zeta_format, &prompt_input.excerpt_ranges).0;
+                let editable_range_in_buffer = editable_range_in_excerpt.start
+                    + full_context_offset_range.start
+                    ..editable_range_in_excerpt.end + full_context_offset_range.start;
+
+                return Ok((
+                    Some((
+                        request_id,
+                        Some(Prediction {
+                            prompt_input,
+                            buffer,
+                            snapshot: snapshot.clone(),
+                            edits: Vec::new(),
+                            cursor_position: None,
+                            editable_range_in_buffer,
+                        }),
+                        model_version,
+                    )),
+                    usage,
+                ));
             };
 
             let editable_range_in_buffer = editable_range_in_excerpt.start
@@ -379,6 +402,7 @@ pub fn request_prediction_with_zeta(
             return Ok(Some(EditPredictionResult {
                 id,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                display_prediction: None,
                 model_version,
                 e2e_latency: request_duration,
             }));
@@ -393,6 +417,7 @@ pub fn request_prediction_with_zeta(
             Some(edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer.clone())),
             inputs,
             model_version,
+            trigger,
             request_duration,
             cx,
         )
@@ -503,14 +528,33 @@ fn handle_api_response<T>(
                     })
                     .ok();
 
-                    let error_message: SharedString = err.to_string().into();
+                    let message: SharedString = err.to_string().into();
+
+                    struct UpdateRequiredError {
+                        message: SharedString,
+                    }
+                    impl WorkspaceError for UpdateRequiredError {
+                        fn primary_message(&self) -> SharedString {
+                            self.message.clone()
+                        }
+                        fn severity(&self) -> ErrorSeverity {
+                            ErrorSeverity::Critical
+                        }
+                        fn primary_action(&self) -> ErrorAction {
+                            ErrorAction::link("Update Zed", "https://zed.dev/releases")
+                        }
+                    }
+
                     show_app_notification(
                         NotificationId::unique::<ZedUpdateRequiredError>(),
                         cx,
                         move |cx| {
-                            cx.new(|cx| {
-                                ErrorMessagePrompt::new(error_message.clone(), cx)
-                                    .with_link_button("Update Zed", "https://zed.dev/releases")
+                            cx.new({
+                                let message = message.clone();
+                                move |cx| {
+                                    let error = UpdateRequiredError { message };
+                                    MessageNotification::from_workspace_error(error, cx)
+                                }
                             })
                         },
                     );
