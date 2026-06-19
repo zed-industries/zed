@@ -1321,6 +1321,18 @@ pub struct FakeFs {
 }
 
 #[cfg(feature = "test-support")]
+struct ReadDirBlock {
+    state: Arc<Mutex<FakeFsState>>,
+}
+
+#[cfg(feature = "test-support")]
+impl Drop for ReadDirBlock {
+    fn drop(&mut self) {
+        self.state.lock().read_dir_block = None;
+    }
+}
+
+#[cfg(feature = "test-support")]
 struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
@@ -1337,6 +1349,11 @@ struct FakeFsState {
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
     file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+    read_dir_block: Option<(
+        PathBuf,
+        async_channel::Sender<()>,
+        async_channel::Receiver<()>,
+    )>,
 }
 
 #[cfg(feature = "test-support")]
@@ -1657,6 +1674,7 @@ impl FakeFs {
                 trash: Vec::new(),
                 file_to_create_before_watch_add: None,
                 remove_dir_errors: Default::default(),
+                read_dir_block: None,
             })),
         });
 
@@ -2498,6 +2516,22 @@ impl FakeFs {
         self.state.lock().read_dir_call_count
     }
 
+    pub async fn with_read_dir_blocked<R>(
+        &self,
+        prefix: impl AsRef<Path>,
+        body: impl Future<Output = R>,
+    ) -> R {
+        let _block = {
+            let prefix = normalize_path(prefix.as_ref());
+            let (tx, rx) = async_channel::unbounded();
+            self.state.lock().read_dir_block = Some((prefix, tx, rx));
+            ReadDirBlock {
+                state: self.state.clone(),
+            }
+        };
+        body.await
+    }
+
     pub fn watched_paths(&self) -> Vec<PathBuf> {
         let state = self.state.lock();
         state
@@ -3111,6 +3145,17 @@ impl Fs for FakeFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
+
+        let blocker = self
+            .state
+            .lock()
+            .read_dir_block
+            .as_ref()
+            .and_then(|(prefix, _tx, rx)| path.starts_with(prefix).then(|| rx.clone()));
+        if let Some(rx) = blocker {
+            rx.recv().await.ok();
+        }
+
         let mut state = self.state.lock();
         state.read_dir_call_count += 1;
         let entry = state.entry(&path)?;

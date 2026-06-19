@@ -1617,6 +1617,83 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_path_prefix_scan_is_not_starved_by_rescan(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "heavy\nlight\n",
+            "heavy": {
+                "a": { "a1.js": "a1" },
+                "b": { "b1.js": "b1" },
+                "c": { "c1.js": "c1" },
+            },
+            "light": {
+                "x.js": "",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load the heavy gitignored subtree so a later rescan will re-crawl it.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // "light" has not been loaded yet.
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("light/x.js")).is_none());
+    });
+
+    // Suspend the rescan mid-flight, then emit a watcher "lost sync" rescan for that subtree.
+    // The scanner's main loop is now parked, waiting on the blocked read.
+    let mut done = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            // While the rescan is suspended, ask the scanner to load a different,
+            // new gitignored subtree. This must be serviced by a free scan worker
+            // rather than waiting for the blocked rescan to complete.
+            let done = tree.update(cx, |tree, _| {
+                tree.as_local()
+                    .unwrap()
+                    .add_path_prefix_to_scan(rel_path("light").into())
+            });
+            cx.executor().run_until_parked();
+
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("light/x.js")).is_some(),
+                    "path-prefix scan was starved by the in-flight rescan"
+                );
+            });
+
+            done
+        })
+        .await;
+
+    done.recv().await;
+    cx.executor().run_until_parked();
+}
+
+#[gpui::test]
 async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
