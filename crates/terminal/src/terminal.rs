@@ -1880,7 +1880,7 @@ impl Terminal {
         input: impl Into<Cow<'static, [u8]>>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.keyboard_input_sent {
+        if self.keyboard_input_sent || self.child_exited.is_some() {
             return false;
         }
 
@@ -3607,6 +3607,46 @@ mod tests {
         );
         let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
         assert_eq!(input_log, vec![b"user input".to_vec()]);
+    }
+
+    #[gpui::test]
+    async fn test_write_init_command_after_startup_skips_after_child_exit(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"shell failed to start\nprompt", cx);
+            #[cfg(unix)]
+            let exit_status =
+                <ExitStatus as std::os::unix::process::ExitStatusExt>::from_raw(1 << 8);
+            #[cfg(windows)]
+            let exit_status = <ExitStatus as std::os::windows::process::ExitStatusExt>::from_raw(1);
+            terminal.register_task_finished(Some(exit_status), cx);
+        });
+
+        let wrote = terminal.update(cx, |terminal, cx| {
+            terminal.write_init_command_after_startup(b"agent\r".to_vec(), cx)
+        });
+        assert!(!wrote);
+        let content = terminal.update(cx, |terminal, _| terminal.get_content());
+        assert!(
+            content.contains("shell failed to start"),
+            "startup failure output should be preserved when the init command is skipped"
+        );
+        let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+        assert!(
+            input_log.is_empty(),
+            "init command should not be written after the child has exited, got {input_log:?}"
+        );
     }
 
     #[gpui::test]

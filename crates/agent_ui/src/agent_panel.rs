@@ -2110,7 +2110,7 @@ impl AgentPanel {
             if let Err(error) = terminal.update(cx, move |terminal, cx| {
                 if !terminal.write_init_command_after_startup(input, cx) {
                     log::debug!(
-                        "skipping terminal init command because terminal input was received first"
+                        "skipping terminal init command because the terminal is no longer eligible"
                     );
                 }
             }) {
