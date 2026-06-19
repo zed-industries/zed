@@ -1075,7 +1075,7 @@ mod tests {
         DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
-        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints_tests::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
