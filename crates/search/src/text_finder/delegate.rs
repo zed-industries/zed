@@ -4,6 +4,7 @@
 //!
 //! Basic interaction:
 //!
+//! ```txt
 //! Open text finder --- Open file ---> File tab
 //!
 //!                     (text_finder action)
@@ -12,14 +13,15 @@
 //! Can also have a little loop where the user uses the ProjectSearch filters etc
 //! to refine the search:
 //!
-//!                     (project seach tab)
+//!                     (project search tab)
 //!                  (removes tab, opens modal)
 //! Project search tab --- ToTextFinder ---> Text finder modal
 //!                             ^                  |
-//!                             |             ToProjectSeach (adds tab,
+//!                             |             ToProjectSearch (adds tab,
 //!                             |                  |          closes modal)
 //!                             |                  V
-//!                             . --------  Project seach tab
+//!                             . --------  Project search tab
+//! ```
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

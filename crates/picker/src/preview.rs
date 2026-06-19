@@ -179,7 +179,7 @@ impl EditorPreview {
             current_path: None,
             message: None,
         };
-        this.clear(); // picker starts with no resutls.
+        this.clear(); // picker starts with no results.
         this
     }
 
@@ -217,8 +217,6 @@ impl EditorPreview {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // TODO!(yara) debounce this/cache the last one for fast switching
-        // between top two results.
         let open_task = self.project.update(cx, |project, cx| {
             match project.project_path_for_absolute_path(&abs_path, cx) {
                 Some(project_path) => {
@@ -313,7 +311,6 @@ impl EditorPreview {
         self.scroll_to_focus_match(window, cx);
     }
 
-    // TODO!(yara) wire this up to run when dragging is done
     /// Keep the scroll as far left as possible while showing the match.
     /// Vertically center the match as much as possible
     fn scroll_to_focus_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {

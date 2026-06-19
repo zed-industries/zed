@@ -26,6 +26,7 @@
 //! width/height. The size is serialized as soon as the use lets go of the drag.
 //!
 //! # Diagrams & Details
+//! ```txt
 //! ================ CHANGING WIDTH ======================================
 //! The picker position stays constant during the drag but it is centered
 //! directly after. (when the user lets go)
@@ -41,9 +42,7 @@
 //! |    |  preview    |
 //! --------------------
 //!
-//! ```rust
 //! self.w_preview = w_preview + drag
-//! ```
 //! ================ DRAGGING LEFT =======================================
 //!
 //!                       ------------
@@ -55,6 +54,7 @@
 //! | list     |      |
 //! |          |      |
 //! -------------------
+//! ```
 
 use std::{any::type_name, marker::PhantomData};
 
@@ -446,7 +446,7 @@ impl<D: PickerDelegate> Picker<D> {
                 )
             })
             .block_mouse_except_scroll()
-            .on_mouse_down(MouseButton::Left, do_nothing) // TODO!(yara) do we need this?
+            .on_mouse_down(MouseButton::Left, do_nothing)
             .on_drag(
                 ResizeDrag::<S>::start_new(
                     self.shape,

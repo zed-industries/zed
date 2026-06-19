@@ -534,7 +534,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     /// Sets the width the picker appears with if the user has never resized it
-    /// or when the user sets it back to it's default size. // TODO!(yara) implement this
+    /// or when the user sets it back to it's default size.
     ///
     /// # Padding
     /// By default the picker will fill this space. If you want it to only grow

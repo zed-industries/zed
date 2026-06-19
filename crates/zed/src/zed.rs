@@ -5367,6 +5367,7 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
+                "text_finder",
                 "theme",
                 "theme_selector",
                 "toast",

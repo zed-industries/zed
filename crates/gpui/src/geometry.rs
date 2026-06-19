@@ -3246,7 +3246,7 @@ impl Rems {
     }
     /// Convert from pixels to Rem
     pub fn from_pixels(length: Pixels, window: &gpui::Window) -> Self {
-        Self(length / window.rem_size()) // TODO!(yara) nice checked div?
+        Self(length / window.rem_size())
     }
 }
 

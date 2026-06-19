@@ -479,7 +479,7 @@ impl ProjectSearch {
 
     // At the point this is called the multibuffer has already been filled with
     // plundered results from the text finder
-    pub(crate) fn hook_up_ongoing_seach(
+    pub(crate) fn hook_up_ongoing_search(
         &mut self,
         search_results: SearchResults<SearchResult>,
         cx: &mut Context<Self>,

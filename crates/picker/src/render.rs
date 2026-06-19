@@ -271,7 +271,6 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // TODO!(yara) minimize the number of flex/divs etc needed
         h_flex()
             .relative()
             .child(

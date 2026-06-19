@@ -85,7 +85,7 @@ impl TextFinder {
         let picker = Entity::clone(&self.picker);
         let workspace = self.weak_workspace(cx);
 
-        let connected_task = self.take_seach_task(cx);
+        let connected_task = self.take_search_task(cx);
         let project_search_view = self.project_search_view(cx);
         let query = picker.read(cx).delegate.active_query.clone();
         let search_options = picker.read(cx).delegate.search_options;
@@ -123,7 +123,7 @@ impl TextFinder {
             if let Some(stream) = search_stream {
                 project_search_view.update(cx, |view, cx| {
                     view.entity
-                        .update(cx, |search, cx| search.hook_up_ongoing_seach(stream, cx));
+                        .update(cx, |search, cx| search.hook_up_ongoing_search(stream, cx));
                 });
             }
         })
@@ -190,7 +190,7 @@ impl TextFinder {
         workspace
     }
 
-    fn take_seach_task(
+    fn take_search_task(
         &self,
         cx: &mut App,
     ) -> Option<Task<Option<project::SearchResults<project::search::SearchResult>>>> {
@@ -265,7 +265,6 @@ impl ModalView for TextFinder {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> DismissDecision {
-        // self.save_layout(cx); // TODO! move to Picker
         DismissDecision::Dismiss(true)
     }
 }
