@@ -123,7 +123,7 @@ impl ProfileSelector {
             let picker = cx.new(|cx| {
                 Picker::list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems(18.))
+                    .minimum_results_width(rems(18.))
                     .height(rems(20.))
                     .no_vertical_padding()
             });

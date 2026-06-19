@@ -177,7 +177,7 @@ impl FileFinder {
             // width, but only if the user actually changed it from the default;
             if modal_max_width_setting != FileFinderWidth::default() {
                 let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
-                picker.width(Rems::from_pixels(modal_max_width, window))
+                picker.initial_width(Rems::from_pixels(modal_max_width, window))
             } else {
                 picker
             }

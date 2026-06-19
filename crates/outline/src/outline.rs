@@ -179,7 +179,7 @@ impl OutlineView {
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
-                .width(rems(34.))
+                .minimum_results_width(rems(34.))
                 .height(Rems::from_pixels(
                     window.viewport_size().height * 0.75,
                     window,

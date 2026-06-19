@@ -632,7 +632,7 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .width(rems(rem_width))
+                .minimum_results_width(rems(rem_width))
                 .height(rems(24.))
                 .no_vertical_padding()
                 .show_scrollbar(true)

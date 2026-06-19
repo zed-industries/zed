@@ -515,7 +515,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     /// Sets the width the picker appears with if the user has never resized it
     /// or when the user sets it back to it's default size.
-    pub fn width(mut self, width: impl Into<RelativeWidth>) -> Self {
+    pub fn initial_width(mut self, width: impl Into<RelativeWidth>) -> Self {
         let width = width.into();
         self.default_shape.width = width;
         if !self.shape_loaded_from_persistence {

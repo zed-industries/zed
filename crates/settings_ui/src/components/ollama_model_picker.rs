@@ -204,7 +204,7 @@ pub fn render_ollama_model_picker(
 
                 Picker::uniform_list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems_from_px(210.))
+                    .minimum_results_width(rems_from_px(210.))
                     .height(rems(18.))
                     .no_vertical_padding()
             }))
