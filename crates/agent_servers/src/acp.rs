@@ -3,7 +3,10 @@ use acp_thread::{
     AgentSessionListResponse,
 };
 use action_log::ActionLog;
-use agent_client_protocol::schema::{self as acp, ErrorCode};
+use agent_client_protocol::schema::{
+    ProtocolVersion,
+    v1::{self as acp, ErrorCode},
+};
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder, SentRequest,
 };
@@ -670,7 +673,7 @@ pub async fn connect(
     Ok(Rc::new(conn) as _)
 }
 
-const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1;
+const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
 
 /// Build a `Client` connection over `transport` with Zed's full
 /// agent→client handler set wired up.
@@ -949,7 +952,7 @@ impl AcpConnection {
 
         let initialize_response = into_foreground_future(
             connection.send_request(
-                acp::InitializeRequest::new(acp::ProtocolVersion::V1)
+                acp::InitializeRequest::new(ProtocolVersion::V1)
                     .client_capabilities(
                         acp::ClientCapabilities::new()
                             .fs(acp::FileSystemCapabilities::new()
@@ -2411,7 +2414,7 @@ pub mod test_support {
             .context("failed to receive fake ACP connection handle")?;
 
         let response = into_foreground_future(
-            client_conn.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
+            client_conn.send_request(acp::InitializeRequest::new(ProtocolVersion::V1)),
         )
         .await?;
 
@@ -3221,7 +3224,7 @@ mod tests {
             .expect("failed to receive ACP connection handle");
 
         let response = into_foreground_future(
-            client_conn.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
+            client_conn.send_request(acp::InitializeRequest::new(ProtocolVersion::V1)),
         )
         .await
         .expect("failed to initialize ACP connection");

@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk};
 use agent::ThreadStore;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
@@ -690,7 +690,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema as acp;
+    use agent_client_protocol::schema::v1 as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
