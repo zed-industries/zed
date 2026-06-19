@@ -1871,6 +1871,17 @@ impl Terminal {
         self.write_input(input);
     }
 
+    pub fn is_pty(&self) -> bool {
+        matches!(self.terminal_type, TerminalType::Pty { .. })
+    }
+
+    pub fn clear_screen_command(&self) -> &'static str {
+        self.template
+            .shell
+            .shell_kind(self.path_style.is_windows())
+            .clear_screen_command()
+    }
+
     fn write_input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));

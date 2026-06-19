@@ -75,9 +75,10 @@ use feature_flags::{
 };
 
 use fs::Fs;
+use futures::FutureExt as _;
 use gpui::{
-    Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
+    Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncApp, AsyncWindowContext,
+    ClipboardItem, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
     PlatformDisplay, Subscription, Task, TaskExt, WeakEntity, WindowHandle, prelude::*,
     pulsating_between,
 };
@@ -109,6 +110,8 @@ const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
+const TERMINAL_INIT_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_millis(250);
+const TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
     "agent", // Unfortunately, both Cursor cli + grok
     "agy",
@@ -2063,20 +2066,92 @@ impl AgentPanel {
     fn write_terminal_init_command(
         terminal: &Entity<terminal::Terminal>,
         init_command: Option<String>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
         let Some(command) = init_command else {
             return;
         };
+
+        if !terminal.read(cx).is_pty() {
+            terminal.update(cx, |terminal, _| {
+                terminal.write_init_command(Self::terminal_init_command_input(command))
+            });
+            return;
+        }
+
+        // Custom shells can emit prompts, titles, or startup output after the PTY is
+        // created. If we write the init command during that window, the PTY may echo
+        // it before the shell is ready or the shell startup output may appear after
+        // our clear command.
+        let clear_command = terminal.read(cx).clear_screen_command().to_string();
+        let (startup_tx, startup_rx) = async_channel::bounded(1);
+        let terminal_subscription = cx.subscribe(
+            terminal,
+            move |_this, _terminal, event: &TerminalEvent, _cx| {
+                if matches!(
+                    event,
+                    TerminalEvent::Wakeup
+                        | TerminalEvent::TitleChanged
+                        | TerminalEvent::BreadcrumbsChanged
+                ) {
+                    match startup_tx.try_send(()) {
+                        Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
+                        Err(async_channel::TrySendError::Closed(())) => {}
+                    }
+                }
+            },
+        );
+
+        let terminal = terminal.downgrade();
+        cx.spawn(async move |_this, cx| {
+            Self::wait_for_terminal_startup(startup_rx, cx).await;
+            drop(terminal_subscription);
+
+            let input = Self::terminal_init_command_input(format!("{clear_command}\r{command}"));
+            if let Err(error) =
+                terminal.update(cx, |terminal, _| terminal.write_init_command(input))
+            {
+                log::debug!("skipping terminal init command because the terminal closed: {error}");
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn terminal_init_command_input(command: String) -> Vec<u8> {
         let mut input = command.into_bytes();
         // CR, not "\r\n": "\r\n" puts PowerShell into continuation
         // mode (same convention as the activation-script writes in
         // `TerminalBuilder::new`).
         input.push(b'\x0d');
-        // `write_init_command`, not `input`: the latter sets `keyboard_input_sent`,
-        // which would auto-close the terminal (hiding the error) if the shell
-        // fails to spawn after we've written the command.
-        terminal.update(cx, |terminal, _| terminal.write_init_command(input));
+        input
+    }
+
+    async fn wait_for_terminal_startup(startup_rx: async_channel::Receiver<()>, cx: &mut AsyncApp) {
+        let startup_timeout = cx
+            .background_executor()
+            .timer(TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT)
+            .fuse();
+        futures::pin_mut!(startup_timeout);
+
+        loop {
+            let next_event = startup_rx.recv().fuse();
+            let idle_timeout = cx
+                .background_executor()
+                .timer(TERMINAL_INIT_COMMAND_IDLE_TIMEOUT)
+                .fuse();
+            futures::pin_mut!(next_event, idle_timeout);
+
+            futures::select_biased! {
+                result = next_event => {
+                    if result.is_err() {
+                        return;
+                    }
+                }
+                _ = idle_timeout => return,
+                _ = startup_timeout => return,
+            }
+        }
     }
 
     fn insert_terminal(
@@ -7497,11 +7572,11 @@ mod tests {
         cx.executor().allow_parking();
         cx.update(|_, cx| {
             let mut settings = AgentSettings::get_global(cx).clone();
-            // The output (`init_ran_42`) is distinct from the command text
-            // (`init_ran_$((6*7))`), which the PTY also echoes back. Finding the
-            // output therefore proves the shell actually executed the command
-            // rather than merely echoing the keystrokes.
-            settings.terminal_init_command = Some("echo init_ran_$((6*7))".to_string());
+            // The output (`init_ran_42`) is distinct from the command text,
+            // which the PTY also echoes back. Finding the output therefore
+            // proves the shell actually executed the command rather than merely
+            // echoing the keystrokes.
+            settings.terminal_init_command = Some("printf 'init_ran_%s\\n' 42".to_string());
             AgentSettings::override_global(settings, cx);
         });
 
@@ -7529,6 +7604,7 @@ mod tests {
         // sleep, matching the real-PTY test in `acp_thread`.
         let deadline = Instant::now() + Duration::from_secs(10);
         let terminal = loop {
+            cx.run_until_parked();
             let terminal = panel.read_with(&cx, |panel, cx| {
                 panel
                     .terminals
@@ -7542,13 +7618,29 @@ mod tests {
             {
                 break terminal.clone();
             }
-            assert!(
-                Instant::now() < deadline,
-                "init command output never appeared in the terminal"
-            );
+            if Instant::now() >= deadline {
+                let terminal_created = terminal.is_some();
+                let (content, input_log) = if let Some(terminal) = terminal {
+                    let content = terminal.read_with(&cx, |terminal, _| terminal.get_content());
+                    let input_log =
+                        terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+                    (content, input_log)
+                } else {
+                    (String::new(), Vec::new())
+                };
+                panic!(
+                    "init command output never appeared in the terminal; terminal_created={terminal_created}, content={content:?}, input_log={input_log:?}"
+                );
+            }
             cx.executor().timer(Duration::from_millis(50)).await;
         };
 
+        let input_log = terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(
+            input_log,
+            vec![b"clear\rprintf 'init_ran_%s\\n' 42\r".to_vec()],
+            "init command should be written only after terminal startup has settled"
+        );
         assert!(
             !terminal.read_with(&cx, |terminal, _| terminal.keyboard_input_sent()),
             "writing the init command must not mark the terminal as having received \
