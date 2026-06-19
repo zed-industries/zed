@@ -16,8 +16,7 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
-use util::ResultExt as _;
-use util::command::{new_command, new_std_command};
+use gpui_util::{ResultExt as _, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -461,15 +460,15 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = new_command("xdg-open")
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
+                new_std_command("xdg-open")
                     .arg(path)
-                    .spawn()
-                    .context("invoking xdg-open")
-                    .log_err()?
                     .status()
-                    .await
-                    .log_err()?;
-                Some(())
+                    .context("invoking xdg-open")
+                    .log_err();
             })
             .detach();
     }

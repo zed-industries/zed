@@ -553,10 +553,15 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
-            let subscriptions = vec![cx.subscribe(
-                &LanguageModelRegistry::global(cx),
-                Self::handle_models_updated_event,
-            )];
+            let subscriptions = vec![
+                cx.subscribe(
+                    &LanguageModelRegistry::global(cx),
+                    Self::handle_models_updated_event,
+                ),
+                // Flush thread content on quit so an in-flight async save
+                // can't leave a thread orphaned ("no thread found with ID").
+                cx.on_app_quit(Self::flush_threads_on_quit),
+            ];
 
             if !cx.has_global::<SkillIndex>() {
                 cx.set_global(SkillIndex::default());
@@ -1364,12 +1369,8 @@ impl NativeAgent {
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
-                if thread.model().is_none()
-                    && let Some(model) = default_model.clone()
-                {
-                    thread.set_model(model, cx);
-                    cx.notify();
-                }
+                thread.ensure_model(default_model.as_ref(), cx);
+
                 if let Some(model) = summarization_model.clone() {
                     if thread.summarization_model().is_none()
                         || matches!(event, language_model::Event::ThreadSummaryModelChanged)
@@ -1721,36 +1722,19 @@ impl NativeAgent {
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
-        if thread.read(cx).is_empty() {
-            return;
-        }
-
         let id = thread.read(cx).id().clone();
+        let Some(session) = self.sessions.get(&id) else {
+            return;
+        };
+        let Some((id, folder_paths, db_thread)) = self.thread_save_payload(session, cx) else {
+            return;
+        };
+
+        let database_future = ThreadsDatabase::connect(cx);
+        let thread_store = self.thread_store.clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-
-        let project_id = session.project_id;
-        let Some(state) = self.projects.get(&project_id) else {
-            return;
-        };
-
-        let folder_paths = PathList::new(
-            &state
-                .project
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect::<Vec<_>>(),
-        );
-
-        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
-        let database_future = ThreadsDatabase::connect(cx);
-        let db_thread = thread.update(cx, |thread, cx| {
-            thread.set_draft_prompt(draft_prompt);
-            thread.to_db(cx)
-        });
-        let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return Ok(());
@@ -1763,6 +1747,68 @@ impl NativeAgent {
             thread_store.update(cx, |store, cx| store.reload(cx));
             Ok(())
         });
+    }
+
+    /// Builds everything needed to persist a session's thread content,
+    /// capturing the current draft prompt from the ACP thread. Returns `None`
+    /// if the thread is empty or its project state is gone.
+    fn thread_save_payload(
+        &self,
+        session: &Session,
+        cx: &mut App,
+    ) -> Option<(acp::SessionId, PathList, Task<DbThread>)> {
+        if session.thread.read(cx).is_empty() {
+            return None;
+        }
+        let state = self.projects.get(&session.project_id)?;
+        let folder_paths = PathList::new(
+            &state
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+        );
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
+        let id = session.thread.read(cx).id().clone();
+        let db_thread = session.thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(draft_prompt);
+            thread.to_db(cx)
+        });
+        Some((id, folder_paths, db_thread))
+    }
+
+    /// Commits every non-empty thread's content on shutdown so the async
+    /// `save_thread` losing the race can't leave metadata without content.
+    fn flush_threads_on_quit(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        let database_future = ThreadsDatabase::connect(cx);
+
+        let mut saves = Vec::new();
+        for session in self.sessions.values() {
+            saves.extend(self.thread_save_payload(session, cx));
+        }
+
+        async move {
+            let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
+                return;
+            };
+            // All quit observers share `gpui::SHUTDOWN_TIMEOUT`, so run the
+            // saves concurrently instead of one at a time.
+            future::join_all(saves.into_iter().map(|(id, folder_paths, db_thread)| {
+                let database = database.clone();
+                async move {
+                    let db_thread = db_thread.await;
+                    database
+                        .save_thread(id, db_thread, folder_paths)
+                        .await
+                        .log_err();
+                }
+            }))
+            .await;
+        }
     }
 
     fn send_mcp_prompt(
@@ -2161,6 +2207,14 @@ impl NativeAgentConnection {
                                     }
                                 })
                                 .detach();
+                            }
+                            ThreadEvent::ToolCallAuthorizationResolved {
+                                tool_call_id,
+                                outcome,
+                            } => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.authorize_tool_call(tool_call_id, outcome, cx);
+                                })?;
                             }
                             ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -3037,49 +3091,67 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>> {
-        // Use a per-thread temp directory for all terminal commands, even when
-        // sandboxing is disabled, so the model can't infer sandbox state from
-        // `$TMPDIR` changing between conversations.
+        // On Seatbelt-style sandboxes (macOS) there's no tmpfs overlay, so to
+        // give the command a writable temp area we point `$TMPDIR`/`$TMP`/
+        // `$TEMP` at a per-thread directory inside the sandbox's writable
+        // scope. Doing this even when sandboxing is disabled keeps `$TMPDIR`
+        // stable so the model can't infer sandbox state from it.
         //
         // Only do this for local projects. For remote projects the temp
         // directory would be created on the client, but the terminal runs on
         // the remote host, so pointing `$TMPDIR` (and the sandbox writable
         // scope) at a client-side path would leak client environment into the
         // remote terminal and reference a directory that doesn't exist there.
+        //
+        // Linux and Windows are excluded: the bwrap sandbox (run directly on
+        // Linux, and via WSL on Windows) already mounts a fresh, writable
+        // `tmpfs` over `/tmp`, so the environment looks like a normal
+        // filesystem with no special `$TMPDIR` (which would only make the
+        // sandbox more obviously Zed-specific). On Windows a per-thread
+        // `$TMPDIR` would also be a Windows path that's meaningless inside
+        // WSL, and adding it to the writable scope would bind a stray
+        // `/mnt/<drive>/...` path.
+        #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut extra_env = extra_env;
+        #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut sandbox_wrap = sandbox_wrap;
-        let temp_dir = self.thread.update(cx, |thread, cx| {
-            thread
-                .project()
-                .read(cx)
-                .is_local()
-                .then(|| thread.sandboxed_terminal_temp_dir(cx))
-        });
-        match temp_dir {
-            Ok(Some(Ok(temp_dir))) => {
-                // Canonicalize so the path matches what the sandbox resolves
-                // symlinks to (e.g. `/var` -> `/private/var` on macOS).
-                // `$TMPDIR` and the writable-scope entry below must agree, and
-                // they must agree with the path the kernel actually checks.
-                let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
-                let temp_dir_string = temp_dir.to_string_lossy().into_owned();
-                extra_env.extend([
-                    acp::EnvVariable::new("TMPDIR", &temp_dir_string),
-                    acp::EnvVariable::new("TMP", &temp_dir_string),
-                    acp::EnvVariable::new("TEMP", &temp_dir_string),
-                ]);
-                // The command's `$TMPDIR` must live inside the sandbox's
-                // writable scope. The per-thread temp directory is owned here
-                // (not in the terminal tool that assembles the rest of the
-                // writable set), so add it whenever the command is sandboxed.
-                if let Some(sandbox_wrap) = &mut sandbox_wrap {
-                    sandbox_wrap.writable_paths.push(temp_dir);
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        {
+            let temp_dir = self.thread.update(cx, |thread, cx| {
+                thread
+                    .project()
+                    .read(cx)
+                    .is_local()
+                    .then(|| thread.sandboxed_terminal_temp_dir(cx))
+            });
+            match temp_dir {
+                Ok(Some(Ok(temp_dir))) => {
+                    // Canonicalize so the path matches what the sandbox
+                    // resolves symlinks to (e.g. `/var` -> `/private/var` on
+                    // macOS). `$TMPDIR` and the writable-scope entry below must
+                    // agree, and they must agree with the path the kernel
+                    // actually checks.
+                    let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
+                    let temp_dir_string = temp_dir.to_string_lossy().into_owned();
+                    extra_env.extend([
+                        acp::EnvVariable::new("TMPDIR", &temp_dir_string),
+                        acp::EnvVariable::new("TMP", &temp_dir_string),
+                        acp::EnvVariable::new("TEMP", &temp_dir_string),
+                    ]);
+                    // The command's `$TMPDIR` must live inside the sandbox's
+                    // writable scope. The per-thread temp directory is owned
+                    // here (not in the terminal tool that assembles the rest
+                    // of the writable set), so add it whenever the command is
+                    // sandboxed.
+                    if let Some(sandbox_wrap) = &mut sandbox_wrap {
+                        sandbox_wrap.writable_paths.push(temp_dir);
+                    }
                 }
-            }
-            Ok(None) => {}
-            Ok(Some(Err(error))) => return Task::ready(Err(error)),
-            Err(error) => return Task::ready(Err(error)),
-        };
+                Ok(None) => {}
+                Ok(Some(Err(error))) => return Task::ready(Err(error)),
+                Err(error) => return Task::ready(Err(error)),
+            };
+        }
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
@@ -3747,6 +3819,90 @@ mod internal_tests {
         model.end_completion_stream(&request);
         cx.run_until_parked();
         prompt_task.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        // A second session whose thread stays empty must be skipped by the
+        // quit flush rather than persisted as an empty row.
+        let empty_acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let empty_session_id = cx.update(|cx| empty_acp_thread.read(cx).session_id().clone());
+
+        // Give the first thread content so it's no longer an empty draft, plus
+        // an in-progress draft prompt that the flush must capture.
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(
+                    UserMessageId::new(),
+                    [acp::ContentBlock::from("hello from the user")],
+                    path_style,
+                    cx,
+                );
+            });
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread
+                    .set_draft_prompt(Some(vec![acp::ContentBlock::from("draft in progress")]), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Reproduce the orphaned state from the bug: the sidebar metadata and
+        // serialized panel still reference the session, but the per-session
+        // async content save never landed, so the content row is absent.
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        database.delete_thread(session_id.clone()).await.unwrap();
+        assert!(
+            database
+                .load_thread(session_id.clone())
+                .await
+                .unwrap()
+                .is_none(),
+            "precondition: content row should be missing before the quit flush"
+        );
+
+        // Quit through the real shutdown path so the `on_app_quit`
+        // registration is exercised, not just the flush itself.
+        cx.update(|cx| cx.shutdown());
+
+        let restored = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .expect("thread content should be persisted to the database on quit");
+        assert_eq!(
+            restored.messages.len(),
+            1,
+            "the user message should survive the quit flush"
+        );
+        assert_eq!(
+            restored.draft_prompt,
+            Some(vec![acp::ContentBlock::from("draft in progress")]),
+            "the current draft prompt should be captured by the quit flush"
+        );
+        assert!(
+            database
+                .load_thread(empty_session_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "empty threads should not be persisted by the quit flush"
+        );
     }
 
     #[test]
@@ -5857,6 +6013,212 @@ mod internal_tests {
                 reloaded_model.id().0.as_ref(),
                 "custom-model-id",
                 "reloaded thread should have the same model, not fall back to the default"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    async fn persist_thread_with_fake_corp_model(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<NativeAgent>,
+        Rc<NativeAgentConnection>,
+        Entity<Project>,
+        acp::SessionId,
+        Arc<FakeLanguageModelProvider>,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_text_chunk("Response.");
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(acp_thread);
+
+        (agent, connection, project, session_id, provider)
+    }
+
+    fn unregister_fake_corp(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.unregister_provider(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    cx,
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_loaded_thread_resolves_model_when_provider_loads_late(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, _connection, project, session_id, provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+
+        // Simulate a restart where the provider hasn't fetched its model list
+        // yet, so the saved selection can't be resolved at load time.
+        unregister_fake_corp(cx);
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.model().is_none(),
+                "should not fall back to an unrelated model"
+            );
+        });
+
+        // The original selection is persisted even while unresolved, so a save
+        // during the window can't overwrite the user's choice with a fallback.
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let saved = db_thread.model.expect("selection should be persisted");
+        assert_eq!(saved.provider, "fake-corp");
+        assert_eq!(saved.model, "custom-model-id");
+
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .model()
+                    .expect("model should resolve once provider loads")
+                    .id()
+                    .0
+                    .as_ref(),
+                "custom-model-id"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    #[gpui::test]
+    async fn test_explicit_model_selection_cancels_pending(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, connection, project, session_id, provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+
+        unregister_fake_corp(cx);
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.model().is_none());
+        });
+
+        // The user explicitly picks a different, available model.
+        let other_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "other-corp",
+            "other-model-id",
+            "Other Model",
+            false,
+        ));
+        let other_provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("other-corp".to_string()),
+                LanguageModelProviderName::from("Other Corp".to_string()),
+            )
+            .with_models(vec![other_model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(other_provider, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("other-corp/other-model-id"), cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().unwrap().id().0.as_ref(), "other-model-id");
+        });
+
+        // The original provider returning must not clobber the explicit choice.
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.model().unwrap().id().0.as_ref(),
+                "other-model-id",
+                "a late provider load must not override the explicit selection"
             );
         });
 

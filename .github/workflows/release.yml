@@ -367,6 +367,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -407,6 +412,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -430,6 +440,76 @@ jobs:
         path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+  build_static_bwrap_linux_aarch64:
+    needs:
+    - run_tests_linux
+    - clippy_linux
+    - check_scripts
+    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    steps:
+    - name: steps::cache_nix_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: nix
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        cachixArgs: -v
+    - name: run_bundling::build_static_bwrap
+      run: nix build nixpkgs#pkgsStatic.bubblewrap -L
+    - name: run_bundling::build_static_bwrap
+      run: |
+        cp result/bin/bwrap bwrap-linux-aarch64
+        chmod 755 bwrap-linux-aarch64
+        gzip -f --stdout --best bwrap-linux-aarch64 > bwrap-linux-aarch64.gz
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: bwrap-linux-aarch64.gz
+        path: bwrap-linux-aarch64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
+  build_static_bwrap_linux_x86_64:
+    needs:
+    - run_tests_linux
+    - clippy_linux
+    - check_scripts
+    runs-on: namespace-profile-32x64-ubuntu-2004
+    steps:
+    - name: steps::cache_nix_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: nix
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        cachixArgs: -v
+    - name: run_bundling::build_static_bwrap
+      run: nix build nixpkgs#pkgsStatic.bubblewrap -L
+    - name: run_bundling::build_static_bwrap
+      run: |
+        cp result/bin/bwrap bwrap-linux-x86_64
+        chmod 755 bwrap-linux-x86_64
+        gzip -f --stdout --best bwrap-linux-x86_64 > bwrap-linux-x86_64.gz
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: bwrap-linux-x86_64.gz
+        path: bwrap-linux-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
   bundle_mac_aarch64:
     needs:
     - run_tests_mac
@@ -450,6 +530,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -495,6 +580,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -548,6 +638,9 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
@@ -593,6 +686,9 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
@@ -615,6 +711,8 @@ jobs:
     - create_draft_release
     - bundle_linux_aarch64
     - bundle_linux_x86_64
+    - build_static_bwrap_linux_aarch64
+    - build_static_bwrap_linux_x86_64
     - bundle_mac_aarch64
     - bundle_mac_x86_64
     - bundle_windows_aarch64
@@ -635,6 +733,8 @@ jobs:
         mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
         mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
         mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
+        mv ./artifacts/bwrap-linux-aarch64.gz/bwrap-linux-aarch64.gz release-artifacts/bwrap-linux-aarch64.gz
+        mv ./artifacts/bwrap-linux-x86_64.gz/bwrap-linux-x86_64.gz release-artifacts/bwrap-linux-x86_64.gz
         mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
         mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
         mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
@@ -654,7 +754,7 @@ jobs:
     steps:
     - name: release::validate_release_assets
       run: |
-        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
+        EXPECTED_ASSETS='["Zed-aarch64.dmg", "Zed-x86_64.dmg", "zed-linux-aarch64.tar.gz", "zed-linux-x86_64.tar.gz", "bwrap-linux-aarch64.gz", "bwrap-linux-x86_64.gz", "Zed-x86_64.exe", "Zed-aarch64.exe", "zed-remote-server-macos-aarch64.gz", "zed-remote-server-macos-x86_64.gz", "zed-remote-server-linux-aarch64.gz", "zed-remote-server-linux-x86_64.gz", "zed-remote-server-windows-aarch64.zip", "zed-remote-server-windows-x86_64.zip"]'
         TAG="$GITHUB_REF_NAME"
 
         ACTUAL_ASSETS=$(gh release view "$TAG" --repo=zed-industries/zed --json assets -q '[.assets[].name]')
@@ -795,6 +895,8 @@ jobs:
     - check_scripts
     - bundle_linux_aarch64
     - bundle_linux_x86_64
+    - build_static_bwrap_linux_aarch64
+    - build_static_bwrap_linux_x86_64
     - bundle_mac_aarch64
     - bundle_mac_x86_64
     - bundle_windows_aarch64
@@ -822,6 +924,8 @@ jobs:
                 if [ "$RESULT_CHECK_SCRIPTS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
                 if [ "$RESULT_BUNDLE_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
                 if [ "$RESULT_BUNDLE_LINUX_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
+                if [ "$RESULT_BUILD_STATIC_BWRAP_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS build_static_bwrap_linux_aarch64"; fi
+                if [ "$RESULT_BUILD_STATIC_BWRAP_LINUX_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS build_static_bwrap_linux_x86_64"; fi
                 if [ "$RESULT_BUNDLE_MAC_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
                 if [ "$RESULT_BUNDLE_MAC_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
                 if [ "$RESULT_BUNDLE_WINDOWS_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
@@ -874,6 +978,8 @@ jobs:
         RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
         RESULT_BUNDLE_LINUX_AARCH64: ${{ needs.bundle_linux_aarch64.result }}
         RESULT_BUNDLE_LINUX_X86_64: ${{ needs.bundle_linux_x86_64.result }}
+        RESULT_BUILD_STATIC_BWRAP_LINUX_AARCH64: ${{ needs.build_static_bwrap_linux_aarch64.result }}
+        RESULT_BUILD_STATIC_BWRAP_LINUX_X86_64: ${{ needs.build_static_bwrap_linux_x86_64.result }}
         RESULT_BUNDLE_MAC_AARCH64: ${{ needs.bundle_mac_aarch64.result }}
         RESULT_BUNDLE_MAC_X86_64: ${{ needs.bundle_mac_x86_64.result }}
         RESULT_BUNDLE_WINDOWS_AARCH64: ${{ needs.bundle_windows_aarch64.result }}

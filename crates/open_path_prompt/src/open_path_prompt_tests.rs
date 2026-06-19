@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic};
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
@@ -439,6 +439,43 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
 
     insert_query(path!("/root/."), &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec![".hidden"]);
+}
+
+#[gpui::test]
+async fn test_dismiss_cancels_in_flight_match(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a1": "A1",
+                "a2": "A2",
+                "a3": "A3",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, false, false, cx);
+
+    insert_query(path!("/root/a"), &picker, cx).await;
+
+    let cancel_flag = picker.read_with(cx, |picker, _| picker.delegate.cancel_flag.clone());
+    assert!(
+        !cancel_flag.load(atomic::Ordering::Acquire),
+        "cancel flag should be clear while the prompt is active"
+    );
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.dismissed(window, cx);
+    });
+
+    assert!(
+        cancel_flag.load(atomic::Ordering::Acquire),
+        "dismissing the prompt must cancel the in-flight fuzzy match"
+    );
 }
 
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
