@@ -253,7 +253,7 @@ fn format_binding(binding: String) -> String {
 }
 
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let regex = Regex::new(r"\{#kb(?::(\w+))?\s+(.*?)\}").unwrap();
+    let regex = Regex::new(r"(?s)\{#kb(?::(\w+))?\s+(.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
@@ -301,7 +301,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
 }
 
 fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let regex = Regex::new(r"\{#action (.*?)\}").unwrap();
+    let regex = Regex::new(r"(?s)\{#action\s+(.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
@@ -752,7 +752,7 @@ fn handle_postprocessing() -> Result<()> {
         .and_then(|site_url| site_url.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| "/docs/".to_string());
-    write_ai_discovery_artifacts(&ctx.book, &ctx.root, &root_dir, &site_url)?;
+    write_ai_discovery_artifacts(&ctx.book, &root_dir, &site_url)?;
     let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
     for file in &files {
         let contents = std::fs::read_to_string(&file)?;
@@ -829,16 +829,12 @@ fn handle_postprocessing() -> Result<()> {
 struct DocsPage {
     title: String,
     source_path: PathBuf,
+    content: String,
 }
 
-fn write_ai_discovery_artifacts(
-    book: &Book,
-    book_root: &Path,
-    destination: &Path,
-    site_url: &str,
-) -> Result<()> {
+fn write_ai_discovery_artifacts(book: &Book, destination: &Path, site_url: &str) -> Result<()> {
     let pages = docs_pages(book);
-    copy_markdown_sources(book_root, destination, site_url, &pages)?;
+    copy_markdown_sources(destination, site_url, &pages)?;
     write_llms_txt(destination, site_url, &pages)?;
     write_sitemap_xml(destination, site_url, &pages)?;
     Ok(())
@@ -859,36 +855,28 @@ fn docs_pages(book: &Book) -> Vec<DocsPage> {
         pages.push(DocsPage {
             title: chapter.name.clone(),
             source_path: source_path.clone(),
+            content: chapter.content.clone(),
         });
     }
     pages
 }
 
-fn copy_markdown_sources(
-    book_root: &Path,
-    destination: &Path,
-    site_url: &str,
-    pages: &[DocsPage],
-) -> Result<()> {
-    let source_root = book_root.join("src");
+fn copy_markdown_sources(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Result<()> {
     for page in pages {
-        let source = source_root.join(&page.source_path);
         let destination = destination.join(&page.source_path);
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create markdown destination {}", parent.display())
             })?;
         }
-        let contents = std::fs::read_to_string(&source)
-            .with_context(|| format!("failed to read markdown source {}", source.display()))?;
         std::fs::write(
             &destination,
-            add_llms_markdown_directive(&contents, site_url),
+            add_llms_markdown_directive(&markdown_source_contents(&page.content), site_url),
         )
         .with_context(|| {
             format!(
-                "failed to write markdown source {} to {}",
-                source.display(),
+                "failed to write markdown page {} to {}",
+                page.source_path.display(),
                 destination.display()
             )
         })?;
@@ -899,6 +887,11 @@ fn copy_markdown_sources(
             .context("failed to write index.md markdown alias")?;
     }
     Ok(())
+}
+
+fn markdown_source_contents(contents: &str) -> String {
+    let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
+    meta_regex.replace(contents, "").trim_start().to_string()
 }
 
 fn write_llms_txt(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Result<()> {

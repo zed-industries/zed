@@ -58,6 +58,10 @@ function markdownPathFor(pathname) {
     return pathname.replace(/\.html$/, ".md");
   }
 
+  if (pathname.split("/").pop().includes(".")) {
+    return pathname;
+  }
+
   if (pathname.endsWith("/")) {
     return `${pathname}getting-started.md`;
   }
