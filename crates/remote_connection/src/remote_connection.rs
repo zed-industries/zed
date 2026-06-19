@@ -245,6 +245,8 @@ impl RemoteConnectionModal {
             RemoteConnectionOptions::Mock(options) => {
                 (format!("mock-{}", options.id), None, false, false)
             }
+            #[cfg(not(any(test, feature = "test-support")))]
+            _ => unreachable!("Mock variant only exists in test builds"),
         };
         Self {
             prompt: cx.new(|cx| {
