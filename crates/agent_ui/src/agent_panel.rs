@@ -2082,8 +2082,7 @@ impl AgentPanel {
         // Custom shells can emit prompts, titles, or startup output after the PTY is
         // created. If we write the init command during that window, the PTY may echo
         // it before the shell is ready or the shell startup output may appear after
-        // our clear command.
-        let clear_command = terminal.read(cx).clear_screen_command().to_string();
+        // we've cleaned up the startup screen.
         let (startup_tx, startup_rx) = async_channel::bounded(1);
         let terminal_subscription = cx.subscribe(
             terminal,
@@ -2107,10 +2106,14 @@ impl AgentPanel {
             Self::wait_for_terminal_startup(startup_rx, cx).await;
             drop(terminal_subscription);
 
-            let input = Self::terminal_init_command_input(format!("{clear_command}\r{command}"));
-            if let Err(error) =
-                terminal.update(cx, |terminal, _| terminal.write_init_command(input))
-            {
+            let input = Self::terminal_init_command_input(command);
+            if let Err(error) = terminal.update(cx, move |terminal, cx| {
+                if !terminal.write_init_command_after_startup(input, cx) {
+                    log::debug!(
+                        "skipping terminal init command because terminal input was received first"
+                    );
+                }
+            }) {
                 log::debug!("skipping terminal init command because the terminal closed: {error}");
             }
             anyhow::Ok(())
@@ -2143,13 +2146,13 @@ impl AgentPanel {
             futures::pin_mut!(next_event, idle_timeout);
 
             futures::select_biased! {
+                _ = startup_timeout => return,
                 result = next_event => {
                     if result.is_err() {
                         return;
                     }
                 }
                 _ = idle_timeout => return,
-                _ = startup_timeout => return,
             }
         }
     }
@@ -7638,7 +7641,7 @@ mod tests {
         let input_log = terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
         assert_eq!(
             input_log,
-            vec![b"clear\rprintf 'init_ran_%s\\n' 42\r".to_vec()],
+            vec![b"printf 'init_ran_%s\\n' 42\r".to_vec()],
             "init command should be written only after terminal startup has settled"
         );
         assert!(
