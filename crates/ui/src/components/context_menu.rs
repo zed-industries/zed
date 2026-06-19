@@ -1474,7 +1474,7 @@ impl ContextMenu {
                 .child(Label::new(label.clone()))
                 .into_any_element(),
             ContextMenuItem::Entry(entry) => self
-                .render_menu_entry(ix, entry, is_active_descendant(true), cx)
+                .render_menu_entry(ix, entry, is_active_descendant(true), window, cx)
                 .into_any_element(),
             ContextMenuItem::CustomEntry {
                 entry_render,
@@ -1791,6 +1791,7 @@ impl ContextMenu {
         ix: usize,
         entry: &ContextMenuEntry,
         is_active_descendant: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuEntry {
@@ -1813,6 +1814,17 @@ impl ContextMenu {
             secondary_handler: _,
         } = entry;
         let this = cx.weak_entity();
+        // Announce the item's keyboard shortcut to assistive technology via
+        // `aria-keyshortcuts`, resolving the action's binding the same way the
+        // visible accelerator (rendered below) is.
+        let aria_keyshortcuts = action.as_ref().and_then(|action| {
+            let binding = self
+                .action_context
+                .as_ref()
+                .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+            binding.aria_keyshortcuts(window, cx)
+        });
 
         let handler = handler.clone();
         let menu = cx.entity().downgrade();
@@ -1939,6 +1951,9 @@ impl ContextMenu {
                     .when_some(*toggle, |item, (_, checked)| item.aria_checked(checked))
                     .when(is_active_descendant, |item| item.aria_active_descendant())
                     .aria_label(label.clone())
+                    .when_some(aria_keyshortcuts, |item, keyshortcuts| {
+                        item.aria_keyshortcuts(keyshortcuts)
+                    })
                     .toggle_state(Some(ix) == self.selected_index)
                     .when(self.main_menu.is_none() && !*disabled, |item| {
                         item.on_hover(cx.listener(move |this, hovered, window, cx| {

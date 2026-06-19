@@ -416,7 +416,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(mut self, _window: &mut Window, cx: &mut App) -> ButtonLike {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -427,6 +427,18 @@ impl RenderOnce for Button {
 
         if self.base.aria_label.is_none() {
             self.base.aria_label = Some(label.clone());
+        }
+
+        // Announce the displayed keybinding to assistive technology via
+        // `aria-keyshortcuts` so screen-reader users hear the same shortcut
+        // sighted users see next to the button.
+        if self.base.aria_keyshortcuts.is_none()
+            && let Some(keyshortcuts) = self
+                .key_binding
+                .as_ref()
+                .and_then(|key_binding| key_binding.aria_keyshortcuts(window, cx))
+        {
+            self.base.aria_keyshortcuts = Some(keyshortcuts);
         }
 
         // A combobox's value is its visible text, so expose it as the

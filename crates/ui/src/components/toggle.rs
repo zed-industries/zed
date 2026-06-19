@@ -443,7 +443,7 @@ impl Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
         let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
 
@@ -467,11 +467,18 @@ impl RenderOnce for Switch {
         let label = self.label;
         let aria_label = self.aria_label.or_else(|| label.clone());
         let aria_description = self.aria_description;
+        let aria_keyshortcuts = self
+            .key_binding
+            .as_ref()
+            .and_then(|key_binding| key_binding.aria_keyshortcuts(window, cx));
 
         let switch = div()
             .id((self.id.clone(), "switch"))
             .role(Role::Switch)
             .when_some(aria_label, |this, label| this.aria_label(label))
+            .when_some(aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
             .when_some(aria_description, |this, description| {
                 this.aria_description(description)
             })

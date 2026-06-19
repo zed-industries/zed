@@ -52,7 +52,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -300,8 +300,13 @@ impl Render for TitleBar {
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
-                                render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                                // Hide the project/branch items to make room when the
+                                // menu bar is expanded -- except in accessible mode,
+                                // where the menu bar is always expanded but those
+                                // controls must still remain reachable.
+                                render_project_items &= !menu
+                                    .update(cx, |menu, cx| menu.all_menus_shown(cx))
+                                    || cx.accessible_mode();
                                 title_bar.child(menu)
                             },
                         )

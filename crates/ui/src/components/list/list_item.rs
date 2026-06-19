@@ -55,6 +55,7 @@ pub struct ListItem {
     height: Option<DefiniteLength>,
     aria_role: Option<Role>,
     aria_label: Option<SharedString>,
+    aria_keyshortcuts: Option<SharedString>,
     aria_checked: Option<bool>,
     aria_active_descendant: bool,
 }
@@ -90,6 +91,7 @@ impl ListItem {
             height: None,
             aria_role: None,
             aria_label: None,
+            aria_keyshortcuts: None,
             aria_checked: None,
             aria_active_descendant: false,
         }
@@ -108,6 +110,15 @@ impl ListItem {
     /// label exists.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the keyboard shortcut announced by assistive technology
+    /// (`aria-keyshortcuts`) for this item, e.g. a menu item's accelerator.
+    /// Requires [`Self::aria_role`] to be set. Use standard ARIA syntax, e.g.
+    /// `"Control+S"`.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
         self
     }
 
@@ -324,6 +335,9 @@ impl RenderOnce for ListItem {
                         |this| this.aria_active_descendant(),
                     )
                     .when_some(self.aria_label, |this, label| this.aria_label(label))
+                    .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                        this.aria_keyshortcuts(keyshortcuts)
+                    })
                     .when(self.aria_role.is_some(), |this| {
                         this.aria_selected(self.selected)
                             .when_some(self.aria_checked.or(self.toggle), |this, toggled| {

@@ -1210,6 +1210,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the keyboard shortcut(s) that activate this element, announced by
+    /// assistive technology (ARIA `aria-keyshortcuts`).
+    ///
+    /// This is purely declarative: it does not create the binding, so the value
+    /// must reflect the actual keymap binding. Use the standard ARIA syntax -
+    /// modifiers (`Control`, `Alt`, `Shift`, `Meta`) and the key joined by `+`,
+    /// with chords separated by spaces, e.g. `"Control+S"` or `"Meta+K Meta+S"`.
+    fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_keyshortcuts = Some(keyshortcuts.into());
+        self
+    }
+
     /// Report this element as the focused node in the accessibility tree,
     /// overriding the element that holds real keyboard focus — but only while
     /// one of its ancestors actually holds focus.
@@ -1943,6 +1955,7 @@ pub struct Interactivity {
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria_label: Option<SharedString>,
     pub(crate) aria_description: Option<SharedString>,
+    pub(crate) aria_keyshortcuts: Option<SharedString>,
     pub(crate) aria_selected: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
@@ -3204,6 +3217,9 @@ impl Interactivity {
         }
         if let Some(description) = &self.aria_description {
             node.set_description(description.to_string());
+        }
+        if let Some(keyshortcuts) = &self.aria_keyshortcuts {
+            node.set_keyboard_shortcut(keyshortcuts.to_string());
         }
         if let Some(selected) = self.aria_selected {
             node.set_selected(selected);

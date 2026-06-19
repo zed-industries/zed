@@ -1,5 +1,6 @@
-use gpui::{Action, Entity, OwnedMenu, OwnedMenuItem, actions};
-use settings::Settings;
+use gpui::{Action, Entity, OwnedMenu, OwnedMenuItem, Subscription, actions};
+use settings::{Settings, SettingsStore};
+use workspace::AccessibleMode;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -45,11 +46,15 @@ struct MenuEntry {
 pub struct ApplicationMenu {
     entries: SmallVec<[MenuEntry; 8]>,
     pending_menu_open: Option<String>,
+    _settings_subscription: Subscription,
 }
 
 impl ApplicationMenu {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
+        // Re-render when settings change so toggling "accessible mode" expands or
+        // collapses the menu bar (see `all_menus_shown`).
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
         Self {
             entries: menus
                 .into_iter()
@@ -59,6 +64,7 @@ impl ApplicationMenu {
                 })
                 .collect(),
             pending_menu_open: None,
+            _settings_subscription: settings_subscription,
         }
     }
 
@@ -277,6 +283,9 @@ impl ApplicationMenu {
         show_menus(cx)
             || self.entries.iter().any(|entry| entry.handle.is_deployed())
             || self.pending_menu_open.is_some()
+            // In accessible mode, keep the full menu bar expanded so every menu
+            // is individually reachable and labeled for assistive technology.
+            || cx.accessible_mode()
     }
 }
 

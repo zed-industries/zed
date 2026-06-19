@@ -495,6 +495,7 @@ pub struct ButtonLike {
     pub(super) aria_label: Option<SharedString>,
     aria_description: Option<SharedString>,
     pub(super) aria_value: Option<SharedString>,
+    pub(super) aria_keyshortcuts: Option<SharedString>,
     pub(super) aria_role: Option<Role>,
     aria_expanded: Option<bool>,
     toggled: Option<bool>,
@@ -527,6 +528,7 @@ impl ButtonLike {
             aria_label: None,
             aria_description: None,
             aria_value: None,
+            aria_keyshortcuts: None,
             aria_role: None,
             aria_expanded: None,
             toggled: None,
@@ -589,6 +591,15 @@ impl ButtonLike {
     /// Sets the label announced by assistive technology for this button.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the keyboard shortcut announced by assistive technology
+    /// (`aria-keyshortcuts`) for this button. Use standard ARIA syntax, e.g.
+    /// `"Control+S"`. [`Button`](crate::Button) sets this automatically from its
+    /// displayed keybinding.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
         self
     }
 
@@ -746,6 +757,9 @@ impl RenderOnce for ButtonLike {
             .id(self.id.clone())
             .role(self.aria_role.unwrap_or(Role::Button))
             .when_some(self.aria_label, |this, label| this.aria_label(label))
+            .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
             .when_some(self.aria_description, |this, description| {
                 this.aria_description(description)
             })
