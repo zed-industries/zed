@@ -369,27 +369,28 @@ fn case_insensitive_path(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn case_insensitive_path(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt as _;
+fn case_insensitive_path(_path: &Path) -> bool {
+    // use std::os::unix::ffi::OsStrExt as _;
 
-    // Only ext4/f2fs casefold (`+F`) dirs are insensitive, reported by `statx` via
-    // STATX_ATTR_CASEFOLD; any failure (e.g. pre-4.11 ENOSYS) means case-sensitive.
-    const STATX_ATTR_CASEFOLD: u64 = 0x0000_2000;
-    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    let mut buf = std::mem::MaybeUninit::<libc::statx>::zeroed();
+    // // Only ext4/f2fs casefold (`+F`) dirs are insensitive, reported by `statx` via
+    // // STATX_ATTR_CASEFOLD; any failure (e.g. pre-4.11 ENOSYS) means case-sensitive.
+    // const STATX_ATTR_CASEFOLD: u64 = 0x0000_2000;
+    // let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+    //     return false;
+    // };
+    // let mut buf = std::mem::MaybeUninit::<libc::statx>::zeroed();
 
-    // SAFETY: c_path is still valid, buffer has been zeroed
-    if unsafe { libc::statx(libc::AT_FDCWD, c_path.as_ptr(), 0, 0, buf.as_mut_ptr()) } != 0 {
-        return false;
-    }
+    // // SAFETY: c_path is still valid, buffer has been zeroed
+    // if unsafe { libc::statx(libc::AT_FDCWD, c_path.as_ptr(), 0, 0, buf.as_mut_ptr()) } != 0 {
+    //     return false;
+    // }
 
-    // SAFETY: libc statx initialized this buffer, otherwise we would've returned on a error
-    // in that function call
-    let buf = unsafe { buf.assume_init() };
-    buf.stx_attributes_mask & STATX_ATTR_CASEFOLD != 0
-        && buf.stx_attributes & STATX_ATTR_CASEFOLD != 0
+    // // SAFETY: libc statx initialized this buffer, otherwise we would've returned on a error
+    // // in that function call
+    // let buf = unsafe { buf.assume_init() };
+    // buf.stx_attributes_mask & STATX_ATTR_CASEFOLD != 0
+    //     && buf.stx_attributes & STATX_ATTR_CASEFOLD != 0
+    false
 }
 
 #[cfg(target_os = "windows")]
