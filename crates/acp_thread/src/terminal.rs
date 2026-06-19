@@ -225,9 +225,14 @@ pub(crate) enum NetworkPolicy {
 ///   back over a status channel whether it could enforce the sandbox, and when
 ///   it can't (no usable `bwrap`, user namespaces disabled, …) it runs the
 ///   command unsandboxed and the parent logs a warning rather than failing.
-/// * Windows and all other platforms pass the command through unchanged —
-///   we have no sandbox integration there, so the command runs with the
-///   agent's ambient permissions.
+/// * Windows routes the command through WSL and runs it under Bubblewrap
+///   there, but that path is async (it performs `wsl.exe` round-trips), so it
+///   lives in [`apply_windows_wsl_sandbox_wrap`] rather than this synchronous
+///   function.
+/// * All other platforms pass the command through unchanged — we have no
+///   sandbox integration there, so the command runs with the agent's ambient
+///   permissions.
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -346,18 +351,7 @@ pub(crate) fn apply_sandbox_wrap(
         // there's no on-disk resource to keep alive.
         Ok((new_program, new_args, None))
     }
-    #[cfg(target_os = "windows")]
-    {
-        // No sandbox integration on Windows; run with ambient permissions.
-        if let NetworkPolicy::Proxied(port) = network_policy {
-            log::debug!(
-                "[sandbox/network] ignoring proxy port {port} because this platform has no sandbox integration"
-            );
-        }
-        let _ = (sandbox_wrap, cwd);
-        Ok((program, args, None))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         // No sandbox integration available; run with ambient permissions.
         if let NetworkPolicy::Proxied(port) = network_policy {
@@ -368,6 +362,72 @@ pub(crate) fn apply_sandbox_wrap(
         let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
+}
+
+/// Upper bound on preparing a WSL-sandboxed command (the probe and path
+/// resolution `wsl.exe` round-trips in [`apply_windows_wsl_sandbox_wrap`]).
+/// Deliberately generous: the first invocation after the WSL utility VM has
+/// shut down (or after boot) has to start the VM and the distro, which
+/// routinely takes 10-30 seconds on slow disks or under antivirus scanning.
+/// The point is not latency policing but turning a wedged `wsl.exe` (a real
+/// failure mode when the WSL service is unhealthy) into an actionable error
+/// instead of a terminal command that never starts.
+#[cfg(target_os = "windows")]
+pub(crate) const WSL_SANDBOX_WRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wrap a terminal command so it runs under Bubblewrap inside WSL (see
+/// [`sandbox::windows_wsl`]).
+///
+/// Async because it performs `wsl.exe` round-trips and UNC-path stats that
+/// can take seconds when the WSL VM is cold; callers must run it on a
+/// background executor so the UI thread is never blocked, and should bound
+/// it with [`WSL_SANDBOX_WRAP_TIMEOUT`]. Parameters are owned so the future
+/// is `Send + 'static`. Dropping the future (timeout or caller cancellation)
+/// kills any in-flight `wsl.exe` child rather than leaking it.
+///
+/// The Windows sandbox (Bubblewrap inside WSL) can only toggle network access
+/// wholesale, so `network_policy` collapses to allow/deny here just as it does
+/// on Linux. `setup_network_proxy` never resolves to `Proxied` on Windows.
+#[cfg(target_os = "windows")]
+pub(crate) async fn apply_windows_wsl_sandbox_wrap(
+    command: String,
+    args: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
+    sandbox_wrap: SandboxWrap,
+    network_policy: NetworkPolicy,
+    env: collections::HashMap<String, String>,
+) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
+    let allow_network = match network_policy {
+        NetworkPolicy::Denied => false,
+        NetworkPolicy::Unrestricted => true,
+        NetworkPolicy::Proxied(port) => {
+            // Bubblewrap (in WSL) can only toggle network access wholesale, so
+            // it can't confine egress to the proxy's loopback port.
+            // `setup_network_proxy` never resolves to `Proxied` on Windows;
+            // deny network rather than silently widening access.
+            log::debug!(
+                "[sandbox/network] ignoring proxy port {port}; bubblewrap in WSL can't confine to a loopback port"
+            );
+            false
+        }
+    };
+    let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
+        .non_interactive()
+        .redirect_stdin_to_dev_null()
+        .build(Some(command), &args);
+    let writable: Vec<std::path::PathBuf> = sandbox_wrap
+        .writable_paths
+        .into_iter()
+        .chain(sandbox_wrap.extra_write_paths)
+        .collect();
+    let permissions = sandbox::SandboxPermissions {
+        allow_network,
+        allow_fs_write: sandbox_wrap.allow_fs_write,
+    };
+    let (program, args) =
+        sandbox::windows_wsl::wrap_invocation(program, args, writable, permissions, cwd, env)
+            .await?;
+    Ok((program, args, None))
 }
 
 /// Spawn the in-process network proxy for a sandboxed command with restricted

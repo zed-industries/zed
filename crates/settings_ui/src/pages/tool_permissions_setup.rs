@@ -977,8 +977,7 @@ fn render_user_pattern_row(
     let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(input_id)
+    SettingsInputField::new(input_id)
         .with_initial_text(pattern)
         .tab_index(0)
         .with_buffer_font()
@@ -1038,8 +1037,7 @@ fn render_add_pattern_input(
     let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(input_id)
+    SettingsInputField::new(input_id)
         .with_placeholder("Add regex pattern…")
         .tab_index(0)
         .with_buffer_font()

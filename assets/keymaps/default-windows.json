@@ -291,6 +291,29 @@
       "ctrl-alt-down": "agent::ScrollOutputLineDown",
       "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
       "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
+      "ctrl-f": "agent::ToggleSearch",
+      "f3": "agent::SelectNextThreadMatch",
+      "shift-f3": "agent::SelectPreviousThreadMatch",
+      "alt-c": "search::ToggleCaseSensitive",
+      "alt-w": "search::ToggleWholeWord",
+      "alt-r": "search::ToggleRegex",
+    },
+  },
+  {
+    "context": "AcpThreadSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "agent::DismissThreadSearch",
+      "enter": "agent::SelectNextThreadMatch",
+      "shift-enter": "agent::SelectPreviousThreadMatch",
+      "ctrl-f": "search::FocusSearch",
+    },
+  },
+  {
+    "context": "AcpThreadSearchBar > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-enter": "agent::SelectPreviousThreadMatch",
     },
   },
   {
