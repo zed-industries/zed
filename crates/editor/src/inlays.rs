@@ -17,6 +17,8 @@
 /// Logic, related to managing LSP inlay hint inlays.
 pub mod inlay_hints;
 
+pub mod inlay_hints_tests;
+
 use std::sync::OnceLock;
 
 use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
