@@ -12,11 +12,24 @@ kbd.keybinding {
   -webkit-text-stroke: 0.5px currentColor;
 }
 
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 28px;
+}
+
+.page-header h1 {
+  min-width: 0;
+  margin-block: 0;
+}
+
 .page-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
   gap: 8px;
-  margin: -8px 0 28px;
+  margin-top: 6px;
 }
 
 .page-action {
@@ -43,6 +56,18 @@ kbd.keybinding {
 .page-action i {
   width: 14px;
   text-align: center;
+}
+
+@media (max-width: 720px) {
+  .page-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .page-actions {
+    flex-wrap: wrap;
+    margin-top: 0;
+  }
 }
 
 .copy-toast {

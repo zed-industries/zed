@@ -161,6 +161,9 @@ const copyPageActions = () => {
     const firstHeading = contentRoot.querySelector("h1");
     if (!firstHeading) return;
 
+    const header = document.createElement("div");
+    header.className = "page-header";
+
     const actions = document.createElement("div");
     actions.className = "page-actions";
     actions.innerHTML = `
@@ -174,28 +177,29 @@ const copyPageActions = () => {
       </button>
     `;
 
-    firstHeading.insertAdjacentElement("afterend", actions);
+    firstHeading.insertAdjacentElement("beforebegin", header);
+    header.append(firstHeading, actions);
 
     registerButton(actions.querySelector("[data-copy-page]"), "fa fa-copy");
     registerButton(actions.querySelector("[data-copy-markdown]"), "fa fa-code");
   };
 
-  const getCurrentPagePath = () => {
+  const markdownPathForCurrentPage = () => {
     const pathname = window.location.pathname;
+    const docsPrefix = pathname.startsWith("/docs/") ? "/docs/" : "/";
 
-    // Handle root docs path
-    if (pathname === "/docs/" || pathname === "/docs") {
-      return "getting-started.md";
+    if (pathname === "/docs/" || pathname === "/docs" || pathname === "/") {
+      return `${docsPrefix}getting-started.md`;
     }
 
-    // Remove /docs/ prefix and .html suffix, then add .md
     const cleanPath = pathname
-      .replace(/^\/docs\//, "")
+      .replace(/^\//, "")
+      .replace(/^docs\//, "")
       .replace(/\.md$/, "")
       .replace(/\.html$/, "")
       .replace(/\/$/, "");
 
-    return cleanPath ? cleanPath + ".md" : "getting-started.md";
+    return `${docsPrefix}${cleanPath || "getting-started"}.md`;
   };
 
   const markdownUrl = () => {
@@ -203,9 +207,17 @@ const copyPageActions = () => {
       'link[rel="alternate"][type="text/markdown"]',
     );
     const alternateHref = alternateLink?.getAttribute("href");
-    if (!alternateHref) return `/docs/${getCurrentPagePath()}`;
+    if (!alternateHref) return markdownPathForCurrentPage();
 
     const url = new URL(alternateHref, window.location.href);
+    if (
+      url.origin === window.location.origin &&
+      url.pathname.startsWith("/docs/") &&
+      !window.location.pathname.startsWith("/docs/")
+    ) {
+      return url.pathname.replace(/^\/docs/, "") || "/";
+    }
+
     if (url.origin === window.location.origin) {
       return `${url.pathname}${url.search}${url.hash}`;
     }
