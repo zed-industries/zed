@@ -162,7 +162,7 @@ pub(crate) fn check_docs() -> NamedJob {
     NamedJob {
         name: "check_docs".to_owned(),
         job: docs_build_steps(
-            release_job(&[]),
+            release_job(&[]).add_step(steps::harden_runner()),
             None,
             DocsChannel::Stable.channel_name(),
             DocsChannel::Stable.site_url(),

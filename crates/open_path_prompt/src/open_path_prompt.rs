@@ -694,6 +694,7 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.cancel_flag.store(true, atomic::Ordering::Release);
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }

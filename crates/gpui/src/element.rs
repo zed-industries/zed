@@ -32,8 +32,8 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId, FocusHandle,
-    InspectorElementId, LayoutId, Pixels, Point, SharedString, Size, Style, Window,
+    A11ySubtreeBuilder, App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ElementId,
+    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, SharedString, Size, Style, Window,
     util::FluentBuilder, window::with_element_arena,
 };
 use derive_more::{Deref, DerefMut};
@@ -118,6 +118,22 @@ pub trait Element: 'static + IntoElement {
     ///
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn write_a11y_info(&self, _node: &mut accesskit::Node) {}
+
+    /// Add synthetic child nodes to an [`Element`] that has an
+    /// [`.id()`][Element::id] and a [`.role()`][Element::a11y_role].
+    ///
+    /// Some elements may want to inject accessibility nodes that do not
+    /// correspond to any GPUI element. For example, a custom text field element
+    /// may want to inject synthetic child nodes for the text content.
+    ///
+    /// See [Synthetic children](crate::_accessibility#synthetic-children) in
+    /// the accessibility guide for more detail.
+    fn a11y_synthetic_children(
+        &mut self,
+        _prepaint: &mut Self::PrepaintState,
+        _builder: &mut A11ySubtreeBuilder,
+    ) {
+    }
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
@@ -477,7 +493,7 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                let prepaint = self.element.prepaint(
+                let mut prepaint = self.element.prepaint(
                     global_id.as_ref(),
                     inspector_id.as_ref(),
                     bounds,
@@ -488,6 +504,14 @@ impl<E: Element> Drawable<E> {
                 window.next_frame.dispatch_tree.pop_node();
 
                 if pushed_a11y_node {
+                    if let Some(global_id) = global_id.as_ref() {
+                        let mut builder = A11ySubtreeBuilder::new(
+                            global_id.accesskit_node_id(),
+                            &mut window.a11y.nodes,
+                        );
+                        self.element
+                            .a11y_synthetic_children(&mut prepaint, &mut builder);
+                    }
                     window.a11y.nodes.pop();
                 }
 
