@@ -8,5 +8,8 @@ edition.workspace = true
 log.workspace = true
 anyhow.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+which.workspace = true
+
 [lints]
 workspace = true

@@ -98,6 +98,68 @@ jobs:
         path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+  build_static_bwrap_linux_aarch64:
+    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    steps:
+    - name: steps::cache_nix_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: nix
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        cachixArgs: -v
+    - name: run_bundling::build_static_bwrap
+      run: nix build nixpkgs#pkgsStatic.bubblewrap -L
+    - name: run_bundling::build_static_bwrap
+      run: |
+        cp result/bin/bwrap bwrap-linux-aarch64
+        chmod 755 bwrap-linux-aarch64
+        gzip -f --stdout --best bwrap-linux-aarch64 > bwrap-linux-aarch64.gz
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: bwrap-linux-aarch64.gz
+        path: bwrap-linux-aarch64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
+  build_static_bwrap_linux_x86_64:
+    runs-on: namespace-profile-32x64-ubuntu-2004
+    steps:
+    - name: steps::cache_nix_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: nix
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        cachixArgs: -v
+    - name: run_bundling::build_static_bwrap
+      run: nix build nixpkgs#pkgsStatic.bubblewrap -L
+    - name: run_bundling::build_static_bwrap
+      run: |
+        cp result/bin/bwrap bwrap-linux-x86_64
+        chmod 755 bwrap-linux-x86_64
+        gzip -f --stdout --best bwrap-linux-x86_64 > bwrap-linux-x86_64.gz
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: bwrap-linux-x86_64.gz
+        path: bwrap-linux-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
   bundle_mac_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
