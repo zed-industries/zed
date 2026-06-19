@@ -7,6 +7,7 @@ use calloop::{
 use collections::HashMap;
 use core::str;
 use gpui::{Capslock, profiler};
+use gpui_util::ResultExt as _;
 use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
@@ -18,7 +19,6 @@ use std::{
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
-use util::ResultExt as _;
 
 use x11rb::{
     connection::{Connection, RequestConnection},

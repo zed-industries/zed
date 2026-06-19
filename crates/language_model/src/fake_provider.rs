@@ -127,6 +127,7 @@ pub struct FakeLanguageModel {
     supports_disabling_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    supports_server_side_compaction: AtomicBool,
     max_token_count: AtomicU64,
     max_output_tokens: AtomicU64,
 }
@@ -144,6 +145,7 @@ impl Default for FakeLanguageModel {
             supports_disabling_thinking: AtomicBool::new(true),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            supports_server_side_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
             max_output_tokens: AtomicU64::new(0),
         }
@@ -188,6 +190,10 @@ impl FakeLanguageModel {
 
     pub fn set_supports_images(&self, supports: bool) {
         self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_server_side_compaction(&self, supports: bool) {
+        self.supports_server_side_compaction.store(supports, SeqCst);
     }
 
     pub fn set_max_token_count(&self, count: u64) {
@@ -306,6 +312,10 @@ impl LanguageModel for FakeLanguageModel {
 
     fn supports_images(&self) -> bool {
         self.supports_images.load(SeqCst)
+    }
+
+    fn supports_server_side_compaction(&self) -> bool {
+        self.supports_server_side_compaction.load(SeqCst)
     }
 
     fn supports_thinking(&self) -> bool {

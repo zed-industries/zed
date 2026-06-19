@@ -185,6 +185,15 @@ pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
 mod tests {
     use super::*;
 
+    /// An ER diagram whose attribute-block tokens begin with a multibyte
+    /// UTF-8 character (e.g. CJK type/field names) must not panic while the
+    /// lexer probes for the two-character `PK`/`FK`/`UK` keys.
+    #[test]
+    fn er_multibyte_attribute_does_not_crash() {
+        let source = "erDiagram\n顧客 {\n  文字列 名前\n}";
+        let _ = render_to_svg(source, &MermaidTheme::default());
+    }
+
     /// A flowchart with mutually nested subgraphs (`A` contains `B` and `B`
     /// contains `A`) is an invalid containment cycle. Rendering it must return
     /// gracefully rather than overflowing the stack and aborting the process.
