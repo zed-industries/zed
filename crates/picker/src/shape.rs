@@ -182,6 +182,14 @@ impl ViewportFraction {
     }
 }
 
+impl std::ops::Mul<f32> for ViewportFraction {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self(self.0 * rhs)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum VerticalPadding {
     /// The picker always fills its height even if there are no resutls
@@ -621,9 +629,19 @@ impl Shape {
         }
     }
 
-    pub(crate) fn reset_preview_size(&mut self, default: &Centered) {
-        if let Shape::HorizontallyCentered(Centered { preview_size, .. }) = self {
-            *preview_size = default.preview_size;
+    pub(crate) fn center_divider(&mut self, layout: Layout, window: &Window) {
+        if let Shape::HorizontallyCentered(Centered {
+            width,
+            height,
+            preview_size,
+        }) = self
+        {
+            let total = match layout {
+                Layout::Right => width.as_viewport_fraction(window),
+                Layout::Below => height.as_viewport_fraction(window),
+                Layout::Hidden => return,
+            };
+            *preview_size = total * 0.5;
         }
     }
 }

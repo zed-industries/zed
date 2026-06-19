@@ -272,34 +272,36 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // TODO!(yara) minimize the number of flex/divs etc needed
-        h_flex().relative().child(
-            v_flex()
-                .h(self
-                    .shape
-                    .height(Some(preview::Layout::Below), &self.size_bounds, window))
-                .child(
-                    div()
-                        .h(self.shape.results_height(
-                            preview::Layout::Below,
-                            &self.size_bounds,
-                            window,
-                        ))
-                        .overflow_hidden()
-                        .child(self.render_results(window, cx)),
-                )
-                .child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
-                .child(
-                    div()
-                        .h(self.shape.preview_height(
-                            preview::Layout::Below,
-                            &self.size_bounds,
-                            window,
-                        ))
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .child(preview.render(window, cx)),
-                ),
-        )
+        h_flex()
+            .relative()
+            .child(
+                v_flex()
+                    .h(self
+                        .shape
+                        .height(Some(preview::Layout::Below), &self.size_bounds, window))
+                    .child(
+                        div()
+                            .h(self.shape.results_height(
+                                preview::Layout::Below,
+                                &self.size_bounds,
+                                window,
+                            ))
+                            .overflow_hidden()
+                            .child(self.render_results(window, cx)),
+                    )
+                    .child(
+                        div()
+                            .h(self.shape.preview_height(
+                                preview::Layout::Below,
+                                &self.size_bounds,
+                                window,
+                            ))
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(preview.render(cx)),
+                    ),
+            )
+            .child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
     }
 
     pub(crate) fn render_with_preview_right(
@@ -308,38 +310,40 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        v_flex().relative().child(
-            h_flex()
-                .h(self
-                    .shape
-                    .height(Some(Layout::Right), &self.size_bounds, window))
-                .child(
-                    div()
-                        .flex_1()
-                        .h_full()
-                        .overflow_hidden()
-                        .child(self.render_results(window, cx)),
-                )
-                .child(self.render_resize(Middle(Layout::Right), window, cx))
-                .child(
-                    div()
-                        .w(self
-                            .shape
-                            .preview_width(Layout::Right, &self.size_bounds, window))
-                        .map(|this| {
-                            self.shape.apply_height(
-                                Some(Layout::Right),
-                                &self.size_bounds,
-                                this,
-                                window,
-                            )
-                        })
-                        .border_l_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .overflow_hidden()
-                        .child(preview.render(window, cx)),
-                ),
-        )
+        v_flex()
+            .relative()
+            .child(
+                h_flex()
+                    .h(self
+                        .shape
+                        .height(Some(Layout::Right), &self.size_bounds, window))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(self.render_results(window, cx)),
+                    )
+                    .child(
+                        div()
+                            .w(self
+                                .shape
+                                .preview_width(Layout::Right, &self.size_bounds, window))
+                            .map(|this| {
+                                self.shape.apply_height(
+                                    Some(Layout::Right),
+                                    &self.size_bounds,
+                                    this,
+                                    window,
+                                )
+                            })
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .overflow_hidden()
+                            .child(preview.render(cx)),
+                    ),
+            )
+            .child(self.render_resize(Middle(Layout::Right), window, cx))
     }
 
     fn finish_any_completed_resize(

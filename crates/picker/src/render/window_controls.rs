@@ -118,7 +118,7 @@ pub(crate) trait Side: Copy + 'static {
         layout: Option<Layout>,
         window: &Window,
     );
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered);
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered, window: &Window);
 }
 
 #[derive(Clone, Copy)]
@@ -156,7 +156,7 @@ impl Side for Left {
         bounds.clamp_left_edge(working, layout, window);
         bounds.clamp_divider(working, layout, window);
     }
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered, _window: &Window) {
         shape.reset_width(default);
     }
 }
@@ -198,7 +198,7 @@ impl Side for Right {
         bounds.clamp_right_edge(working, layout, window);
         bounds.clamp_divider(working, layout, window);
     }
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered, _window: &Window) {
         shape.reset_width(default);
     }
 }
@@ -263,8 +263,8 @@ impl Side for Middle {
         // The divider only moves the preview; the outer edges are unchanged.
         bounds.clamp_divider(working, layout, window);
     }
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
-        shape.reset_preview_size(default);
+    fn revert_to_default_size(&self, shape: &mut Shape, _default: &Centered, window: &Window) {
+        shape.center_divider(self.0, window);
     }
 }
 
@@ -306,7 +306,7 @@ impl Side for Bottom {
         bounds.clamp_bottom_edge(working, layout, window);
         bounds.clamp_divider(working, layout, window);
     }
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered, _window: &Window) {
         shape.reset_height(default);
     }
 }
@@ -352,7 +352,7 @@ impl Side for LeftCorner {
         bounds.clamp_bottom_edge(working, layout, window);
         bounds.clamp_divider(working, layout, window);
     }
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered, _window: &Window) {
         shape.reset_width(default);
         shape.reset_height(default);
     }
@@ -399,7 +399,7 @@ impl Side for RightCorner {
         bounds.clamp_bottom_edge(working, layout, window);
         bounds.clamp_divider(working, layout, window);
     }
-    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered) {
+    fn revert_to_default_size(&self, shape: &mut Shape, default: &Centered, _window: &Window) {
         shape.reset_width(default);
         shape.reset_height(default);
     }
@@ -486,7 +486,7 @@ impl<D: PickerDelegate> Picker<D> {
         if event.click_count() < 2 {
             return;
         }
-        side.revert_to_default_size(&mut self.shape, &self.default_shape);
+        side.revert_to_default_size(&mut self.shape, &self.default_shape, window);
         let pos =
             self.shape
                 .clamped_position_and_size(self.preview_layout(), &self.size_bounds, window);
