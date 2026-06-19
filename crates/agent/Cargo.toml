@@ -41,6 +41,7 @@ handlebars = { workspace = true, features = ["rust-embed"] }
 heck.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+http_proxy.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -54,6 +55,7 @@ prompt_store.workspace = true
 quick-xml.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -223,14 +223,8 @@ impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
 const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
-enum MentionInsertPosition {
-    AtCursor,
-    EndOfBuffer,
-}
-
 fn insert_mention_for_project_path(
     project_path: &ProjectPath,
-    position: MentionInsertPosition,
     editor: &Entity<Editor>,
     mention_set: &Entity<MentionSet>,
     project: &Entity<Project>,
@@ -261,38 +255,20 @@ fn insert_mention_for_project_path(
     let mention_text = mention_uri.as_link().to_string();
     let content_len = mention_text.len();
 
-    let text_anchor = match position {
-        MentionInsertPosition::AtCursor => editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx);
-            let snapshot = buffer.snapshot(cx);
-            let buffer_snapshot = snapshot.as_singleton()?;
-            let text_anchor = snapshot
-                .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
-                .0
-                .bias_left(&buffer_snapshot);
+    let text_anchor = editor.update(cx, |editor, cx| {
+        let buffer = editor.buffer().read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let buffer_snapshot = snapshot.as_singleton()?;
+        let text_anchor = snapshot
+            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
+            .0
+            .bias_left(&buffer_snapshot);
 
-            editor.insert(&mention_text, window, cx);
-            editor.insert(" ", window, cx);
+        editor.insert(&mention_text, window, cx);
+        editor.insert(" ", window, cx);
 
-            Some(text_anchor)
-        }),
-        MentionInsertPosition::EndOfBuffer => {
-            let multi_buffer = editor.read(cx).buffer().clone();
-            let buffer = multi_buffer.read(cx).as_singleton()?;
-            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
-            let new_text = format!("{mention_text} ");
-            editor.update(cx, |editor, cx| {
-                editor.edit(
-                    [(
-                        multi_buffer::Anchor::Max..multi_buffer::Anchor::Max,
-                        new_text,
-                    )],
-                    cx,
-                );
-            });
-            Some(anchor)
-        }
-    }?;
+        Some(text_anchor)
+    })?;
 
     Some(mention_set.update(cx, |mention_set, cx| {
         mention_set.confirm_mention_completion(
@@ -395,7 +371,6 @@ fn insert_project_path_as_context(
         let project = workspace.read(cx).project().clone();
         insert_mention_for_project_path(
             &project_path,
-            MentionInsertPosition::AtCursor,
             &editor,
             &mention_set,
             &project,
@@ -723,7 +698,6 @@ impl MessageEditor {
             .detach();
     }
 
-    #[cfg(test)]
     pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
@@ -1412,7 +1386,6 @@ impl MessageEditor {
         for path in paths {
             if let Some(task) = insert_mention_for_project_path(
                 &path,
-                MentionInsertPosition::EndOfBuffer,
                 &self.editor,
                 &self.mention_set,
                 &project,
@@ -5108,6 +5081,88 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dragged_file_path_inserts_at_cursor(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("Hello world", window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
+            });
+        });
+
+        insert_dragged_project_paths(&message_editor, vec!["file.txt"], &mut cx);
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/file.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Hello [@file.txt]({expected_uri}) world")
+            );
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(content, "content");
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/file.txt").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dragged_file_paths_insert_in_order_at_cursor(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
+            json!({
+                "one.txt": "one",
+                "two.txt": "two",
+            }),
+            cx,
+        )
+        .await;
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("Hello world", window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
+            });
+        });
+
+        insert_dragged_project_paths(&message_editor, vec!["one.txt", "two.txt"], &mut cx);
+
+        let first_uri = MentionUri::File {
+            abs_path: path!("/project/one.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+        let second_uri = MentionUri::File {
+            abs_path: path!("/project/two.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Hello [@one.txt]({first_uri}) [@two.txt]({second_uri}) world")
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_paste_mixed_external_image_without_extension_and_file_path(
         cx: &mut TestAppContext,
     ) {
@@ -5251,6 +5306,36 @@ mod tests {
 
         message_editor.update_in(cx, |message_editor, window, cx| {
             message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn insert_dragged_project_paths(
+        message_editor: &Entity<MessageEditor>,
+        paths: Vec<&str>,
+        cx: &mut VisualTestContext,
+    ) {
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            let workspace = message_editor
+                .workspace
+                .upgrade()
+                .expect("message editor should keep workspace alive");
+            let project = workspace.read(cx).project().clone();
+            let worktree_id = project.update(cx, |project, cx| {
+                let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+                assert_eq!(worktrees.len(), 1, "expected a single worktree");
+                worktrees.pop().unwrap().read(cx).id()
+            });
+
+            let paths = paths
+                .into_iter()
+                .map(|path| ProjectPath {
+                    worktree_id,
+                    path: rel_path(path).into(),
+                })
+                .collect();
+
+            message_editor.insert_dragged_files(paths, vec![], window, cx);
         });
         cx.run_until_parked();
     }
