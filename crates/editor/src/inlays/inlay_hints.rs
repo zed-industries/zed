@@ -564,14 +564,16 @@ impl Editor {
         Some(invalidate_cache)
     }
 
-    pub fn visible_inlay_hints(display_map: &DisplayMap) -> impl Iterator<Item = Inlay> + use<'_> {
+    pub(crate) fn visible_inlay_hints(
+        display_map: &DisplayMap,
+    ) -> impl Iterator<Item = Inlay> + use<'_> {
         display_map
             .current_inlays()
             .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
             .cloned()
     }
 
-    pub fn allowed_hint_kinds_for_editor(editor: &Editor) -> HashSet<Option<InlayHintKind>> {
+    pub(crate) fn allowed_hint_kinds_for_editor(editor: &Editor) -> HashSet<Option<InlayHintKind>> {
         editor
             .inlay_hints
             .as_ref()
