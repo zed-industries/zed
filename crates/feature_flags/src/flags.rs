@@ -147,9 +147,5 @@ pub struct SandboxingFeatureFlag;
 impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(SandboxingFeatureFlag);

@@ -428,7 +428,6 @@ impl Worktree {
         } else {
             None
         };
-
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
