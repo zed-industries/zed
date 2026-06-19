@@ -41,7 +41,7 @@ use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
-use crate::GEMINI_ID;
+use crate::{CURSOR_ID, GEMINI_ID};
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
@@ -947,6 +947,14 @@ impl AcpConnection {
             }
         });
 
+        let mut initialize_meta = acp::Meta::from_iter([
+            ("terminal_output".into(), true.into()),
+            ("terminal-auth".into(), true.into()),
+        ]);
+        if id.as_ref() == CURSOR_ID {
+            initialize_meta.insert("parameterizedModelPicker".into(), true.into());
+        }
+
         let initialize_response = into_foreground_future(
             connection.send_request(
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
@@ -957,10 +965,7 @@ impl AcpConnection {
                                 .write_text_file(true))
                             .terminal(true)
                             .auth(acp::AuthCapabilities::new().terminal(true))
-                            .meta(acp::Meta::from_iter([
-                                ("terminal_output".into(), true.into()),
-                                ("terminal-auth".into(), true.into()),
-                            ])),
+                            .meta(initialize_meta),
                     )
                     .client_info(
                         acp::Implementation::new("zed", version)
