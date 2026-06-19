@@ -564,7 +564,7 @@ impl Editor {
         Some(invalidate_cache)
     }
 
-    pub(crate) fn visible_inlay_hints(
+    pub(super) fn visible_inlay_hints(
         display_map: &DisplayMap,
     ) -> impl Iterator<Item = Inlay> + use<'_> {
         display_map
