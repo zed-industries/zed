@@ -1136,6 +1136,37 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
+pub(crate) enum ThreadModel {
+    Ready(Arc<dyn LanguageModel>),
+    Unresolved(SelectedModel),
+    Unset,
+}
+
+impl ThreadModel {
+    fn as_model(&self) -> Option<&Arc<dyn LanguageModel>> {
+        match self {
+            Self::Ready(model) => Some(model),
+            Self::Unresolved(_) | Self::Unset => None,
+        }
+    }
+}
+
+impl From<&ThreadModel> for Option<DbLanguageModel> {
+    fn from(model: &ThreadModel) -> Self {
+        match model {
+            ThreadModel::Ready(model) => Some(DbLanguageModel {
+                provider: model.provider_id().to_string(),
+                model: model.id().0.to_string(),
+            }),
+            ThreadModel::Unresolved(selection) => Some(DbLanguageModel {
+                provider: selection.provider.0.to_string(),
+                model: selection.model.0.to_string(),
+            }),
+            ThreadModel::Unset => None,
+        }
+    }
+}
+
 pub struct Thread {
     id: acp::SessionId,
     prompt_id: PromptId,
@@ -1169,7 +1200,7 @@ pub struct Thread {
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
     pub(crate) templates: Arc<Templates>,
-    model: Option<Arc<dyn LanguageModel>>,
+    model: ThreadModel,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
@@ -1278,6 +1309,7 @@ impl Thread {
             .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
+        let model = model.map_or(ThreadModel::Unset, ThreadModel::Ready);
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -1354,13 +1386,13 @@ impl Thread {
             return;
         };
 
-        self.model = Some(model.clone());
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
         self.prompt_capabilities_tx
-            .send(Self::prompt_capabilities(self.model.as_deref()))
+            .send(Self::prompt_capabilities(Some(model.as_ref())))
             .log_err();
+        self.model = ThreadModel::Ready(model);
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -1630,31 +1662,33 @@ impl Thread {
             .profile
             .unwrap_or_else(|| settings.default_profile.clone());
 
-        let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            db_thread
-                .model
-                .and_then(|model| {
-                    let model = SelectedModel {
-                        provider: model.provider.clone().into(),
-                        model: model.model.into(),
-                    };
-                    registry.select_model(&model, cx)
-                })
-                .or_else(|| registry.default_model())
-                .map(|model| model.model)
+        let saved_selection = db_thread.model.map(|model| SelectedModel {
+            provider: model.provider.into(),
+            model: model.model.into(),
         });
 
-        if model.is_none() {
-            model = Self::resolve_profile_model(&profile_id, cx);
-        }
-        if model.is_none() {
-            model = LanguageModelRegistry::global(cx).update(cx, |registry, _cx| {
-                registry.default_model().map(|model| model.model)
-            });
-        }
+        let resolved_saved_model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            saved_selection
+                .as_ref()
+                .and_then(|selection| registry.select_model(selection, cx))
+                .map(|configured| configured.model)
+        });
 
-        let (prompt_capabilities_tx, prompt_capabilities_rx) =
-            watch::channel(Self::prompt_capabilities(model.as_deref()));
+        let model = match (resolved_saved_model, saved_selection) {
+            (Some(model), _) => ThreadModel::Ready(model),
+            (None, Some(selection)) => ThreadModel::Unresolved(selection),
+            (None, None) => Self::resolve_profile_model(&profile_id, cx)
+                .or_else(|| {
+                    LanguageModelRegistry::global(cx).update(cx, |registry, _cx| {
+                        registry.default_model().map(|model| model.model)
+                    })
+                })
+                .map_or(ThreadModel::Unset, ThreadModel::Ready),
+        };
+
+        let (prompt_capabilities_tx, prompt_capabilities_rx) = watch::channel(
+            Self::prompt_capabilities(model.as_model().map(|model| model.as_ref())),
+        );
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
@@ -1719,10 +1753,7 @@ impl Thread {
             initial_project_snapshot: None,
             cumulative_token_usage: self.cumulative_token_usage,
             request_token_usage: self.request_token_usage.clone(),
-            model: self.model.as_ref().map(|model| DbLanguageModel {
-                provider: model.provider_id().to_string(),
-                model: model.id().0.to_string(),
-            }),
+            model: (&self.model).into(),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
             subagent_context: self.subagent_context.clone(),
@@ -1795,13 +1826,35 @@ impl Thread {
     }
 
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
-        self.model.as_ref()
+        self.model.as_model()
+    }
+
+    pub(crate) fn ensure_model(
+        &mut self,
+        default_model: Option<&Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) {
+        let resolved = match &self.model {
+            ThreadModel::Ready(_) => return,
+            ThreadModel::Unresolved(selection) => {
+                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry
+                        .select_model(selection, cx)
+                        .map(|configured| configured.model)
+                })
+            }
+            ThreadModel::Unset => default_model.cloned(),
+        };
+
+        if let Some(model) = resolved {
+            self.set_model(model, cx);
+        }
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let old_usage = self.latest_token_usage();
-        self.model = Some(model.clone());
-        let new_caps = Self::prompt_capabilities(self.model.as_deref());
+        self.model = ThreadModel::Ready(model.clone());
+        let new_caps = Self::prompt_capabilities(self.model.as_model().map(|model| model.as_ref()));
         let new_usage = self.latest_token_usage();
         if old_usage != new_usage {
             cx.emit(TokenUsageUpdated(new_usage));
@@ -2137,7 +2190,7 @@ impl Thread {
 
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
         let usage = self.latest_request_token_usage()?;
-        let model = self.model.clone()?;
+        let model = self.model()?;
         let input_tokens = total_input_tokens(usage);
 
         Some(acp_thread::TokenUsage {
@@ -2256,8 +2309,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         let model = self
-            .model
-            .clone()
+            .model()
+            .cloned()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
 
         // Flush any pending message and cancel an in-flight turn before we
@@ -2536,7 +2589,7 @@ impl Thread {
             let (model, request) = this.update(cx, |this, cx| {
                 let model = refusal_fallback_model
                     .clone()
-                    .or_else(|| this.model.clone())
+                    .or_else(|| this.model().cloned())
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
@@ -2683,7 +2736,7 @@ impl Thread {
 
             if had_refusal {
                 let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
-                    let current_model = refusal_fallback_model.as_ref().or(this.model.as_ref())?;
+                    let current_model = refusal_fallback_model.as_ref().or(this.model())?;
                     let fallback_id = match current_model.refusal_fallback_model_id() {
                         Some(id) => id,
                         None => {
@@ -2830,7 +2883,7 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
             let insertion_ix = this.compaction_message_target_ix(cx)?;
-            let model = this.model.clone()?;
+            let model = this.model().cloned()?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
             // Preserve telemetry across retries so the retry count keeps
@@ -2997,7 +3050,7 @@ impl Thread {
         attempt: u8,
         plan: Option<Plan>,
     ) -> Result<acp_thread::RetryStatus> {
-        let Some(model) = self.model.as_ref() else {
+        let Some(model) = self.model() else {
             return Err(anyhow!(error));
         };
 
@@ -3103,8 +3156,8 @@ impl Thread {
                     thread_id = self.id.to_string(),
                     parent_thread_id = self.parent_thread_id().map(|id| id.to_string()),
                     prompt_id = self.prompt_id.to_string(),
-                    model = self.model.as_ref().map(|m| m.telemetry_id()),
-                    model_provider = self.model.as_ref().map(|m| m.provider_id().to_string()),
+                    model = self.model().map(|m| m.telemetry_id()),
+                    model_provider = self.model().map(|m| m.provider_id().to_string()),
                     input_tokens = usage.input_tokens,
                     output_tokens = usage.output_tokens,
                     cache_creation_input_tokens = usage.cache_creation_input_tokens,
@@ -3720,7 +3773,7 @@ impl Thread {
     }
 
     fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
-        let Some(model) = self.model.as_ref() else {
+        let Some(model) = self.model() else {
             return BTreeMap::new();
         };
         let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
@@ -3907,7 +3960,7 @@ impl Thread {
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
-            model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
+            model_name: self.model().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
@@ -3972,7 +4025,7 @@ impl Thread {
         trigger: &'static str,
         cx: &App,
     ) -> Option<CompactionTelemetry> {
-        let model = self.model.as_ref()?;
+        let model = self.model()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_tokens = model.max_token_count();
         let max_input_tokens = max_tokens.saturating_sub(model.max_output_tokens().unwrap_or(0));
@@ -4014,7 +4067,7 @@ impl Thread {
             return None;
         }
 
-        let model = self.model.as_ref()?;
+        let model = self.model()?;
         let max_token_count = model.max_token_count();
         let max_input_tokens =
             max_token_count.saturating_sub(model.max_output_tokens().unwrap_or(0));
