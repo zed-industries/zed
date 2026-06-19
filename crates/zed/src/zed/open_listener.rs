@@ -761,9 +761,13 @@ pub(crate) fn open_options_for_request(
     location: &SerializedWorkspaceLocation,
     cx: &App,
 ) -> workspace::OpenOptions {
-    open_behavior.map_or_else(workspace::OpenOptions::default, |open_behavior| {
-        open_options_for_behavior(open_behavior, location, cx)
-    })
+    let open_behavior = open_behavior.unwrap_or_else(|| {
+        match workspace::WorkspaceSettings::get_global(cx).default_open_behavior {
+            settings::DefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
+            settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::Classic,
+        }
+    });
+    open_options_for_behavior(open_behavior, location, cx)
 }
 
 pub(crate) fn open_options_for_behavior(
@@ -1063,13 +1067,20 @@ pub async fn derive_paths_with_position(
         let original_path = Path::new(path_str.as_ref());
         let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
 
-        // If the unparsed path string actually points to a file, use that file instead of parsing out the line/col number.
-        // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
-        // However, the colon is not valid in NTFS file names, so we can just skip this logic.
-        if !cfg!(windows)
+        // If the unparsed path string actually points to an existing file or directory, use it
+        // instead of parsing out the line/col number. This matters for paths whose final
+        // component looks like a position suffix, e.g. a folder named `Test (3)` would
+        // otherwise be parsed as `Test ` at row 3.
+        // Colon : is not valid in NTFS file names, so skip this logic if colon on windows.
+        let has_colon = original_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_none_or(|name| name.contains(':'));
+
+        if (!has_colon || !cfg!(windows))
             && parsed.row.is_some()
             && parsed.path != original_path
-            && fs.is_file(original_path).await
+            && (fs.is_file(original_path).await || fs.is_dir(original_path).await)
         {
             parsed = PathWithPosition::from_path(original_path.to_path_buf());
         }
@@ -1202,6 +1213,100 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_derive_paths_with_position_directory_with_position_like_name(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        // A folder whose name ends in `(N)` or `(row,col)` would otherwise be parsed as a
+        // path with a row/column suffix (e.g. the MSVC-style `file.c(22)`), truncating the name.
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "TEST (1)": {},
+                "Project (2,3)": {},
+                "test 123": {},
+            }),
+        )
+        .await;
+
+        let inputs = vec![
+            path!("/root/TEST (1)").to_string(),
+            path!("/root/Project (2,3)").to_string(),
+            path!("/root/test 123").to_string(),
+        ];
+        let result = derive_paths_with_position(fs.as_ref(), inputs).await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                (path!("/root/TEST (1)").to_string(), None, None),
+                (path!("/root/Project (2,3)").to_string(), None, None),
+                (path!("/root/test 123").to_string(), None, None),
+            ]
+        );
+    }
+
+    // Test file with colon (`:`) in the name on non-Windows platforms,
+    // as it is valid for file names on Unix-like systems.
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_derive_paths_with_position_colon_in_name_reverts_on_unix(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        fs.insert_tree(path!("/root"), json!({ "test.txt:10": "" }))
+            .await;
+
+        let result =
+            derive_paths_with_position(fs.as_ref(), vec![path!("/root/test.txt:10").to_string()])
+                .await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![(path!("/root/test.txt:10").to_string(), None, None)]
+        );
+    }
+
+    // On Windows `:` is used to delimit NTFS alternate data streams,
+    // `notes.txt:10` should be parsed as `notes.txt` at row 10
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_derive_paths_with_position_colon_in_name_parsed_as_position_on_windows(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let fs = app_state.fs.as_fake();
+
+        fs.insert_tree(path!("/root"), json!({ "test.txt": "" }))
+            .await;
+
+        let result =
+            derive_paths_with_position(fs.as_ref(), vec![path!("/root/test.txt:10").to_string()])
+                .await;
+
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| (p.path.to_string_lossy().to_string(), p.row, p.column))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![(path!("/root/test.txt").to_string(), Some(10), None)]
+        );
+    }
+
+    #[gpui::test]
     fn test_parse_ssh_url_preserves_open_behavior(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
@@ -1258,6 +1363,48 @@ mod tests {
         );
         assert!(!options.add_dirs_to_sidebar);
         assert!(options.requesting_window.is_none());
+    }
+
+    #[gpui::test]
+    fn test_open_options_for_request_respects_default_open_behavior(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+
+        let _app_state = init_test(cx);
+
+        // A `None` behavior (e.g. a Finder or URL open) consults the UI-level
+        // `default_open_behavior` setting rather than falling back to fixed
+        // defaults.
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.default_open_behavior =
+                        Some(settings::DefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+        let options =
+            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
+        assert_eq!(
+            options.workspace_matching,
+            workspace::WorkspaceMatching::MatchExact
+        );
+        assert!(!options.add_dirs_to_sidebar);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.default_open_behavior =
+                        Some(settings::DefaultOpenBehavior::ExistingWindow);
+                });
+            });
+        });
+        let options =
+            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
+        assert_eq!(
+            options.workspace_matching,
+            workspace::WorkspaceMatching::MatchExact
+        );
+        assert!(options.add_dirs_to_sidebar);
     }
 
     #[gpui::test]
