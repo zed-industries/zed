@@ -174,7 +174,10 @@ const copyPageActions = () => {
     actions.className = "page-actions";
 
     firstHeading.insertAdjacentElement("beforebegin", header);
-    headerCopyMarkdownButton.classList.remove("icon-button", "ib-hidden-mobile");
+    headerCopyMarkdownButton.classList.remove(
+      "icon-button",
+      "ib-hidden-mobile",
+    );
     headerCopyMarkdownButton.classList.add("page-action", "page-action-icon");
     actions.append(headerCopyMarkdownButton);
     header.append(firstHeading, actions);
