@@ -234,32 +234,33 @@ fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) ->
     }
 }
 
-/// Awaits the response to an ACP request from a GPUI foreground task.
+/// Awaits the response to an ACP request from a task outside the SDK dispatch
+/// loop.
 ///
-/// The ACP SDK offers two ways to consume a [`SentRequest`]:
-///   - [`SentRequest::block_task`]: linear `.await` inside a spawned task.
-///   - [`SentRequest::on_receiving_result`]: a callback invoked when the
-///     response arrives, with the guarantee that no other inbound messages
-///     are processed while the callback runs. This is the recommended form
-///     inside SDK handler callbacks, where [`block_task`] would deadlock.
-///
-/// We use `on_receiving_result` with a oneshot bridge here (rather than
-/// [`block_task`]) so that our handler-side code paths can share a single
-/// request-awaiting helper. The SDK callback itself is trivial (one channel
-/// send) so the extra ordering guarantee it imposes on the dispatch loop is
-/// negligible.
+/// Keeping the [`SentRequest`] inside the awaited future lets dropping the
+/// containing GPUI task propagate `$/cancel_request` to the peer when the
+/// request is still in flight.
 fn into_foreground_future<T: JsonRpcResponse>(
     sent: SentRequest<T>,
 ) -> impl Future<Output = Result<T, acp::Error>> {
-    let (tx, rx) = futures::channel::oneshot::channel();
-    let spawn_result = sent.on_receiving_result(async move |result| {
-        tx.send(result).ok();
-        Ok(())
-    });
+    let method = sent.method().to_owned();
     async move {
-        spawn_result?;
-        rx.await
-            .map_err(|_| acp::Error::internal_error().data(ACP_RESPONSE_CHANNEL_CANCELLED))?
+        sent.block_task().await.map_err(|error| {
+            let response_channel_closed = error.code == ErrorCode::InternalError
+                && error
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.as_str())
+                    .is_some_and(|data| {
+                        data.starts_with(&format!("response to `{method}` never received:"))
+                    });
+
+            if response_channel_closed {
+                acp::Error::internal_error().data(ACP_RESPONSE_CHANNEL_CANCELLED)
+            } else {
+                error
+            }
+        })
     }
 }
 
