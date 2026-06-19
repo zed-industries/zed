@@ -56,6 +56,7 @@ use util::path;
 
 mod test_tools;
 use test_tools::*;
+mod corruption_retry;
 
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {

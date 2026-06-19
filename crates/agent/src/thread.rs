@@ -1,10 +1,12 @@
 use crate::{
-    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
-    CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
-    FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool,
-    RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
+    ApplyCodeActionTool, AttemptCompletionTool, CodeActionStore, ContextServerRegistry,
+    CopyPathTool, CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
+    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
+    GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
+    ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
+    WriteFileTool,
+    corruption::{CorruptionSnapshot, CorruptionSnapshotSettings},
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -118,6 +120,7 @@ impl std::fmt::Display for PromptId {
 }
 
 pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
+pub(crate) const MAX_CORRUPTION_RETRY_ATTEMPTS: u8 = 2;
 pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -1126,12 +1129,45 @@ fn auto_resolve_permission_outcome(
     ))
 }
 
+/// Details about an output corruption event for retry/fallback signaling.
+#[derive(Debug, Clone)]
+pub struct CorruptionDetail {
+    /// Which corruption signals were triggered
+    pub triggered_signals: Vec<String>,
+    /// Confidence level of the corruption assessment (0.0-1.0)
+    pub confidence: f32,
+    /// Optional affected file path
+    pub file_path: Option<PathBuf>,
+}
+
+impl CorruptionDetail {
+    pub fn new(
+        triggered_signals: Vec<String>,
+        confidence: f32,
+        file_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            triggered_signals,
+            confidence,
+            file_path,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 enum CompletionError {
     #[error("max tokens")]
     MaxTokens,
     #[error("refusal")]
     Refusal,
+    #[error("output corruption detected")]
+    Corrupted(CorruptionDetail),
+    #[error("model did not call attempt_completion tool")]
+    MissingCompletionTool,
+    #[error("edit scope anomaly detected")]
+    ScopeAnomaly,
+    #[error("AST validation failed")]
+    AstValidationFailed,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -1225,6 +1261,11 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// Rolling window of the last N bytes of model output, used to build
+    /// corruption snapshots when corruption is detected.
+    last_output_text: String,
+    /// Whether corruption snapshots are enabled (cached from settings).
+    snapshots_enabled: bool,
 }
 
 impl Thread {
@@ -1356,6 +1397,8 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            last_output_text: String::new(),
+            snapshots_enabled: false,
         }
     }
 
@@ -1740,6 +1783,8 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            last_output_text: String::new(),
+            snapshots_enabled: false,
         }
     }
 
@@ -2037,6 +2082,8 @@ impl Thread {
         // `Thread::enabled_tools`.
         self.add_tool(CreateThreadTool::new(environment.clone()));
         self.add_tool(ListAgentsAndModelsTool::new(environment));
+
+        self.add_tool(AttemptCompletionTool);
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -2482,7 +2529,10 @@ impl Thread {
                             Ok(CompletionError::MaxTokens) => {
                                 event_stream.send_stop(acp::StopReason::MaxTokens);
                             }
-                            Ok(CompletionError::Other(error)) | Err(error) => {
+                            Ok(other) => {
+                                event_stream.send_error(other);
+                            }
+                            Err(error) => {
                                 event_stream.send_error(error);
                             }
                         }
@@ -2496,6 +2546,7 @@ impl Thread {
         Ok(events_rx)
     }
 
+    #[allow(unused_assignments)]
     async fn run_turn_internal(
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
@@ -2503,6 +2554,7 @@ impl Thread {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut attempt = 0;
+        let mut corruption_attempt: u8 = 0;
         let mut intent = CompletionIntent::UserPrompt;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
@@ -2611,10 +2663,14 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
-            let (mut events, mut error) = match model.stream_completion(request, cx).await {
+            let (mut events, error) = match model.stream_completion(request, cx).await {
                 Ok(events) => (events.fuse(), None),
-                Err(err) => (stream::empty().boxed().fuse(), Some(err)),
+                Err(err) => (
+                    stream::empty().boxed().fuse(),
+                    Some(anyhow::Error::from(err)),
+                ),
             };
+            let mut error: Option<anyhow::Error> = error;
             let mut tool_results: FuturesUnordered<Task<LanguageModelToolResult>> =
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
@@ -2701,15 +2757,15 @@ impl Thread {
 
                 tool_results.extend(batch_result.0);
                 if let Some(err) = batch_result.1 {
-                    let is_refusal = err
+                    if err
                         .downcast_ref::<CompletionError>()
-                        .is_some_and(|e| matches!(e, CompletionError::Refusal));
-                    if is_refusal {
+                        .is_some_and(|e| matches!(e, CompletionError::Refusal))
+                    {
                         log::info!("Model refused request; checking for fallback model");
                         had_refusal = true;
                         break;
                     }
-                    error = Some(err.downcast()?);
+                    error = Some(err);
                     break;
                 }
             }
@@ -2810,28 +2866,203 @@ impl Thread {
 
             if let Some(error) = error {
                 attempt += 1;
-                match Self::retry_completion_error(
-                    this,
-                    event_stream,
-                    &mut cancellation_rx,
-                    error,
-                    attempt,
-                    cx,
-                )
-                .await?
-                {
-                    ControlFlow::Break(_) => return Ok(()),
-                    ControlFlow::Continue(_) => {}
-                }
-                this.update(cx, |this, _cx| {
-                    if let Some(Message::Agent(message)) = this.last_message() {
-                        if message.tool_results.is_empty() {
-                            intent = CompletionIntent::UserPrompt;
-                            this.messages.push(Arc::new(Message::Resume));
+                // Handle corruption-style CompletionErrors separately with their own
+                // retry counter and fallback path.
+                let is_corruption_error =
+                    error.downcast_ref::<CompletionError>().is_some_and(|e| {
+                        matches!(
+                            e,
+                            CompletionError::Corrupted(_)
+                                | CompletionError::MissingCompletionTool
+                                | CompletionError::ScopeAnomaly
+                                | CompletionError::AstValidationFailed
+                        )
+                    });
+                if is_corruption_error {
+                    corruption_attempt += 1;
+                    let error_string = error.to_string();
+
+                    // Determine which corruption layer flagged the issue.
+                    let layer = error
+                        .downcast_ref::<CompletionError>()
+                        .map_or("unknown", |e| match e {
+                            CompletionError::Corrupted(_) => "output_quality",
+                            CompletionError::MissingCompletionTool => "missing_completion_tool",
+                            CompletionError::ScopeAnomaly => "scope_anomaly",
+                            CompletionError::AstValidationFailed => "ast_validation",
+                            _ => "unknown",
+                        });
+
+                    // Emit telemetry for the corruption detection.
+                    let model_for_telemetry: Option<Arc<dyn LanguageModel>> =
+                        refusal_fallback_model.clone().or_else(|| {
+                            this.read_with(cx, |this, _| this.model().cloned())
+                                .ok()
+                                .flatten()
+                        });
+                    if let Some(model) = &model_for_telemetry {
+                        let corruption_detail =
+                            error.downcast_ref::<CompletionError>().and_then(|e| {
+                                if let CompletionError::Corrupted(detail) = e {
+                                    Some(detail.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                        this.update(cx, |this, _| {
+                            if let Some(detail) = &corruption_detail {
+                                this.emit_corruption_detected_telemetry(
+                                    layer,
+                                    model,
+                                    detail,
+                                    corruption_attempt,
+                                );
+                            } else {
+                                // For non-Corrupted errors, emit a generic event.
+                                let triggered_signals = vec![layer.to_string()];
+                                let fake_detail =
+                                    CorruptionDetail::new(triggered_signals, 1.0, None);
+                                this.emit_corruption_detected_telemetry(
+                                    layer,
+                                    model,
+                                    &fake_detail,
+                                    corruption_attempt,
+                                );
+                            }
+                        })
+                        .log_err();
+                    }
+
+                    if corruption_attempt > MAX_CORRUPTION_RETRY_ATTEMPTS {
+                        log::info!("Max corruption retries exceeded; attempting model fallback");
+                        let maybe_fallback = this.update(cx, |this, cx| -> Option<Arc<dyn LanguageModel>> {
+                            let current_model = refusal_fallback_model.as_ref().or(this.model())?;
+                            let fallback_id = match current_model.refusal_fallback_model_id() {
+                                Some(id) => id,
+                                None => {
+                                    log::info!(
+                                        "Corruption fallback: no fallback configured for model {} (provider {})",
+                                        current_model.id().0,
+                                        current_model.provider_id()
+                                    );
+                                    return None;
+                                }
+                            };
+                            let provider_id = current_model.provider_id();
+                            let found = LanguageModelRegistry::global(cx)
+                                .read(cx)
+                                .available_models(cx)
+                                .find(|m| {
+                                    m.provider_id() == provider_id && m.id().0.as_ref() == fallback_id
+                                });
+                            if found.is_none() {
+                                log::info!(
+                                    "Corruption fallback: fallback model {}/{} not found in available models",
+                                    provider_id,
+                                    fallback_id
+                                );
+                            }
+                            found
+                        })?;
+
+                        if let Some(fallback) = maybe_fallback {
+                            log::info!("Corruption fallback: retrying with {}", fallback.id().0);
+                            let fallback_name = fallback.name().0.clone();
+                            this.update(cx, |this, cx| {
+                                this.pending_message = None;
+                                this.set_model(fallback.clone(), cx);
+                            })?;
+                            event_stream.send_retry(acp_thread::RetryStatus {
+                                last_error: "Corruption detected, trying fallback model".into(),
+                                attempt: 1,
+                                max_attempts: 1,
+                                started_at: Instant::now(),
+                                duration: Duration::MAX,
+                                meta: Some(acp_thread::meta_with_refusal_fallback(&fallback_name)),
+                            });
+                            refusal_fallback_model = Some(fallback);
+                            continue;
+                        }
+                        // No fallback available — propagate the error.
+                        return Err(error);
+                    }
+                    // Standard retry for corruption errors before max retries
+                    let timer = cx.background_executor().timer(BASE_RETRY_DELAY);
+                    event_stream.send_retry(acp_thread::RetryStatus {
+                        last_error: error_string.into(),
+                        attempt: corruption_attempt as usize,
+                        max_attempts: MAX_CORRUPTION_RETRY_ATTEMPTS as usize,
+                        started_at: Instant::now(),
+                        duration: BASE_RETRY_DELAY,
+                        meta: None,
+                    });
+                    futures::select! {
+                        _ = timer.fuse() => {}
+                        _ = cancellation_rx.changed().fuse() => {
+                            if *cancellation_rx.borrow() {
+                                log::debug!("Turn cancelled during corruption retry delay, exiting");
+                                return Ok(());
+                            }
                         }
                     }
-                })?;
+                    this.update(cx, |this, _cx| {
+                        if let Some(Message::Agent(message)) = this.last_message() {
+                            if message.tool_results.is_empty() {
+                                intent = CompletionIntent::UserPrompt;
+                                this.messages.push(Arc::new(Message::Resume));
+                            }
+                        }
+                    })?;
+                    continue;
+                } else {
+                    match error.downcast::<LanguageModelCompletionError>() {
+                        Ok(lm_error) => {
+                            match Self::retry_completion_error(
+                                this,
+                                event_stream,
+                                &mut cancellation_rx,
+                                lm_error,
+                                attempt,
+                                cx,
+                            )
+                            .await?
+                            {
+                                ControlFlow::Break(_) => return Ok(()),
+                                ControlFlow::Continue(_) => {}
+                            }
+                            this.update(cx, |this, _cx| {
+                                if let Some(Message::Agent(message)) = this.last_message() {
+                                    if message.tool_results.is_empty() {
+                                        intent = CompletionIntent::UserPrompt;
+                                        this.messages.push(Arc::new(Message::Resume));
+                                    }
+                                }
+                            })?;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
             } else if end_turn {
+                // After processing all events, if the model didn't call
+                // attempt_completion, emit an error instead of ending the turn.
+                let had_attempt_completion = this.update(cx, |this, _cx| {
+                    this.last_message().map_or(false, |msg| {
+                        if let Message::Agent(agent_msg) = msg {
+                            agent_msg
+                                .content
+                                .iter()
+                                .any(|c| matches!(c, AgentMessageContent::ToolUse(tu) if tu.name.as_ref() == "attempt_completion"))
+                        } else {
+                            false
+                        }
+                    })
+                })?;
+                if !had_attempt_completion {
+                    // Inject a corruption error which the outer `if let Some(error)`
+                    // block will handle on the next loop iteration.
+                    error = Some(CompletionError::MissingCompletionTool.into());
+                    continue;
+                }
                 return Ok(());
             } else {
                 let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
@@ -2907,6 +3138,74 @@ impl Thread {
             cx,
         )
         .await
+    }
+
+    /// Build a corruption snapshot from the current thread state.
+    fn build_corruption_snapshot(
+        &self,
+        corruption_detail: &CorruptionDetail,
+        model: &Arc<dyn LanguageModel>,
+        prompt_hash: u64,
+        snapshot_settings: &CorruptionSnapshotSettings,
+    ) -> CorruptionSnapshot {
+        let signals: Vec<crate::corruption::CorruptionSignal> = corruption_detail
+            .triggered_signals
+            .iter()
+            .filter_map(|s| match s.as_str() {
+                "repetition" => Some(crate::corruption::CorruptionSignal::Repetition),
+                "script_switching" => Some(crate::corruption::CorruptionSignal::ScriptSwitching),
+                "structure_breakdown" => {
+                    Some(crate::corruption::CorruptionSignal::StructureBreakdown)
+                }
+                "semantic_collapse" => Some(crate::corruption::CorruptionSignal::SemanticCollapse),
+                "task_irrelevance" => Some(crate::corruption::CorruptionSignal::TaskIrrelevance),
+                "character_class_chaos" => {
+                    Some(crate::corruption::CorruptionSignal::CharacterClassChaos)
+                }
+                _ => None,
+            })
+            .collect();
+        let mut snapshot = CorruptionSnapshot::new(
+            model.telemetry_id(),
+            model.provider_id().to_string(),
+            prompt_hash,
+            self.last_output_text.clone(),
+            signals,
+            corruption_detail.confidence,
+        );
+        snapshot.truncate_output(snapshot_settings.max_output_bytes());
+        if snapshot_settings.redact {
+            snapshot.redact();
+        }
+        snapshot
+    }
+
+    /// Emit a telemetry event for a corruption detection.
+    fn emit_corruption_detected_telemetry(
+        &self,
+        layer: &'static str,
+        model: &Arc<dyn LanguageModel>,
+        corruption_detail: &CorruptionDetail,
+        retry_count: u8,
+    ) {
+        let triggered_signals: Vec<&str> = corruption_detail
+            .triggered_signals
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let triggered_signals_str = format!("{:?}", triggered_signals);
+        telemetry::event!(
+            "Agent Corruption Detected",
+            thread_id = self.id.to_string(),
+            parent_thread_id = self.parent_thread_id().map(|id| id.to_string()),
+            prompt_id = self.prompt_id.to_string(),
+            model = model.telemetry_id(),
+            model_provider = model.provider_id().to_string(),
+            layer = layer,
+            triggered_signals = triggered_signals_str,
+            confidence = corruption_detail.confidence,
+            retry_count = retry_count,
+        );
     }
 
     async fn stream_compaction(
@@ -3182,6 +3481,17 @@ impl Thread {
 
     fn handle_text_event(&mut self, new_text: String, event_stream: &ThreadEventStream) {
         event_stream.send_text(&new_text);
+
+        // Maintain a rolling window of the last N bytes of output for
+        // corruption snapshots.
+        if self.snapshots_enabled {
+            self.last_output_text.push_str(&new_text);
+            let max_bytes = CorruptionSnapshot::DEFAULT_MAX_OUTPUT_BYTES;
+            if self.last_output_text.len() > max_bytes * 2 {
+                let start = self.last_output_text.len() - max_bytes;
+                self.last_output_text = self.last_output_text.split_off(start);
+            }
+        }
 
         let last_message = self.pending_message();
         if let Some(AgentMessageContent::Text(text)) = last_message.content.last_mut() {

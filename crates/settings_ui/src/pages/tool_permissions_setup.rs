@@ -1421,6 +1421,9 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
+            // attempt_completion is a mandatory turn-end signal with no
+            // side effects; no permission check needed.
+            "attempt_completion",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();
