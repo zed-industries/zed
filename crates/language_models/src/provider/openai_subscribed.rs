@@ -256,6 +256,18 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         self.sign_out(cx)
     }
 
+    fn authentication_error_message(&self) -> SharedString {
+        "Your ChatGPT subscription session is invalid or has expired. \
+        Sign in again via the Agent Panel settings to continue."
+            .into()
+    }
+
+    fn missing_credentials_error_message(&self) -> SharedString {
+        "You are not signed in to your ChatGPT account. \
+        Sign in via the Agent Panel settings to continue."
+            .into()
+    }
+
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
             title: "Enable Fast Mode for OpenAI?".into(),

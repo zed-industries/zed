@@ -57,7 +57,8 @@ use language::{
 };
 use markdown::Markdown;
 use multi_buffer::{
-    Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint, MultiBufferRow, RowInfo,
+    Anchor, ExpandExcerptDirection, ExpandInfo, MultiBufferOffset, MultiBufferPoint,
+    MultiBufferRow, RowInfo,
 };
 
 use project::{
@@ -335,6 +336,8 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
+        register_action(editor, window, Editor::select_inside_delimiters);
+        register_action(editor, window, Editor::select_around_delimiters);
         register_action(editor, window, Editor::undo_selection);
         register_action(editor, window, Editor::redo_selection);
         if editor.read(cx).buffer_kind(cx) == ItemBufferKind::Multibuffer {
@@ -426,6 +429,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
+        register_action(editor, window, Editor::toggle_inline_values);
         register_action(editor, window, Editor::toggle_code_lens_action);
         register_action(editor, window, Editor::toggle_semantic_highlights);
         register_action(editor, window, Editor::toggle_edit_predictions);
@@ -4521,45 +4525,51 @@ impl EditorElement {
         let visible_end = DisplayPoint::new(DisplayRow(start_row.0 + row_infos.len() as u32), 0)
             .to_offset(&snapshot.display_snapshot, Bias::Right);
 
-        let word_highlights = display_hunks
-            .into_iter()
+        // Gather the word diffs that intersect the viewport. A hunk stores the
+        // word diffs for its entire range, so without this filter a large hunk
+        // that is only partially scrolled into view would cost work
+        // proportional to its whole size every frame.
+        let mut visible_word_diffs: Vec<&Range<MultiBufferOffset>> = display_hunks
+            .iter()
             .filter_map(|(hunk, _)| match hunk {
                 DisplayDiffHunk::Unfolded {
                     word_diffs, status, ..
-                } => Some((word_diffs, status)),
+                } if status.is_modified() => Some(word_diffs),
                 _ => None,
             })
-            .filter(|(_, status)| status.is_modified())
-            .flat_map(|(word_diffs, _)| word_diffs)
+            .flatten()
             .filter(|word_diff| word_diff.start < visible_end && word_diff.end > visible_start)
-            .flat_map(|word_diff| {
-                let display_ranges = snapshot
-                    .display_snapshot
-                    .isomorphic_display_point_ranges_for_buffer_range(
-                        word_diff.start..word_diff.end,
-                    );
+            .collect();
 
-                display_ranges.into_iter().filter_map(|range| {
-                    let start_row_offset = range.start.row().0.saturating_sub(start_row.0) as usize;
+        // The converter walks each display-map layer with a forward-only cursor,
+        // so it must receive ranges in non-decreasing order. Word diffs are
+        // disjoint, so sorting by offset yields a monotonic sequence.
+        visible_word_diffs.sort_unstable_by_key(|word_diff| (word_diff.start, word_diff.end));
 
-                    let diff_status = row_infos
-                        .get(start_row_offset)
-                        .and_then(|row_info| row_info.diff_status)?;
+        let mut converter = snapshot.display_snapshot.display_point_converter();
+        for word_diff in visible_word_diffs {
+            for range in converter.map(word_diff.start..word_diff.end) {
+                let start_row_offset = range.start.row().0.saturating_sub(start_row.0) as usize;
 
-                    let background_color = match diff_status.kind {
-                        DiffHunkStatusKind::Added => colors.version_control_word_added,
-                        DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
-                        DiffHunkStatusKind::Modified => {
-                            debug_panic!("modified diff status for row info");
-                            return None;
-                        }
-                    };
+                let Some(diff_status) = row_infos
+                    .get(start_row_offset)
+                    .and_then(|row_info| row_info.diff_status)
+                else {
+                    continue;
+                };
 
-                    Some((range, background_color))
-                })
-            });
+                let background_color = match diff_status.kind {
+                    DiffHunkStatusKind::Added => colors.version_control_word_added,
+                    DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
+                    DiffHunkStatusKind::Modified => {
+                        debug_panic!("modified diff status for row info");
+                        continue;
+                    }
+                };
 
-        highlighted_ranges.extend(word_highlights);
+                highlighted_ranges.push((range, background_color));
+            }
+        }
     }
 
     fn layout_diff_hunk_controls(
@@ -5134,6 +5144,7 @@ impl EditorElement {
     }
 
     fn paint_gutter_diff_hunks(
+        &self,
         layout: &mut EditorLayout,
         split_side: Option<SplitSide>,
         window: &mut Window,
@@ -5209,7 +5220,7 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if !Self::diff_hunk_hollow(status, cx) {
+                    if !self.diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -5387,7 +5398,7 @@ impl EditorElement {
                 )
             });
         if show_git_gutter {
-            Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
+            self.paint_gutter_diff_hunks(layout, self.split_side, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -6500,8 +6511,9 @@ impl EditorElement {
         )
     }
 
-    fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged = status.has_secondary_hunk();
+    fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
+        let unstaged =
+            self.editor.read(cx).render_diff_hunks_as_unstaged || status.has_secondary_hunk();
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
@@ -8193,7 +8205,7 @@ impl Element for EditorElement {
                             type_id: None,
                         };
 
-                        let background = if Self::diff_hunk_hollow(diff_status, cx) {
+                        let background = if self.diff_hunk_hollow(diff_status, cx) {
                             hollow_highlight
                         } else {
                             filled_highlight
@@ -8252,30 +8264,31 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
-                                let all_selections =
-                                    editor.selections.all::<Point>(&snapshot.display_snapshot);
-                                let all_anchor_selections =
-                                    editor.selections.all_anchors(&snapshot.display_snapshot);
-                                let selected_buffer_ids =
-                                    if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
-                                        Vec::new()
-                                    } else {
-                                        let mut selected_buffer_ids =
-                                            Vec::with_capacity(all_selections.len());
+                                let is_singleton =
+                                    editor.buffer_kind(cx) == ItemBufferKind::Singleton;
 
-                                        for selection in all_selections {
-                                            for buffer_id in snapshot
-                                                .buffer_snapshot()
-                                                .buffer_ids_for_range(selection.range())
-                                            {
-                                                if selected_buffer_ids.last() != Some(&buffer_id) {
-                                                    selected_buffer_ids.push(buffer_id);
-                                                }
+                                // Singleton buffers only need the newest selection anchor here.
+                                let selected_buffer_ids = if is_singleton {
+                                    Vec::new()
+                                } else {
+                                    let all_selections =
+                                        editor.selections.all::<Point>(&snapshot.display_snapshot);
+                                    let mut selected_buffer_ids =
+                                        Vec::with_capacity(all_selections.len());
+
+                                    for selection in all_selections {
+                                        for buffer_id in snapshot
+                                            .buffer_snapshot()
+                                            .buffer_ids_for_range(selection.range())
+                                        {
+                                            if selected_buffer_ids.last() != Some(&buffer_id) {
+                                                selected_buffer_ids.push(buffer_id);
                                             }
                                         }
+                                    }
 
-                                        selected_buffer_ids
-                                    };
+                                    selected_buffer_ids
+                                };
 
                                 let mut selections = editor.selections.disjoint_in_range(
                                     start_anchor..end_anchor,
@@ -8284,28 +8297,45 @@ impl Element for EditorElement {
                                 selections
                                     .extend(editor.selections.pending(&snapshot.display_snapshot));
 
-                                let mut anchors_by_buffer: HashMap<BufferId, (usize, Anchor)> =
-                                    HashMap::default();
-                                for selection in all_anchor_selections.iter() {
-                                    let head = selection.head();
-                                    if let Some((text_anchor, _)) =
-                                        snapshot.buffer_snapshot().anchor_to_buffer_anchor(head)
-                                    {
+                                let latest_selection_anchors: HashMap<BufferId, Anchor> =
+                                    if is_singleton {
+                                        let head = editor.selections.newest_anchor().head();
+                                        snapshot
+                                            .buffer_snapshot()
+                                            .anchor_to_buffer_anchor(head)
+                                            .map(|(text_anchor, _)| (text_anchor.buffer_id, head))
+                                            .into_iter()
+                                            .collect()
+                                    } else {
+                                        let all_anchor_selections = editor
+                                            .selections
+                                            .all_anchors(&snapshot.display_snapshot);
+                                        let mut anchors_by_buffer: HashMap<
+                                            BufferId,
+                                            (usize, Anchor),
+                                        > = HashMap::default();
+                                        for selection in all_anchor_selections.iter() {
+                                            let head = selection.head();
+                                            if let Some((text_anchor, _)) = snapshot
+                                                .buffer_snapshot()
+                                                .anchor_to_buffer_anchor(head)
+                                            {
+                                                anchors_by_buffer
+                                                    .entry(text_anchor.buffer_id)
+                                                    .and_modify(|(latest_id, latest_anchor)| {
+                                                        if selection.id > *latest_id {
+                                                            *latest_id = selection.id;
+                                                            *latest_anchor = head;
+                                                        }
+                                                    })
+                                                    .or_insert((selection.id, head));
+                                            }
+                                        }
                                         anchors_by_buffer
-                                            .entry(text_anchor.buffer_id)
-                                            .and_modify(|(latest_id, latest_anchor)| {
-                                                if selection.id > *latest_id {
-                                                    *latest_id = selection.id;
-                                                    *latest_anchor = head;
-                                                }
-                                            })
-                                            .or_insert((selection.id, head));
-                                    }
-                                }
-                                let latest_selection_anchors = anchors_by_buffer
-                                    .into_iter()
-                                    .map(|(buffer_id, (_, anchor))| (buffer_id, anchor))
-                                    .collect();
+                                            .into_iter()
+                                            .map(|(buffer_id, (_, anchor))| (buffer_id, anchor))
+                                            .collect()
+                                    };
 
                                 (selections, selected_buffer_ids, latest_selection_anchors)
                             })
@@ -9272,8 +9302,15 @@ impl Element for EditorElement {
                         diff_hunk_control_bounds,
                     });
 
+                    let visible_horizontal_scrollbar =
+                        scrollbars_layout.as_ref().is_some_and(|scrollbars_layout| {
+                            scrollbars_layout.visible && scrollbars_layout.horizontal.is_some()
+                        });
+
                     self.editor.update(cx, |editor, _| {
-                        editor.last_position_map = Some(position_map.clone())
+                        editor.last_position_map = Some(position_map.clone());
+                        editor.last_right_margin = right_margin;
+                        editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
                     });
 
                     EditorLayout {
