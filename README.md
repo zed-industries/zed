@@ -1,3 +1,5 @@
+<div align=center>
+
 # [AnimAIOS](https://github.com/animaios/airi) - Zed
 
 <!--
@@ -13,6 +15,8 @@ Welcome to AnimAIOS Zed, a high-performance, multiplayer code editor.
 
 <img width="256" height="384" alt="anima-chan" src="https://github.com/user-attachments/assets/1704ceea-f1c4-44de-a83f-ca0d8d1a0953" />
 
+</div>
+
 <!--
 
 ### Installation (under construction)
@@ -27,8 +31,8 @@ Other platforms are not yet available:
 
 ### Developing Zed
 
-- [Building Zed for macOS](./docs/src/development/macos.md)
 - [Building Zed for Linux](./docs/src/development/linux.md)
+- [Building Zed for macOS](./docs/src/development/macos.md)
 - [Building Zed for Windows](./docs/src/development/windows.md)
 
 <!--
