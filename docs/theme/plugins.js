@@ -79,14 +79,106 @@ function darkModeToggle() {
   });
 }
 
-const copyMarkdown = () => {
-  const copyButton = document.getElementById("copy-markdown-toggle");
-  if (!copyButton) return;
+const copyPageActions = () => {
+  const headerCopyMarkdownButton = document.getElementById(
+    "copy-markdown-toggle",
+  );
 
-  // Store the original icon class, loading state, and timeout reference
-  const originalIconClass = "fa fa-copy";
+  const actionButtons = new Map();
   let isLoading = false;
-  let iconTimeoutId = null;
+
+  const showToast = (message, isSuccess = true) => {
+    const existingToast = document.getElementById("copy-toast");
+    existingToast?.remove();
+
+    const toast = document.createElement("div");
+    toast.id = "copy-toast";
+    toast.className = `copy-toast ${isSuccess ? "success" : "error"}`;
+    toast.textContent = message;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add("show");
+    }, 10);
+
+    setTimeout(() => {
+      toast.classList.remove("show");
+      setTimeout(() => {
+        toast.parentNode?.removeChild(toast);
+      }, 300);
+    }, 2000);
+  };
+
+  const registerButton = (button, originalIconClass) => {
+    if (!button) return;
+    actionButtons.set(button, {
+      originalIconClass,
+      iconTimeoutId: null,
+    });
+  };
+
+  registerButton(headerCopyMarkdownButton, "fa fa-copy");
+
+  const changeButtonIcon = (button, iconClass, duration = 1000) => {
+    const state = actionButtons.get(button);
+    if (!state) return;
+
+    const icon = button.querySelector("i");
+    if (!icon) return;
+
+    if (state.iconTimeoutId) {
+      clearTimeout(state.iconTimeoutId);
+      state.iconTimeoutId = null;
+    }
+
+    icon.className = iconClass;
+
+    if (duration > 0) {
+      state.iconTimeoutId = setTimeout(() => {
+        icon.className = state.originalIconClass;
+        state.iconTimeoutId = null;
+      }, duration);
+    }
+  };
+
+  const copyText = async (text) => {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error("Clipboard API not supported in this browser");
+    }
+
+    await navigator.clipboard.writeText(text);
+  };
+
+  const getContentRoot = () =>
+    document.querySelector("#content main .content-wrap") ||
+    document.querySelector("#content > main");
+
+  const insertPageActionButtons = () => {
+    const contentRoot = getContentRoot();
+    if (!contentRoot || contentRoot.querySelector(".page-actions")) return;
+
+    const firstHeading = contentRoot.querySelector("h1");
+    if (!firstHeading) return;
+
+    const actions = document.createElement("div");
+    actions.className = "page-actions";
+    actions.innerHTML = `
+      <button class="page-action" type="button" data-copy-page>
+        <i class="fa fa-copy"></i>
+        <span>Copy page</span>
+      </button>
+      <button class="page-action" type="button" data-copy-markdown>
+        <i class="fa fa-code"></i>
+        <span>Copy as Markdown</span>
+      </button>
+    `;
+
+    firstHeading.insertAdjacentElement("afterend", actions);
+
+    registerButton(actions.querySelector("[data-copy-page]"), "fa fa-copy");
+    registerButton(actions.querySelector("[data-copy-markdown]"), "fa fa-code");
+  };
 
   const getCurrentPagePath = () => {
     const pathname = window.location.pathname;
@@ -99,70 +191,84 @@ const copyMarkdown = () => {
     // Remove /docs/ prefix and .html suffix, then add .md
     const cleanPath = pathname
       .replace(/^\/docs\//, "")
+      .replace(/\.md$/, "")
       .replace(/\.html$/, "")
       .replace(/\/$/, "");
 
     return cleanPath ? cleanPath + ".md" : "getting-started.md";
   };
 
-  const showToast = (message, isSuccess = true) => {
-    // Remove existing toast if any
-    const existingToast = document.getElementById("copy-toast");
-    existingToast?.remove();
+  const markdownUrl = () => {
+    const alternateLink = document.querySelector(
+      'link[rel="alternate"][type="text/markdown"]',
+    );
+    const alternateHref = alternateLink?.getAttribute("href");
+    if (!alternateHref) return `/docs/${getCurrentPagePath()}`;
 
-    const toast = document.createElement("div");
-    toast.id = "copy-toast";
-    toast.className = `copy-toast ${isSuccess ? "success" : "error"}`;
-    toast.textContent = message;
-
-    document.body.appendChild(toast);
-
-    // Show toast with animation
-    setTimeout(() => {
-      toast.classList.add("show");
-    }, 10);
-
-    // Hide and remove toast after 2 seconds
-    setTimeout(() => {
-      toast.classList.remove("show");
-      setTimeout(() => {
-        toast.parentNode?.removeChild(toast);
-      }, 300);
-    }, 2000);
-  };
-
-  const changeButtonIcon = (iconClass, duration = 1000) => {
-    const icon = copyButton.querySelector("i");
-    if (!icon) return;
-
-    // Clear any existing timeout
-    if (iconTimeoutId) {
-      clearTimeout(iconTimeoutId);
-      iconTimeoutId = null;
+    const url = new URL(alternateHref, window.location.href);
+    if (url.origin === window.location.origin) {
+      return `${url.pathname}${url.search}${url.hash}`;
     }
 
-    icon.className = iconClass;
+    return url.pathname;
+  };
 
-    if (duration > 0) {
-      iconTimeoutId = setTimeout(() => {
-        icon.className = originalIconClass;
-        iconTimeoutId = null;
-      }, duration);
+  const copyRenderedPage = async (button) => {
+    if (isLoading) return;
+
+    try {
+      isLoading = true;
+      changeButtonIcon(button, "fa fa-spinner fa-spin", 0);
+
+      const contentRoot = getContentRoot();
+      if (!contentRoot) {
+        throw new Error("Page content not found");
+      }
+
+      const clone = contentRoot.cloneNode(true);
+      clone
+        .querySelectorAll(
+          ".page-actions, .footer-buttons, .footer, .toc-container, script, style",
+        )
+        .forEach((element) => element.remove());
+
+      const hiddenContainer = document.createElement("div");
+      hiddenContainer.style.position = "fixed";
+      hiddenContainer.style.inset = "-9999px auto auto -9999px";
+      hiddenContainer.style.width = "1px";
+      hiddenContainer.style.height = "1px";
+      hiddenContainer.style.overflow = "hidden";
+      hiddenContainer.appendChild(clone);
+      document.body.appendChild(hiddenContainer);
+      const pageContent = clone.innerText.trim();
+      hiddenContainer.remove();
+
+      if (!pageContent) {
+        throw new Error("No page content found to copy");
+      }
+
+      await copyText(pageContent);
+
+      changeButtonIcon(button, "fa fa-check", 1000);
+      showToast("Page copied to clipboard!");
+    } catch (error) {
+      console.error("Error copying page:", error);
+      changeButtonIcon(button, "fa fa-exclamation-triangle", 2000);
+      showToast("Failed to copy page. Please try again.", false);
+    } finally {
+      isLoading = false;
     }
   };
 
-  const fetchAndCopyMarkdown = async () => {
+  const fetchAndCopyMarkdown = async (button) => {
     // Prevent multiple simultaneous requests
     if (isLoading) return;
 
     try {
       isLoading = true;
-      changeButtonIcon("fa fa-spinner fa-spin", 0); // Don't auto-restore spinner
+      changeButtonIcon(button, "fa fa-spinner fa-spin", 0); // Don't auto-restore spinner
 
-      const pagePath = getCurrentPagePath();
-      const rawUrl = `/docs/${pagePath}`;
-
-      const response = await fetch(rawUrl);
+      const response = await fetch(markdownUrl());
       if (!response.ok) {
         throw new Error(
           `Failed to fetch markdown: ${response.status} ${response.statusText}`,
@@ -171,32 +277,40 @@ const copyMarkdown = () => {
 
       const markdownContent = await response.text();
 
-      // Copy to clipboard using modern API
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(markdownContent);
-      } else {
-        // Fallback: throw error if clipboard API isn't available
-        throw new Error("Clipboard API not supported in this browser");
-      }
+      await copyText(markdownContent);
 
-      changeButtonIcon("fa fa-check", 1000);
-      showToast("Page content copied to clipboard!");
+      changeButtonIcon(button, "fa fa-check", 1000);
+      showToast("Markdown copied to clipboard!");
     } catch (error) {
       console.error("Error copying markdown:", error);
-      changeButtonIcon("fa fa-exclamation-triangle", 2000);
+      changeButtonIcon(button, "fa fa-exclamation-triangle", 2000);
       showToast("Failed to copy markdown. Please try again.", false);
     } finally {
       isLoading = false;
     }
   };
 
-  copyButton.addEventListener("click", fetchAndCopyMarkdown);
+  headerCopyMarkdownButton?.addEventListener("click", () =>
+    fetchAndCopyMarkdown(headerCopyMarkdownButton),
+  );
+
+  document
+    .querySelector("[data-copy-page]")
+    ?.addEventListener("click", (event) =>
+      copyRenderedPage(event.currentTarget),
+    );
+
+  document
+    .querySelector("[data-copy-markdown]")
+    ?.addEventListener("click", (event) =>
+      fetchAndCopyMarkdown(event.currentTarget),
+    );
 };
 
 // Initialize functionality when DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
   darkModeToggle();
-  copyMarkdown();
+  requestAnimationFrame(copyPageActions);
 });
 
 // Collapsible sidebar navigation for entire sections

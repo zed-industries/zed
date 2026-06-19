@@ -12,6 +12,39 @@ kbd.keybinding {
   -webkit-text-stroke: 0.5px currentColor;
 }
 
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -8px 0 28px;
+}
+
+.page-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--fg);
+  background: var(--media-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.page-action:hover {
+  color: var(--full-contrast);
+  border-color: var(--border-hover);
+}
+
+.page-action i {
+  width: 14px;
+  text-align: center;
+}
+
 .copy-toast {
   position: fixed;
   top: 72px;
