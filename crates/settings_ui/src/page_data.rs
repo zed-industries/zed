@@ -2728,6 +2728,7 @@ fn editor_page() -> SettingsPage {
                 title: "File Path Navigation",
                 description: "Show clickable file path segments in the breadcrumb for navigating the project.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("toolbar.file_path_nav"),
                     pick: |settings_content| {
                         settings_content
