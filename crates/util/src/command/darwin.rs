@@ -301,7 +301,7 @@ fn spawn_posix_spawn(
     kill_on_drop: bool,
 ) -> io::Result<Child> {
     // posix_spawnp resolves programs against the parent's cwd/PATH, not the child's.
-    let program_cstr = CString::new(if program.as_bytes().contains(&b'/') {
+    let resolved_program = if program.as_bytes().contains(&b'/') {
         std::path::absolute(current_dir.join(program)).map_or_else(
             |_| program.as_bytes().to_vec(),
             |p| p.into_os_string().into_vec(),
@@ -316,13 +316,14 @@ fn spawn_posix_spawn(
             || program.as_bytes().to_vec(),
             |path| path.into_os_string().into_vec(),
         )
-    })
-    .map_err(|_| invalid_input_error())?;
+    };
+    let program_cstr = CString::new(resolved_program).map_err(|_| invalid_input_error())?;
+    let argv0_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
 
     let current_dir_cstr =
         CString::new(current_dir.as_os_str().as_bytes()).map_err(|_| invalid_input_error())?;
 
-    let mut argv_cstrs = vec![program_cstr.clone()];
+    let mut argv_cstrs = vec![argv0_cstr];
     for arg in args {
         let cstr = CString::new(arg.as_bytes()).map_err(|_| invalid_input_error())?;
         argv_cstrs.push(cstr);
@@ -928,7 +929,7 @@ mod tests {
 
     #[test]
     fn test_bare_program_resolved_via_custom_path() {
-        let temp_dir = std::temp::tempdir().expect("failed to create temp dir");
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
 
         let link_path = temp_dir.path().join("zed-test-echo");
         std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
@@ -945,6 +946,28 @@ mod tests {
 
             assert!(output.status.success());
             assert_eq!(output.stdout, b"from-custom-path");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_preserves_argv0_when_resolved_via_custom_path() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let link_path = temp_dir.path().join("zed-test-sh");
+        std::os::unix::fs::symlink("/bin/sh", &link_path).expect("failed to create symlink");
+
+        let custom_path = temp_dir.path().to_string_lossy().into_owned();
+
+        smol::block_on(async {
+            let output = Command::new("zed-test-sh")
+                .args(["-c", "printf %s \"$0\""])
+                .env("PATH", &custom_path)
+                .output()
+                .await
+                .expect("failed to spawn with custom PATH");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"zed-test-sh");
         });
     }
 
@@ -976,7 +999,7 @@ mod tests {
 
     #[test]
     fn test_relative_path_resolved_against_current_dir() {
-        let temp_dir = std::temp::tempdir().expect("failed to create temp dir");
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
 
         let link_path = temp_dir.path().join("zed-test-echo");
         std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
