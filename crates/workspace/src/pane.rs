@@ -394,6 +394,31 @@ impl fmt::Debug for Event {
 /// Treats all items uniformly via the [`ItemHandle`] trait, whether it's an editor, search results multibuffer, terminal or something else,
 /// responsible for managing item tabs, focus and zoom states and drag and drop features.
 /// Can be split, see `PaneGroup` for more details.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaneContextMenuPolicy {
+    pub show_terminal_actions: bool,
+}
+
+impl PaneContextMenuPolicy {
+    pub const fn full() -> Self {
+        Self {
+            show_terminal_actions: true,
+        }
+    }
+
+    pub const fn file_editor() -> Self {
+        Self {
+            show_terminal_actions: false,
+        }
+    }
+}
+
+impl Default for PaneContextMenuPolicy {
+    fn default() -> Self {
+        Self::full()
+    }
+}
+
 pub struct Pane {
     alternate_file_items: (
         Option<Box<dyn WeakItemHandle>>,
@@ -438,6 +463,7 @@ pub struct Pane {
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
+    context_menu_policy: PaneContextMenuPolicy,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
     close_pane_if_empty: bool,
@@ -610,6 +636,7 @@ impl Pane {
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
             ),
+            context_menu_policy: PaneContextMenuPolicy::default(),
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
@@ -881,6 +908,18 @@ impl Pane {
             ) -> (Option<AnyElement>, Option<AnyElement>),
     {
         self.render_tab_bar_buttons = Rc::new(render);
+        cx.notify();
+    }
+
+    pub fn set_context_menu_policy(
+        &mut self,
+        policy: PaneContextMenuPolicy,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_menu_policy == policy {
+            return;
+        }
+        self.context_menu_policy = policy;
         cx.notify();
     }
 
@@ -3272,9 +3311,14 @@ impl Pane {
 
                             let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
                             let reveal_path = entry_abs_path.clone();
-                            let parent_abs_path = entry_abs_path
-                                .as_deref()
-                                .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                            let parent_abs_path =
+                                if pane.read(cx).context_menu_policy.show_terminal_actions {
+                                    entry_abs_path
+                                        .as_deref()
+                                        .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()))
+                                } else {
+                                    None
+                                };
                             let relative_path = project_path
                                 .map(|project_path| project_path.path)
                                 .filter(|_| has_relative_path);

@@ -132,6 +132,43 @@ impl State {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectPanelContextMenuPolicy {
+    pub show_terminal_actions: bool,
+    pub show_search_actions: bool,
+    pub show_compare_actions: bool,
+    pub show_git_actions: bool,
+    pub show_workspace_folder_actions: bool,
+}
+
+impl ProjectPanelContextMenuPolicy {
+    pub const fn full() -> Self {
+        Self {
+            show_terminal_actions: true,
+            show_search_actions: true,
+            show_compare_actions: true,
+            show_git_actions: true,
+            show_workspace_folder_actions: true,
+        }
+    }
+
+    pub const fn file_browser() -> Self {
+        Self {
+            show_terminal_actions: false,
+            show_search_actions: false,
+            show_compare_actions: false,
+            show_git_actions: false,
+            show_workspace_folder_actions: false,
+        }
+    }
+}
+
+impl Default for ProjectPanelContextMenuPolicy {
+    fn default() -> Self {
+        Self::full()
+    }
+}
+
 pub struct ProjectPanel {
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
@@ -162,6 +199,7 @@ pub struct ProjectPanel {
     last_reported_update: Instant,
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
+    context_menu_policy: ProjectPanelContextMenuPolicy,
     state: State,
 }
 
@@ -834,6 +872,7 @@ impl ProjectPanel {
                 },
                 update_visible_entries_task: Default::default(),
                 undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
+                context_menu_policy: ProjectPanelContextMenuPolicy::default(),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1051,9 +1090,12 @@ impl ProjectPanel {
             let should_hide_rename = is_root
                 && (cfg!(target_os = "windows")
                     || (settings.hide_root && visible_worktrees_count == 1));
-            let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
+            let context_menu_policy = self.context_menu_policy;
+            let should_show_compare = context_menu_policy.show_compare_actions
+                && !is_dir
+                && self.file_abs_paths_to_diff(cx).is_some();
 
-            let (has_git_repo, has_history) = {
+            let (has_git_repo, has_history) = if context_menu_policy.show_git_actions {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
@@ -1067,14 +1109,15 @@ impl ProjectPanel {
                         .project_path_git_status(&project_path, cx)
                         .is_some_and(|status| status.is_created());
                 (has_git_repo, has_history)
+            } else {
+                (false, false)
             };
-
             let has_pasteable_content = self.has_pasteable_content(cx);
             let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
-                        menu.when(is_dir, |menu| {
+                        menu.when(is_dir && context_menu_policy.show_search_actions, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
                     } else {
@@ -1090,8 +1133,10 @@ impl ProjectPanel {
                             .when(is_local, |menu| {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
-                            .action("Open in Terminal", Box::new(OpenInTerminal))
-                            .when(is_dir, |menu| {
+                            .when(context_menu_policy.show_terminal_actions, |menu| {
+                                menu.action("Open in Terminal", Box::new(OpenInTerminal))
+                            })
+                            .when(context_menu_policy.show_search_actions && is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
                             })
@@ -1155,14 +1200,19 @@ impl ProjectPanel {
                             .when(!is_root, |menu| {
                                 menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(!is_collab && is_root, |menu| {
-                                menu.separator()
-                                    .action(
-                                        "Add Folders to Project…",
-                                        Box::new(workspace::AddFolderToProject),
-                                    )
-                                    .action("Remove from Project", Box::new(RemoveFromProject))
-                            })
+                            .when(
+                                context_menu_policy.show_workspace_folder_actions
+                                    && !is_collab
+                                    && is_root,
+                                |menu| {
+                                    menu.separator()
+                                        .action(
+                                            "Add Folders to Project…",
+                                            Box::new(workspace::AddFolderToProject),
+                                        )
+                                        .action("Remove from Project", Box::new(RemoveFromProject))
+                                },
+                            )
                             .when(is_dir && !is_root, |menu| {
                                 menu.separator().action(
                                     "Collapse All",
@@ -3798,6 +3848,18 @@ impl ProjectPanel {
         })
     }
 
+    pub fn set_context_menu_policy(
+        &mut self,
+        policy: ProjectPanelContextMenuPolicy,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_menu_policy == policy {
+            return;
+        }
+        self.context_menu_policy = policy;
+        cx.notify();
+    }
+
     /// Compared to selected_entry, this function resolves to the currently
     /// selected subentry if dir auto-folding is enabled.
     fn selected_sub_entry<'a>(
@@ -6262,6 +6324,50 @@ impl ProjectPanel {
 
         dispatch_context.add(identifier);
         dispatch_context
+    }
+
+    /// Reveals, selects, and scrolls to the project entry at `abs_path`.
+    pub fn reveal_abs_path(
+        &mut self,
+        project: Entity<Project>,
+        abs_path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let Some(project_path) = project
+            .read(cx)
+            .project_path_for_absolute_path(abs_path, cx)
+        else {
+            anyhow::bail!("path is not part of the project");
+        };
+        let Some(entry_id) = project
+            .read(cx)
+            .entry_for_path(&project_path, cx)
+            .map(|entry| entry.id)
+        else {
+            anyhow::bail!("path has not been loaded in the project panel");
+        };
+        // `reveal_entry` -> `expand_entry` only records expanded ancestors when the
+        // worktree already has an `expanded_dir_ids` entry. That map is seeded
+        // asynchronously by `update_visible_entries` (its vacant branch inserts the
+        // root entry), so a reveal issued right after mount can beat it
+        // and `expand_entry`'s `get_mut` returns `None` — it silently no-ops and the
+        // tree never expands to the target file. Seed the worktree root here if
+        // it's still vacant (same value `update_visible_entries` would insert) so
+        // `expand_entry` writes the ancestors into `self.state` synchronously; every
+        // later `update_visible_entries` derives from that state and preserves them.
+        let worktree_id = project_path.worktree_id;
+        if !self.state.expanded_dir_ids.contains_key(&worktree_id)
+            && let Some(root_id) = project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .and_then(|worktree| worktree.read(cx).root_entry().map(|entry| entry.id))
+        {
+            self.state
+                .expanded_dir_ids
+                .insert(worktree_id, vec![root_id]);
+        }
+        self.reveal_entry(project, entry_id, true, window, cx)
     }
 
     fn reveal_entry(

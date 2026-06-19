@@ -756,6 +756,43 @@ pub struct ContextMenuOptions {
     pub placement: Option<ContextMenuPlacement>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EditorSurfacePolicy {
+    pub show_language_actions: bool,
+    pub show_agent_actions: bool,
+    pub show_preview_actions: bool,
+    pub show_terminal_actions: bool,
+    pub show_git_actions: bool,
+}
+
+impl EditorSurfacePolicy {
+    pub const fn full() -> Self {
+        Self {
+            show_language_actions: true,
+            show_agent_actions: true,
+            show_preview_actions: true,
+            show_terminal_actions: true,
+            show_git_actions: true,
+        }
+    }
+
+    pub const fn file_editor() -> Self {
+        Self {
+            show_language_actions: false,
+            show_agent_actions: false,
+            show_preview_actions: false,
+            show_terminal_actions: false,
+            show_git_actions: false,
+        }
+    }
+}
+
+impl Default for EditorSurfacePolicy {
+    fn default() -> Self {
+        Self::full()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextMenuPlacement {
     Above,
@@ -1308,6 +1345,7 @@ pub struct Editor {
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    surface_policy: EditorSurfacePolicy,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -2595,6 +2633,7 @@ impl Editor {
             }),
             blame: None,
             blame_subscription: None,
+            surface_policy: EditorSurfacePolicy::default(),
 
             bookmark_store,
             breakpoint_store,
@@ -3442,6 +3481,14 @@ impl Editor {
 
     pub fn set_in_project_search(&mut self, in_project_search: bool) {
         self.in_project_search = in_project_search;
+    }
+
+    pub fn set_surface_policy(&mut self, policy: EditorSurfacePolicy, cx: &mut Context<Self>) {
+        if self.surface_policy == policy {
+            return;
+        }
+        self.surface_policy = policy;
+        cx.notify();
     }
 
     pub fn set_custom_context_menu(

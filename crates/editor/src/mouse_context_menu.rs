@@ -205,8 +205,9 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(&display_map)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo =
-            buffer
+        let surface_policy = editor.surface_policy;
+        let has_git_repo = surface_policy.show_git_actions
+            && buffer
                 .anchor_to_buffer_anchor(anchor)
                 .is_some_and(|(buffer_anchor, _)| {
                     project
@@ -225,23 +226,25 @@ pub fn deploy_context_menu(
             cx,
         );
 
-        let is_markdown = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).language())
-            .is_some_and(|language| language.name().as_ref() == "Markdown");
+        let is_markdown = surface_policy.show_preview_actions
+            && editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).language())
+                .is_some_and(|language| language.name().as_ref() == "Markdown");
 
-        let is_svg = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())
-            .is_some_and(|file| {
-                std::path::Path::new(file.file_name(cx))
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-            });
+        let is_svg = surface_policy.show_preview_actions
+            && editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file())
+                .is_some_and(|file| {
+                    std::path::Path::new(file.file_name(cx))
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+                });
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
@@ -256,31 +259,39 @@ pub fn deploy_context_menu(
                     run_to_cursor || (evaluate_selection && has_selections),
                     |builder| builder.separator(),
                 )
-                .action("Go to Definition", Box::new(GoToDefinition))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                .action("Go to Implementation", Box::new(GoToImplementation))
-                .action(
-                    "Find All References",
-                    Box::new(FindAllReferences::default()),
-                )
-                .separator()
-                .action("Rename Symbol", Box::new(Rename))
-                .action("Format Buffer", Box::new(Format))
-                .when(format_selections, |cx| {
-                    cx.action("Format Selections", Box::new(FormatSelections))
+                .when(surface_policy.show_language_actions, |builder| {
+                    builder
+                        .action("Go to Definition", Box::new(GoToDefinition))
+                        .action("Go to Declaration", Box::new(GoToDeclaration))
+                        .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                        .action("Go to Implementation", Box::new(GoToImplementation))
+                        .action(
+                            "Find All References",
+                            Box::new(FindAllReferences::default()),
+                        )
+                        .separator()
+                        .action("Rename Symbol", Box::new(Rename))
+                        .action("Format Buffer", Box::new(Format))
+                        .when(format_selections, |cx| {
+                            cx.action("Format Selections", Box::new(FormatSelections))
+                        })
+                        .action(
+                            "Show Code Actions",
+                            Box::new(ToggleCodeActions {
+                                deployed_from: None,
+                                quick_launch: false,
+                            }),
+                        )
                 })
-                .action(
-                    "Show Code Actions",
-                    Box::new(ToggleCodeActions {
-                        deployed_from: None,
-                        quick_launch: false,
-                    }),
+                .when(
+                    surface_policy.show_agent_actions && !disable_ai && has_selections,
+                    |this| this.action("Add to Agent Thread", Box::new(AddSelectionToThread)),
                 )
-                .when(!disable_ai && has_selections, |this| {
-                    this.action("Add to Agent Thread", Box::new(AddSelectionToThread))
-                })
-                .separator()
+                .when(
+                    surface_policy.show_language_actions
+                        || (surface_policy.show_agent_actions && !disable_ai && has_selections),
+                    |builder| builder.separator(),
+                )
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
                 .action("Copy and Trim", Box::new(CopyAndTrim))
@@ -297,21 +308,26 @@ pub fn deploy_context_menu(
                 .when(is_svg, |builder| {
                     builder.action("Open SVG Preview", Box::new(OpenSvgPreview))
                 })
-                .action_disabled_when(
-                    !has_reveal_target,
-                    "Open in Terminal",
-                    Box::new(OpenInTerminal),
-                )
-                .action_disabled_when(
-                    !has_git_repo,
-                    "Copy Permalink",
-                    Box::new(CopyPermalinkToLine),
-                )
-                .action_disabled_when(
-                    !has_git_repo,
-                    "View File History",
-                    Box::new(git::FileHistory),
-                );
+                .when(surface_policy.show_terminal_actions, |builder| {
+                    builder.action_disabled_when(
+                        !has_reveal_target,
+                        "Open in Terminal",
+                        Box::new(OpenInTerminal),
+                    )
+                })
+                .when(surface_policy.show_git_actions, |builder| {
+                    builder
+                        .action_disabled_when(
+                            !has_git_repo,
+                            "Copy Permalink",
+                            Box::new(CopyPermalinkToLine),
+                        )
+                        .action_disabled_when(
+                            !has_git_repo,
+                            "View File History",
+                            Box::new(git::FileHistory),
+                        )
+                });
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

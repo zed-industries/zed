@@ -58,7 +58,6 @@ use workspace::{
 use zed_actions::preview::{
     markdown::OpenPreview as OpenMarkdownPreview, svg::OpenPreview as OpenSvgPreview,
 };
-
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
@@ -1102,6 +1101,10 @@ impl Item for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
+        if !self.surface_policy.show_preview_actions {
+            return Vec::new();
+        }
+
         let mut actions = Vec::new();
 
         let is_markdown = self
