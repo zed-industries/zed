@@ -35,7 +35,7 @@ pub struct SecurityModal {
     trusted: Option<bool>,
     /// Editable trust scope shown inline with the checkbox when a single
     /// project is being prompted for; read-only until the checkbox is ticked.
-    trust_path_input: Option<Entity<InputField>>,
+    trust_path_input: Entity<InputField>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -90,26 +90,12 @@ impl Render for SecurityModal {
 
         let trust_label = self.build_trust_label();
 
-        // Build the inline editable trust-scope field, pre-filled with the
-        // project's parent folder (today's static scope), whenever a single
-        // project is being prompted for. Created lazily because `InputField`
-        // needs a `Window`, which `new` lacks but `render` has.
-        if self.trust_path_input.is_none() {
-            if let Some(project) = self.single_trustable_path() {
-                let default_scope = project.parent().unwrap_or(&project).to_path_buf();
-                let input = cx.new(|cx| {
-                    let field = InputField::new(window, cx, "Folder to trust");
-                    field.set_text(&default_scope.to_string_lossy(), window, cx);
-                    field
-                });
-                // Read-only until the checkbox is ticked; editing only matters
-                // once the user opts into trusting the parent folder.
-                let editor = input.read(cx).editor().clone();
-                editor.set_read_only(!self.trust_parents, cx);
-                self.trust_path_input = Some(input);
-            }
-        }
-        let trust_input = self.trust_path_input.clone();
+        // The editable trust-scope field is shown only when a single project is
+        // being prompted for (Delta opens one worktree per thread).
+        let trust_input = self
+            .single_trustable_path()
+            .is_some()
+            .then(|| self.trust_path_input.clone());
 
         AlertModal::new("security-modal")
             .width(rems(40.))
@@ -243,20 +229,14 @@ impl Render for SecurityModal {
                                             |security_modal, state: &ToggleState, _, cx| {
                                                 let trust_parents = state.selected();
                                                 security_modal.trust_parents = trust_parents;
-                                                if let Some(input) =
-                                                    security_modal.trust_path_input.clone()
-                                                {
-                                                    let editor =
-                                                        input.read(cx).editor().clone();
-                                                    editor.set_read_only(!trust_parents, cx);
-                                                    if !trust_parents {
-                                                        input.update(cx, |input, cx| {
-                                                            input.set_error(
-                                                                None::<SharedString>,
-                                                                cx,
-                                                            )
-                                                        });
-                                                    }
+                                                let input =
+                                                    security_modal.trust_path_input.clone();
+                                                let editor = input.read(cx).editor().clone();
+                                                editor.set_read_only(!trust_parents, cx);
+                                                if !trust_parents {
+                                                    input.update(cx, |input, cx| {
+                                                        input.set_error(None::<SharedString>, cx)
+                                                    });
                                                 }
                                                 cx.notify();
                                                 cx.stop_propagation();
@@ -327,8 +307,10 @@ impl SecurityModal {
     pub fn new(
         worktree_store: WeakEntity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let trust_path_input = cx.new(|cx| InputField::new(window, cx, "Folder to trust"));
         let mut this = Self {
             worktree_store,
             remote_host: remote_host.map(|host| host.into()),
@@ -338,9 +320,20 @@ impl SecurityModal {
             trust_parents: false,
             home_dir: std::env::home_dir(),
             trusted: None,
-            trust_path_input: None,
+            trust_path_input,
         };
         this.refresh_restricted_paths(cx);
+
+        // Pre-fill with the single project's parent folder (today's static
+        // scope), read-only until the checkbox is ticked.
+        if let Some(project) = this.single_trustable_path() {
+            let default_scope = project.parent().unwrap_or(&project).to_path_buf();
+            this.trust_path_input.update(cx, |field, cx| {
+                field.set_text(&default_scope.to_string_lossy(), window, cx);
+            });
+        }
+        let editor = this.trust_path_input.read(cx).editor().clone();
+        editor.set_read_only(!this.trust_parents, cx);
 
         this
     }
@@ -387,17 +380,13 @@ impl SecurityModal {
     /// means fall back to the default per-parent behavior; `Err` is a validation
     /// message to surface on the field.
     fn edited_trust_scope(&self, cx: &App) -> Result<Option<PathBuf>, SharedString> {
-        let Some(input) = self
-            .trust_path_input
-            .as_ref()
-            .filter(|_| self.trust_parents)
-        else {
+        if !self.trust_parents {
             return Ok(None);
-        };
+        }
         let Some(project) = self.single_trustable_path() else {
             return Ok(None);
         };
-        let typed = input.read(cx).text(cx);
+        let typed = self.trust_path_input.read(cx).text(cx);
         validate_trust_scope(&typed, &project, self.home_dir.as_deref()).map(Some)
     }
 
@@ -406,9 +395,8 @@ impl SecurityModal {
             Ok(scope) => scope,
             Err(error) => {
                 // Invalid path: flag the field and keep the modal open.
-                if let Some(input) = &self.trust_path_input {
-                    input.update(cx, |input, cx| input.set_error(Some(error), cx));
-                }
+                self.trust_path_input
+                    .update(cx, |input, cx| input.set_error(Some(error), cx));
                 return;
             }
         };
