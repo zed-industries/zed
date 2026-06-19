@@ -3362,15 +3362,14 @@ impl AcpThread {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             }
                             if is_same_turn {
-                                this.mark_pending_entries_as_canceled(cx);
+                                this.cancel_pending_turn_entries(cx);
                             }
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled && is_same_turn {
-                            this.mark_pending_entries_as_canceled(cx);
-                            this.cancel_pending_elicitations(true, cx);
+                            this.cancel_pending_turn_entries(cx);
                         }
 
                         if !canceled {
@@ -3428,7 +3427,7 @@ impl AcpThread {
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
                         if is_same_turn {
-                            this.mark_pending_entries_as_canceled(cx);
+                            this.cancel_pending_turn_entries(cx);
                         }
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
@@ -3445,9 +3444,10 @@ impl AcpThread {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         let has_running_turn = self.running_turn.is_some();
         if has_running_turn {
-            self.mark_pending_entries_as_canceled(cx);
+            self.cancel_pending_turn_entries(cx);
+        } else {
+            self.cancel_pending_elicitations(false, cx);
         }
-        self.cancel_pending_elicitations(has_running_turn, cx);
 
         let Some(turn) = self.running_turn.take() else {
             return Task::ready(());
@@ -3456,6 +3456,11 @@ impl AcpThread {
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
+    }
+
+    fn cancel_pending_turn_entries(&mut self, cx: &mut Context<Self>) {
+        self.mark_pending_entries_as_canceled(cx);
+        self.cancel_pending_elicitations(true, cx);
     }
 
     fn mark_pending_entries_as_canceled(&mut self, cx: &mut Context<Self>) {
@@ -6721,6 +6726,139 @@ mod tests {
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
                 panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    fn request_test_session_elicitation(
+        thread: WeakEntity<AcpThread>,
+        session_id: acp::SessionId,
+        cx: &mut AsyncApp,
+    ) -> Result<Task<acp::CreateElicitationResponse>> {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .map_err(|error| anyhow!(error))
+        })?
+    }
+
+    #[gpui::test]
+    async fn test_prompt_error_cancels_pending_session_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let elicitation_action = Rc::new(RefCell::new(None));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let elicitation_action = elicitation_action.clone();
+            move |request, thread, mut cx| {
+                let elicitation_action = elicitation_action.clone();
+                async move {
+                    let response_task =
+                        request_test_session_elicitation(thread, request.session_id, &mut cx)?;
+                    cx.spawn(async move |_cx| {
+                        let response = response_task.await;
+                        *elicitation_action.borrow_mut() = Some(response.action);
+                    })
+                    .detach();
+
+                    Err(anyhow!("prompt failed"))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("new session should succeed");
+
+        let result = thread
+            .update(cx, |thread, cx| thread.send(vec!["hello".into()], cx))
+            .await;
+
+        assert!(result.is_err());
+        cx.run_until_parked();
+        assert_eq!(
+            *elicitation_action.borrow(),
+            Some(acp::ElicitationAction::Cancel)
+        );
+        thread.read_with(cx, |thread, _| {
+            let Some(elicitation) = thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(elicitation) = entry {
+                    Some(elicitation)
+                } else {
+                    None
+                }
+            }) else {
+                panic!("expected an elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_max_tokens_cancels_pending_session_elicitation(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let elicitation_action = Rc::new(RefCell::new(None));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let elicitation_action = elicitation_action.clone();
+            move |request, thread, mut cx| {
+                let elicitation_action = elicitation_action.clone();
+                async move {
+                    let response_task =
+                        request_test_session_elicitation(thread, request.session_id, &mut cx)?;
+                    cx.spawn(async move |_cx| {
+                        let response = response_task.await;
+                        *elicitation_action.borrow_mut() = Some(response.action);
+                    })
+                    .detach();
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::MaxTokens))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("new session should succeed");
+
+        let result = thread
+            .update(cx, |thread, cx| thread.send(vec!["hello".into()], cx))
+            .await;
+
+        assert!(result.is_err());
+        cx.run_until_parked();
+        assert_eq!(
+            *elicitation_action.borrow(),
+            Some(acp::ElicitationAction::Cancel)
+        );
+        thread.read_with(cx, |thread, _| {
+            let Some(elicitation) = thread.entries().iter().find_map(|entry| {
+                if let AgentThreadEntry::Elicitation(elicitation) = entry {
+                    Some(elicitation)
+                } else {
+                    None
+                }
+            }) else {
+                panic!("expected an elicitation entry");
             };
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });

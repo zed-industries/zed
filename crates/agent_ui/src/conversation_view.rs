@@ -844,9 +844,7 @@ impl ConversationView {
         }));
 
         cx.on_release(|this, cx| {
-            if let Some(connection) = this.request_elicitation_connection() {
-                this.clear_request_elicitations_for_connection(&connection, cx);
-            }
+            this.request_elicitation_form_states.clear();
             if let Some(connected) = this.as_connected() {
                 connected.close_all_sessions(cx).detach();
             }
@@ -912,7 +910,7 @@ impl ConversationView {
                 .as_ref()
                 .is_some_and(|next_connection| Rc::ptr_eq(&connection, next_connection))
         {
-            self.clear_request_elicitations_for_connection(&connection, cx);
+            self.request_elicitation_form_states.clear();
         }
 
         self.server_state = state;
@@ -957,17 +955,6 @@ impl ConversationView {
     fn request_elicitation_store(&self) -> Option<Entity<ElicitationStore>> {
         self.request_elicitation_connection()?
             .request_elicitations()
-    }
-
-    fn clear_request_elicitations_for_connection(
-        &mut self,
-        connection: &Rc<dyn AgentConnection>,
-        cx: &mut App,
-    ) {
-        self.request_elicitation_form_states.clear();
-        if let Some(store) = connection.request_elicitations() {
-            store.update(cx, |store, cx| store.clear(cx));
-        }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3924,7 +3911,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_drop_clears_pending_request_elicitations(cx: &mut TestAppContext) {
+    async fn test_drop_preserves_shared_pending_request_elicitations(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
@@ -3957,11 +3944,71 @@ pub(crate) mod tests {
 
         assert!(!weak_view.is_upgradable());
         store.read_with(cx, |store, _cx| {
-            assert!(
-                store.elicitations().is_empty(),
-                "request elicitations should be cleared on release"
+            assert_eq!(
+                store.elicitations().len(),
+                1,
+                "view release should not clear connection-wide request elicitations"
             );
         });
+        assert_eq!(*response.lock(), None);
+
+        store.update(cx, |store, cx| store.clear(cx));
+        cx.run_until_parked();
+        assert!(matches!(
+            response.lock().as_ref(),
+            Some(acp::ElicitationAction::Cancel)
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_state_transition_preserves_shared_pending_request_elicitations(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+
+        let response = Arc::new(Mutex::new(None));
+        let server = ReleaseRequestElicitationServer {
+            response: response.clone(),
+        };
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+        let connection = conversation_view
+            .read_with(cx, |view, _cx| view.request_elicitation_connection())
+            .expect("conversation should have an active connection");
+        let store = connection
+            .request_elicitations()
+            .expect("connection should expose request elicitations");
+        store.read_with(cx, |store, _cx| {
+            assert_eq!(
+                store.elicitations().len(),
+                1,
+                "test should start with one pending request elicitation"
+            );
+        });
+
+        conversation_view.update(cx, |view, cx| {
+            view.set_server_state(
+                ServerState::LoadError {
+                    error: LoadError::Other("load failed".into()),
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        store.read_with(cx, |store, _cx| {
+            assert_eq!(
+                store.elicitations().len(),
+                1,
+                "leaving a connection should not clear connection-wide request elicitations"
+            );
+        });
+        assert_eq!(*response.lock(), None);
+
+        store.update(cx, |store, cx| store.clear(cx));
+        cx.run_until_parked();
         assert!(matches!(
             response.lock().as_ref(),
             Some(acp::ElicitationAction::Cancel)
