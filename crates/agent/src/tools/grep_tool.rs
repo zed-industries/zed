@@ -174,7 +174,7 @@ impl AgentTool for GrepTool {
             let project = project.downgrade();
             // Keep the search alive for the duration of result iteration. Dropping this task is the
             // cancellation mechanism; we intentionally do not detach it.
-            let SearchResults {rx, _task_handle}  = results;
+            let SearchResults {rx, ..}  = results;
             futures::pin_mut!(rx);
 
             let mut output = String::new();

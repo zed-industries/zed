@@ -62,6 +62,10 @@ impl OllamaModelPickerDelegate {
 impl PickerDelegate for OllamaModelPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "ollama model picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_models.len()
     }
@@ -200,8 +204,9 @@ pub fn render_ollama_model_picker(
 
                 Picker::uniform_list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems_from_px(210.))
-                    .max_height(Some(rems(18.).into()))
+                    .minimum_results_width(rems_from_px(210.))
+                    .height(rems(18.))
+                    .no_vertical_padding()
             }))
         })
         .anchor(gpui::Anchor::TopLeft)
