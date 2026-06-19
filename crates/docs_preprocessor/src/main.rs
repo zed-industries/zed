@@ -799,6 +799,7 @@ fn handle_postprocessing() -> Result<()> {
         std::fs::write(file, contents)?;
     }
     if let Some(redirects) = redirects {
+        write_markdown_redirect_aliases(&root_dir, &redirects)?;
         write_pages_redirects(&root_dir, &redirects)?;
     }
     return Ok(());
@@ -960,6 +961,42 @@ fn write_pages_redirects(destination: &Path, redirects: &[(String, String)]) -> 
     }
     std::fs::write(deploy_root.join("_redirects"), contents)
         .context("failed to write Cloudflare Pages _redirects")?;
+    Ok(())
+}
+
+fn write_markdown_redirect_aliases(
+    destination: &Path,
+    redirects: &[(String, String)],
+) -> Result<()> {
+    for (source, redirect_destination) in redirects {
+        let Some(source_markdown) = html_path_to_markdown(source) else {
+            continue;
+        };
+        let Some(destination_markdown) = html_path_to_markdown(redirect_destination) else {
+            continue;
+        };
+        let source_markdown = destination.join(source_markdown.trim_start_matches('/'));
+        let destination_markdown =
+            destination.join(destination_markdown.trim_start_matches("/docs/"));
+        if !destination_markdown.exists() {
+            continue;
+        }
+        if let Some(parent) = source_markdown.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create markdown alias directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::copy(&destination_markdown, &source_markdown).with_context(|| {
+            format!(
+                "failed to copy markdown redirect alias from {} to {}",
+                destination_markdown.display(),
+                source_markdown.display()
+            )
+        })?;
+    }
     Ok(())
 }
 
