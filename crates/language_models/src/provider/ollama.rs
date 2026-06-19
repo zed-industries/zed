@@ -161,13 +161,12 @@ impl State {
 
             // Rate-limit capability fetches
             // since there is an arbitrary number of models available
-            let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
+            let results: Vec<Result<_>> = futures::stream::iter(tasks)
                 .buffer_unordered(5)
-                .collect::<Vec<Result<_>>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?;
+                .collect()
+                .await;
 
+            let mut ollama_models = skip_failed_models(results);
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
@@ -1063,6 +1062,23 @@ impl Render for ConfigurationView {
     }
 }
 
+/// Keeps only the models whose `show_model` request succeeded, logging and
+/// dropping the rest. A single model failing (e.g. a cloud model that was
+/// retired but is still listed by `/api/tags`) shouldn't take down the whole
+/// list - see https://github.com/zed-industries/zed/issues/37815.
+fn skip_failed_models(results: Vec<Result<ollama::Model>>) -> Vec<ollama::Model> {
+    let mut ollama_models = Vec::with_capacity(results.len());
+    for result in results {
+        match result {
+            Ok(model) => ollama_models.push(model),
+            Err(err) => {
+                log::warn!("Failed to fetch Ollama model details, skipping it: {err}");
+            }
+        }
+    }
+    ollama_models
+}
+
 fn merge_settings_into_models(
     models: &mut HashMap<String, ollama::Model>,
     available_models: &[AvailableModel],
@@ -1182,5 +1198,49 @@ mod tests {
             "3b model should have its own display_name"
         );
         assert_eq!(model_3b.max_tokens, 6000);
+    }
+
+    fn fake_model(name: &str) -> ollama::Model {
+        ollama::Model {
+            name: name.to_string(),
+            display_name: None,
+            max_tokens: 4096,
+            keep_alive: None,
+            supports_tools: None,
+            supports_vision: None,
+            supports_thinking: None,
+        }
+    }
+
+    #[test]
+    fn test_skip_failed_models_keeps_successful_ones() {
+        // Regression test for https://github.com/zed-industries/zed/issues/37815
+        // A single model failing `show_model` (e.g. a retired Ollama Cloud model
+        // still listed by `/api/tags`) used to abort the whole fetch via
+        // `collect::<Result<Vec<_>>>()?`, leaving `fetched_models` permanently
+        // empty and the provider permanently "unauthenticated".
+        let results: Vec<Result<ollama::Model>> = vec![
+            Ok(fake_model("llama3.2")),
+            Err(anyhow!(
+                "qwen3-vl:235b-instruct was retired at 2026-06-16 00:00:00 -0700 PDT"
+            )),
+            Ok(fake_model("qwen3:8b")),
+        ];
+
+        let models = skip_failed_models(results);
+
+        assert_eq!(
+            models.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+            vec!["llama3.2", "qwen3:8b"],
+            "the failing model should be skipped, not abort the whole list"
+        );
+    }
+
+    #[test]
+    fn test_skip_failed_models_all_failed_returns_empty() {
+        let results: Vec<Result<ollama::Model>> =
+            vec![Err(anyhow!("connection refused")), Err(anyhow!("timeout"))];
+
+        assert!(skip_failed_models(results).is_empty());
     }
 }
