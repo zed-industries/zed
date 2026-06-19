@@ -393,7 +393,7 @@ fn case_insensitive_path(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn case_insensitive_path(path: &Path) -> bool {
+fn case_insensitive_path(_path: &Path) -> bool {
     // todo(windows): Windows defaults to case in sensitive, but
     // they can mark specific directories as case sensitive. Mainly
     // for WSL use cases
