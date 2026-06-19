@@ -3814,6 +3814,15 @@ fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
     responder.respond_with_error(err).log_err();
 }
 
+fn respond_result<T: JsonRpcResponse>(responder: Responder<T>, result: Result<T, acp::Error>) {
+    match result {
+        Ok(response) => {
+            responder.respond(response).log_err();
+        }
+        Err(err) => respond_err(responder, err),
+    }
+}
+
 fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     responder: Responder<acp::RequestPermissionResponse>,
@@ -3825,6 +3834,8 @@ fn handle_request_permission(
         Err(e) => return respond_err(responder, e),
     };
 
+    let cancellation = responder.cancellation();
+    let tool_call_id = args.tool_call.tool_call_id.clone();
     cx.spawn(async move |cx| {
         let result: Result<_, acp::Error> = async {
             let task = thread
@@ -3837,7 +3848,9 @@ fn handle_request_permission(
                     )
                 })
                 .flatten_acp()?;
-            Ok(task.await)
+            cancellation
+                .run_until_cancelled(async { Ok(task.await) })
+                .await
         }
         .await;
 
@@ -3847,7 +3860,16 @@ fn handle_request_permission(
                     .respond(acp::RequestPermissionResponse::new(outcome.into()))
                     .log_err();
             }
-            Err(e) => respond_err(responder, e),
+            Err(e) => {
+                if e.code == ErrorCode::RequestCancelled {
+                    thread
+                        .update(cx, |thread, cx| {
+                            thread.cancel_tool_call_authorization(&tool_call_id, cx)
+                        })
+                        .log_err();
+                }
+                respond_err(responder, e)
+            }
         }
     })
     .detach();
@@ -3900,24 +3922,19 @@ fn handle_read_text_file(
     };
 
     cx.spawn(async move |cx| {
-        let result: Result<_, acp::Error> = async {
-            thread
-                .update(cx, |thread, cx| {
-                    thread.read_text_file(args.path, args.line, args.limit, false, cx)
-                })
-                .map_err(acp::Error::from)?
-                .await
-        }
-        .await;
+        let cancellation = responder.cancellation();
+        let result = cancellation
+            .run_until_cancelled(async {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.read_text_file(args.path, args.line, args.limit, false, cx)
+                    })
+                    .map_err(acp::Error::from)?
+                    .await
+            })
+            .await;
 
-        match result {
-            Ok(content) => {
-                responder
-                    .respond(acp::ReadTextFileResponse::new(content))
-                    .log_err();
-            }
-            Err(e) => respond_err(responder, e),
-        }
+        respond_result(responder, result.map(acp::ReadTextFileResponse::new));
     })
     .detach();
 }
@@ -4228,25 +4245,20 @@ fn handle_wait_for_terminal_exit(
     };
 
     cx.spawn(async move |cx| {
-        let result: Result<_, acp::Error> = async {
-            let exit_status = thread
-                .update(cx, |thread, cx| {
-                    anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
-                })
-                .flatten_acp()?
-                .await;
-            Ok(exit_status)
-        }
-        .await;
+        let cancellation = responder.cancellation();
+        let result = cancellation
+            .run_until_cancelled(async {
+                let exit_status = thread
+                    .update(cx, |thread, cx| {
+                        anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
+                    })
+                    .flatten_acp()?
+                    .await;
+                Ok(exit_status)
+            })
+            .await;
 
-        match result {
-            Ok(exit_status) => {
-                responder
-                    .respond(acp::WaitForTerminalExitResponse::new(exit_status))
-                    .log_err();
-            }
-            Err(e) => respond_err(responder, e),
-        }
+        respond_result(responder, result.map(acp::WaitForTerminalExitResponse::new));
     })
     .detach();
 }
