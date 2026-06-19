@@ -1,0 +1,113 @@
+name: release_nightly_fork
+env:
+  CARGO_TERM_COLOR: always
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+jobs:
+  bundle_linux_x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set release channel to nightly
+        run: |
+          sed -i 's/\(release_channel = \)"[^"]*"/\1"nightly"/' crates/zed/Cargo.toml
+
+      - name: Install system dependencies
+        run: ./script/linux
+
+      - name: Download wasi-sdk
+        run: ./script/download-wasi-sdk
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build release binary
+        run: cargo build --release --package zed
+
+      - name: Package binary
+        run: |
+          mkdir -p release
+          cp target/release/zed release/
+          cp target/release/zed-remote-server release/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-linux-x86_64-nightly
+          path: release/
+
+  bundle_mac_aarch64:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set release channel to nightly
+        run: |
+          sed -i '' 's/\(release_channel = \)"[^"]*"/\1"nightly"/' crates/zed/Cargo.toml
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build release binary
+        run: cargo build --release --package zed --target aarch64-apple-darwin
+
+      - name: Package binary
+        run: |
+          mkdir -p release
+          cp target/aarch64-apple-darwin/release/zed release/
+          cp target/aarch64-apple-darwin/release/zed-remote-server release/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-macos-aarch64-nightly
+          path: release/
+
+  bundle_windows_x86_64:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set release channel to nightly
+        shell: pwsh
+        run: |
+          $path = "crates/zed/Cargo.toml"
+          (Get-Content $path) -replace '(release_channel = )"[^"]*"', '$1"nightly"' | Set-Content $path
+
+      - name: Build release binary
+        run: cargo build --release --package zed
+
+      - name: Package binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item target/release/zed.exe release/
+          Copy-Item target/release/zed-remote-server.exe release/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-windows-x86_64-nightly
+          path: release/
