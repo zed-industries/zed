@@ -12,9 +12,9 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -26,7 +26,7 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool, time::SystemTime};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -161,8 +161,6 @@ impl FakeGitRepository {
 }
 
 impl GitRepository for FakeGitRepository {
-    fn reload_index(&self) {}
-
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         let fut = self.with_state_async(false, move |state| {
             state
@@ -223,16 +221,9 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
-        let name = name.to_string();
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .remotes
-                .get(&name)
-                .context("remote not found")
-                .cloned()
-        });
-        async move { fut.await.ok() }.boxed()
+    fn remote_urls(&self) -> BoxFuture<'_, HashMap<String, String>> {
+        let fut = self.with_state_async(false, |state| Ok(state.remotes.clone()));
+        async move { fut.await.unwrap_or_default() }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -273,14 +264,14 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
-        async {
+        self.with_state_async(false, move |state| {
+            let sha = state.refs.get(&commit).cloned().unwrap_or(commit);
             Ok(CommitDetails {
-                sha: commit.into(),
+                sha: sha.into(),
                 message: "initial commit".into(),
                 ..Default::default()
             })
-        }
-        .boxed()
+        })
     }
 
     fn reset(
@@ -489,11 +480,11 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+    fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
     }
 
-    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
+    fn branches(&self) -> BoxFuture<'_, Result<git::repository::BranchesScanResult>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
             let mut branches = state
@@ -518,7 +509,7 @@ impl GitRepository for FakeGitRepository {
             // compute snapshot expects these to be sorted by ref_name
             // because that's what git itself does
             branches.sort_by(|a, b| a.ref_name.cmp(&b.ref_name));
-            Ok(branches)
+            Ok(branches.into())
         })
     }
 
@@ -595,6 +586,37 @@ impl GitRepository for FakeGitRepository {
             }
 
             Ok(all)
+        }
+        .boxed()
+    }
+
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>> {
+        let fs = self.fs.clone();
+        async move {
+            if fs.metadata(&worktree_path).await?.is_none() {
+                return Ok(None);
+            }
+            let dot_git_path = worktree_path.join(".git");
+            let git_file = fs
+                .load(&dot_git_path)
+                .await
+                .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+            let git_dir = git_file
+                .strip_prefix("gitdir:")
+                .context("worktree .git file missing gitdir pointer")?
+                .trim();
+            let git_dir = worktree_path.join(git_dir);
+            let metadata = fs
+                .metadata(&git_dir)
+                .await?
+                .with_context(|| format!("missing worktree git dir {}", git_dir.display()))?;
+            // FakeFs assigns directories a monotonically increasing mtime at
+            // creation and never updates it afterwards, so a directory's
+            // mtime doubles as its creation time.
+            Ok(Some(metadata.mtime.0))
         }
         .boxed()
     }
@@ -1127,7 +1149,7 @@ impl GitRepository for FakeGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
+    ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
             if s.is_empty() {
                 0
@@ -1502,6 +1524,14 @@ impl GitRepository for FakeGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn file_history_changed_files(
+        &self,
+        paths: Vec<RepoPath>,
+        _commit_limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
+        async move { Ok(vec![FileHistoryChangedFileSets::default(); paths.len()]) }.boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {

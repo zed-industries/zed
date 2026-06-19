@@ -1,11 +1,10 @@
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -14,6 +13,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use crate::SandboxFallbackDecision;
+use crate::sandboxing::{NetworkRequest, sandboxing_enabled_for_project};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -28,6 +30,8 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
 ///
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
@@ -39,9 +43,9 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
 /// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
     /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
@@ -49,6 +53,188 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+    /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub head_lines: Option<usize>,
+    /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
+}
+
+/// Executes a shell one-liner and returns the combined output.
+///
+/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
+///
+/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
+///
+/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
+///
+/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+///
+/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
+///
+/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+///
+/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SandboxedTerminalToolInput {
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
+    ///
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    pub command: String,
+    /// Working directory for the command. This must be one of the root directories of the project.
+    pub cd: String,
+    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    pub timeout_ms: Option<u64>,
+    /// Return only the first N lines of terminal output to the model after the command finishes. Do not pipe output to `head`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub head_lines: Option<usize>,
+    /// Return only the last N lines of terminal output to the model after the command finishes. Do not pipe output to `tail`; use this parameter instead so the user can still see live output. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
+    /// Hosts the command needs outbound network access to.
+    ///
+    /// Sandboxed commands cannot reach the network by default. List the hosts
+    /// the command needs (e.g. `["github.com", "*.npmjs.org"]`) when running
+    /// commands that fetch or upload (installing dependencies, cloning,
+    /// pushing, downloading, etc.). Each entry must be a hostname or a
+    /// leading-`*.` subdomain wildcard; IP literals and other wildcards are
+    /// rejected. Requesting network access triggers a user approval prompt, so
+    /// only list hosts you expect the command to need.
+    #[cfg_attr(
+        target_os = "macos",
+        doc = "\nHost-specific access is enforced by an HTTP/HTTPS proxy, so use \
+        `https://` URLs rather than `git@`/`ssh://`."
+    )]
+    #[cfg_attr(
+        target_os = "linux",
+        doc = "\nNOTE: on Linux the sandbox cannot restrict network access to specific \
+        hosts. Any value here grants the command unrestricted outbound network access \
+        (exactly like `allow_all_hosts`), and the user is asked to approve access to \
+        all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
+        directly when per-host restriction isn't available."
+    )]
+    #[serde(default)]
+    pub allow_hosts: Vec<String>,
+    /// Set to `true` only if the command needs outbound network access to
+    /// hosts you can't enumerate up front.
+    ///
+    /// This grants unrestricted outbound network access. Prefer `allow_hosts`
+    /// with specific hostnames whenever possible, so the user knows what's
+    /// being approved. Requesting it triggers a user approval prompt.
+    #[serde(default)]
+    pub allow_all_hosts: Option<bool>,
+    /// Paths the command needs to write to outside the default-writable
+    /// locations.
+    ///
+    #[cfg_attr(
+        target_os = "macos",
+        doc = "Sandboxed commands can already write to the project worktree \
+        directories and a per-command temporary directory, so only list paths \
+        outside those."
+    )]
+    /// Provide absolute or worktree-relative paths; each
+    /// directory grants write access to its whole subtree. Prefer this over
+    /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
+    /// paths triggers a user approval prompt.
+    #[cfg_attr(
+        target_os = "linux",
+        doc = "\nOn Linux, every path here must be a directory that already exists. \
+        Requesting a file, or a path that does not exist yet, is an error. To create new \
+        files, request write access to the existing directory that will contain them."
+    )]
+    #[serde(default)]
+    pub fs_write_paths: Vec<String>,
+    /// Set to `true` only when the command needs to write outside the
+    /// default-writable locations but the specific paths cannot be
+    /// enumerated up front.
+    ///
+    /// This is a broad escape hatch — prefer `fs_write_paths` whenever the
+    /// set of paths is known. Requesting it triggers a user approval prompt.
+    #[serde(default, alias = "allow_fs_write")]
+    pub allow_fs_write_all: Option<bool>,
+    /// Set to `true` only as a last resort, to run the command fully outside
+    /// the sandbox.
+    ///
+    /// First try the narrower options (`allow_hosts`, `fs_write_paths`,
+    /// `allow_fs_write_all`); use this only when the command needs behavior
+    /// the sandbox can't grant on a per-permission basis. Requesting it
+    /// triggers a user approval prompt.
+    #[serde(default)]
+    pub unsandboxed: Option<bool>,
+    /// A short justification for why this command needs the sandbox
+    /// permission(s) it requests (`allow_network`, `fs_write_paths`,
+    /// `allow_fs_write_all`, or `unsandboxed`).
+    ///
+    /// Required whenever you request any of those permissions; omit it for
+    /// ordinary commands that request none. Write it in your own voice — it
+    /// is shown to the user, attributed to you, when they're asked to approve
+    /// the request.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TerminalSandboxInput {
+    allow_hosts: Vec<String>,
+    allow_all_hosts: Option<bool>,
+    fs_write_paths: Vec<String>,
+    allow_fs_write_all: Option<bool>,
+    unsandboxed: Option<bool>,
+    reason: Option<String>,
+}
+
+struct TerminalToolRequest {
+    command: String,
+    cd: String,
+    timeout_ms: Option<u64>,
+    selection: TerminalOutputSelection,
+    sandbox: Option<TerminalSandboxInput>,
+}
+
+impl From<TerminalToolInput> for TerminalToolRequest {
+    fn from(input: TerminalToolInput) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            selection: TerminalOutputSelection {
+                head_lines: input.head_lines,
+                tail_lines: input.tail_lines,
+            },
+            sandbox: None,
+        }
+    }
+}
+
+impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
+    fn from(input: SandboxedTerminalToolInput) -> Self {
+        Self {
+            command: input.command,
+            cd: input.cd,
+            timeout_ms: input.timeout_ms,
+            selection: TerminalOutputSelection {
+                head_lines: input.head_lines,
+                tail_lines: input.tail_lines,
+            },
+            sandbox: Some(TerminalSandboxInput {
+                allow_hosts: input.allow_hosts,
+                allow_all_hosts: input.allow_all_hosts,
+                fs_write_paths: input.fs_write_paths,
+                allow_fs_write_all: input.allow_fs_write_all,
+                unsandboxed: input.unsandboxed,
+                reason: input.reason,
+            }),
+        }
+    }
 }
 
 pub struct TerminalTool {
@@ -57,6 +243,20 @@ pub struct TerminalTool {
 }
 
 impl TerminalTool {
+    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self {
+            project,
+            environment,
+        }
+    }
+}
+
+pub struct SandboxedTerminalTool {
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+}
+
+impl SandboxedTerminalTool {
     pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
         Self {
             project,
@@ -80,11 +280,7 @@ impl AgentTool for TerminalTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        if let Ok(input) = input {
-            input.command.into()
-        } else {
-            "".into()
-        }
+        terminal_initial_title(input.map(|input| input.command))
     }
 
     fn run(
@@ -95,91 +291,758 @@ impl AgentTool for TerminalTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
+                event_stream,
+                cx,
+            )
+            .await
+        })
+    }
+}
 
-            let (working_dir, authorize) = cx.update(|cx| {
-                let working_dir =
-                    working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
-                let context =
-                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
-                let authorize =
-                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
-                Result::<_, String>::Ok((working_dir, authorize))
-            })?;
+impl AgentTool for SandboxedTerminalTool {
+    type Input = SandboxedTerminalToolInput;
+    type Output = String;
 
-            authorize.await.map_err(|e| e.to_string())?;
+    const NAME: &'static str = "sandboxed_terminal";
 
-            let terminal = self
-                .environment
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        terminal_initial_title(input.map(|input| input.command))
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+            run_terminal_tool(
+                self.project.clone(),
+                self.environment.clone(),
+                input.into(),
+                event_stream,
+                cx,
+            )
+            .await
+        })
+    }
+}
+
+fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedString {
+    if let Ok(command) = input {
+        command.into()
+    } else {
+        "".into()
+    }
+}
+
+async fn run_terminal_tool(
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+    input: TerminalToolRequest,
+    event_stream: ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let selection = input.selection;
+    let sandbox_input = input.sandbox.clone().unwrap_or_default();
+
+    let (working_dir, authorize, sandboxing, is_local_project) = cx.update(|cx| {
+        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+        let context =
+            crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+        let authorize =
+            event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+        let sandboxing =
+            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
+        let is_local_project = project.read(cx).is_local();
+        Result::<_, String>::Ok((working_dir, authorize, sandboxing, is_local_project))
+    })?;
+
+    authorize.await.map_err(|e| e.to_string())?;
+
+    let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
+    let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
+
+    // Validate the model-supplied host patterns up front. Malformed input is
+    // the model's responsibility, so surface it back as a tool-call error
+    // (the model retries) rather than letting the user approve a request that
+    // then fails.
+    let mut network = if sandboxing && !want_unsandboxed {
+        build_network_request(&sandbox_input)?
+    } else {
+        NetworkRequest::None
+    };
+
+    // Host-specific network access is enforced by a loopback proxy that
+    // confines the sandbox to its port, and only macOS can do that. A
+    // non-local project's terminal can't reach the proxy, and the Linux
+    // sandbox (bwrap) has no host-restriction mechanism at all — it can only
+    // allow or deny the network wholesale. Whenever per-host restriction
+    // isn't enforceable, widen the request to "any host" before prompting, so
+    // the approval the user grants matches what's actually enforced
+    // (unrestricted egress) rather than naming hosts we can't pin.
+    let can_restrict_to_hosts = cfg!(target_os = "macos") && is_local_project;
+    if !can_restrict_to_hosts && network.is_requested() {
+        network = NetworkRequest::AnyHost;
+    }
+
+    let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
+        cx.update(|cx| {
+            resolve_write_paths(
+                &sandbox_input.fs_write_paths,
+                working_dir.as_deref(),
+                &project,
+                cx,
+            )
+        })
+    } else {
+        Vec::new()
+    };
+
+    // On Linux the sandbox (bwrap) can only bind a path that already exists,
+    // and granting a not-yet-existing path would silently widen the grant to
+    // its nearest existing ancestor directory. Reject anything that
+    // isn't an already-existing directory so the user is only ever asked to
+    // approve — and only ever grants — exactly the paths shown to them.
+    #[cfg(target_os = "linux")]
+    for path in &write_paths {
+        if !path.is_dir() {
+            return Err(format!(
+                "Cannot request sandbox write access to `{}`: on Linux, write access can only \
+                 be granted to directories that already exist. To create or modify files, \
+                 request write access to the existing directory that contains them, not the \
+                 file path itself.",
+                path.display()
+            ));
+        }
+    }
+
+    let request = crate::sandboxing::SandboxRequest {
+        network,
+        allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
+        unsandboxed: want_unsandboxed,
+        write_paths,
+    };
+
+    if request.needs_escalation() {
+        let reason = sandbox_input
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty());
+        let Some(reason) = reason else {
+            return Err(
+                "This command requests elevated sandbox permissions, so a `reason` is \
+                 required: briefly justify why the command needs them, then run it again."
+                    .to_string(),
+            );
+        };
+        let title = sandbox_approval_title(&request);
+        let command = Some(input.command.clone());
+        let approve = cx.update(|cx| {
+            event_stream.authorize_sandbox(title, command, request.clone(), reason.to_string(), cx)
+        });
+        if let Err(error) = approve.await {
+            if want_unsandboxed {
+                return Ok(format!(
+                    "Command cancelled: user denied permission to run outside the sandbox ({error})."
+                ));
+            }
+            return Ok(format!(
+                "Command cancelled: user denied the requested sandbox permissions ({error})."
+            ));
+        }
+    }
+
+    let extra_env = Vec::new();
+
+    // Build the sandbox request, then decide whether we can actually sandbox.
+    // The sandbox itself never silently runs a command unsandboxed: if it can't
+    // create the sandbox it aborts. As the consumer we may still run the command
+    // without a sandbox (when the user has opted into that), but we record
+    // *why* in `sandbox_not_applied` so we can warn the user and tell the agent.
+    let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
+    let sandbox_wrap = if sandboxing && !want_unsandboxed {
+        let sandbox_permissions = cx.update(|cx| {
+            agent_settings::AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .clone()
+        });
+
+        if sandbox_permissions.allow_unsandboxed {
+            // Unsandboxed execution is permanently allowed in settings: skip
+            // the sandbox machinery entirely and run the command the same way
+            // the unsandboxed terminal tool does.
+            sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::DisabledForever);
+            None
+        } else if event_stream.sandbox_fallback_granted_for_thread() {
+            // The user allowed unsandboxed execution for the rest of this
+            // thread after an earlier sandbox failure (Linux and Windows, which
+            // share the `authorize_sandbox_fallback` flow).
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            {
+                sandbox_not_applied =
+                    Some(acp_thread::SandboxNotAppliedReason::DisabledForThisThread);
+            }
+            None
+        } else {
+            let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
+            let writable_paths: Vec<PathBuf> = cx.update(|cx| {
+                project
+                    .read(cx)
+                    .worktrees(cx)
+                    .map(|w| w.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>()
+            });
+            let wrap = acp_thread::SandboxWrap {
+                writable_paths,
+                extra_write_paths: effective.write_paths,
+                network: network_request_to_sandbox_network_access(&effective.network),
+                allow_fs_write: effective.allow_fs_write_all,
+                is_local: is_local_project,
+            };
+
+            // The viability check runs a brief probe subprocess, so do it off
+            // the main thread. On Linux the sandbox can genuinely be unavailable
+            // (missing `bwrap`, disabled user namespaces, …); rather than
+            // silently failing open, we ask the user how to proceed and let them
+            // retry after fixing their environment. (On other platforms the
+            // probe never fails, so this prompt is Linux-only.)
+            // Each retry re-probes from scratch, so the failure reason shown to
+            // the user reflects the *current* environment (e.g. it can change
+            // from "no bwrap" to "bwrap is setuid" after they install one).
+            #[cfg(target_os = "linux")]
+            {
+                let mut retries = 0usize;
+                loop {
+                    let probe_wrap = wrap.clone();
+                    let probe_cwd = working_dir.clone();
+                    let error = match cx
+                        .background_executor()
+                        .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                        .await
+                    {
+                        Ok(()) => break Some(wrap),
+                        Err(error) => error,
+                    };
+
+                    // Distinct from the intentional skips above (settings / thread
+                    // grant): the sandbox was requested but couldn't be created.
+                    log::warn!(
+                        "Failed to create a sandbox for an agent terminal command: {error:?}"
+                    );
+
+                    let decision = cx
+                        .update(|cx| {
+                            event_stream.authorize_sandbox_fallback(
+                                Some(input.command.clone()),
+                                error.user_facing_message(),
+                                retries,
+                                cx,
+                            )
+                        })
+                        .await;
+                    match decision {
+                        Ok(SandboxFallbackDecision::Retry) => {
+                            retries += 1;
+                            continue;
+                        }
+                        Ok(SandboxFallbackDecision::RunUnsandboxed) => {
+                            sandbox_not_applied =
+                                Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error));
+                            break None;
+                        }
+                        Ok(SandboxFallbackDecision::Deny) | Err(_) => {
+                            return Ok(format!(
+                                "Command cancelled: the sandbox could not be created ({}) and \
+                                 the user declined to run it without one.",
+                                error.user_facing_message()
+                            ));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let probe_wrap = wrap.clone();
+                let probe_cwd = working_dir.clone();
+                match cx
+                    .background_executor()
+                    .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                    .await
+                {
+                    Ok(()) => Some(wrap),
+                    Err(error) => {
+                        // The probe can't fail off Linux; keep failing open just
+                        // in case a future platform's probe ever does.
+                        log::warn!(
+                            "Failed to create a sandbox for an agent terminal command: {error:?}"
+                        );
+                        None
+                    }
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let output_byte_limit = if selection.is_enabled() {
+        None
+    } else {
+        Some(COMMAND_OUTPUT_LIMIT)
+    };
+
+    // Create the terminal. On Windows the WSL sandbox can only report whether
+    // it set up the environment once `wsl.exe` actually runs (its probe is
+    // async), so — unlike Linux's up-front `can_create_sandbox` loop above —
+    // the sandbox-creation fallback happens here, around `create_terminal`. The
+    // user gets the same choices via `authorize_sandbox_fallback` (retry / run
+    // unsandboxed once / for this thread / always / deny), and a chosen
+    // "run unsandboxed" is recorded in `sandbox_not_applied` exactly as on
+    // Linux so the model and UI are told the command ran without a sandbox.
+    #[cfg(target_os = "windows")]
+    let terminal = {
+        let mut retries = 0usize;
+        let mut effective_wrap = sandbox_wrap.clone();
+        loop {
+            let error = match environment
                 .create_terminal(
                     input.command.clone(),
-                    working_dir,
-                    Some(COMMAND_OUTPUT_LIMIT),
+                    extra_env.clone(),
+                    working_dir.clone(),
+                    output_byte_limit,
+                    effective_wrap.clone(),
                     cx,
                 )
                 .await
-                .map_err(|e| e.to_string())?;
-
-            let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
-            ]));
-
-            let timeout = input.timeout_ms.map(Duration::from_millis);
-
-            let mut timed_out = false;
-            let mut user_stopped_via_signal = false;
-            let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
-
-            match timeout {
-                Some(timeout) => {
-                    let timeout_task = cx.background_executor().timer(timeout);
-
-                    futures::select! {
-                        _ = wait_for_exit.clone().fuse() => {},
-                        _ = timeout_task.fuse() => {
-                            timed_out = true;
-                            terminal.kill(cx).map_err(|e| e.to_string())?;
-                            wait_for_exit.await;
-                        }
-                        _ = event_stream.cancelled_by_user().fuse() => {
-                            user_stopped_via_signal = true;
-                            terminal.kill(cx).map_err(|e| e.to_string())?;
-                            wait_for_exit.await;
-                        }
-                    }
-                }
-                None => {
-                    futures::select! {
-                        _ = wait_for_exit.clone().fuse() => {},
-                        _ = event_stream.cancelled_by_user().fuse() => {
-                            user_stopped_via_signal = true;
-                            terminal.kill(cx).map_err(|e| e.to_string())?;
-                            wait_for_exit.await;
-                        }
-                    }
-                }
+            {
+                Ok(terminal) => break terminal,
+                Err(error) => error,
             };
 
-            // Check if user stopped - we check both:
-            // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
-            // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
-            // Note: user_stopped_via_signal is already set above if we detected cancellation in the select!
-            // but we also check was_cancelled_by_user() for cases where cancellation happened after wait_for_exit completed
-            let user_stopped_via_signal =
-                user_stopped_via_signal || event_stream.was_cancelled_by_user();
-            let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
-            let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
+            // Only an *environment*-unavailable failure of the WSL sandbox is a
+            // sandbox-creation problem the user can act on. A bad request (a
+            // missing writable path, mixed distros) — or any failure once we're
+            // already running unsandboxed — goes straight back to the model.
+            let Some(message) = effective_wrap.as_ref().and_then(|_| {
+                error
+                    .downcast_ref::<sandbox::windows_wsl::WslSandboxUnavailable>()
+                    .map(|unavailable| unavailable.message().to_string())
+            }) else {
+                return Err(format!("{error:#}"));
+            };
+            let sandbox_error = acp_thread::LinuxWslSandboxError::Other(message);
+            log::warn!("Failed to create a WSL sandbox for an agent terminal command: {error:?}");
 
-            let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
+            let decision = cx
+                .update(|cx| {
+                    event_stream.authorize_sandbox_fallback(
+                        Some(input.command.clone()),
+                        sandbox_error.user_facing_message(),
+                        retries,
+                        cx,
+                    )
+                })
+                .await;
+            match decision {
+                Ok(SandboxFallbackDecision::Retry) => {
+                    // WSL probe failures aren't cached, so retrying re-probes
+                    // the current environment (e.g. after installing `bwrap`).
+                    retries += 1;
+                }
+                Ok(SandboxFallbackDecision::RunUnsandboxed) => {
+                    sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(
+                        sandbox_error,
+                    ));
+                    effective_wrap = None;
+                }
+                Ok(SandboxFallbackDecision::Deny) | Err(_) => {
+                    return Ok(format!(
+                        "Command cancelled: the sandbox could not be created ({}) and the \
+                         user declined to run it without one.",
+                        sandbox_error.user_facing_message()
+                    ));
+                }
+            }
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let terminal = environment
+        .create_terminal(
+            input.command.clone(),
+            extra_env,
+            working_dir.clone(),
+            output_byte_limit,
+            sandbox_wrap.clone(),
+            cx,
+        )
+        .await
+        .map_err(|e| format!("{e:#}"))?;
 
-            Ok(process_content(
-                output,
-                &input.command,
-                timed_out,
-                user_stopped,
-            ))
-        })
+    // When sandboxing was active but the command ran without a sandbox (a
+    // settings opt-out, a thread grant, or a sandbox-creation failure the user
+    // chose to run through), tell the agent so it can account for the weaker
+    // isolation. Computed here — after the Windows fallback above may have set
+    // the reason — so every affected command communicates the state.
+    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
+        acp_thread::SandboxNotAppliedReason::DisabledForever => {
+            "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
+             enabled in settings."
+                .to_string()
+        }
+        acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
+            "Note: this command ran WITHOUT an OS sandbox because you allowed unsandboxed \
+             execution for the rest of this thread."
+                .to_string()
+        }
+        acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
+            "Note: I tried to run this command inside an OS sandbox, but it could not be \
+             created ({}). It ran WITHOUT a sandbox.",
+            error.user_facing_message()
+        ),
+    });
+
+    let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
+    let fields = acp::ToolCallUpdateFields::new().content(vec![acp::ToolCallContent::Terminal(
+        acp::Terminal::new(terminal_id),
+    )]);
+    if let Some(reason) = &sandbox_not_applied {
+        event_stream.update_fields_with_meta(
+            fields,
+            Some(acp_thread::meta_with_sandbox_not_applied(reason)),
+        );
+    } else {
+        event_stream.update_fields(fields);
     }
+
+    let timeout = input.timeout_ms.map(Duration::from_millis);
+
+    let mut timed_out = false;
+    let mut user_stopped_via_signal = false;
+    let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
+
+    match timeout {
+        Some(timeout) => {
+            let timeout_task = cx.background_executor().timer(timeout);
+
+            futures::select! {
+                _ = wait_for_exit.clone().fuse() => {},
+                _ = timeout_task.fuse() => {
+                    timed_out = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    user_stopped_via_signal = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+            }
+        }
+        None => {
+            futures::select! {
+                _ = wait_for_exit.clone().fuse() => {},
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    user_stopped_via_signal = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+            }
+        }
+    };
+
+    let user_stopped_via_signal = user_stopped_via_signal || event_stream.was_cancelled_by_user();
+    let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
+    let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
+
+    let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
+
+    let result = process_content(output, &input.command, timed_out, user_stopped, selection);
+    Ok(match sandbox_note {
+        Some(note) => format!("{note}\n\n{result}"),
+        None => result,
+    })
+}
+
+/// Resolve model-requested write paths into absolute paths.
+///
+/// Relative paths are resolved against the command's working directory when
+/// known, otherwise against the project's first worktree root. Paths that
+/// can't be made absolute (relative paths with no base) are dropped. The
+/// resulting paths are shown to the user for approval, so resolving against
+/// model-controlled inputs is safe — nothing is granted without that prompt.
+fn resolve_write_paths(
+    raw_paths: &[String],
+    working_dir: Option<&Path>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> Vec<PathBuf> {
+    if raw_paths.is_empty() {
+        return Vec::new();
+    }
+    let project = project.read(cx);
+    let windows_paths = project.path_style(cx).is_windows();
+    let base = working_dir.map(Path::to_path_buf).or_else(|| {
+        project
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+    });
+    join_write_paths(raw_paths, base.as_deref(), windows_paths)
+}
+
+/// Pure path-joining step of [`resolve_write_paths`], split out so it can be
+/// unit-tested without a `Project`/`App`.
+///
+/// Each path is lexically normalized (resolving `.`/`..`) so that later
+/// subtree-containment checks and the user-facing approval prompt operate on
+/// the same path the sandbox will ultimately enforce. Relative paths with no
+/// base, and paths that traverse above the filesystem root, are dropped.
+///
+/// On Windows, raw paths the model expressed in WSL terms (a `/mnt/<drive>/...`
+/// automount path, or a WSL-absolute `/home/...` path) are mapped back to the
+/// form the sandbox machinery expects before normalization.
+fn join_write_paths(
+    raw_paths: &[String],
+    base: Option<&Path>,
+    windows_paths: bool,
+) -> Vec<PathBuf> {
+    raw_paths
+        .iter()
+        .filter_map(|raw| {
+            if windows_paths {
+                if let Some(path) = wsl_drive_mount_path_to_windows_path(raw) {
+                    return Some(path);
+                }
+                if let Some(path) = wsl_absolute_path(raw) {
+                    return Some(path);
+                }
+            }
+
+            let path = Path::new(raw);
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base?.join(path)
+            };
+            util::paths::normalize_lexically(&absolute).ok()
+        })
+        .collect()
+}
+
+fn wsl_drive_mount_path_to_windows_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    let remainder = raw.strip_prefix("/mnt/")?;
+    let (drive, rest) = remainder
+        .split_once('/')
+        .map_or((remainder, ""), |(drive, rest)| (drive, rest));
+    let mut drive_chars = drive.chars();
+    let drive = drive_chars.next()?.to_ascii_uppercase();
+    if !drive.is_ascii_alphabetic() || drive_chars.next().is_some() {
+        return None;
+    }
+
+    let mut windows_path = format!("{drive}:\\");
+    if !rest.is_empty() {
+        windows_path.push_str(&rest.replace('/', "\\"));
+    }
+    Some(PathBuf::from(windows_path))
+}
+
+fn wsl_absolute_path(raw: &str) -> Option<PathBuf> {
+    let raw = raw.replace('\\', "/");
+    if raw.starts_with('/') && !raw.starts_with("//") {
+        Some(PathBuf::from(raw))
+    } else {
+        None
+    }
+}
+
+/// Convert a (validated) network request into the access mode enforced by the
+/// terminal sandbox.
+fn network_request_to_sandbox_network_access(
+    network: &NetworkRequest,
+) -> acp_thread::SandboxNetworkAccess {
+    match network {
+        NetworkRequest::None => acp_thread::SandboxNetworkAccess::None,
+        NetworkRequest::AnyHost => acp_thread::SandboxNetworkAccess::All,
+        NetworkRequest::Hosts(hosts) => {
+            #[cfg(target_os = "macos")]
+            {
+                acp_thread::SandboxNetworkAccess::Restricted(http_proxy::Allowlist::from_patterns(
+                    hosts.iter().cloned(),
+                ))
+            }
+            // Only macOS (Seatbelt plus the loopback proxy) can confine egress
+            // to an allowlist; other sandboxes can only toggle the network
+            // wholesale, so a host-specific grant becomes full network access.
+            // `run_terminal_tool` widens once-requests to `AnyHost` up front so
+            // the approval prompt matches — this guards the persistent-grant
+            // path (host grants restored from settings).
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = hosts;
+                acp_thread::SandboxNetworkAccess::All
+            }
+        }
+    }
+}
+
+/// Parse and validate the model's network escalation request. `allow_all_hosts`
+/// subsumes any specific `allow_hosts` list. Returns an error string suitable
+/// for showing back to the model when a host pattern is malformed.
+fn build_network_request(sandbox: &TerminalSandboxInput) -> Result<NetworkRequest, String> {
+    if sandbox.allow_all_hosts == Some(true) {
+        return Ok(NetworkRequest::AnyHost);
+    }
+    if sandbox.allow_hosts.is_empty() {
+        return Ok(NetworkRequest::None);
+    }
+    let mut patterns = Vec::with_capacity(sandbox.allow_hosts.len());
+    for raw in &sandbox.allow_hosts {
+        match http_proxy::HostPattern::parse(raw) {
+            Ok(pattern) => patterns.push(pattern),
+            Err(error) => {
+                return Err(format!(
+                    "`allow_hosts` contains an invalid pattern '{raw}': {error}. \
+                     Hostnames only — no IP literals; leading-`*.` wildcards \
+                     are supported (e.g. `*.example.com`)."
+                ));
+            }
+        }
+    }
+    Ok(NetworkRequest::Hosts(patterns))
+}
+
+/// User-facing title for the sandbox-escalation approval prompt. Only called
+/// when the request actually asks for something (see
+/// [`crate::sandboxing::SandboxRequest::needs_escalation`]).
+fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String {
+    if request.unsandboxed {
+        return "Allow this command to run outside the sandbox?".to_string();
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(network_clause) = network_clause(&request.network) {
+        parts.push(network_clause);
+    }
+    if request.allow_fs_write_all {
+        parts.push("unrestricted filesystem writes".to_string());
+    } else if !request.write_paths.is_empty() {
+        parts.push(format!(
+            "write access to {}",
+            write_path_summary(&request.write_paths)
+        ));
+    }
+    match parts.as_slice() {
+        [] => "Allow this command extra permissions?".to_string(),
+        [only] => format!("Allow {only}?"),
+        [first, second] => format!("Allow {first} and {second}?"),
+        _ => format!("Allow {}?", parts.join(", ")),
+    }
+}
+
+/// The network clause for the approval title, or `None` when no network was
+/// requested.
+fn network_clause(network: &NetworkRequest) -> Option<String> {
+    match network {
+        NetworkRequest::None => None,
+        NetworkRequest::AnyHost => Some("arbitrary network access".to_string()),
+        NetworkRequest::Hosts(hosts) => Some(format_hosts_clause(hosts)),
+    }
+}
+
+fn format_hosts_clause(hosts: &[http_proxy::HostPattern]) -> String {
+    let names: Vec<String> = hosts.iter().map(|host| host.to_string()).collect();
+    match names.as_slice() {
+        [] => "network access".to_string(),
+        [single] => format!("network access to {single}"),
+        [first, second] => format!("network access to {first} and {second}"),
+        _ => {
+            let (last, init) = names.split_last().expect("non-empty");
+            format!("network access to {}, and {last}", init.join(", "))
+        }
+    }
+}
+
+fn write_path_summary(paths: &[PathBuf]) -> String {
+    match paths {
+        [] => "0 paths".to_string(),
+        [path] => path.display().to_string(),
+        paths => format!("{} paths", paths.len()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TerminalOutputSelection {
+    head_lines: Option<usize>,
+    tail_lines: Option<usize>,
+}
+
+impl TerminalOutputSelection {
+    fn is_enabled(self) -> bool {
+        self.head_lines.is_some() || self.tail_lines.is_some()
+    }
+}
+
+fn select_terminal_output_lines(output: &str, selection: TerminalOutputSelection) -> String {
+    match (selection.head_lines, selection.tail_lines) {
+        (None, None) => output.to_string(),
+        (Some(head_lines), None) => output
+            .lines()
+            .take(head_lines)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        (None, Some(tail_lines)) => {
+            let lines = output.lines().collect::<Vec<_>>();
+            let start = lines.len().saturating_sub(tail_lines);
+            lines[start..].join("\n")
+        }
+        (Some(head_lines), Some(tail_lines)) => {
+            let lines = output.lines().collect::<Vec<_>>();
+            let head = lines
+                .iter()
+                .take(head_lines)
+                .copied()
+                .collect::<Vec<_>>()
+                .join("\n");
+            let tail_start = lines.len().saturating_sub(tail_lines);
+            let tail = lines[tail_start..].join("\n");
+            format!("{head}\n\n{tail}")
+        }
+    }
+}
+
+/// Explanation appended to the model-facing result when a sandboxed command
+/// fails because it tried to use WSL's Windows interop (see
+/// [`wsl_interop_blocked`]).
+const WSL_INTEROP_BLOCKED_NOTE: &str = "This command tried to launch a Windows \
+executable, which the sandbox blocks: WSL Windows interop is disabled so \
+sandboxed commands can't escape to the Windows host. The noisy `WSL ... ERROR` \
+lines below are from that blocked attempt, not a bug in the command. If you \
+genuinely need to run a Windows program, re-run with `unsandboxed: true`.";
+
+/// Whether terminal output contains the kernel-style diagnostics WSL prints
+/// when a Windows executable is launched inside our pid-namespaced sandbox
+/// (interop init fails to parse `/proc/1/stat`, which is now `bwrap`). These
+/// markers don't appear for ordinary Linux commands.
+#[cfg(target_os = "windows")]
+fn wsl_interop_blocked(content: &str) -> bool {
+    content.contains("UtilGetPpid") || content.contains("Failed to parse: /proc/1/stat")
 }
 
 fn process_content(
@@ -187,9 +1050,20 @@ fn process_content(
     command: &str,
     timed_out: bool,
     user_stopped: bool,
+    selection: TerminalOutputSelection,
 ) -> String {
     let content = output.output.trim();
+    let content = select_terminal_output_lines(content, selection);
     let is_empty = content.is_empty();
+
+    // On Windows, recognize the kernel-style diagnostics WSL prints when a
+    // command tries to launch a Windows executable inside the sandbox (where
+    // interop is deliberately disabled). They're noise the model can't act on,
+    // so we explain what actually happened.
+    #[cfg(target_os = "windows")]
+    let interop_blocked = wsl_interop_blocked(&content);
+    #[cfg(not(target_os = "windows"))]
+    let interop_blocked = false;
 
     let content = format!("```\n{content}\n```");
     let content = if output.truncated {
@@ -233,6 +1107,11 @@ fn process_content(
                     content
                 }
             }
+            Some(exit_code) if interop_blocked => {
+                format!(
+                    "Command \"{command}\" failed with exit code {exit_code}. {WSL_INTEROP_BLOCKED_NOTE}\n\n{content}"
+                )
+            }
             Some(exit_code) => {
                 if is_empty {
                     format!("Command \"{command}\" failed with exit code {}.", exit_code)
@@ -258,16 +1137,10 @@ fn process_content(
     content
 }
 
-fn working_dir(
-    input: &TerminalToolInput,
-    project: &Entity<Project>,
-    cx: &mut App,
-) -> Result<Option<PathBuf>> {
+fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
-    let cd = &input.cd;
 
     if cd == "." || cd.is_empty() {
-        // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
         match worktrees.next() {
@@ -284,7 +1157,6 @@ fn working_dir(
         let input_path = Path::new(cd);
 
         if input_path.is_absolute() {
-            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
             if project
                 .worktrees(cx)
                 .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
@@ -310,7 +1182,8 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
-        };
+                ..Default::default()
+            };
 
         let title = format_initial_title(Ok(input));
 
@@ -336,7 +1209,13 @@ mod tests {
     fn test_process_content_user_stopped() {
         let output = acp::TerminalOutputResponse::new("partial output".to_string(), false);
 
-        let result = process_content(output, "cargo build", false, true);
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            true,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("user stopped"),
@@ -369,6 +1248,7 @@ mod tests {
                 command: cmd.to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                ..Default::default()
             };
 
             let title = format_initial_title(Ok(input));
@@ -406,6 +1286,7 @@ mod tests {
             command: "echo 'hello world'".to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -435,6 +1316,7 @@ mod tests {
             command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -454,10 +1336,227 @@ mod tests {
     }
 
     #[test]
+    fn test_select_terminal_output_head_lines() {
+        let output = "one\ntwo\nthree\nfour";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: Some(2),
+                tail_lines: None,
+            },
+        );
+
+        assert_eq!(result, "one\ntwo");
+    }
+
+    #[test]
+    fn test_select_terminal_output_tail_lines() {
+        let output = "one\ntwo\nthree\nfour";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "three\nfour");
+    }
+
+    #[test]
+    fn test_select_terminal_output_head_and_tail_lines() {
+        let output = "one\ntwo\nthree\nfour\nfive";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: Some(2),
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "one\ntwo\n\nfour\nfive");
+    }
+
+    #[test]
+    fn test_select_terminal_output_head_and_tail_lines_overlap() {
+        let output = "one\ntwo\nthree";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: Some(2),
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "one\ntwo\n\ntwo\nthree");
+    }
+
+    #[test]
+    fn test_select_terminal_output_allows_zero_lines() {
+        let output = "one\ntwo\nthree";
+
+        assert_eq!(
+            select_terminal_output_lines(
+                output,
+                TerminalOutputSelection {
+                    head_lines: Some(0),
+                    tail_lines: None,
+                },
+            ),
+            ""
+        );
+        assert_eq!(
+            select_terminal_output_lines(
+                output,
+                TerminalOutputSelection {
+                    head_lines: None,
+                    tail_lines: Some(0),
+                },
+            ),
+            ""
+        );
+        assert_eq!(
+            select_terminal_output_lines(
+                output,
+                TerminalOutputSelection {
+                    head_lines: Some(0),
+                    tail_lines: Some(0),
+                },
+            ),
+            "\n\n"
+        );
+    }
+
+    #[test]
+    fn test_select_terminal_output_handles_unicode_without_trailing_newline() {
+        let output = "α\nβ\nγ";
+        let result = select_terminal_output_lines(
+            output,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(2),
+            },
+        );
+
+        assert_eq!(result, "β\nγ");
+    }
+
+    #[test]
+    fn test_process_content_filters_success_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(
+            output,
+            "printf lines",
+            false,
+            false,
+            TerminalOutputSelection {
+                head_lines: Some(1),
+                tail_lines: Some(1),
+            },
+        );
+
+        assert_eq!(result, "```\none\n\nfour\n```");
+    }
+
+    #[test]
+    fn test_process_content_filters_failure_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(1));
+
+        let result = process_content(
+            output,
+            "failing command",
+            false,
+            false,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(1),
+            },
+        );
+
+        assert!(result.contains("failed with exit code 1"));
+        assert!(result.contains("three"));
+        assert!(!result.contains("one"));
+        assert!(!result.contains("two"));
+    }
+
+    #[test]
+    fn test_process_content_filters_timeout_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+
+        let result = process_content(
+            output,
+            "slow command",
+            true,
+            false,
+            TerminalOutputSelection {
+                head_lines: Some(1),
+                tail_lines: None,
+            },
+        );
+
+        assert!(result.contains("timed out"));
+        assert!(result.contains("one"));
+        assert!(!result.contains("two"));
+        assert!(!result.contains("three"));
+    }
+
+    #[test]
+    fn test_process_content_filters_user_stopped_output_for_model() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false);
+
+        let result = process_content(
+            output,
+            "stopped command",
+            false,
+            true,
+            TerminalOutputSelection {
+                head_lines: None,
+                tail_lines: Some(1),
+            },
+        );
+
+        assert!(result.contains("user stopped"));
+        assert!(result.contains("ask them what they would like to do"));
+        assert!(result.contains("three"));
+        assert!(!result.contains("one"));
+        assert!(!result.contains("two"));
+    }
+
+    #[test]
+    fn test_process_content_selected_output_has_no_explanatory_note() {
+        let output = acp::TerminalOutputResponse::new("one\ntwo\nthree".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+
+        let result = process_content(
+            output,
+            "printf lines",
+            false,
+            false,
+            TerminalOutputSelection {
+                head_lines: Some(1),
+                tail_lines: Some(1),
+            },
+        );
+
+        assert!(!result.contains("Showing"));
+        assert!(!result.contains("first"));
+        assert!(!result.contains("last"));
+    }
+
+    #[test]
     fn test_process_content_user_stopped_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
-        let result = process_content(output, "cargo build", false, true);
+        let result = process_content(
+            output,
+            "cargo build",
+            false,
+            true,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("user stopped"),
@@ -475,7 +1574,13 @@ mod tests {
     fn test_process_content_timed_out() {
         let output = acp::TerminalOutputResponse::new("build output here".to_string(), false);
 
-        let result = process_content(output, "cargo build", true, false);
+        let result = process_content(
+            output,
+            "cargo build",
+            true,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("timed out"),
@@ -493,7 +1598,13 @@ mod tests {
     fn test_process_content_timed_out_with_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
-        let result = process_content(output, "sleep 1000", true, false);
+        let result = process_content(
+            output,
+            "sleep 1000",
+            true,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("timed out"),
@@ -512,7 +1623,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("success output".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(0));
 
-        let result = process_content(output, "echo hello", false, false);
+        let result = process_content(
+            output,
+            "echo hello",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("success output"),
@@ -531,7 +1648,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(0));
 
-        let result = process_content(output, "true", false, false);
+        let result = process_content(
+            output,
+            "true",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("executed successfully"),
@@ -545,7 +1668,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("error output".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(1));
 
-        let result = process_content(output, "false", false, false);
+        let result = process_content(
+            output,
+            "false",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("failed with exit code 1"),
@@ -564,7 +1693,13 @@ mod tests {
         let output = acp::TerminalOutputResponse::new("".to_string(), false)
             .exit_status(acp::TerminalExitStatus::new().exit_code(1));
 
-        let result = process_content(output, "false", false, false);
+        let result = process_content(
+            output,
+            "false",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("failed with exit code 1"),
@@ -577,7 +1712,13 @@ mod tests {
     fn test_process_content_unexpected_termination() {
         let output = acp::TerminalOutputResponse::new("some output".to_string(), false);
 
-        let result = process_content(output, "some_command", false, false);
+        let result = process_content(
+            output,
+            "some_command",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("terminated unexpectedly"),
@@ -595,7 +1736,13 @@ mod tests {
     fn test_process_content_unexpected_termination_empty_output() {
         let output = acp::TerminalOutputResponse::new("".to_string(), false);
 
-        let result = process_content(output, "some_command", false, false);
+        let result = process_content(
+            output,
+            "some_command",
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
 
         assert!(
             result.contains("terminated unexpectedly"),
@@ -641,6 +1788,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -708,6 +1856,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -769,6 +1918,7 @@ mod tests {
                     command: "echo $(rm -rf /)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -838,6 +1988,7 @@ mod tests {
                     command: "PAGER=blah git log --oneline".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -864,6 +2015,118 @@ mod tests {
         assert!(
             result.contains("command output") || result.contains("Command executed successfully."),
             "unexpected terminal result: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_filters_model_output_and_bypasses_byte_limit_when_head_or_tail_is_set(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let output =
+            acp::TerminalOutputResponse::new("one\ntwo\nthree\nfour\nfive".to_string(), false)
+                .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
+                    .with_output(output),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "printf lines".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    head_lines: Some(1),
+                    tail_lines: Some(1),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content update"
+        );
+
+        let result = task.await.expect("terminal command should succeed");
+        assert_eq!(result, "```\none\n\nfive\n```");
+        assert_eq!(environment.terminal_output_limits(), vec![None]);
+    }
+
+    #[gpui::test]
+    async fn test_run_uses_byte_limit_when_head_and_tail_are_not_set(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let output = acp::TerminalOutputResponse::new("command output".to_string(), false)
+            .exit_status(acp::TerminalExitStatus::new().exit_code(0));
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0)
+                    .with_output(output),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo output".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        rx.expect_update_fields().await;
+        let result = task.await.expect("terminal command should succeed");
+        assert_eq!(result, "```\ncommand output\n```");
+        assert_eq!(
+            environment.terminal_output_limits(),
+            vec![Some(COMMAND_OUTPUT_LIMIT)]
         );
     }
 
@@ -911,6 +2174,7 @@ mod tests {
                     command: "PAGER=blah git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -988,6 +2252,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_terminal_tool_description_mentions_head_and_tail_parameters() {
+        let description = <TerminalTool as crate::AgentTool>::description().to_string();
+
+        assert!(description.contains("head_lines"));
+        assert!(description.contains("tail_lines"));
+        assert!(description.contains("Do not pipe output to `head`, `tail`, or similar"));
+        assert!(description.contains("visible to the user in real time"));
+        assert!(description.contains("waste tokens or exceed the context window"));
+    }
+
+    #[test]
+    fn test_terminal_tool_input_schema_mentions_head_and_tail_parameters() {
+        let schema = <TerminalTool as crate::AgentTool>::input_schema(
+            language_model::LanguageModelToolSchemaFormat::JsonSchema,
+        );
+        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_text = schema_json.to_string();
+
+        assert!(schema_text.contains("head_lines"));
+        assert!(schema_text.contains("tail_lines"));
+        assert!(schema_text.contains("Do not pipe output to `head`"));
+        assert!(schema_text.contains("Do not pipe output to `tail`"));
+        assert!(schema_text.contains("waste tokens or exceed the context window"));
+    }
+
     async fn assert_rejected_before_terminal_creation(
         command: &str,
         cx: &mut gpui::TestAppContext,
@@ -1018,6 +2308,7 @@ mod tests {
                     command: command.to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1185,6 +2476,7 @@ mod tests {
                     command: "echo $(whoami)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1257,6 +2549,7 @@ mod tests {
                     command: "PAGER=other git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1323,6 +2616,7 @@ mod tests {
                     command: "A=1 B=2 git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1400,6 +2694,7 @@ mod tests {
                     command: "PAGER=\"less -R\" git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1427,5 +2722,671 @@ mod tests {
             result.contains("command output") || result.contains("Command executed successfully."),
             "unexpected terminal result: {result}"
         );
+    }
+
+    fn sandbox_request(
+        network: NetworkRequest,
+        all: bool,
+        paths: &[&str],
+    ) -> crate::sandboxing::SandboxRequest {
+        crate::sandboxing::SandboxRequest {
+            network,
+            allow_fs_write_all: all,
+            unsandboxed: false,
+            write_paths: paths.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    #[test]
+    fn test_join_write_paths_resolves_relative_and_absolute() {
+        let base = PathBuf::from(if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        });
+        let abs = if cfg!(windows) {
+            "C:\\abs\\path"
+        } else {
+            "/abs/path"
+        };
+        let joined = join_write_paths(
+            &[
+                abs.to_string(),
+                "relative/dir".to_string(),
+                "file.txt".to_string(),
+            ],
+            Some(base.as_path()),
+            cfg!(windows),
+        );
+        assert_eq!(
+            joined,
+            vec![
+                PathBuf::from(abs),
+                base.join("relative/dir"),
+                base.join("file.txt"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_join_write_paths_drops_relative_without_base() {
+        // Absolute paths still pass through; relative ones are dropped when
+        // there's no base to resolve them against.
+        let abs = if cfg!(windows) {
+            "C:\\abs\\keep"
+        } else {
+            "/abs/keep"
+        };
+        let joined = join_write_paths(
+            &[abs.to_string(), "relative/drop".to_string()],
+            None,
+            cfg!(windows),
+        );
+        assert_eq!(joined, vec![PathBuf::from(abs)]);
+    }
+
+    #[test]
+    fn test_join_write_paths_converts_wsl_drive_mounts_on_windows() {
+        let joined = join_write_paths(
+            &["/mnt/c/example/write-root".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("C:\\example\\write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_only_converts_wsl_drive_mounts_for_windows_paths() {
+        let joined = join_write_paths(
+            &["/mnt/c/example/write-root".to_string()],
+            Some(Path::new("/project")),
+            false,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/mnt/c/example/write-root")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_preserves_wsl_absolute_paths_on_windows() {
+        let joined = join_write_paths(
+            &["/home/example".to_string()],
+            Some(Path::new("C:\\project")),
+            true,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/home/example")]);
+    }
+
+    #[test]
+    fn test_join_write_paths_normalizes_parent_traversal() {
+        let base = PathBuf::from(if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        });
+        // `..` is resolved lexically so containment checks and the approval
+        // prompt see the real target rather than a traversal that the sandbox
+        // would canonicalize differently.
+        let joined = join_write_paths(
+            &[
+                "build/../../escape".to_string(),
+                if cfg!(windows) {
+                    "C:\\abs\\a\\..\\b".to_string()
+                } else {
+                    "/abs/a/../b".to_string()
+                },
+            ],
+            Some(base.as_path()),
+            cfg!(windows),
+        );
+        let expected_escape = if cfg!(windows) {
+            PathBuf::from("C:\\escape")
+        } else {
+            PathBuf::from("/escape")
+        };
+        let expected_abs = if cfg!(windows) {
+            PathBuf::from("C:\\abs\\b")
+        } else {
+            PathBuf::from("/abs/b")
+        };
+        assert_eq!(joined, vec![expected_escape, expected_abs]);
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_unsandboxed() {
+        let mut request = sandbox_request(NetworkRequest::AnyHost, true, &["/tmp/build"]);
+        request.unsandboxed = true;
+        assert_eq!(
+            sandbox_approval_title(&request),
+            "Allow this command to run outside the sandbox?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_summarizes_multiple_paths_by_count() {
+        let title = sandbox_approval_title(&sandbox_request(
+            NetworkRequest::None,
+            false,
+            &["/a", "/b", "/c", "/d"],
+        ));
+        assert_eq!(title, "Allow write access to 4 paths?");
+    }
+
+    #[test]
+    fn test_input_schema_includes_sandbox_flags() {
+        // The sandboxed terminal tool advertises these fields so the model can
+        // request escalations when the sandbox is in effect. Guard against
+        // accidentally renaming or removing them.
+        let schema = serde_json::to_string(&schemars::schema_for!(SandboxedTerminalToolInput))
+            .expect("input schema should serialize");
+        assert!(
+            schema.contains("allow_hosts"),
+            "schema should advertise allow_hosts: {schema}"
+        );
+        assert!(
+            schema.contains("allow_all_hosts"),
+            "schema should advertise allow_all_hosts: {schema}"
+        );
+        assert!(
+            schema.contains("fs_write_paths"),
+            "schema should advertise fs_write_paths: {schema}"
+        );
+        assert!(
+            schema.contains("allow_fs_write_all"),
+            "schema should advertise allow_fs_write_all: {schema}"
+        );
+        assert!(
+            schema.contains("unsandboxed"),
+            "schema should advertise unsandboxed: {schema}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_flags_default_to_none_when_absent() {
+        // The model is expected to omit the sandbox fields entirely on most
+        // calls. Make sure deserialization doesn't reject the minimal
+        // payload and that the fields default to empty/`None` (which the tool
+        // interprets as "no escalation requested").
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+        }))
+        .expect("minimal input should deserialize");
+        assert!(input.allow_hosts.is_empty());
+        assert_eq!(input.allow_all_hosts, None);
+        assert!(input.fs_write_paths.is_empty());
+        assert_eq!(input.allow_fs_write_all, None);
+        assert_eq!(input.unsandboxed, None);
+    }
+
+    #[test]
+    fn test_legacy_allow_fs_write_aliases_to_allow_fs_write_all() {
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+            "allow_fs_write": true,
+        }))
+        .expect("legacy allow_fs_write should deserialize");
+
+        assert_eq!(input.allow_fs_write_all, Some(true));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_legacy_allow_fs_write_uses_sandbox_permission_options(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": "root",
+            "allow_fs_write": true,
+            "reason": "needs to write outside the project",
+        }))
+        .expect("legacy allow_fs_write should deserialize");
+
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("legacy allow_fs_write should request sandbox authorization details");
+        assert!(details.network_hosts.is_empty());
+        assert!(!details.network_all_hosts);
+        assert!(details.allow_fs_write_all);
+        assert!(!details.unsandboxed);
+        assert!(details.write_paths.is_empty());
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
+        );
+
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied the requested sandbox permissions"));
+        assert_eq!(environment.terminal_creation_count(), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_unsandboxed_uses_sandbox_permission_options(cx: &mut gpui::TestAppContext) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(project, environment.clone()));
+        let (event_stream, mut receiver) = crate::ToolCallEventStream::test();
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": "root",
+            "allow_all_hosts": true,
+            "allow_fs_write_all": true,
+            "unsandboxed": true,
+            "reason": "needs full access for this task",
+        }))
+        .expect("unsandboxed input should deserialize");
+
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        assert_eq!(
+            authorization.tool_call.fields.title.as_deref(),
+            Some("Allow this command to run outside the sandbox?")
+        );
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+                .expect("unsandboxed should request sandbox authorization details");
+        assert!(details.network_hosts.is_empty());
+        assert!(!details.network_all_hosts);
+        assert!(!details.allow_fs_write_all);
+        assert!(details.unsandboxed);
+        assert!(details.write_paths.is_empty());
+
+        let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
+            panic!("expected flat sandbox permission options");
+        };
+        let options = options
+            .iter()
+            .map(|option| {
+                (
+                    option.option_id.0.as_ref(),
+                    option.name.as_ref(),
+                    option.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            options,
+            vec![
+                ("allow", "Allow once", acp::PermissionOptionKind::AllowOnce),
+                (
+                    "allow_thread",
+                    "Allow for this thread",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                (
+                    "allow_always",
+                    "Allow always",
+                    acp::PermissionOptionKind::AllowAlways,
+                ),
+                ("deny", "Deny", acp::PermissionOptionKind::RejectOnce),
+            ]
+        );
+
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied permission to run outside the sandbox"));
+        assert_eq!(environment.terminal_creation_count(), 0);
+    }
+
+    /// Regression test: choosing "Allow always" on a sandbox prompt must persist
+    /// the grant to settings *only* — it must not also cache an in-memory thread
+    /// grant. Otherwise removing the entry from settings.json wouldn't revoke it
+    /// within the same conversation, and a later identical command would run
+    /// without prompting again (the bug this guards against).
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_allow_always_grant_is_revocable_via_settings(cx: &mut gpui::TestAppContext) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        crate::tests::init_test(cx);
+        // Auto-allow the terminal tool itself so only the *sandbox* escalation
+        // prompts, and start with no persisted sandbox grants (mirroring a
+        // settings.json that doesn't grant the path — e.g. after the user
+        // removed it).
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            settings.sandbox_permissions = agent_settings::SandboxPermissions::default();
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        // Both tool calls belong to the same conversation, so they share one set
+        // of in-memory thread sandbox grants, exactly like a real `Thread`.
+        let sandbox_grants = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::sandboxing::ThreadSandboxGrants::default(),
+        ));
+
+        let input = serde_json::json!({
+            "command": "touch build/output",
+            "cd": "root",
+            "fs_write_paths": ["build"],
+            "reason": "needs to write build artifacts",
+        });
+
+        // ---- First call: the user picks "Allow always".
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project.clone(),
+            environment.clone(),
+        ));
+        let (event_stream, mut receiver) =
+            crate::ToolCallEventStream::test_with_grants(sandbox_grants.clone());
+        let resolved: SandboxedTerminalToolInput = serde_json::from_value(input.clone()).unwrap();
+        let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(resolved), event_stream, cx));
+
+        let authorization = receiver.expect_authorization().await;
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow_always"),
+                acp::PermissionOptionKind::AllowAlways,
+            ))
+            .expect("authorization response should send");
+        task.await.expect("granted command should run");
+        assert_eq!(environment.terminal_creation_count(), 1);
+
+        // The grant must NOT have been cached in the shared thread grants: with
+        // empty persistent settings, the thread grants should cover nothing.
+        let cached = sandbox_grants.borrow().effective_with_persistent(
+            &crate::sandboxing::SandboxRequest::default(),
+            &agent_settings::SandboxPermissions::default(),
+        );
+        assert!(
+            cached.write_paths.is_empty(),
+            "\"Allow always\" must not cache an in-memory thread grant: {:?}",
+            cached.write_paths
+        );
+
+        // ---- Second call: the same request, with the path absent from
+        // settings, must prompt again instead of being silently allowed.
+        let environment2 = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool2 = std::sync::Arc::new(SandboxedTerminalTool::new(
+            project.clone(),
+            environment2.clone(),
+        ));
+        let (event_stream2, mut receiver2) =
+            crate::ToolCallEventStream::test_with_grants(sandbox_grants.clone());
+        let resolved2: SandboxedTerminalToolInput = serde_json::from_value(input).unwrap();
+        let task2 =
+            cx.update(|cx| tool2.run(crate::ToolInput::resolved(resolved2), event_stream2, cx));
+
+        let authorization2 = receiver2.expect_authorization().await;
+        let details =
+            acp_thread::sandbox_authorization_details_from_meta(&authorization2.tool_call.meta)
+                .expect("the identical request should prompt for sandbox authorization again");
+        assert!(
+            details
+                .write_paths
+                .iter()
+                .any(|path| path.ends_with("build")),
+            "re-prompt should request the same write path: {:?}",
+            details.write_paths
+        );
+
+        authorization2
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("deny"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .expect("authorization response should send");
+        let result = task2
+            .await
+            .expect("denied sandbox request returns model-readable output");
+        assert!(result.contains("user denied the requested sandbox permissions"));
+        assert_eq!(environment2.terminal_creation_count(), 0);
+    }
+
+    fn host_request(list: &[&str]) -> NetworkRequest {
+        NetworkRequest::Hosts(
+            list.iter()
+                .map(|h| http_proxy::HostPattern::parse(h).unwrap())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_all_access_and_network() {
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(NetworkRequest::AnyHost, true, &[])),
+            "Allow arbitrary network access and unrestricted filesystem writes?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(NetworkRequest::AnyHost, false, &[])),
+            "Allow arbitrary network access?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(NetworkRequest::None, true, &[])),
+            "Allow unrestricted filesystem writes?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_specific_hosts() {
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(host_request(&["github.com"]), false, &[])),
+            "Allow network access to github.com?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(
+                host_request(&["github.com", "*.npmjs.org"]),
+                false,
+                &[]
+            )),
+            "Allow network access to github.com and *.npmjs.org?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(
+                host_request(&["github.com", "npmjs.org", "pypi.org"]),
+                false,
+                &[]
+            )),
+            "Allow network access to github.com, npmjs.org, and pypi.org?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_per_path_writes() {
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(
+                NetworkRequest::None,
+                false,
+                &["/tmp/build"]
+            )),
+            "Allow write access to /tmp/build?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(
+                host_request(&["github.com"]),
+                false,
+                &["/tmp/build"]
+            )),
+            "Allow network access to github.com and write access to /tmp/build?"
+        );
+    }
+
+    #[test]
+    fn test_all_access_takes_precedence_over_paths_in_title() {
+        // When all-access is requested, the specific paths are redundant and
+        // should not be listed.
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(
+                NetworkRequest::None,
+                true,
+                &["/tmp/build"]
+            )),
+            "Allow unrestricted filesystem writes?"
+        );
+    }
+
+    #[test]
+    fn test_build_network_request_validates_and_classifies() {
+        // No fields -> None.
+        assert_eq!(
+            build_network_request(&TerminalSandboxInput::default()).unwrap(),
+            NetworkRequest::None
+        );
+        // allow_all_hosts -> AnyHost, even alongside specific hosts.
+        assert_eq!(
+            build_network_request(&TerminalSandboxInput {
+                allow_hosts: vec!["github.com".into()],
+                allow_all_hosts: Some(true),
+                ..Default::default()
+            })
+            .unwrap(),
+            NetworkRequest::AnyHost
+        );
+        // Valid hosts parse to patterns.
+        assert_eq!(
+            build_network_request(&TerminalSandboxInput {
+                allow_hosts: vec!["github.com".into(), "*.npmjs.org".into()],
+                ..Default::default()
+            })
+            .unwrap(),
+            host_request(&["github.com", "*.npmjs.org"])
+        );
+        // An IP literal is rejected with an actionable message.
+        let err = build_network_request(&TerminalSandboxInput {
+            allow_hosts: vec!["127.0.0.1".into()],
+            ..Default::default()
+        })
+        .unwrap_err();
+        assert!(err.contains("127.0.0.1"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_network_request_to_sandbox_network_access_uses_explicit_unrestricted_variant() {
+        match network_request_to_sandbox_network_access(&NetworkRequest::None) {
+            acp_thread::SandboxNetworkAccess::None => {}
+            other => panic!("expected no network access, got {other:?}"),
+        }
+
+        match network_request_to_sandbox_network_access(&NetworkRequest::AnyHost) {
+            acp_thread::SandboxNetworkAccess::All => {}
+            other => panic!("expected unrestricted network access, got {other:?}"),
+        }
+
+        // Only macOS can confine egress to an allowlist; other platforms can
+        // only toggle the network wholesale, so a host request becomes full
+        // access there.
+        match network_request_to_sandbox_network_access(&host_request(&["github.com"])) {
+            #[cfg(target_os = "macos")]
+            acp_thread::SandboxNetworkAccess::Restricted(allowlist) => {
+                assert!(allowlist.allows("github.com"));
+                assert!(!allowlist.allows("example.com"));
+            }
+            #[cfg(not(target_os = "macos"))]
+            acp_thread::SandboxNetworkAccess::All => {}
+            other => panic!("unexpected network access for host request, got {other:?}"),
+        }
     }
 }

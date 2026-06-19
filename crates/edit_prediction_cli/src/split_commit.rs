@@ -5,7 +5,9 @@
 //!
 //! TODO: Port Python code to generate chronologically-ordered commits
 use crate::FailedHandling;
-use crate::reorder_patch::{Patch, PatchLine, extract_edits, locate_edited_line};
+use crate::reorder_patch::{
+    EditLocation, Patch, PatchLine, edit_locations, extract_edits, locate_edited_line,
+};
 use crate::word_diff::tokenize;
 
 /// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
@@ -27,7 +29,8 @@ use clap::Args;
 use edit_prediction::example_spec::ExampleSpec;
 use rand::Rng;
 use rand::SeedableRng;
-use serde::{Deserialize, Serialize};
+use rand::seq::SliceRandom;
+use serde::Deserialize;
 use similar::{DiffTag, TextDiff};
 use std::collections::BTreeSet;
 use std::fs;
@@ -35,10 +38,29 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
+const MAX_SPLIT_POINT_SAMPLING_ATTEMPTS: usize = 10;
+const SAME_FILE_NEAR_LINE_THRESHOLD: usize = 30;
+
+/// A commit has no split point matching the requested kind. This is an
+/// expected outcome when filtering by kind, so such commits are skipped
+/// rather than treated as failures.
+#[derive(Debug)]
+pub struct NoMatchingSplitPointError {
+    kind: SplitPointKind,
+}
+
+impl std::fmt::Display for NoMatchingSplitPointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no split point found matching {}", self.kind)
+    }
+}
+
+impl std::error::Error for NoMatchingSplitPointError {}
+
 /// `ep split-commit` CLI args.
 #[derive(Debug, Args, Clone)]
 pub struct SplitCommitArgs {
-    /// Split point (float 0.0-1.0 for fraction, or integer for index)
+    /// Split point (float 0.0-1.0 for fraction, integer for index, or one of: fim, same-file-near, same-file-far, cross-file; append :<index-or-fraction> to validate a specific split)
     #[arg(long, short = 's')]
     pub split_point: Option<String>,
 
@@ -74,11 +96,12 @@ pub struct AnnotatedCommit {
 }
 
 /// Cursor position in a file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CursorPosition {
     pub file: String,
     pub line: usize,
     pub column: usize,
+    pub line_length: usize,
 }
 
 impl std::fmt::Display for CursorPosition {
@@ -95,20 +118,349 @@ pub struct SplitCommit {
 }
 
 /// Split point specification for evaluation generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPointKind {
+    Fim,
+    SameFileNear,
+    SameFileFar,
+    CrossFile,
+}
+
+impl std::fmt::Display for SplitPointKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SplitPointKind::Fim => write!(f, "fim"),
+            SplitPointKind::SameFileNear => write!(f, "same-file-near"),
+            SplitPointKind::SameFileFar => write!(f, "same-file-far"),
+            SplitPointKind::CrossFile => write!(f, "cross-file"),
+        }
+    }
+}
+
+impl std::str::FromStr for SplitPointKind {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "fim" => Ok(Self::Fim),
+            "same-file-near" => Ok(Self::SameFileNear),
+            "same-file-far" => Ok(Self::SameFileFar),
+            "cross-file" => Ok(Self::CrossFile),
+            _ => anyhow::bail!(
+                "invalid split point kind '{value}' (expected fim, same-file-near, same-file-far, or cross-file)"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SplitPoint {
     /// Fraction of total edits (0.0 to 1.0)
     Fraction(f64),
     /// Absolute index
     Index(usize),
+    /// Random split point matching the requested kind.
+    Kind(SplitPointKind),
+    /// Explicit split point that must match the requested kind.
+    KindWithSplit {
+        kind: SplitPointKind,
+        split_point: SplitPointValue,
+    },
 }
 
-fn parse_split_point(value: &str) -> Option<SplitPoint> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum SplitPointValue {
+    Fraction(f64),
+    Index(usize),
+}
+
+fn parse_split_point_value(value: &str) -> Result<SplitPointValue> {
     if value.contains('.') {
-        value.parse::<f64>().ok().map(SplitPoint::Fraction)
+        value
+            .parse::<f64>()
+            .map(SplitPointValue::Fraction)
+            .with_context(|| format!("invalid split point fraction '{value}'"))
     } else {
-        value.parse::<usize>().ok().map(SplitPoint::Index)
+        value
+            .parse::<usize>()
+            .map(SplitPointValue::Index)
+            .with_context(|| format!("invalid split point index '{value}'"))
     }
+}
+
+fn parse_split_point(value: &str) -> Result<SplitPoint> {
+    if let Some((kind, split_point)) = value.split_once(':') {
+        let kind = kind.parse::<SplitPointKind>()?;
+        anyhow::ensure!(
+            !split_point.is_empty(),
+            "missing split point after kind '{kind}:'"
+        );
+        return Ok(SplitPoint::KindWithSplit {
+            kind,
+            split_point: parse_split_point_value(split_point)?,
+        });
+    }
+
+    if let Ok(kind) = value.parse::<SplitPointKind>() {
+        return Ok(SplitPoint::Kind(kind));
+    }
+
+    match parse_split_point_value(value)? {
+        SplitPointValue::Fraction(value) => Ok(SplitPoint::Fraction(value)),
+        SplitPointValue::Index(value) => Ok(SplitPoint::Index(value)),
+    }
+}
+
+fn is_service_file(path: &str) -> bool {
+    let path = path.trim();
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path)
+        .trim_start_matches("./");
+
+    if path.is_empty() || path == "/dev/null" {
+        return true;
+    }
+
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    if matches!(
+        file_name,
+        "package.json"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "Cargo.lock"
+            | "yarn.lock"
+            | "bun.lock"
+            | "bun.lockb"
+            | "go.sum"
+            | "composer.lock"
+            | "Gemfile.lock"
+            | "Pipfile.lock"
+            | "poetry.lock"
+            | "uv.lock"
+            | ".gitlab-ci.yml"
+            | ".travis.yml"
+            | "azure-pipelines.yml"
+            | "Jenkinsfile"
+    ) {
+        return true;
+    }
+
+    if file_name.ends_with(".min.js")
+        || file_name.ends_with(".bundle.js")
+        || file_name.contains(".generated.")
+        || file_name.ends_with(".pb.go")
+    {
+        return true;
+    }
+
+    if path == ".github/workflows"
+        || path.starts_with(".github/workflows/")
+        || path == ".circleci"
+        || path.starts_with(".circleci/")
+    {
+        return true;
+    }
+
+    path.split('/').any(|component| {
+        matches!(
+            component,
+            "dist" | "build" | "coverage" | "node_modules" | "vendor"
+        )
+    })
+}
+
+fn edit_starts_on_service_file(patch: &Patch, split_pos: usize) -> bool {
+    locate_edited_line(patch, split_pos as isize)
+        .is_some_and(|edit_location| is_service_file(&edit_location.filename))
+}
+
+fn has_submodule_gitlink_hunk(commit: &str) -> bool {
+    commit.lines().any(line_indicates_submodule_gitlink)
+}
+
+fn line_indicates_submodule_gitlink(line: &str) -> bool {
+    let line = line.trim();
+
+    matches!(
+        line,
+        "new file mode 160000" | "deleted file mode 160000" | "old mode 160000" | "new mode 160000"
+    ) || line
+        .strip_prefix("index ")
+        .and_then(|line| line.split_whitespace().last())
+        .is_some_and(|mode| mode == "160000")
+        || line
+            .strip_prefix('+')
+            .or_else(|| line.strip_prefix('-'))
+            .is_some_and(|line| line.starts_with("Subproject commit "))
+}
+
+fn sample_split_point(patch: &Patch, rng: &mut dyn rand::RngCore) -> usize {
+    let stats = patch.stats();
+    let num_edits = stats.added + stats.removed;
+    if num_edits == 0 {
+        return 0;
+    }
+
+    let mut split = rng.random_range(1..=num_edits);
+    for _ in 1..MAX_SPLIT_POINT_SAMPLING_ATTEMPTS {
+        if !edit_starts_on_service_file(patch, split) {
+            break;
+        }
+        split = rng.random_range(1..=num_edits);
+    }
+
+    split
+}
+
+fn resolve_split_point_value(split_point: SplitPointValue, num_edits: usize) -> usize {
+    match split_point {
+        SplitPointValue::Fraction(fraction) => {
+            let split = (fraction * num_edits as f64).floor() as usize;
+            split.min(num_edits)
+        }
+        SplitPointValue::Index(index) => index.min(num_edits),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GeneratedSplitCommit {
+    split: usize,
+    split_commit: SplitCommit,
+    cursor: CursorPosition,
+    cursor_from_human_edit: bool,
+}
+
+fn generate_split_commit_at_split(
+    patch: &Patch,
+    split: usize,
+    rng: &mut dyn rand::RngCore,
+) -> Result<GeneratedSplitCommit> {
+    let (prefix, suffix) = split_ordered_patch(patch, split);
+
+    let mut split_commit = SplitCommit {
+        source_patch: prefix,
+        target_patch: suffix,
+    };
+
+    let human_edit_seed = rng.random_range(1..=10000u64);
+    let (src_patch, tgt_patch, cursor_opt) = imitate_human_edits(
+        &split_commit.source_patch,
+        &split_commit.target_patch,
+        human_edit_seed,
+    );
+    split_commit.source_patch = src_patch;
+    split_commit.target_patch = tgt_patch;
+
+    let cursor_from_human_edit = cursor_opt.is_some();
+    let cursor = match cursor_opt {
+        Some(cursor) => cursor,
+        None => sample_cursor_position(&split_commit, rng)
+            .context("failed to sample cursor position")?,
+    };
+
+    Ok(GeneratedSplitCommit {
+        split,
+        split_commit,
+        cursor,
+        cursor_from_human_edit,
+    })
+}
+
+fn classify_generated_split_commit(
+    generated_split_commit: &GeneratedSplitCommit,
+) -> Option<SplitPointKind> {
+    let target_patch = Patch::parse_unified_diff(&generated_split_commit.split_commit.target_patch);
+    let next_edit = locate_edited_line(&target_patch, 0)?;
+
+    if next_edit.filename != generated_split_commit.cursor.file {
+        return Some(SplitPointKind::CrossFile);
+    }
+
+    if generated_split_commit.cursor_from_human_edit
+        && next_edit.target_line_number == generated_split_commit.cursor.line
+    {
+        return Some(SplitPointKind::Fim);
+    }
+
+    let line_distance = next_edit
+        .target_line_number
+        .abs_diff(generated_split_commit.cursor.line);
+    if line_distance <= SAME_FILE_NEAR_LINE_THRESHOLD {
+        Some(SplitPointKind::SameFileNear)
+    } else {
+        Some(SplitPointKind::SameFileFar)
+    }
+}
+
+/// Cheap necessary condition for a split to be classifiable as `kind`,
+/// computed from the full patch without generating the split.
+///
+/// The cursor ends up either at the first target edit (or, via
+/// `imitate_human_edits`, on its line), or at the last source edit. So the
+/// edits adjacent to the split bound what classifications are reachable.
+/// Line numbers here are in full-patch coordinates, which can drift slightly
+/// from split-patch coordinates, so this is a heuristic pre-filter; the final
+/// classification is always verified on the generated split.
+fn split_can_match_kind(
+    edit_locations: &[EditLocation],
+    split: usize,
+    kind: SplitPointKind,
+) -> bool {
+    let (Some(previous_edit), Some(next_edit)) = (
+        split.checked_sub(1).and_then(|i| edit_locations.get(i)),
+        edit_locations.get(split),
+    ) else {
+        return false;
+    };
+
+    match kind {
+        SplitPointKind::Fim => matches!(next_edit.patch_line, PatchLine::Addition(_)),
+        SplitPointKind::SameFileNear => true,
+        SplitPointKind::SameFileFar => {
+            previous_edit.filename == next_edit.filename
+                && previous_edit
+                    .target_line_number
+                    .abs_diff(next_edit.target_line_number)
+                    > SAME_FILE_NEAR_LINE_THRESHOLD
+        }
+        SplitPointKind::CrossFile => previous_edit.filename != next_edit.filename,
+    }
+}
+
+fn sample_split_commit_of_kind(
+    patch: &Patch,
+    kind: SplitPointKind,
+    rng: &mut dyn rand::RngCore,
+) -> Result<GeneratedSplitCommit> {
+    let edit_locations = edit_locations(patch);
+    let num_edits = edit_locations.len();
+
+    let mut candidate_splits: Vec<usize> = (1..num_edits)
+        .filter(|&split| {
+            !edit_locations
+                .get(split)
+                .is_some_and(|next_edit| is_service_file(&next_edit.filename))
+                && split_can_match_kind(&edit_locations, split, kind)
+        })
+        .collect();
+    candidate_splits.shuffle(rng);
+
+    for split in candidate_splits {
+        for _ in 0..MAX_SPLIT_POINT_SAMPLING_ATTEMPTS {
+            let Ok(generated_split_commit) = generate_split_commit_at_split(patch, split, rng)
+            else {
+                continue;
+            };
+
+            if classify_generated_split_commit(&generated_split_commit) == Some(kind) {
+                return Ok(generated_split_commit);
+            }
+        }
+    }
+
+    Err(NoMatchingSplitPointError { kind }.into())
 }
 
 /// Entry point for the `ep split-commit` subcommand.
@@ -130,8 +482,13 @@ pub fn run_split_commit(
         inputs
     };
 
-    let split_point = args.split_point.as_deref().and_then(parse_split_point);
+    let split_point = args
+        .split_point
+        .as_deref()
+        .map(parse_split_point)
+        .transpose()?;
     let mut output_lines = Vec::new();
+    let mut processed_commits = 0usize;
 
     for input_path in inputs {
         let input: Box<dyn BufRead> = if input_path.as_os_str() == "-" {
@@ -165,7 +522,7 @@ pub fn run_split_commit(
                         &annotated.reordered_commit,
                         &annotated.repo_url,
                         &annotated.commit_sha,
-                        None, // Use random split point for multi-sample mode
+                        split_point.clone(),
                         Some(sample_seed),
                         Some(sample_idx),
                     ) {
@@ -178,6 +535,10 @@ pub fn run_split_commit(
                                 sample_idx,
                                 e
                             );
+                            if e.is::<NoMatchingSplitPointError>() {
+                                eprintln!("skipping: {}", err_msg);
+                                continue;
+                            }
                             match failed {
                                 FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                     eprintln!("{}", err_msg);
@@ -219,6 +580,10 @@ pub fn run_split_commit(
                             line_num + 1,
                             e
                         );
+                        if e.is::<NoMatchingSplitPointError>() {
+                            eprintln!("skipping: {}", err_msg);
+                            continue;
+                        }
                         match failed {
                             FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                 eprintln!("{}", err_msg);
@@ -240,7 +605,21 @@ pub fn run_split_commit(
 
                 output_lines.push(json);
             }
+
+            processed_commits += 1;
+            eprint!(
+                "\rsplit-commit: processed {} commits, generated {} examples",
+                processed_commits,
+                output_lines.len()
+            );
+            io::stderr()
+                .flush()
+                .context("failed to flush progress to stderr")?;
         }
+    }
+
+    if processed_commits > 0 {
+        eprintln!();
     }
 
     let output_content = output_lines.join("\n") + if output_lines.is_empty() { "" } else { "\n" };
@@ -274,6 +653,11 @@ pub fn generate_evaluation_example_from_ordered_commit(
     seed: Option<u64>,
     sample_num: Option<usize>,
 ) -> Result<ExampleSpec> {
+    anyhow::ensure!(
+        !has_submodule_gitlink_hunk(commit),
+        "commit contains submodule/gitlink hunk"
+    );
+
     let mut rng: Box<dyn rand::RngCore> = match seed {
         Some(seed) => Box::new(rand::rngs::StdRng::seed_from_u64(seed)),
         None => Box::new(rand::rngs::ThreadRng::default()),
@@ -293,7 +677,6 @@ pub fn generate_evaluation_example_from_ordered_commit(
     } else {
         header_lines.join("\n") + "\n"
     };
-    let commit_normalized = patch.to_string();
 
     // Compute the split point
     let stats = patch.stats();
@@ -301,39 +684,39 @@ pub fn generate_evaluation_example_from_ordered_commit(
 
     anyhow::ensure!(num_edits != 0, "no edits found in commit");
 
-    let split = match split_point {
-        None => rng.random_range(1..=num_edits),
-        Some(SplitPoint::Fraction(f)) => {
-            let v = (f * num_edits as f64).floor() as usize;
-            v.min(num_edits)
+    let generated_split_commit = match split_point {
+        None => {
+            let split = sample_split_point(&patch, rng.as_mut());
+            generate_split_commit_at_split(&patch, split, rng.as_mut())?
         }
-        Some(SplitPoint::Index(i)) => i.min(num_edits),
+        Some(SplitPoint::Fraction(fraction)) => {
+            let split = resolve_split_point_value(SplitPointValue::Fraction(fraction), num_edits);
+            generate_split_commit_at_split(&patch, split, rng.as_mut())?
+        }
+        Some(SplitPoint::Index(index)) => {
+            let split = resolve_split_point_value(SplitPointValue::Index(index), num_edits);
+            generate_split_commit_at_split(&patch, split, rng.as_mut())?
+        }
+        Some(SplitPoint::Kind(kind)) => sample_split_commit_of_kind(&patch, kind, rng.as_mut())?,
+        Some(SplitPoint::KindWithSplit { kind, split_point }) => {
+            let split = resolve_split_point_value(split_point, num_edits);
+            let generated_split_commit =
+                generate_split_commit_at_split(&patch, split, rng.as_mut())?;
+            let actual_kind = classify_generated_split_commit(&generated_split_commit);
+            anyhow::ensure!(
+                actual_kind == Some(kind),
+                "split point {split} classified as {}, expected {kind}",
+                actual_kind
+                    .map(|kind| kind.to_string())
+                    .unwrap_or_else(|| "empty-target".to_string())
+            );
+            generated_split_commit
+        }
     };
 
-    // Split the commit into source and target patches
-    let (prefix, suffix) = split_ordered_commit(&commit_normalized, split);
-
-    let mut split_commit = SplitCommit {
-        source_patch: prefix,
-        target_patch: suffix,
-    };
-
-    // Imitate human edits
-    let human_edit_seed = rng.random_range(1..=10000u64);
-    let (src_patch, tgt_patch, cursor_opt) = imitate_human_edits(
-        &split_commit.source_patch,
-        &split_commit.target_patch,
-        human_edit_seed,
-    );
-    split_commit.source_patch = src_patch;
-    split_commit.target_patch = tgt_patch;
-
-    // Sample cursor position
-    let cursor = match cursor_opt {
-        Some(c) => c,
-        None => sample_cursor_position(&patch, &split_commit)
-            .context("failed to sample cursor position")?,
-    };
+    let split = generated_split_commit.split;
+    let cursor = generated_split_commit.cursor;
+    let mut split_commit = generated_split_commit.split_commit;
 
     // Get cursor excerpt
     let cursor_excerpt = get_cursor_excerpt(
@@ -343,7 +726,8 @@ pub fn generate_evaluation_example_from_ordered_commit(
     )
     .context("failed to generate cursor excerpt")?;
 
-    // Handle edge case where split_point == 0
+    // Where the source patch is empty, there's not enough info to make a
+    // meaningful prediction
     if split == 0 {
         split_commit.target_patch = String::new();
     }
@@ -389,10 +773,14 @@ pub fn generate_evaluation_example_from_ordered_commit(
 ///
 /// # Returns
 /// A tuple of (source_diff, target_diff)
-pub fn split_ordered_commit(commit: &str, split_pos: usize) -> (String, String) {
-    let patch = Patch::parse_unified_diff(commit);
+pub fn split_ordered_patch(patch: &Patch, split_pos: usize) -> (String, String) {
     let source_edits: BTreeSet<usize> = (0..split_pos).collect();
-    let (source, target) = extract_edits(&patch, &source_edits);
+    let (source, mut target) = extract_edits(patch, &source_edits);
+    if !target.hunks.is_empty() {
+        if let Some(header) = header_for_edit(patch, split_pos) {
+            target.header = header;
+        }
+    }
 
     let mut source_str = source.to_string();
     let target_str = target.to_string();
@@ -417,23 +805,61 @@ pub fn split_ordered_commit(commit: &str, split_pos: usize) -> (String, String) 
     (source_str, target_str)
 }
 
-/// Calculate the weight for a split position based on the character at that position.
+fn header_for_edit(patch: &Patch, edit_index: usize) -> Option<String> {
+    let edit_index = edit_index.try_into().ok()?;
+    let edit_location = locate_edited_line(patch, edit_index)?;
+    header_for_hunk(patch, edit_location.hunk_index)
+}
+
+fn header_for_hunk(patch: &Patch, hunk_index: usize) -> Option<String> {
+    for hunk in patch.hunks.get(..hunk_index)?.iter().rev() {
+        let mut header_lines = Vec::new();
+        for line in hunk.lines.iter().rev() {
+            let PatchLine::Garbage(line) = line else {
+                break;
+            };
+            if line.trim().is_empty() && header_lines.is_empty() {
+                continue;
+            }
+            if !line.starts_with("//") {
+                break;
+            }
+            header_lines.push(line.as_str());
+        }
+        if !header_lines.is_empty() {
+            return Some(render_reversed_header_lines(header_lines));
+        }
+    }
+
+    let header_lines = patch
+        .header
+        .lines()
+        .rev()
+        .skip_while(|line| line.trim().is_empty())
+        .take_while(|line| line.starts_with("//"))
+        .collect::<Vec<_>>();
+    (!header_lines.is_empty()).then(|| render_reversed_header_lines(header_lines))
+}
+
+fn render_reversed_header_lines(mut lines: Vec<&str>) -> String {
+    lines.reverse();
+    lines.join("\n") + "\n"
+}
+
+/// Calculate the weight for a split byte offset in `text`.
 ///
 /// Higher weights indicate more natural pause points (e.g., after punctuation,
 /// at identifier boundaries). Lower weights indicate less natural points
 /// (e.g., mid-identifier).
-fn position_weight(text: &str, pos: usize) -> u32 {
-    if pos == 0 || pos > text.len() {
+fn position_weight(text: &str, byte_offset: usize) -> u32 {
+    if byte_offset == 0 || byte_offset > text.len() || !text.is_char_boundary(byte_offset) {
         return 1;
     }
 
-    let chars: Vec<char> = text.chars().collect();
-    if pos > chars.len() {
+    let Some(prev_char) = text[..byte_offset].chars().next_back() else {
         return 1;
-    }
-
-    // Get the character just before this position (what we just "typed")
-    let prev_char = chars[pos - 1];
+    };
+    let next_char = text[byte_offset..].chars().next();
 
     // High weight: natural pause points (end of statement/argument, opening brackets)
     if matches!(prev_char, ',' | ';' | ':' | '(' | '[' | '{') {
@@ -455,8 +881,7 @@ fn position_weight(text: &str, pos: usize) -> u32 {
 
     // Check if we're at the end of an identifier (word char followed by non-word char)
     let is_prev_word_char = prev_char.is_alphanumeric() || prev_char == '_';
-    let is_next_word_char =
-        pos < chars.len() && (chars[pos].is_alphanumeric() || chars[pos] == '_');
+    let is_next_word_char = next_char.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
 
     if is_prev_word_char && !is_next_word_char {
         // End of identifier - high weight
@@ -481,6 +906,7 @@ fn position_weight(text: &str, pos: usize) -> u32 {
 ///
 /// Returns an index based on the weights, using the provided seed for
 /// deterministic selection.
+#[cfg(test)]
 fn weighted_select(weights: &[u32], seed: u64) -> usize {
     if weights.is_empty() {
         return 0;
@@ -505,6 +931,74 @@ fn weighted_select(weights: &[u32], seed: u64) -> usize {
 
     // Fallback to last index
     weights.len() - 1
+}
+
+#[derive(Clone, Copy)]
+struct CandidateSplit {
+    edit_byte_offset: usize,
+    weight: u32,
+}
+
+fn push_typed_text_candidates(
+    candidates: &mut Vec<CandidateSplit>,
+    edit_start_byte_offset: usize,
+    final_line: &str,
+    final_line_start_byte_offset: usize,
+    typed_text: &str,
+) {
+    for (byte_offset, character) in typed_text.char_indices() {
+        let next_byte_offset = byte_offset + character.len_utf8();
+        let final_line_candidate_byte_offset = final_line_start_byte_offset + next_byte_offset;
+        if final_line[..final_line_candidate_byte_offset]
+            .trim()
+            .is_empty()
+        {
+            continue;
+        }
+        candidates.push(CandidateSplit {
+            edit_byte_offset: edit_start_byte_offset + next_byte_offset,
+            weight: position_weight(final_line, final_line_candidate_byte_offset),
+        });
+    }
+}
+
+fn push_deleted_text_candidates(
+    candidates: &mut Vec<CandidateSplit>,
+    edit_start_byte_offset: usize,
+    deleted_text: &str,
+) {
+    for (byte_offset, character) in deleted_text.char_indices() {
+        candidates.push(CandidateSplit {
+            edit_byte_offset: edit_start_byte_offset + byte_offset + character.len_utf8(),
+            weight: 2,
+        });
+    }
+}
+
+fn weighted_select_candidate(candidates: &[CandidateSplit], seed: u64) -> Option<CandidateSplit> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let total_weight: u64 = candidates
+        .iter()
+        .map(|candidate| candidate.weight as u64)
+        .sum();
+    if total_weight == 0 {
+        return Some(candidates[seed as usize % candidates.len()]);
+    }
+
+    let target = seed % total_weight;
+    let mut cumulative: u64 = 0;
+
+    for candidate in candidates {
+        cumulative += candidate.weight as u64;
+        if target < cumulative {
+            return Some(*candidate);
+        }
+    }
+
+    candidates.last().copied()
 }
 
 /// Calculate similarity ratio between two strings (0-100).
@@ -567,25 +1061,13 @@ pub fn imitate_human_edits(
         _ => return no_change,
     };
 
-    // Try to locate the last edit in source
-    let src_edit_loc = locate_edited_line(&src_patch, -1);
+    let source_edit_locations = edit_locations(&src_patch);
+    let src_edit_loc = source_edit_locations.last().cloned();
 
-    // Check if source has ANY edit at the same line as target's first edit
-    // We need to iterate through all edits to check this
-    let src_has_edit_at_target_line = {
-        let mut found = false;
-        let mut idx = 0isize;
-        while let Some(loc) = locate_edited_line(&src_patch, idx) {
-            if loc.filename == tgt_edit_loc.filename
-                && loc.target_line_number == tgt_edit_loc.target_line_number
-            {
-                found = true;
-                break;
-            }
-            idx += 1;
-        }
-        found
-    };
+    let src_has_edit_at_target_line = source_edit_locations.iter().any(|loc| {
+        loc.filename == tgt_edit_loc.filename
+            && loc.target_line_number == tgt_edit_loc.target_line_number
+    });
 
     // Check if this is a replacement (deletion followed by insertion on the same line)
     // or a pure insertion (no corresponding deletion in source)
@@ -623,61 +1105,62 @@ pub fn imitate_human_edits(
     // Use similar to get diff operations
     let diff = TextDiff::from_slices(&src_tokens, &tgt_tokens);
 
-    // Build weights for each possible split position
-    let mut position_weights: Vec<u32> = Vec::new();
+    let mut candidate_splits = Vec::new();
+    let mut edit_byte_offset = 0usize;
+    let mut final_line_byte_offset = 0usize;
 
-    // Simulate the edit process to collect weights for all possible split positions
-    {
-        let mut current_text = String::new();
-
-        for op in diff.ops() {
-            match op.tag() {
-                DiffTag::Equal => {
-                    for i in op.old_range() {
-                        current_text.push_str(src_tokens[i]);
-                    }
-                }
-                DiffTag::Replace => {
-                    let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
-                    let del: String = op.old_range().map(|i| src_tokens[i]).collect();
-
-                    // For insertion part
-                    for ch in ins.chars() {
-                        current_text.push(ch);
-                        let weight = position_weight(&current_text, current_text.len());
-                        position_weights.push(weight);
-                    }
-
-                    // For deletion part (we're "untyping" from source)
-                    for _ in del.chars() {
-                        // Weight deletions lower as they represent removing text
-                        position_weights.push(2);
-                    }
-                }
-                DiffTag::Insert => {
-                    let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
-                    for ch in ins.chars() {
-                        current_text.push(ch);
-                        let weight = position_weight(&current_text, current_text.len());
-                        position_weights.push(weight);
-                    }
-                }
-                DiffTag::Delete => {
-                    let del: String = op.old_range().map(|i| src_tokens[i]).collect();
-                    for _ in del.chars() {
-                        // Weight deletions lower
-                        position_weights.push(2);
-                    }
-                }
+    for op in diff.ops() {
+        match op.tag() {
+            DiffTag::Equal => {
+                let equal_text: String = op.old_range().map(|i| src_tokens[i]).collect();
+                final_line_byte_offset += equal_text.len();
+            }
+            DiffTag::Replace => {
+                let inserted_text: String = op.new_range().map(|i| tgt_tokens[i]).collect();
+                let deleted_text: String = op.old_range().map(|i| src_tokens[i]).collect();
+                push_typed_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset,
+                    &tgt_line,
+                    final_line_byte_offset,
+                    &inserted_text,
+                );
+                push_deleted_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset + inserted_text.len(),
+                    &deleted_text,
+                );
+                edit_byte_offset += inserted_text.len() + deleted_text.len();
+                final_line_byte_offset += inserted_text.len();
+            }
+            DiffTag::Insert => {
+                let inserted_text: String = op.new_range().map(|i| tgt_tokens[i]).collect();
+                push_typed_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset,
+                    &tgt_line,
+                    final_line_byte_offset,
+                    &inserted_text,
+                );
+                edit_byte_offset += inserted_text.len();
+                final_line_byte_offset += inserted_text.len();
+            }
+            DiffTag::Delete => {
+                let deleted_text: String = op.old_range().map(|i| src_tokens[i]).collect();
+                push_deleted_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset,
+                    &deleted_text,
+                );
+                edit_byte_offset += deleted_text.len();
             }
         }
     }
 
-    // Use weighted selection to choose split index
-    if position_weights.is_empty() {
+    let Some(selected_split) = weighted_select_candidate(&candidate_splits, seed) else {
         return no_change;
-    }
-    let split_index = weighted_select(&position_weights, seed);
+    };
+    let split_byte_offset = selected_split.edit_byte_offset;
 
     let mut edit_index = 0usize;
     let mut new_src = String::new();
@@ -697,9 +1180,9 @@ pub fn imitate_human_edits(
                 let del: String = op.old_range().map(|i| src_tokens[i]).collect();
                 let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
                 let repl_len = del.len() + ins.len();
-                if edit_index + repl_len >= split_index {
+                if edit_index + repl_len >= split_byte_offset {
                     // Split within this replace operation
-                    let offset = split_index - edit_index;
+                    let offset = split_byte_offset - edit_index;
                     if offset < ins.len() {
                         let safe_offset = floor_char_boundary(&ins, offset);
                         new_src.push_str(&ins[..safe_offset]);
@@ -720,8 +1203,8 @@ pub fn imitate_human_edits(
             }
             DiffTag::Insert => {
                 let repl: String = op.new_range().map(|i| tgt_tokens[i]).collect();
-                if edit_index + repl.len() >= split_index {
-                    let offset = split_index - edit_index;
+                if edit_index + repl.len() >= split_byte_offset {
+                    let offset = split_byte_offset - edit_index;
                     let safe_offset = floor_char_boundary(&repl, offset);
                     new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
@@ -733,8 +1216,8 @@ pub fn imitate_human_edits(
             }
             DiffTag::Delete => {
                 let repl: String = op.old_range().map(|i| src_tokens[i]).collect();
-                if edit_index + repl.len() >= split_index {
-                    let offset = split_index - edit_index;
+                if edit_index + repl.len() >= split_byte_offset {
+                    let offset = split_byte_offset - edit_index;
                     let safe_offset = floor_char_boundary(&repl, offset);
                     new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
@@ -754,15 +1237,12 @@ pub fn imitate_human_edits(
     }
 
     // Calculate cursor position
-    let cursor = CursorPosition {
-        file: tgt_edit_loc.filename.clone(),
-        line: if is_replacement {
-            src_edit_loc.as_ref().unwrap().source_line_number
-        } else {
-            tgt_edit_loc.target_line_number
-        },
-        column: new_src.len() + 1,
+    let line = if is_replacement {
+        src_edit_loc.as_ref().unwrap().source_line_number
+    } else {
+        tgt_edit_loc.target_line_number
     };
+    let column = new_src.len() + 1;
 
     // Add remainder of source if similar enough to target remainder
     let remainder_src: String = (last_old_end..src_tokens.len())
@@ -784,6 +1264,13 @@ pub fn imitate_human_edits(
     if new_src == src_line {
         return no_change;
     }
+
+    let cursor = CursorPosition {
+        file: tgt_edit_loc.filename.clone(),
+        line,
+        column: column.min(new_src.len()),
+        line_length: new_src.len(),
+    };
 
     // Build new source patch with the intermediate line
     let mut new_src_patch = src_patch;
@@ -860,16 +1347,17 @@ pub fn imitate_human_edits(
 fn locate_end_of_last_edit(patch: &Patch) -> Option<CursorPosition> {
     let loc = locate_edited_line(patch, -1)?;
 
-    let (line, col) = match &loc.patch_line {
-        PatchLine::Addition(content) => (loc.target_line_number, content.len()),
-        PatchLine::Deletion(_) => (loc.target_line_number, 1),
+    let (line, column, line_length) = match &loc.patch_line {
+        PatchLine::Addition(content) => (loc.target_line_number, content.len(), content.len()),
+        PatchLine::Deletion(_) => (loc.target_line_number, 1, 1),
         _ => return None,
     };
 
     Some(CursorPosition {
         file: loc.filename,
         line,
-        column: col,
+        column,
+        line_length,
     })
 }
 
@@ -878,7 +1366,7 @@ fn locate_beginning_of_first_edit(patch: &Patch) -> Option<CursorPosition> {
     let loc = locate_edited_line(patch, 0)?;
 
     let hunk = patch.hunks.get(loc.hunk_index)?;
-    let column = if loc.line_index_within_hunk > 0 {
+    let line_length = if loc.line_index_within_hunk > 0 {
         if let Some(prev_line) = hunk.lines.get(loc.line_index_within_hunk - 1) {
             let content = match prev_line {
                 PatchLine::Context(s) | PatchLine::Addition(s) | PatchLine::Deletion(s) => s,
@@ -893,32 +1381,57 @@ fn locate_beginning_of_first_edit(patch: &Patch) -> Option<CursorPosition> {
     };
 
     let line = loc.target_line_number.saturating_sub(1).max(1);
+    let column = line_length.saturating_sub(1);
 
     Some(CursorPosition {
         file: loc.filename,
         line,
         column,
+        line_length,
     })
 }
 
 /// Sample cursor position according to the following rules:
-/// 1. 50% chance of cursor being at the end of the source patch
-/// 2. 50% chance of cursor being at the beginning of the target patch
-pub fn sample_cursor_position(patch: &Patch, split_commit: &SplitCommit) -> Option<CursorPosition> {
-    // Try end of history first
+/// 1. 80% chance of cursor being at the end of the source patch
+/// 2. 20% chance of cursor being at the beginning of the target patch
+/// 3. 20% chance of adding a jitter offset
+pub fn sample_cursor_position(
+    split_commit: &SplitCommit,
+    rng: &mut dyn rand::RngCore,
+) -> Option<CursorPosition> {
+    // End of history
     let src_patch = Patch::parse_unified_diff(&split_commit.source_patch);
-    if let Some(cursor) = locate_end_of_last_edit(&src_patch) {
-        return Some(cursor);
-    }
+    let src_cursor = locate_end_of_last_edit(&src_patch);
 
-    // Try beginning of target
+    // Beginning of target
     let tgt_patch = Patch::parse_unified_diff(&split_commit.target_patch);
-    if let Some(cursor) = locate_beginning_of_first_edit(&tgt_patch) {
-        return Some(cursor);
+    let tgt_cursor = locate_beginning_of_first_edit(&tgt_patch);
+
+    // Randomly pick a cursor position
+    let prefer_source = rng.random_bool(0.8);
+    let mut cursor = if prefer_source {
+        src_cursor.or(tgt_cursor)
+    } else {
+        tgt_cursor.or(src_cursor)
+    };
+
+    // Possible add jitter
+    let should_jitter = rng.random_bool(0.2);
+    if should_jitter {
+        if let Some(cursor) = cursor.as_mut() {
+            let col_offset = rng.random_range(1..=5);
+            if rng.random_bool(0.5) {
+                cursor.column = cursor
+                    .column
+                    .saturating_add(col_offset)
+                    .min(cursor.line_length);
+            } else {
+                cursor.column = cursor.column.saturating_sub(col_offset);
+            }
+        }
     }
 
-    // Fallback: use the original patch
-    locate_end_of_last_edit(patch)
+    cursor
 }
 
 /// Get cursor excerpt from the patches.
@@ -1108,7 +1621,7 @@ mod tests {
         let stats = patch.stats();
         assert_eq!(stats.added, 2);
 
-        let (source, target) = split_ordered_commit(commit, 1);
+        let (source, target) = split_ordered_patch(&patch, 1);
 
         // Source should have 1 addition
         let src_patch = Patch::parse_unified_diff(&source);
@@ -1136,7 +1649,7 @@ mod tests {
         assert_eq!(stats.removed, 1);
 
         // Split at position 1 (after the deletion)
-        let (source, target) = split_ordered_commit(commit, 1);
+        let (source, target) = split_ordered_patch(&patch, 1);
 
         let src_patch = Patch::parse_unified_diff(&source);
         let tgt_patch = Patch::parse_unified_diff(&target);
@@ -1145,6 +1658,55 @@ mod tests {
         assert_eq!(src_patch.stats().removed, 1);
         // Target should have the addition
         assert_eq!(tgt_patch.stats().added, 1);
+    }
+
+    #[test]
+    fn test_split_ordered_commit_target_header_continues_current_group() {
+        let commit = r#"////////////////////////////////////////////////////////////////////////////////
+// Update dependency version
+////////////////////////////////////////////////////////////////////////////////
+--- a/go.mod
++++ b/go.mod
+@@ -1,3 +1,3 @@
+ require (
+-	gopkg.in/yaml.v3 v3.0.0 // indirect
++	gopkg.in/yaml.v3 v3.0.1 // indirect
+ )
+diff --git a/go.sum b/go.sum
+index f71a068..b8cc3c2 100644
+////////////////////////////////////////////////////////////////////////////////
+// Update go.sum checksums
+////////////////////////////////////////////////////////////////////////////////
+--- a/go.sum
++++ b/go.sum
+@@ -1,3 +1,5 @@
+ gopkg.in/yaml.v3 v3.0.0 h1:old
+ gopkg.in/yaml.v3 v3.0.0/go.mod h1:oldmod
++gopkg.in/yaml.v3 v3.0.1 h1:new
++gopkg.in/yaml.v3 v3.0.1/go.mod h1:newmod
+diff --git a/lib/handler.go b/lib/handler.go
+index 1827a70..d9b3ed1 100644
+////////////////////////////////////////////////////////////////////////////////
+// Fix error wrapping
+////////////////////////////////////////////////////////////////////////////////
+--- a/lib/handler.go
++++ b/lib/handler.go
+@@ -1,3 +1,3 @@
+-	return fmt.Errorf("failed: %s", err)
++	return fmt.Errorf("failed: %w", err)
+"#;
+
+        let (_source, target) = split_ordered_patch(&Patch::parse_unified_diff(commit), 3);
+
+        assert!(
+            target.starts_with(
+                "////////////////////////////////////////////////////////////////////////////////\n// Update go.sum checksums\n////////////////////////////////////////////////////////////////////////////////\n"
+            ),
+            "target patch should continue with the active group header:\n{target}"
+        );
+        assert!(!target.starts_with(
+            "////////////////////////////////////////////////////////////////////////////////\n// Update dependency version\n////////////////////////////////////////////////////////////////////////////////\n"
+        ));
     }
 
     #[test]
@@ -1230,6 +1792,7 @@ Date: Mon Jan 1 00:00:00 2024
             file: "src/main.rs".to_string(),
             line: 42,
             column: 10,
+            line_length: 80,
         };
         assert_eq!(cursor.to_string(), "src/main.rs:42:10");
     }
@@ -1258,6 +1821,162 @@ Date: Mon Jan 1 00:00:00 2024
         assert_eq!(new_src, source);
         assert_eq!(new_tgt, target);
         assert!(cursor.is_none());
+    }
+
+    #[test]
+    fn test_parse_typed_split_points() {
+        assert_eq!(
+            parse_split_point("fim").unwrap(),
+            SplitPoint::Kind(SplitPointKind::Fim)
+        );
+        assert_eq!(
+            parse_split_point("same-file-near").unwrap(),
+            SplitPoint::Kind(SplitPointKind::SameFileNear)
+        );
+        assert_eq!(
+            parse_split_point("same-file-far:2").unwrap(),
+            SplitPoint::KindWithSplit {
+                kind: SplitPointKind::SameFileFar,
+                split_point: SplitPointValue::Index(2),
+            }
+        );
+        assert_eq!(
+            parse_split_point("cross-file:0.5").unwrap(),
+            SplitPoint::KindWithSplit {
+                kind: SplitPointKind::CrossFile,
+                split_point: SplitPointValue::Fraction(0.5),
+            }
+        );
+        assert!(parse_split_point("local").is_err());
+    }
+
+    fn assert_generated_split_kind(
+        commit: &str,
+        kind: SplitPointKind,
+        seed: u64,
+    ) -> GeneratedSplitCommit {
+        let patch = Patch::parse_unified_diff(commit);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let generated_split_commit = sample_split_commit_of_kind(&patch, kind, &mut rng).unwrap();
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(kind)
+        );
+        generated_split_commit
+    }
+
+    #[test]
+    fn test_classify_generated_split_commit() {
+        let target_patch = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -10,3 +10,3 @@
+ fn main() {
+-old();
++new();
+ }
+"#;
+        let mut generated_split_commit = GeneratedSplitCommit {
+            split: 1,
+            split_commit: SplitCommit {
+                source_patch: String::new(),
+                target_patch: target_patch.to_string(),
+            },
+            cursor: CursorPosition {
+                file: "src/main.rs".to_string(),
+                line: 11,
+                column: 5,
+                line_length: 10,
+            },
+            cursor_from_human_edit: true,
+        };
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::Fim)
+        );
+
+        generated_split_commit.cursor_from_human_edit = false;
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::SameFileNear)
+        );
+
+        generated_split_commit.cursor.line = 100;
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::SameFileFar)
+        );
+
+        generated_split_commit.cursor.file = "src/other.rs".to_string();
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::CrossFile)
+        );
+    }
+
+    #[test]
+    fn test_sample_fim_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,3 +1,5 @@
+ fn main() {
++    let first = 1;
++    let second = 2;
+ }
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::Fim, 1);
+    }
+
+    #[test]
+    fn test_sample_same_file_near_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,4 +1,5 @@
+ fn main() {
++    let inserted = 0;
+-    old();
++    new();
+ }
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::SameFileNear, 1);
+    }
+
+    #[test]
+    fn test_sample_same_file_far_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,3 @@
+ start
++source_edit();
+ context
+@@ -100,2 +101,2 @@
+-far_old();
++far_new();
+ end
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::SameFileFar, 1);
+    }
+
+    #[test]
+    fn test_sample_cross_file_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,3 @@
+ fn main() {
++    source_edit();
+ }
+--- a/src/other.rs
++++ b/src/other.rs
+@@ -1,3 +1,3 @@
+ fn other() {
+-    old();
++    new();
+ }
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::CrossFile, 1);
     }
 
     #[test]
@@ -1443,6 +2162,110 @@ index 123..456 789
         // but not the commit metadata
         assert!(!case.edit_history.contains("Author:"));
         assert!(!case.edit_history.contains("Date:"));
+    }
+
+    #[test]
+    fn test_service_file_detection() {
+        assert!(is_service_file("package.json"));
+        assert!(is_service_file("frontend/yarn.lock"));
+        assert!(is_service_file("a/src/generated/types.pb.go"));
+        assert!(is_service_file("b/.github/workflows/ci.yml"));
+        assert!(is_service_file("web/node_modules/pkg/index.js"));
+        assert!(is_service_file("dist/app.bundle.js"));
+
+        assert!(!is_service_file("src/main.rs"));
+        assert!(!is_service_file("src/build.rs"));
+        assert!(!is_service_file("Cargo.toml"));
+    }
+
+    #[test]
+    fn test_edit_starts_on_service_file() {
+        let commit = r#"--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,1 +1,2 @@
+ fn lib() {}
++pub fn added() {}
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"lockfileVersion": 3}
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,1 +1,2 @@
+ fn main() {}
++println!("hello");
+"#;
+        let patch = Patch::parse_unified_diff(commit);
+
+        assert!(edit_starts_on_service_file(&patch, 1));
+        assert!(!edit_starts_on_service_file(&patch, 2));
+    }
+
+    #[test]
+    fn test_submodule_gitlink_hunk_detection() {
+        assert!(has_submodule_gitlink_hunk(
+            r#"diff --git a/controllers/llguidance b/controllers/llguidance
+index 21e68b9..cadabda 160000
+--- a/controllers/llguidance
++++ b/controllers/llguidance
+@@ -1 +1 @@
+-Subproject commit 21e68b916d4705107e1c45ea7bc927e829136258
++Subproject commit cadabdad21f3b81ff58b1918f8c23116b4ff7af3
+"#
+        ));
+        assert!(has_submodule_gitlink_hunk(
+            r#"--- a/controllers/derivre
++++ b/controllers/derivre
+@@ -1 +1 @@
+-Subproject commit e83d8fb3cd92d2c6dd0437e98bfa9b64d8d8284b
++Subproject commit fb0ba7b6307782e0d43a0ca598b237836cb6d304
+"#
+        ));
+        assert!(has_submodule_gitlink_hunk(
+            r#"diff --git a/vendor/dependency b/vendor/dependency
+new file mode 160000
+index 0000000..1234567
+--- /dev/null
++++ b/vendor/dependency
+"#
+        ));
+        assert!(!has_submodule_gitlink_hunk(
+            r#"diff --git a/src/lib.rs b/src/lib.rs
+index 1234567..89abcde 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1 +1,2 @@
+ fn lib() {}
++fn helper() {}
+"#
+        ));
+    }
+
+    #[test]
+    fn test_generate_evaluation_example_rejects_submodule_gitlink_hunk() {
+        let commit = r#"diff --git a/controllers/llguidance b/controllers/llguidance
+index 21e68b9..cadabda 160000
+--- a/controllers/llguidance
++++ b/controllers/llguidance
+@@ -1 +1 @@
+-Subproject commit 21e68b916d4705107e1c45ea7bc927e829136258
++Subproject commit cadabdad21f3b81ff58b1918f8c23116b4ff7af3
+"#;
+
+        let result = generate_evaluation_example_from_ordered_commit(
+            commit,
+            "https://github.com/microsoft/aici",
+            "cadabdad21f3b81ff58b1918f8c23116b4ff7af3",
+            None,
+            Some(0),
+            None,
+        );
+
+        let Err(error) = result else {
+            panic!("expected submodule/gitlink commit to be rejected");
+        };
+        assert!(error.to_string().contains("submodule/gitlink"));
     }
 
     #[test]
@@ -1760,6 +2583,7 @@ index 123..456 789
             file: "test.md".to_string(),
             line: 1,
             column: 1, // Byte index 1 is inside '第' (bytes 0..3)
+            line_length: 80,
         };
 
         let source_patch = r#"--- a/test.md

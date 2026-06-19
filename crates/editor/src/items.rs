@@ -53,7 +53,7 @@ use workspace::{
     },
 };
 use workspace::{
-    Pane, WorkspaceSettings,
+    Pane, TabBarSettings, WorkspaceSettings,
     item::{FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
 };
@@ -370,7 +370,7 @@ impl FollowableItem for Editor {
         };
         drop(buffer);
         self.set_selections_from_remote(vec![selection], None, window, cx);
-        self.request_autoscroll_remotely(Autoscroll::fit(), cx);
+        self.request_autoscroll_remotely(Autoscroll::focused(), cx);
     }
 }
 
@@ -767,7 +767,10 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(
+                description,
+                params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+            ))
         });
 
         // Whether the file was saved in the past but is now deleted.
@@ -779,13 +782,23 @@ impl Item for Editor {
             .is_some_and(|file| file.disk_state().is_deleted());
 
         h_flex()
-            .gap_2()
+            .gap_1()
+            .when(params.truncate_title_middle, |this| {
+                this.w_full().min_w_0().overflow_hidden()
+            })
             .child(
-                Label::new(util::truncate_and_trailoff(
-                    &self.title(cx),
-                    MAX_TAB_TITLE_LEN,
-                ))
+                Label::new(if params.truncate_title_middle {
+                    self.title(cx).to_string()
+                } else {
+                    util::truncate_and_trailoff(
+                        &self.title(cx),
+                        params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+                    )
+                })
                 .color(label_color)
+                .when(params.truncate_title_middle, |this| {
+                    this.truncate_middle().flex_1()
+                })
                 .when(params.preview, |this| this.italic())
                 .when(was_deleted, |this| this.strikethrough()),
             )
@@ -793,6 +806,9 @@ impl Item for Editor {
                 this.child(
                     Label::new(description)
                         .size(LabelSize::XSmall)
+                        .when(params.truncate_title_middle, |this| {
+                            this.truncate_start().flex_shrink()
+                        })
                         .color(Color::Muted),
                 )
             })
@@ -814,6 +830,10 @@ impl Item for Editor {
             true => ItemBufferKind::Singleton,
             false => ItemBufferKind::Multibuffer,
         }
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.active_buffer(cx)?.read(cx).project_path(cx)
     }
 
     fn can_save_as(&self, cx: &App) -> bool {
@@ -1025,7 +1045,7 @@ impl Item for Editor {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs && self.buffer().read(cx).is_singleton() {
+        if self.breadcrumbs_visible() && self.buffer().read(cx).is_singleton() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -1042,6 +1062,20 @@ impl Item for Editor {
         } else {
             None
         }
+    }
+
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        (!TabBarSettings::get_global(cx).show && ItemSettings::get_global(cx).file_icons)
+            .then(|| {
+                path_for_buffer(&self.buffer, 0, true, cx)
+                    .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
+            })
+            .flatten()
+            .map(|icon_path| Icon::from_path(icon_path).into_any_element())
     }
 
     fn added_to_workspace(
@@ -1782,7 +1816,7 @@ impl SearchableItem for Editor {
         let text: Cow<_> = if text.len() == 1 {
             text.first().cloned().unwrap().into()
         } else {
-            let joined_chunks = text.join("");
+            let joined_chunks = text.concat();
             joined_chunks.into()
         };
 
@@ -1814,7 +1848,7 @@ impl SearchableItem for Editor {
                     let text: Cow<_> = if text.len() == 1 {
                         text.first().cloned().unwrap().into()
                     } else {
-                        let joined_chunks = text.join("");
+                        let joined_chunks = text.concat();
                         joined_chunks.into()
                     };
 
@@ -2236,7 +2270,7 @@ mod tests {
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
         let file: Arc<dyn language::File> = Arc::new(TestFile {
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
             root_name: String::new(),
             local_root: None,
         });

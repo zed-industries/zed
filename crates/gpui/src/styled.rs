@@ -99,6 +99,14 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the truncate overflowing text with an ellipsis (…) in the middle if needed.
+    /// Preserves the beginning and end of the text. Useful for filenames.
+    /// Note: This doesn't exist in Tailwind CSS.
+    fn text_ellipsis_middle(mut self) -> Self {
+        self.text_style().text_overflow = Some(TextOverflow::TruncateMiddle(ELLIPSIS));
+        self
+    }
+
     /// Sets the text overflow behavior of the element.
     fn text_overflow(mut self, overflow: TextOverflow) -> Self {
         self.text_style().text_overflow = Some(overflow);
@@ -200,6 +208,7 @@ pub trait Styled: Sized {
     fn flex_none(mut self) -> Self {
         self.style().flex_grow = Some(0.);
         self.style().flex_shrink = Some(0.);
+        self.style().flex_basis = Some(Length::Auto);
         self
     }
 
@@ -210,31 +219,45 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the element to allow a flex item to grow to fill any available space.
+    /// Sets the flex item's grow factor.
     /// [Docs](https://tailwindcss.com/docs/flex-grow)
-    fn flex_grow(mut self) -> Self {
-        self.style().flex_grow = Some(1.);
+    fn flex_grow(mut self, grow: f32) -> Self {
+        self.style().flex_grow = Some(grow);
         self
     }
 
-    /// Sets the element to prevent a flex item from growing.
+    /// Disables flex item growth (flex-grow: 0).
     /// [Docs](https://tailwindcss.com/docs/flex-grow#dont-grow)
     fn flex_grow_0(mut self) -> Self {
         self.style().flex_grow = Some(0.);
         self
     }
 
-    /// Sets the element to allow a flex item to shrink if needed.
-    /// [Docs](https://tailwindcss.com/docs/flex-shrink)
-    fn flex_shrink(mut self) -> Self {
-        self.style().flex_shrink = Some(1.);
+    /// Enables flex item growth (flex-grow: 1).
+    /// [Docs](https://tailwindcss.com/docs/flex-grow#grow-1)
+    fn flex_grow_1(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
         self
     }
 
-    /// Sets the element to prevent a flex item from shrinking.
+    /// Sets the flex item's shrink factor.
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink)
+    fn flex_shrink(mut self, shrink: f32) -> Self {
+        self.style().flex_shrink = Some(shrink);
+        self
+    }
+
+    /// Disables flex item shrinking (flex-shrink: 0).
     /// [Docs](https://tailwindcss.com/docs/flex-shrink#dont-shrink)
     fn flex_shrink_0(mut self) -> Self {
         self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    /// Enables flex item shrinking (flex-shrink: 1).
+    /// [Docs](https://tailwindcss.com/docs/flex-shrink#shrink-1)
+    fn flex_shrink_1(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
         self
     }
 

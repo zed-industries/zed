@@ -133,6 +133,7 @@ pub enum ThreadsArchiveViewEvent {
     Activate { thread: ThreadMetadata },
     CancelRestore { thread_id: ThreadId },
     Import,
+    NewThread,
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -299,16 +300,27 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(
-                    &query,
-                    session
-                        .title
-                        .as_ref()
-                        .map(|t| t.as_ref())
-                        .unwrap_or(DEFAULT_THREAD_TITLE),
-                ) {
-                    Some(positions) => positions,
-                    None => continue,
+                let title = session
+                    .title
+                    .as_ref()
+                    .map(|t| t.as_ref())
+                    .unwrap_or(DEFAULT_THREAD_TITLE);
+                if let Some(positions) = fuzzy_match_positions(&query, title) {
+                    positions
+                } else {
+                    // If title didn't match, also try matching the project name
+                    // (the basename of any of the thread's worktree paths), so
+                    // typing a project name surfaces its threads here too.
+                    let worktree_matched = session.folder_paths().paths().iter().any(|p| {
+                        p.as_path()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| fuzzy_match_positions(&query, name).is_some())
+                    });
+                    if !worktree_matched {
+                        continue;
+                    }
+                    Vec::new()
                 }
             } else {
                 Vec::new()
@@ -824,7 +836,7 @@ impl ThreadsArchiveView {
                     if let Some(list) = state
                         .connection
                         .session_list(cx)
-                        .filter(|list| list.supports_delete(cx))
+                        .filter(|list| list.supports_delete())
                     {
                         list.delete_session(session_id, cx)
                     } else {
@@ -961,6 +973,14 @@ impl ThreadsArchiveView {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(
+                        IconButton::new("new-thread", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Start New Agent Thread"))
+                            .on_click(cx.listener(|_this, _, _, cx| {
+                                cx.emit(ThreadsArchiveViewEvent::NewThread);
+                            })),
+                    )
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
@@ -1340,7 +1360,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1376,7 +1396,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1580,7 +1600,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                         .child(
                             h_flex()
                                 .gap_3()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .child(highlighted_match.render(window, cx)),
                         )
                         .tooltip(Tooltip::text(tooltip_path))

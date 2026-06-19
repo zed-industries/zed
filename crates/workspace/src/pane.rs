@@ -2870,6 +2870,8 @@ impl Pane {
                 selected: is_active,
                 preview: is_preview,
                 deemphasized: !self.has_focus(window, cx),
+                max_title_len: None,
+                truncate_title_middle: false,
             },
             window,
             cx,
@@ -3706,7 +3708,7 @@ impl Pane {
             .id("tab_bar_drop_target")
             .min_w_6()
             .h(Tab::container_height(cx))
-            .flex_grow()
+            .flex_grow_1()
             // HACK: This empty child is currently necessary to force the drop target to appear
             // despite us setting a min width above.
             .child("")
@@ -3750,7 +3752,7 @@ impl Pane {
             .debug_selector(|| "pinned_tabs_border".into())
             .min_w_6()
             .h(Tab::container_height(cx))
-            .flex_grow()
+            .flex_grow_1()
             .border_l_1()
             .border_color(cx.theme().colors().border)
             // HACK: This empty child is currently necessary to force the drop target to appear
@@ -4132,10 +4134,7 @@ impl Pane {
             .workspace
             .update(cx, |workspace, cx| {
                 if workspace.project().read(cx).is_via_collab() {
-                    workspace.show_error(
-                        &anyhow::anyhow!("Cannot drop files on a remote project"),
-                        cx,
-                    );
+                    workspace.show_error("Cannot drop files on a remote project", cx);
                     true
                 } else {
                     false
@@ -4191,7 +4190,7 @@ impl Pane {
                         _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
-                                    workspace.show_error(&e, cx);
+                                    workspace.show_error(format!("Error: {e}"), cx);
                                 }
                             }
                             if to_pane.read(cx).items_len() == 0 {
@@ -5006,6 +5005,8 @@ impl Render for DraggedTab {
                 selected: false,
                 preview: false,
                 deemphasized: false,
+                max_title_len: None,
+                truncate_title_middle: false,
             },
             window,
             cx,
