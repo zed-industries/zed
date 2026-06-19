@@ -2661,7 +2661,7 @@ mod tests {
         let entry = cx
             .update(|cx| {
                 wt.update(cx, |wt, cx| {
-                    wt.create_entry(RelPath::empty().into(), is_dir, None, cx)
+                    wt.create_entry(RelPath::empty_arc(), is_dir, None, cx)
                 })
             })
             .await

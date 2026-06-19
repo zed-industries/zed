@@ -228,9 +228,25 @@ impl RelatedExcerptStore {
         };
 
         let file = snapshot.file().cloned();
+        let file_extension = file
+            .as_ref()
+            .and_then(|file| file.path().extension())
+            .unwrap_or("")
+            .to_string();
         if let Some(file) = &file {
             log::debug!("retrieving_context buffer:{}", file.path().as_unix_str());
         }
+        let (lsp_store, is_via_ssh) = project.read_with(cx, |project, _| {
+            (project.lsp_store(), project.is_via_remote_server())
+        });
+        let lsp_names = lsp_store.update(cx, |lsp_store, cx| {
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(_, server)| server.name().to_string())
+                    .collect::<Vec<_>>()
+            })
+        });
 
         this.update(cx, |_, cx| {
             cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
@@ -260,8 +276,13 @@ impl RelatedExcerptStore {
                         (id, distance)
                     })
                     .collect();
-                identifiers_with_distance.sort_by_key(|(_, distance)| *distance);
-                identifiers_with_distance.truncate(MAX_CONTEXT_IDENTIFIER_COUNT);
+                // Only the closest `MAX_CONTEXT_IDENTIFIER_COUNT` identifiers are
+                // used below, so select that prefix instead of fully sorting.
+                util::truncate_to_bottom_n_sorted_by(
+                    &mut identifiers_with_distance,
+                    MAX_CONTEXT_IDENTIFIER_COUNT,
+                    &|(_, a), (_, b)| a.cmp(b),
+                );
 
                 let mut cursor_distances: HashMap<Identifier, usize> = HashMap::default();
                 let mut current_rank = 0;
@@ -395,10 +416,25 @@ impl RelatedExcerptStore {
                 cache_hit_count += 1;
             }
         }
+        let lsp_fetch_latency_ms = start_time.elapsed().as_millis();
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
         let (new_cache, related_buffers) =
             rebuild_related_files(&project, new_cache, &cursor_distances, cx).await?;
+        let latency_ms = start_time.elapsed().as_millis();
+        let returned_excerpt_count = related_buffers
+            .iter()
+            .map(|related_buffer| related_buffer.anchor_ranges.len())
+            .sum::<usize>();
+        telemetry::event!(
+            "Edit Prediction LSP Context Retrieved",
+            lsp_names,
+            file_extension,
+            latency_ms,
+            lsp_fetch_latency_ms,
+            returned_excerpt_count,
+            is_via_ssh
+        );
 
         if let Some(file) = &file {
             log::debug!(

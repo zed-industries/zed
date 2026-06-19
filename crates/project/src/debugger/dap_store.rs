@@ -343,7 +343,7 @@ impl DapStore {
                     }
 
                     let command = remote.read_with(cx, |remote, _cx| {
-                        remote.build_command_with_options(
+                        remote.build_command(
                             binary.command,
                             &binary.arguments,
                             &binary.envs,

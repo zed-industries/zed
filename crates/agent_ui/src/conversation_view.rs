@@ -24,7 +24,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _, HandoffFeatureFlag};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -33,7 +33,7 @@ use gpui::{
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
     ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
     TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
-    linear_color_stop, linear_gradient, list, point, pulsating_between,
+    linear_color_stop, linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -47,7 +47,7 @@ use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
 use lru::LruCache;
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -106,6 +106,7 @@ const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
+mod thread_search_bar;
 mod thread_view;
 pub use thread_view::*;
 
@@ -123,6 +124,7 @@ enum ThreadFeedback {
 #[derive(Debug)]
 pub(crate) enum ThreadError {
     PaymentRequired,
+    DataRetentionConsentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
     RateLimitExceeded {
@@ -132,17 +134,18 @@ pub(crate) enum ThreadError {
         provider: SharedString,
     },
     PromptTooLarge,
-    NoApiKey {
+    NoCredentials {
         provider: SharedString,
     },
     StreamError {
         provider: SharedString,
     },
-    InvalidApiKey {
+    AuthenticationFailed {
         provider: SharedString,
     },
     PermissionDenied {
         provider: SharedString,
+        message: Option<SharedString>,
     },
     RequestFailed,
     MaxOutputTokens,
@@ -162,8 +165,6 @@ impl From<anyhow::Error> for ThreadError {
             Self::MaxOutputTokens
         } else if error.is::<NoModelConfiguredError>() {
             Self::NoModelSelected
-        } else if error.is::<language_model::PaymentRequiredError>() {
-            Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
@@ -180,7 +181,8 @@ impl From<anyhow::Error> for ThreadError {
                     }
                 }
                 PromptTooLarge { .. } => Self::PromptTooLarge,
-                NoApiKey { provider } => Self::NoApiKey {
+                PaymentRequired => Self::PaymentRequired,
+                NoApiKey { provider } => Self::NoCredentials {
                     provider: provider.to_string().into(),
                 },
                 StreamEndedUnexpectedly { provider }
@@ -189,13 +191,15 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
-                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                AuthenticationError { provider, .. } => Self::AuthenticationFailed {
                     provider: provider.to_string().into(),
                 },
-                PermissionError { provider, .. } => Self::PermissionDenied {
+                PermissionError { provider, message } => Self::PermissionDenied {
                     provider: provider.to_string().into(),
+                    message: Some(message.clone().into()),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
+                DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
                 BadRequestFormat { provider, .. }
                 | HttpResponseError { provider, .. }
                 | ApiEndpointNotFound { provider } => Self::ApiError {
@@ -468,6 +472,10 @@ fn permission_option_for_action(
 
     options.first_option_of_kind(kind)
 }
+
+pub struct StateChange;
+
+impl EventEmitter<StateChange> for ConversationView {}
 
 fn resolve_outcome_from_selection(
     options: &PermissionOptions,
@@ -841,6 +849,7 @@ impl ConversationView {
         }
 
         self.server_state = state;
+        cx.emit(StateChange);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         if matches!(&self.server_state, ServerState::Connected(_)) {
             cx.emit(RootThreadUpdated);
@@ -1350,6 +1359,7 @@ impl ConversationView {
             };
             if let Some(connected) = this.as_connected_mut() {
                 connected.auth_state = auth_state;
+                cx.emit(StateChange);
                 if let Some(view) = connected.active_view()
                     && view
                         .read(cx)
@@ -1534,6 +1544,7 @@ impl ConversationView {
                     });
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1547,6 +1558,7 @@ impl ConversationView {
                     list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
+                        active.sync_generating_indicator(cx);
                     });
                 }
             }
@@ -1582,7 +1594,7 @@ impl ConversationView {
                     active.update(cx, |active, cx| {
                         if !is_generating {
                             active.thread_retry_status.take();
-                            active.clear_auto_expand_tracking();
+                            active.clear_auto_expand_tracking(cx);
                             if active.list_state.is_following_tail() {
                                 active.list_state.scroll_to_end();
                             }
@@ -1847,6 +1859,7 @@ impl ConversationView {
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
+            cx.emit(StateChange);
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
@@ -1892,6 +1905,7 @@ impl ConversationView {
                             }) = this.as_connected_mut()
                             {
                                 pending_auth_method.take();
+                                cx.emit(StateChange);
                             }
                             if let Some(active) = this.root_thread_view() {
                                 active.update(cx, |active, cx| {
@@ -1913,6 +1927,7 @@ impl ConversationView {
         pending_auth_method.replace(method.clone());
 
         let authenticate = connection.authenticate(method, cx);
+        cx.emit(StateChange);
         cx.notify();
         self.auth_task = Some(cx.spawn_in(window, {
             async move |this, cx| {
@@ -1940,6 +1955,7 @@ impl ConversationView {
                         }) = this.as_connected_mut()
                         {
                             pending_auth_method.take();
+                            cx.emit(StateChange);
                         }
                         if let Some(active) = this.root_thread_view() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
@@ -2679,8 +2695,9 @@ impl ConversationView {
         let root_work_dirs = root_thread.work_dirs().cloned();
         let root_title = root_thread.title();
 
-        // TODO: Change this once we have title summarization for external agents.
-        let title = self.agent.agent_id().0;
+        let title = root_title
+            .clone()
+            .unwrap_or_else(|| self.agent.agent_id().0);
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -3023,6 +3040,7 @@ impl ConversationView {
                             pending_auth_method: None,
                             _subscription: None,
                         };
+                        cx.emit(StateChange);
                         if let Some(view) = connected.active_view()
                             && view
                                 .read(cx)
@@ -3063,6 +3081,7 @@ fn native_available_skills(
             description: skill.description.into(),
             source: skill.source,
             skill_file_path: skill.skill_file_path,
+            warning: skill.warning,
         })
         .collect()
 }
@@ -3098,8 +3117,10 @@ impl ConversationView {
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
         if let Some(active) = self.active_thread() {
-            active.update(cx, |active, _cx| {
-                active.expanded_tool_calls.insert(tool_call_id);
+            active.update(cx, |active, cx| {
+                active.entry_view_state.update(cx, |state, _cx| {
+                    state.expand_tool_call(tool_call_id);
+                });
             });
             cx.notify();
         }
@@ -3413,7 +3434,7 @@ pub(crate) mod tests {
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, size};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -3430,6 +3451,21 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_data_retention_error_maps_from_provider_error() {
+        // The agent wraps the provider error in a fresh `anyhow::Error`, so
+        // the mapping must downcast to `LanguageModelCompletionError` rather
+        // than matching on the anyhow error directly.
+        let provider_error = LanguageModelCompletionError::DataRetentionConsentRequired {
+            model_name: "Claude Fable 5".to_string(),
+        };
+        let error = ThreadError::from(anyhow!(provider_error));
+        assert!(
+            matches!(error, ThreadError::DataRetentionConsentRequired),
+            "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
+        );
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
@@ -5595,6 +5631,9 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            // Use an isolated DB so parallel tests can't overwrite each
+            // other's global keys (e.g. the last-created entry kind).
+            cx.set_global(db::AppDatabase::test_new());
             ThreadMetadataStore::init_global(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
@@ -5800,6 +5839,178 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_regenerate_keeps_pending_subagent_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "file.txt": "original content"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::new(connection.as_ref().clone())),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store.clone()),
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let thread = conversation_view
+            .read_with(cx, |view, cx| {
+                view.active_thread().map(|r| r.read(cx).thread.clone())
+            })
+            .unwrap();
+
+        // First turn: a subagent tool call. Subagent edits never appear as
+        // diffs in the parent thread's entries; they are only forwarded to the
+        // parent's action log through the linked-log mechanism.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("spawn1", "Subagent task")
+                .kind(acp::ToolKind::Other)
+                .status(acp::ToolCallStatus::Completed)
+                .meta(acp_thread::meta_with_tool_name("spawn_agent")),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Use a subagent", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Simulate the subagent editing a file: edits performed through a
+        // child action log are forwarded to the parent thread's action log,
+        // just like `Thread::new_subagent` wires it up.
+        let parent_action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+        let subagent_action_log = cx.update(|_, cx| {
+            cx.new(|_| {
+                ActionLog::new(project.clone()).with_linked_action_log(parent_action_log.clone())
+            })
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path("file.txt", cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        cx.update(|_, cx| {
+            subagent_action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text("edited by subagent", cx);
+            });
+            subagent_action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        parent_action_log.read_with(cx, |log, cx| {
+            assert_eq!(
+                log.changed_buffers(cx).count(),
+                1,
+                "the subagent edit should be pending review in the parent's action log"
+            );
+        });
+
+        // Second turn: a plain follow-up.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Follow-up", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let follow_up_ix = thread.read_with(cx, |thread, cx| {
+            thread
+                .entries()
+                .iter()
+                .position(|entry| entry.to_markdown(cx) == "## User\n\nFollow-up\n\n")
+                .unwrap()
+        });
+
+        // Edit and regenerate the follow-up message.
+        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .entry_view_state
+                .read(cx)
+                .entry(follow_up_ix)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited follow-up", window, cx);
+        });
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("New response".into()),
+        )]);
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.regenerate(follow_up_ix, user_message_editor.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // The thread should have been rewound and the edited message resent.
+        thread.read_with(cx, |thread, cx| {
+            let entries = thread.entries();
+            assert_eq!(entries.len(), 4);
+            assert_eq!(
+                entries[2].to_markdown(cx),
+                "## User\n\nEdited follow-up\n\n"
+            );
+        });
+
+        // The subagent's edits predate the regenerated prompt, so they must be
+        // auto-kept rather than rejected by the rewind.
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.text(),
+                "edited by subagent",
+                "pending subagent edits should be kept when regenerating a later prompt"
+            );
+        });
+        parent_action_log.read_with(cx, |log, cx| {
+            assert_eq!(
+                log.changed_buffers(cx).count(),
+                0,
+                "the subagent edit should have been auto-kept"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_scroll_to_most_recent_user_prompt(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5864,6 +6075,999 @@ pub(crate) mod tests {
             let scroll_top = view.list_state.logical_scroll_top();
             assert_eq!(scroll_top.item_ix, 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_finds_matches_across_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Yes, you can substitute banana for plantain in this recipe.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Can I use banana here?", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana yogurt also works as a topping; whisk the banana smooth first.".into(),
+            ),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("What about as a topping?", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let (match_count, active_text) =
+            bar.read_with(cx, |bar, cx| (bar.match_count(), bar.active_match_text(cx)));
+        assert_eq!(
+            match_count, 4,
+            "expected 4 matches for case-insensitive 'banana'"
+        );
+        assert_eq!(active_text.as_deref(), Some("1/4"));
+
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.list_state.logical_scroll_top().item_ix, 0);
+        });
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
+        });
+        cx.run_until_parked();
+        let active_text_2 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
+        assert_eq!(active_text_2.as_deref(), Some("2/4"));
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.select_prev_match(
+                &super::thread_search_bar::SelectPreviousThreadMatch,
+                window,
+                cx,
+            );
+        });
+        let active_text_3 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
+        assert_eq!(active_text_3.as_deref(), Some("1/4"));
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("apple", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        let (match_count_apple, active_text_apple) =
+            bar.read_with(cx, |bar, cx| (bar.match_count(), bar.active_match_text(cx)));
+        assert_eq!(match_count_apple, 0);
+        assert_eq!(active_text_apple.as_deref(), Some("0/0"));
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_includes_expanded_thinking_blocks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                "Hidden papaya reasoning.".into(),
+            )),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                "Final answer without that fruit.".into(),
+            )),
+        ]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Think this through", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let (assistant_entry_ix, thought_chunk_ix) = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .enumerate()
+                .find_map(|(entry_ix, entry)| match entry {
+                    AgentThreadEntry::AssistantMessage(message) => message
+                        .chunks
+                        .iter()
+                        .position(|chunk| matches!(chunk, AssistantMessageChunk::Thought { .. }))
+                        .map(|chunk_ix| (entry_ix, chunk_ix)),
+                    _ => None,
+                })
+                .expect("assistant thought chunk should exist")
+        });
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "collapsed thinking content should not be searched",
+        );
+
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, cx| {
+                state.toggle_thinking_block_expansion((assistant_entry_ix, thought_chunk_ix), cx);
+            });
+        });
+        bar.update_in(cx, |bar, window, cx| {
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            1,
+            "expanded thinking content should be searchable",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_includes_expanded_tool_call_content(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("search-tool-content");
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new(tool_call_id.clone(), "Inspect output")
+                .kind(acp::ToolKind::Other)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec!["Tool output mentions papaya once.".into()]),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Run the tool", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            0,
+            "collapsed tool-call content should not be searched",
+        );
+
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, _cx| {
+                state.expand_tool_call(tool_call_id);
+            });
+        });
+        bar.update_in(cx, |bar, window, cx| {
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.match_count()),
+            1,
+            "expanded tool-call content should be searchable",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_scrolls_to_later_user_message_match(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("First reply, no fruit here.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("First question", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Second reply, still no fruit.".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Where is the papaya?", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let papaya_entry_ix = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .expect("a user message entry should exist")
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        bar.read_with(cx, |bar, _| {
+            assert_eq!(
+                bar.match_count(),
+                1,
+                "only the second user message matches 'papaya'"
+            );
+        });
+
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                papaya_entry_ix,
+                "list should scroll to the user-message entry that owns the match",
+            );
+        });
+    }
+
+    /// Passive rescans (streaming updates, unrelated expansion toggles, query
+    /// refinement) must not yank the list back to the active match.
+    #[gpui::test]
+    async fn test_thread_search_passive_rescan_preserves_scroll(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("First reply, no fruit here.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("First question", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Second reply, still no fruit.".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Where is the papaya?", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let papaya_entry_ix = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .expect("a user message entry should exist")
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("papaya", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        // The initial query activates (and scrolls to) the only match.
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                papaya_entry_ix,
+            );
+        });
+
+        // Simulate the user scrolling elsewhere, then a passive rescan re-running
+        // the matcher while the same hit stays active.
+        thread_view.update(cx, |view, _| {
+            view.list_state.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: gpui::px(0.),
+            });
+        });
+        bar.update_in(cx, |bar, window, cx| {
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.list_state.logical_scroll_top().item_ix,
+                0,
+                "a passive rescan must not scroll back to the active match",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_dismiss_clears_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Mango is a tropical fruit.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Tell me about mango", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .unwrap();
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let entries = thread.read_with(cx, |thread, _| thread.entries().len());
+        assert!(entries > 0);
+
+        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+        cx.run_until_parked();
+
+        bar.read_with(cx, |bar, _| {
+            assert_eq!(bar.match_count(), 0);
+            assert!(bar.active_match_index().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_release_clears_markdown_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Mango is a tropical fruit.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Tell me about mango", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let assistant_markdown = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::AssistantMessage(message) => {
+                        message.chunks.iter().find_map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block } => block.markdown().cloned(),
+                            AssistantMessageChunk::Thought { .. } => None,
+                        })
+                    }
+                    _ => None,
+                })
+                .expect("assistant message should have markdown")
+        });
+
+        let entry_view_state = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.entry_view_state.clone());
+        let on_activate_match: Arc<dyn Fn(usize, &mut Window, &mut App)> = Arc::new(|_, _, _| {});
+        let bar = cx.update(|window, cx| {
+            cx.new(|cx| {
+                super::thread_search_bar::ThreadSearchBar::new(
+                    thread.clone(),
+                    entry_view_state,
+                    on_activate_match,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            assistant_markdown
+                .read_with(cx, |markdown, _| !markdown.search_highlights().is_empty()),
+            "search should have highlighted the assistant markdown before release",
+        );
+
+        drop(bar);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        assert!(
+            assistant_markdown.read_with(cx, |markdown, _| markdown.search_highlights().is_empty()),
+            "releasing the search bar should clear retained markdown highlights",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_refreshes_on_new_thread_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("First reply mentions banana once.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Tell me about banana", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let count_before = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            count_before >= 2,
+            "expected at least two initial matches, got {count_before}",
+        );
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(1),
+            "setup precondition: second match should be active before the refresh",
+        );
+
+        // Advance past the debounced thread-update rescan.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Banana banana: two more banana hits here.".into()),
+        )]);
+        thread
+            .update(cx, |thread, cx| thread.send_raw("More banana please", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(super::thread_search_bar::SEARCH_UPDATE_DEBOUNCE * 2);
+        cx.run_until_parked();
+
+        let (count_after, active_after) =
+            bar.read_with(cx, |bar, _| (bar.match_count(), bar.active_match_index()));
+        assert!(
+            count_after > count_before,
+            "thread subscription should refresh matches after new content \
+             streamed in: before={count_before}, after={count_after}",
+        );
+        assert_eq!(
+            active_after,
+            Some(1),
+            "refreshing matches should preserve the active result when it still exists",
+        );
+    }
+
+    /// Regression test for re-entering `ThreadView` during search navigation.
+    #[gpui::test]
+    async fn test_thread_search_select_next_from_thread_view_update_does_not_panic(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana banana banana, the banana fits the banana bread.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let initial_match_count = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            initial_match_count >= 2,
+            "setup precondition: expected at least 2 matches, got {}",
+            initial_match_count,
+        );
+
+        thread_view.update_in(cx, |view, window, cx| {
+            let bar = view
+                .thread_search_bar
+                .clone()
+                .expect("bar should still be set");
+            bar.update(cx, |bar, cx| {
+                bar.select_next_match(&super::thread_search_bar::SelectNextThreadMatch, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let active_after = bar.read_with(cx, |bar, _| bar.active_match_index());
+        assert_eq!(
+            active_after,
+            Some(1),
+            "select_next_match should have advanced from match 0 to match 1",
+        );
+    }
+
+    /// Past user-message hits must be painted on the inner `Editor`.
+    #[gpui::test]
+    async fn test_thread_search_highlights_user_message_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Sure, I can help with that.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Where do I find a kumquat?", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("kumquat", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let match_count = bar.read_with(cx, |bar, _| bar.match_count());
+        assert_eq!(
+            match_count, 1,
+            "expected exactly one match for 'kumquat' (in the user message)",
+        );
+
+        let user_message_editor = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .and_then(|entry| entry.message_editor())
+                .map(|message_editor| message_editor.read(cx).editor().clone())
+                .expect("entry 0 should be a user message with a message editor")
+        });
+        let has_highlight = user_message_editor.read_with(cx, |editor, _cx| {
+            editor.has_background_highlights(editor::HighlightKey::BufferSearchHighlights)
+        });
+        assert!(
+            has_highlight,
+            "user message editor should carry BufferSearchHighlights after the bar's matcher ran",
+        );
+
+        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+        cx.run_until_parked();
+        let has_highlight_after_clear = user_message_editor.read_with(cx, |editor, _cx| {
+            editor.has_background_highlights(editor::HighlightKey::BufferSearchHighlights)
+        });
+        assert!(
+            !has_highlight_after_clear,
+            "clear_highlights should remove the editor-backed highlights",
+        );
+    }
+
+    /// `editor::Cancel` should dismiss thread search before reaching workspace handlers.
+    #[gpui::test]
+    async fn test_thread_search_editor_cancel_dismisses_bar(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let visible_before = thread_view.read_with(cx, |view, _| view.thread_search_visible);
+        assert!(
+            visible_before,
+            "search bar should be visible after toggle_search"
+        );
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("bar should be set");
+        let query_focus = bar.read_with(cx, |bar, cx| bar.query_editor.focus_handle(cx));
+        cx.update(|window, cx| {
+            window.focus(&query_focus, cx);
+        });
+        cx.run_until_parked();
+
+        conversation_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(editor::actions::Cancel.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let visible_after = thread_view.read_with(cx, |view, _| view.thread_search_visible);
+        assert!(
+            !visible_after,
+            "editor::Cancel should have dismissed the bar before reaching the workspace",
+        );
+    }
+
+    /// JetBrains keymaps route Shift+Enter through `editor::NewlineBelow`.
+    #[gpui::test]
+    async fn test_thread_search_shift_enter_navigates_with_jetbrains_keymap(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            // Load both the default binding and the conflicting base keymap.
+            search::init(cx);
+
+            let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut default_bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(default_bindings);
+
+            let mut jetbrains_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/linux/jetbrains.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut jetbrains_bindings {
+                binding.set_meta(settings::KeybindSource::Base.meta());
+            }
+            cx.bind_keys(jetbrains_bindings);
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana banana banana, multiple banana mentions in this reply.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let initial_count = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            initial_count >= 2,
+            "test precondition: need ≥2 matches across the thread, got {}",
+            initial_count,
+        );
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0),
+            "first match should be active after the bar populates its match list",
+        );
+
+        let query_focus = bar.read_with(cx, |bar, cx| bar.query_editor.focus_handle(cx));
+        cx.update(|window, cx| {
+            window.focus(&query_focus, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                query_focus.contains_focused(window, cx),
+                "query editor must be focused before simulating shift-enter",
+            );
+        });
+
+        cx.simulate_keystrokes("shift-enter");
+        cx.run_until_parked();
+
+        let query_text_after = bar.read_with(cx, |bar, cx| bar.query_editor.read(cx).text(cx));
+        assert!(
+            !query_text_after.contains('\n'),
+            "shift-enter must not insert a newline into the query buffer; got {:?}",
+            query_text_after,
+        );
+
+        let active_after = bar.read_with(cx, |bar, _| bar.active_match_index());
+        assert_eq!(
+            active_after,
+            Some(initial_count - 1),
+            "shift-enter should have wrapped active match from 0 to {} (got {:?})",
+            initial_count - 1,
+            active_after,
+        );
+    }
+
+    /// `f3`/`shift-f3` are bound in the broad `AcpThread` context (like buffer
+    /// search's pane-level `cmd-g`), so they must navigate matches even when
+    /// focus is outside the search bar.
+    #[gpui::test]
+    async fn test_thread_search_navigates_from_outside_search_bar(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            search::init(cx);
+            let mut default_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut default_bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            cx.bind_keys(default_bindings);
+        });
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana banana banana, multiple banana mentions in this reply.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Need banana help", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let initial_count = bar.read_with(cx, |bar, _| bar.match_count());
+        assert!(
+            initial_count >= 2,
+            "test precondition: need ≥ 2 matches, got {}",
+            initial_count,
+        );
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0)
+        );
+
+        // Move focus out of the search bar, back into the thread view itself.
+        let thread_focus = thread_view.read_with(cx, |view, cx| view.focus_handle(cx));
+        cx.update(|window, cx| window.focus(&thread_focus, cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let bar_focused = bar.read_with(cx, |bar, cx| {
+                bar.query_editor
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            });
+            assert!(!bar_focused, "search bar must not be focused for this test");
+        });
+
+        cx.simulate_keystrokes("f3");
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(1),
+            "f3 from outside the bar should advance to the next match",
+        );
+
+        cx.simulate_keystrokes("shift-f3");
+        cx.run_until_parked();
+        assert_eq!(
+            bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0),
+            "shift-f3 from outside the bar should return to the previous match",
+        );
     }
 
     #[gpui::test]
@@ -8276,6 +9480,71 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_permission_row_does_not_flicker_when_activity_bar_squeezes_list(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (_view, thread_view, _entry_ix, cx) =
+            setup_pending_permission_thread("perm-flicker", cx).await;
+
+        // Give the pending tool call tall content (like a full plan awaiting
+        // approval), so the floating row embedding it dwarfs the panel.
+        let thread = thread_view.read_with(cx, |view, _cx| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        acp::ToolCallId::new("perm-flicker"),
+                        acp::ToolCallUpdateFields::new().content(vec![
+                            acp::ToolCallContent::Content(acp::Content::new(
+                                acp::ContentBlock::Text(acp::TextContent::new(
+                                    "Plan step\n\n".repeat(100),
+                                )),
+                            )),
+                        ]),
+                    )),
+                    cx,
+                )
+                .expect("tool call content update should be accepted");
+        });
+        cx.run_until_parked();
+
+        // Park the inline prompt below the viewport so the floating row renders.
+        thread_view.read_with(cx, |view, _cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            });
+        });
+
+        // Drive several real window draws. Each draw lays out the activity bar
+        // (containing the floating row) and the conversation list together, so
+        // the row's height feeds back into the list viewport height that the
+        // next frame's visibility decision is based on. Since showing the row
+        // squeezes the list to zero height, a decision that treats a
+        // zero-height viewport as "unknown" makes the row's visibility
+        // oscillate from frame to frame, flickering between the conversation
+        // and the permission prompt.
+        let mut row_visibility = Vec::new();
+        for _ in 0..4 {
+            thread_view.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+            thread_view.update_in(cx, |view, window, cx| {
+                row_visibility.push(
+                    view.render_main_agent_awaiting_permission(window, cx)
+                        .is_some(),
+                );
+            });
+        }
+        assert_eq!(
+            row_visibility,
+            vec![true; 4],
+            "Floating row visibility must be stable across frames (false entries mean flicker)"
+        );
+    }
+
+    #[gpui::test]
     async fn test_permission_row_shown_when_inline_prompt_is_above_viewport(
         cx: &mut TestAppContext,
     ) {
@@ -8541,6 +9810,65 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_move_up_in_empty_editor_restores_last_queued_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        active_thread(&conversation_view, cx).update(cx, |thread, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "first queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "second queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let editor = message_editor(&conversation_view, cx);
+        cx.focus(&editor);
+
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(
+            queue_len, 1,
+            "Up arrow should pull the last queued message out of the queue"
+        );
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(
+            text, "second queued",
+            "Main editor should contain the last queued message"
+        );
+
+        // With a non-empty editor, another MoveUp must not consume the queue.
+        editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::editor::MoveUp), cx);
+        });
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 1, "Queue should be untouched");
+        let text = editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "second queued");
     }
 
     #[gpui::test]

@@ -1050,11 +1050,7 @@ impl PickerDelegate for BranchListDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
-                if self.is_select_only() {
-                    "Select branch…"
-                } else {
-                    "Switch branch…"
-                }
+                "Switch or type to create a branch…"
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",
         }

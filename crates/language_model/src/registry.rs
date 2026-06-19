@@ -71,8 +71,7 @@ impl FromStr for SelectedModel {
 
     /// Parse string identifiers like `provider_id/model_id` into a `SelectedModel`
     fn from_str(id: &str) -> Result<SelectedModel, Self::Err> {
-        let parts: Vec<&str> = id.split('/').collect();
-        let [provider_id, model_id] = parts.as_slice() else {
+        let Some((provider_id, model_id)) = id.split_once('/') else {
             return Err(format!(
                 "Invalid model identifier format: `{}`. Expected `provider_id/model_id`",
                 id
@@ -479,6 +478,28 @@ impl LanguageModelRegistry {
 mod tests {
     use super::*;
     use crate::fake_provider::FakeLanguageModelProvider;
+
+    #[test]
+    fn selected_model_allows_slashes_in_model_id() {
+        let selected = SelectedModel::from_str("custom-provider/organization/model-name")
+            .expect("model identifier should parse");
+
+        assert_eq!(
+            selected.provider,
+            LanguageModelProviderId("custom-provider".into())
+        );
+        assert_eq!(
+            selected.model,
+            LanguageModelId("organization/model-name".into())
+        );
+    }
+
+    #[test]
+    fn selected_model_rejects_missing_separator_or_empty_parts() {
+        assert!(SelectedModel::from_str("custom-provider").is_err());
+        assert!(SelectedModel::from_str("/organization/model-name").is_err());
+        assert!(SelectedModel::from_str("custom-provider/").is_err());
+    }
 
     #[gpui::test]
     fn test_register_providers(cx: &mut App) {

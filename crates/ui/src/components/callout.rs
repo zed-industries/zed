@@ -3,7 +3,7 @@ use gpui::AnyElement;
 use crate::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BorderPosition {
+pub enum CalloutBorderPosition {
     Top,
     Bottom,
 }
@@ -34,7 +34,7 @@ pub struct Callout {
     actions_slot: Option<AnyElement>,
     dismiss_action: Option<AnyElement>,
     line_height: Option<Pixels>,
-    border_position: BorderPosition,
+    border_position: CalloutBorderPosition,
 }
 
 impl Callout {
@@ -49,7 +49,7 @@ impl Callout {
             actions_slot: None,
             dismiss_action: None,
             line_height: None,
-            border_position: BorderPosition::Top,
+            border_position: CalloutBorderPosition::Top,
         }
     }
 
@@ -105,7 +105,7 @@ impl Callout {
     }
 
     /// Sets the border position in the callout.
-    pub fn border_position(mut self, border_position: BorderPosition) -> Self {
+    pub fn border_position(mut self, border_position: CalloutBorderPosition) -> Self {
         self.border_position = border_position;
         self
     }
@@ -147,8 +147,8 @@ impl RenderOnce for Callout {
             .gap_2()
             .items_start()
             .map(|this| match self.border_position {
-                BorderPosition::Top => this.border_t_1(),
-                BorderPosition::Bottom => this.border_b_1(),
+                CalloutBorderPosition::Top => this.border_t_1(),
+                CalloutBorderPosition::Bottom => this.border_b_1(),
             })
             .border_color(cx.theme().colors().border)
             .bg(bg_color)

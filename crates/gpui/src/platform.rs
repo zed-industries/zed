@@ -6,6 +6,9 @@ mod keystroke;
 #[expect(missing_docs)]
 pub mod layer_shell;
 
+#[cfg(any(test, feature = "bench"))]
+mod bench_dispatcher;
+
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -76,6 +79,9 @@ pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(any(test, feature = "bench"))]
+pub use bench_dispatcher::BenchDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -745,6 +751,13 @@ pub trait PlatformHeadlessRenderer {
         size: Size<DevicePixels>,
     ) -> Result<RgbaImage>;
 
+    /// Render a scene to an offscreen target without reading the result back.
+    ///
+    /// This is the headless analogue of presenting a frame: it performs the
+    /// same CPU-side scene encoding and GPU submission as drawing to a real
+    /// window, but doesn't block on GPU completion or copy pixels back.
+    fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()>;
+
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
@@ -784,6 +797,13 @@ pub trait PlatformDispatcher: Send + Sync {
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {
+        None
+    }
+
+    // This cfg must match the `bench_dispatcher` module's, which implements
+    // this method whenever it compiles.
+    #[cfg(any(test, feature = "bench"))]
+    fn as_bench(&self) -> Option<&BenchDispatcher> {
         None
     }
 }
@@ -1796,7 +1816,7 @@ impl PromptButton {
 impl From<&str> for PromptButton {
     fn from(value: &str) -> Self {
         match value.to_lowercase().as_str() {
-            "ok" => PromptButton::Ok("Ok".into()),
+            "ok" => PromptButton::Ok("OK".into()),
             "cancel" => PromptButton::Cancel("Cancel".into()),
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }
