@@ -20,6 +20,7 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 mod footer;
 mod head;
+pub mod parts;
 pub mod highlighted_match_with_paths;
 mod persistence;
 pub mod popover_menu;
@@ -244,7 +245,7 @@ pub trait PickerDelegate: Sized + 'static {
     /// An optional control rendered at the trailing edge of the search bar, e.g.
     /// a filter toggle. Returning `Some` is the easy way to add such a control;
     /// for full control over the search bar, override [`Self::render_editor`].
-    fn search_filter(
+    fn searchbar_trailer(
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
@@ -270,7 +271,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .h_9()
                     .px_2p5()
                     .child(div().flex_1().child(editor.render(window, cx)))
-                    .children(self.search_filter(window, cx)),
+                    .children(self.searchbar_trailer(window, cx)),
             )
             .when(
                 self.editor_position() == PickerEditorPosition::Start,

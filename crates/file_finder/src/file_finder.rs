@@ -1622,10 +1622,10 @@ impl PickerDelegate for FileFinderDelegate {
         "Search project files...".into()
     }
 
-    fn search_filter(
+    fn searchbar_trailer(
         &self,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
         let including_ignored = self.include_ignored == Some(true);
@@ -1636,19 +1636,28 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             "Include Ignored Files"
         };
+
+        let filter_button = IconButton::new("filter-ignored", IconName::Sliders)
+            .icon_size(IconSize::Small)
+            .toggle_state(including_ignored)
+            .when(self.include_ignored.is_some(), |this| {
+                this.indicator(Indicator::dot().color(Color::Info))
+            })
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in(tooltip_label, &ToggleIncludeIgnored, &focus_handle, cx)
+            })
+            .on_click(|_, window, cx| {
+                window.dispatch_action(ToggleIncludeIgnored.boxed_clone(), cx)
+            });
         Some(
-            IconButton::new("filter-ignored", IconName::Sliders)
-                .icon_size(IconSize::Small)
-                .toggle_state(including_ignored)
-                .when(self.include_ignored.is_some(), |this| {
-                    this.indicator(Indicator::dot().color(Color::Info))
-                })
-                .tooltip(move |_window, cx| {
-                    Tooltip::for_action_in(tooltip_label, &ToggleIncludeIgnored, &focus_handle, cx)
-                })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleIncludeIgnored.boxed_clone(), cx)
-                })
+            h_flex()
+                .gap_1()
+                .child(filter_button)
+                .children(picker::parts::project_scan_indicator(
+                    self.latest_search_query.is_some(),
+                    &self.project,
+                    cx,
+                ))
                 .into_any_element(),
         )
     }

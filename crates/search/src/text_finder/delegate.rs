@@ -536,7 +536,7 @@ impl PickerDelegate for Delegate {
         "Search all files…".into()
     }
 
-    fn search_filter(
+    fn searchbar_trailer(
         &self,
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -544,41 +544,45 @@ impl PickerDelegate for Delegate {
         let active = self.search_options;
         let focus_handle = self.focus_handle.clone();
         let picker = cx.entity();
+
+        let filter_buttons = [
+            SearchOption::CaseSensitive,
+            SearchOption::WholeWord,
+            SearchOption::Regex,
+            SearchOption::IncludeIgnored,
+        ]
+        .into_iter()
+        .map(|option| {
+            let options = option.as_options();
+            let action = option.to_toggle_action();
+            let label = option.label();
+            let focus_handle = focus_handle.clone();
+            let picker = picker.clone();
+            IconButton::new(
+                ("text-finder-search-option", option as usize),
+                option.icon(),
+            )
+            .icon_size(IconSize::Small)
+            .shape(IconButtonShape::Square)
+            .toggle_state(active.contains(options))
+            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
+            .on_click(move |_, window, cx| {
+                picker.update(cx, |picker, cx| {
+                    picker.delegate.search_options.toggle(options);
+                    picker.refresh(window, cx);
+                });
+            })
+        });
+
         Some(
             h_flex()
                 .gap_1()
-                .children(
-                    [
-                        SearchOption::CaseSensitive,
-                        SearchOption::WholeWord,
-                        SearchOption::Regex,
-                        SearchOption::IncludeIgnored,
-                    ]
-                    .into_iter()
-                    .map(|option| {
-                        let options = option.as_options();
-                        let action = option.to_toggle_action();
-                        let label = option.label();
-                        let focus_handle = focus_handle.clone();
-                        let picker = picker.clone();
-                        IconButton::new(
-                            ("text-finder-search-option", option as usize),
-                            option.icon(),
-                        )
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .toggle_state(active.contains(options))
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action_in(label, action, &focus_handle, cx)
-                        })
-                        .on_click(move |_, window, cx| {
-                            picker.update(cx, |picker, cx| {
-                                picker.delegate.search_options.toggle(options);
-                                picker.refresh(window, cx);
-                            });
-                        })
-                    }),
-                )
+                .children(filter_buttons)
+                .children(picker::parts::project_scan_indicator(
+                    self.active_query.is_some(),
+                    self.project(cx),
+                    cx,
+                ))
                 .into_any_element(),
         )
     }
