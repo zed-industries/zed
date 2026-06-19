@@ -143,6 +143,12 @@ impl Drop for AppRefMut<'_> {
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
 
+#[cfg(target_family = "wasm")]
+thread_local! {
+    // The web platform's run method schedules browser callbacks and then returns.
+    static RUNNING_WASM_APPLICATIONS: RefCell<Vec<Rc<AppCell>>> = const { RefCell::new(Vec::new()) };
+}
+
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
 impl Application {
@@ -203,6 +209,8 @@ impl Application {
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
+        #[cfg(target_family = "wasm")]
+        RUNNING_WASM_APPLICATIONS.with_borrow_mut(|applications| applications.push(self.0.clone()));
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
