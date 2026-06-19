@@ -7,7 +7,7 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, ScrollHandle, WeakEntity};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, WeakEntity};
 
 use project::{
     WorktreeId,
@@ -20,6 +20,7 @@ use ui::{
     AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, WithScrollbar,
     prelude::*,
 };
+use ui_input::InputField;
 
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
@@ -32,6 +33,9 @@ pub struct SecurityModal {
     focus_handle: FocusHandle,
     project_list_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
+    /// Editable trust scope shown inline with the checkbox when a single
+    /// project is being prompted for; read-only until the checkbox is ticked.
+    trust_path_input: Entity<InputField>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -85,6 +89,13 @@ impl Render for SecurityModal {
         };
 
         let trust_label = self.build_trust_label();
+
+        // The editable trust-scope field is shown only when a single project is
+        // being prompted for (Delta opens one worktree per thread).
+        let trust_input = self
+            .single_trustable_path()
+            .is_some()
+            .then(|| self.trust_path_input.clone());
 
         AlertModal::new("security-modal")
             .width(rems(40.))
@@ -192,9 +203,55 @@ impl Render for SecurityModal {
                             .child(ListBulletItem::new("Language servers from running"))
                             .child(ListBulletItem::new("MCP Server integrations from installing")),
                     )
-                    .map(|this| match trust_label {
-                        Some(trust_label) => this.child(
-                            Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
+                    .map(|this| {
+                        let Some(trust_label) = trust_label else {
+                            return this;
+                        };
+                        match trust_input {
+                            // Single project: the editable scope field replaces
+                            // the static folder name, inline with the checkbox.
+                            Some(input) => this.child(
+                                // Top-aligned so the field's validation error
+                                // grows downward without shifting the checkbox;
+                                // the checkbox sits in a fixed-height box matching
+                                // the input row.
+                                h_flex()
+                                    .items_start()
+                                    .gap_1p5()
+                                    .child(
+                                        h_flex().h_8().child(
+                                        Checkbox::new(
+                                            "trust-parents",
+                                            ToggleState::from(self.trust_parents),
+                                        )
+                                        .label("Trust all projects in")
+                                        .on_click(cx.listener(
+                                            |security_modal, state: &ToggleState, _, cx| {
+                                                let trust_parents = state.selected();
+                                                security_modal.trust_parents = trust_parents;
+                                                let input =
+                                                    security_modal.trust_path_input.clone();
+                                                let editor = input.read(cx).editor().clone();
+                                                editor.set_read_only(!trust_parents, cx);
+                                                if !trust_parents {
+                                                    input.update(cx, |input, cx| {
+                                                        input.set_error(None::<SharedString>, cx)
+                                                    });
+                                                }
+                                                cx.notify();
+                                                cx.stop_propagation();
+                                            },
+                                        )),
+                                        ),
+                                    )
+                                    .child(input),
+                            ),
+                            // Zero or several projects: keep the static label.
+                            None => this.child(
+                                Checkbox::new(
+                                    "trust-parents",
+                                    ToggleState::from(self.trust_parents),
+                                )
                                 .label(trust_label)
                                 .on_click(cx.listener(
                                     |security_modal, state: &ToggleState, _, cx| {
@@ -203,8 +260,8 @@ impl Render for SecurityModal {
                                         cx.stop_propagation();
                                     },
                                 )),
-                        ),
-                        None => this,
+                            ),
+                        }
                     }),
             )
             .footer(
@@ -250,8 +307,10 @@ impl SecurityModal {
     pub fn new(
         worktree_store: WeakEntity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let trust_path_input = cx.new(|cx| InputField::new(window, cx, "Folder to trust"));
         let mut this = Self {
             worktree_store,
             remote_host: remote_host.map(|host| host.into()),
@@ -261,8 +320,20 @@ impl SecurityModal {
             trust_parents: false,
             home_dir: std::env::home_dir(),
             trusted: None,
+            trust_path_input,
         };
         this.refresh_restricted_paths(cx);
+
+        // Pre-fill with the single project's parent folder (today's static
+        // scope), read-only until the checkbox is ticked.
+        if let Some(project) = this.single_trustable_path() {
+            let default_scope = project.parent().unwrap_or(&project).to_path_buf();
+            this.trust_path_input.update(cx, |field, cx| {
+                field.set_text(&default_scope.to_string_lossy(), window, cx);
+            });
+        }
+        let editor = this.trust_path_input.read(cx).editor().clone();
+        editor.set_read_only(!this.trust_parents, cx);
 
         this
     }
@@ -305,7 +376,31 @@ impl SecurityModal {
         }
     }
 
+    /// The user-edited trust scope, when an editable field is shown. `Ok(None)`
+    /// means fall back to the default per-parent behavior; `Err` is a validation
+    /// message to surface on the field.
+    fn edited_trust_scope(&self, cx: &App) -> Result<Option<PathBuf>, SharedString> {
+        if !self.trust_parents {
+            return Ok(None);
+        }
+        let Some(project) = self.single_trustable_path() else {
+            return Ok(None);
+        };
+        let typed = self.trust_path_input.read(cx).text(cx);
+        validate_trust_scope(&typed, &project, self.home_dir.as_deref()).map(Some)
+    }
+
     fn trust_and_dismiss(&mut self, cx: &mut Context<Self>) {
+        let scope_override = match self.edited_trust_scope(cx) {
+            Ok(scope) => scope,
+            Err(error) => {
+                // Invalid path: flag the field and keep the modal open.
+                self.trust_path_input
+                    .update(cx, |input, cx| input.set_error(Some(error), cx));
+                return;
+            }
+        };
+
         if let Some((trusted_worktrees, worktree_store)) =
             TrustedWorktrees::try_get_global(cx).zip(self.worktree_store.upgrade())
         {
@@ -317,17 +412,21 @@ impl SecurityModal {
                     .map(PathTrust::Worktree)
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
-                    paths_to_trust.extend(self.restricted_paths.values().filter_map(
-                        |restricted_paths| {
-                            if restricted_paths.is_file {
-                                None
-                            } else {
-                                let parent_abs_path =
-                                    restricted_paths.abs_path.parent()?.to_owned();
-                                Some(PathTrust::AbsPath(parent_abs_path))
-                            }
-                        },
-                    ));
+                    if let Some(scope) = scope_override {
+                        paths_to_trust.insert(PathTrust::AbsPath(scope));
+                    } else {
+                        paths_to_trust.extend(self.restricted_paths.values().filter_map(
+                            |restricted_paths| {
+                                if restricted_paths.is_file {
+                                    None
+                                } else {
+                                    let parent_abs_path =
+                                        restricted_paths.abs_path.parent()?.to_owned();
+                                    Some(PathTrust::AbsPath(parent_abs_path))
+                                }
+                            },
+                        ));
+                    }
                 }
                 trusted_worktrees.trust(&worktree_store, paths_to_trust, cx);
             });
@@ -339,6 +438,19 @@ impl SecurityModal {
 
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
+    }
+
+    /// The sole untrusted, non-file project, when exactly one is being prompted
+    /// for. This is the case where the trust scope can be edited (Delta opens
+    /// one worktree per thread); with zero or several we keep the static label.
+    fn single_trustable_path(&self) -> Option<Arc<Path>> {
+        let mut projects = self
+            .restricted_paths
+            .values()
+            .filter(|restricted_path| !restricted_path.is_file)
+            .map(|restricted_path| restricted_path.abs_path.clone());
+        let only = projects.next()?;
+        projects.next().is_none().then_some(only)
     }
 
     pub fn refresh_restricted_paths(&mut self, cx: &mut Context<Self>) {
@@ -376,5 +488,77 @@ impl SecurityModal {
             self.restricted_paths.clear();
             cx.notify();
         }
+    }
+}
+
+/// Validates a user-edited trust-scope path. Returns the absolute folder to
+/// trust when `typed` is an ancestor of (or equal to) `project`; otherwise an
+/// error message suitable for display. A leading `~` is expanded via `home_dir`.
+fn validate_trust_scope(
+    typed: &str,
+    project: &Path,
+    home_dir: Option<&Path>,
+) -> Result<PathBuf, SharedString> {
+    let trimmed = typed.trim();
+    if trimmed.is_empty() {
+        return Err("Enter a folder to trust".into());
+    }
+    let expanded = match (trimmed.strip_prefix('~'), home_dir) {
+        (Some(rest), Some(home_dir)) => {
+            home_dir.join(rest.strip_prefix(std::path::MAIN_SEPARATOR).unwrap_or(rest))
+        }
+        _ => PathBuf::from(trimmed),
+    };
+    if !expanded.is_absolute() {
+        return Err("Enter an absolute folder path".into());
+    }
+    if !project.starts_with(&expanded) {
+        return Err("Must be a parent folder of the project".into());
+    }
+    Ok(expanded)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_ancestor_or_equal() {
+        let project = Path::new("/Users/me/dev/delta/wt/t1");
+        assert_eq!(
+            validate_trust_scope("/Users/me/dev/delta/wt", project, None).unwrap(),
+            PathBuf::from("/Users/me/dev/delta/wt"),
+        );
+        // Equal to the project itself is allowed.
+        assert_eq!(
+            validate_trust_scope("/Users/me/dev/delta/wt/t1", project, None).unwrap(),
+            PathBuf::from("/Users/me/dev/delta/wt/t1"),
+        );
+        // A distant ancestor is allowed.
+        assert!(validate_trust_scope("/Users/me/dev", project, None).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_ancestor_relative_or_empty() {
+        let project = Path::new("/Users/me/dev/delta/wt/t1");
+        assert!(validate_trust_scope("/Users/other", project, None).is_err());
+        assert!(validate_trust_scope("relative/path", project, None).is_err());
+        assert!(validate_trust_scope("   ", project, None).is_err());
+        // Deeper than the project is not an ancestor.
+        assert!(validate_trust_scope("/Users/me/dev/delta/wt/t1/sub", project, None).is_err());
+    }
+
+    #[test]
+    fn expands_leading_tilde() {
+        let home = Path::new("/Users/me");
+        let project = Path::new("/Users/me/dev/wt/t1");
+        assert_eq!(
+            validate_trust_scope("~/dev/wt", project, Some(home)).unwrap(),
+            PathBuf::from("/Users/me/dev/wt"),
+        );
+        assert_eq!(
+            validate_trust_scope("~", project, Some(home)).unwrap(),
+            PathBuf::from("/Users/me"),
+        );
     }
 }

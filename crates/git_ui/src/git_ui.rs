@@ -35,6 +35,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
+pub mod created_worktrees;
 pub mod file_diff_view;
 pub mod git_graph;
 pub mod git_panel;

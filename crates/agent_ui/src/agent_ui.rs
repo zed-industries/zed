@@ -290,6 +290,8 @@ actions!(
         ScrollOutputToPreviousMessage,
         /// Scroll the output to the next user message.
         ScrollOutputToNextMessage,
+        /// Toggles in-thread search over the current agent thread's contents.
+        ToggleSearch,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
@@ -957,9 +959,14 @@ mod tests {
             play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
             single_file_review: false,
             model_parameters: vec![],
+            auto_compact: agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: agent_settings::AutoCompactThreshold::DEFAULT,
+            },
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
+            terminal_init_command: None,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,

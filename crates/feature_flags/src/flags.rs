@@ -35,18 +35,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
-pub struct HandoffFeatureFlag;
-
-impl FeatureFlag for HandoffFeatureFlag {
-    const NAME: &'static str = "handoff";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(HandoffFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -131,6 +119,18 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
 
+/// Moves LLM provider and MCP server configuration out of the dedicated agent
+/// panel page and into the settings UI. When enabled, the agent panel no longer
+/// shows its configuration overlay and the settings UI exposes the "LLM
+/// Providers" and "MCP Servers" sub-pages instead.
+pub struct AgentSettingsUiFeatureFlag;
+
+impl FeatureFlag for AgentSettingsUiFeatureFlag {
+    const NAME: &'static str = "agent-settings-ui";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(AgentSettingsUiFeatureFlag);
+
 pub struct AutoWatchFeatureFlag;
 
 impl FeatureFlag for AutoWatchFeatureFlag {
@@ -147,9 +147,5 @@ pub struct SandboxingFeatureFlag;
 impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(SandboxingFeatureFlag);
