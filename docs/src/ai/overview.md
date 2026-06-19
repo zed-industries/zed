@@ -41,7 +41,7 @@ Zed has several AI-powered workflows:
 - [Parallel Agents](./parallel-agents.md): run multiple threads across projects and worktrees.
 - [Inline Assistant](./inline-assistant.md): transform a selection in place.
 - [Edit Prediction](./edit-prediction.md): accept AI completions while you type.
-- [Git commit generation](../git/staging-and-committing.md#ai-commit-message): generate commit messages from the Git panel.
+- [Git commit generation](../git.md#ai-support-in-git): generate commit messages from the Git panel.
 
 ## Configure AI {#configure-ai}
 

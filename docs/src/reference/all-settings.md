@@ -565,7 +565,7 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 - `"unified"`: Show changes inline with added and deleted lines stacked vertically
 - `"split"`: Display old and new versions side by side in separate panes (default)
 
-See [Git documentation](../git/diffs-and-review.md#diff-view-style) for more details.
+See [Git documentation](../git.md#diff-view-styles) for more details.
 
 ## Disable AI
 

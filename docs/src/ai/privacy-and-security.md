@@ -8,7 +8,7 @@ description: Understand how Zed handles AI prompts, code context, hosted model r
 This page explains the privacy and trust boundaries for AI features in Zed,
 including [Zed Agent](./zed-agent.md), [Edit Prediction](./edit-prediction.md),
 [Inline Assistant](./inline-assistant.md), and
-[Git commit generation](../git/staging-and-committing.md#ai-commit-message).
+[Git commit generation](../git.md#ai-support-in-git).
 
 Zed does not retain your prompts or code context by default. For
 [Zed-hosted models](../account/zed-hosted-models.md), Zed has no-training

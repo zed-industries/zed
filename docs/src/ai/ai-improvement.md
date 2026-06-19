@@ -19,7 +19,7 @@ AI features in Zed include:
 - [Agent Panel](./agent-panel.md)
 - [Edit Prediction](./edit-prediction.md)
 - [Inline Assistant](./inline-assistant.md)
-- [Git commit generation](../git/staging-and-committing.md#ai-commit-message)
+- [Git commit generation](../git.md#ai-support-in-git)
 
 For the broader request path and provider data boundaries, see
 [AI Privacy](./privacy-and-security.md).
