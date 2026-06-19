@@ -56,6 +56,14 @@ impl FilePathNav {
             workspace,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn component_names(&self) -> Vec<&str> {
+        self.components
+            .iter()
+            .map(|component| component.name.as_ref())
+            .collect()
+    }
 }
 
 /// Decompose a worktree-relative file path into breadcrumb segments.

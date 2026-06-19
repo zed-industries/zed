@@ -65,7 +65,7 @@ use test::build_editor_with_project;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    rel_path::rel_path,
+    rel_path::{RelPath, rel_path},
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{
@@ -38556,6 +38556,13 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
 }
 // --- file_path_nav tests ---
 
+fn enable_file_path_nav(cx: &mut TestAppContext) {
+    update_test_editor_settings(cx, &|settings| {
+        settings.toolbar.get_or_insert_default().file_path_nav = Some(true);
+    });
+    cx.run_until_parked();
+}
+
 /// Opens a singleton editor for a real project file and verifies that
 /// `breadcrumb_prefix` returns `Some(...)` when `file_path_nav` is enabled.
 #[gpui::test]
@@ -38587,10 +38594,14 @@ async fn test_file_path_nav_prefix_shown_for_file(cx: &mut TestAppContext) {
         build_editor_with_project(project.clone(), multibuffer, window, cx)
     });
 
-    // file_path_nav defaults to true — prefix should be present.
+    enable_file_path_nav(cx);
+
     editor.update_in(cx, |editor, window, cx| {
         let prefix = editor.breadcrumb_prefix(window, cx);
-        assert!(prefix.is_some(), "breadcrumb_prefix should return Some when file_path_nav is enabled");
+        assert!(
+            prefix.is_some(),
+            "breadcrumb_prefix should return Some when file_path_nav is enabled"
+        );
     });
 }
 
@@ -38633,7 +38644,10 @@ async fn test_file_path_nav_prefix_hidden_when_disabled(cx: &mut TestAppContext)
 
     editor.update_in(cx, |editor, window, cx| {
         let prefix = editor.breadcrumb_prefix(window, cx);
-        assert!(prefix.is_none(), "breadcrumb_prefix should return None when file_path_nav is disabled");
+        assert!(
+            prefix.is_none(),
+            "breadcrumb_prefix should return None when file_path_nav is disabled"
+        );
     });
 }
 
@@ -38689,12 +38703,20 @@ async fn test_file_path_nav_single_worktree_omits_root(cx: &mut TestAppContext) 
         build_editor_with_project(project.clone(), multibuffer, window, cx)
     });
 
+    enable_file_path_nav(cx);
+
     editor.update_in(cx, |editor, window, cx| {
         let worktree_count = project.read(cx).visible_worktrees(cx).count();
-        assert_eq!(worktree_count, 1, "test setup should have exactly 1 worktree");
+        assert_eq!(
+            worktree_count, 1,
+            "test setup should have exactly 1 worktree"
+        );
 
         let prefix = editor.breadcrumb_prefix(window, cx);
-        assert!(prefix.is_some(), "breadcrumb_prefix should return Some for a file");
+        assert!(
+            prefix.is_some(),
+            "breadcrumb_prefix should return Some for a file"
+        );
 
         let file = editor
             .buffer
@@ -38767,12 +38789,20 @@ async fn test_file_path_nav_multi_worktree_shows_root(cx: &mut TestAppContext) {
         build_editor_with_project(project.clone(), multibuffer, window, cx)
     });
 
+    enable_file_path_nav(cx);
+
     editor.update_in(cx, |editor, window, cx| {
         let worktree_count = project.read(cx).visible_worktrees(cx).count();
-        assert_eq!(worktree_count, 2, "test setup should have exactly 2 worktrees");
+        assert_eq!(
+            worktree_count, 2,
+            "test setup should have exactly 2 worktrees"
+        );
 
         let prefix = editor.breadcrumb_prefix(window, cx);
-        assert!(prefix.is_some(), "breadcrumb_prefix should return Some for a file");
+        assert!(
+            prefix.is_some(),
+            "breadcrumb_prefix should return Some for a file"
+        );
 
         let file = editor
             .buffer
@@ -38835,6 +38865,8 @@ async fn test_file_path_nav_segment_count_for_nested_file(cx: &mut TestAppContex
         build_editor_with_project(project.clone(), multibuffer, window, cx)
     });
 
+    enable_file_path_nav(cx);
+
     editor.update_in(cx, |editor, window, cx| {
         assert!(editor.breadcrumb_prefix(window, cx).is_some());
 
@@ -38880,7 +38912,10 @@ async fn test_file_path_nav_collect_rows_sort_order(cx: &mut TestAppContext) {
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
     project.update(cx, |project, cx| {
-        let worktree = project.visible_worktrees(cx).next().expect("should have worktree");
+        let worktree = project
+            .visible_worktrees(cx)
+            .next()
+            .expect("should have worktree");
         let snapshot = worktree.read(cx);
         let empty_expanded = std::collections::HashSet::new();
         let mut rows = Vec::new();
@@ -38893,11 +38928,27 @@ async fn test_file_path_nav_collect_rows_sort_order(cx: &mut TestAppContext) {
             cx,
         );
 
-        let dirs: Vec<&str> = rows.iter().filter(|r| r.is_directory).map(|r| r.name.as_ref()).collect();
-        let files: Vec<&str> = rows.iter().filter(|r| !r.is_directory).map(|r| r.name.as_ref()).collect();
+        let dirs: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.is_directory)
+            .map(|r| r.name.as_ref())
+            .collect();
+        let files: Vec<&str> = rows
+            .iter()
+            .filter(|r| !r.is_directory)
+            .map(|r| r.name.as_ref())
+            .collect();
 
-        assert_eq!(dirs, vec!["config", "utils"], "directories should be sorted alphabetically");
-        assert_eq!(files, vec!["alpha.rs", "main.rs", "zebra.rs"], "files should be sorted alphabetically");
+        assert_eq!(
+            dirs,
+            vec!["config", "utils"],
+            "directories should be sorted alphabetically"
+        );
+        assert_eq!(
+            files,
+            vec!["alpha.rs", "main.rs", "zebra.rs"],
+            "files should be sorted alphabetically"
+        );
 
         let first_file_idx = rows.iter().position(|r| !r.is_directory).unwrap();
         let last_dir_idx = rows.iter().rposition(|r| r.is_directory).unwrap();
@@ -38934,7 +38985,10 @@ async fn test_file_path_nav_collect_rows_expand_collapse(cx: &mut TestAppContext
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
     project.update(cx, |project, cx| {
-        let worktree = project.visible_worktrees(cx).next().expect("should have worktree");
+        let worktree = project
+            .visible_worktrees(cx)
+            .next()
+            .expect("should have worktree");
         let snapshot = worktree.read(cx);
 
         // Nothing expanded: only top-level entries visible.
@@ -38949,8 +39003,15 @@ async fn test_file_path_nav_collect_rows_expand_collapse(cx: &mut TestAppContext
             cx,
         );
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
-        assert_eq!(names, vec!["src", "tests"], "only top-level dirs with no expansion");
-        assert!(rows.iter().all(|r| r.depth == 0), "all entries should be at depth 0");
+        assert_eq!(
+            names,
+            vec!["src", "tests"],
+            "only top-level dirs with no expansion"
+        );
+        assert!(
+            rows.iter().all(|r| r.depth == 0),
+            "all entries should be at depth 0"
+        );
 
         // Expand "src" only — its children should appear, "tests" stays collapsed.
         let mut expanded = std::collections::HashSet::new();
@@ -38967,7 +39028,8 @@ async fn test_file_path_nav_collect_rows_expand_collapse(cx: &mut TestAppContext
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
         assert_eq!(names, vec!["src", "utils", "main.rs", "tests"]);
 
-        let src_children: Vec<(&str, usize)> = rows.iter()
+        let src_children: Vec<(&str, usize)> = rows
+            .iter()
             .filter(|r| r.depth == 1)
             .map(|r| (r.name.as_ref(), r.depth))
             .collect();
@@ -38987,7 +39049,10 @@ async fn test_file_path_nav_collect_rows_expand_collapse(cx: &mut TestAppContext
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
         assert_eq!(names, vec!["src", "utils", "helper.rs", "main.rs", "tests"]);
 
-        let helper = rows.iter().find(|r| r.name.as_ref() == "helper.rs").unwrap();
+        let helper = rows
+            .iter()
+            .find(|r| r.name.as_ref() == "helper.rs")
+            .unwrap();
         assert_eq!(helper.depth, 2, "nested child should be at depth 2");
         assert!(!helper.is_directory);
     });
@@ -39030,16 +39095,23 @@ async fn test_file_path_nav_collect_rows_empty_directory(cx: &mut TestAppContext
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_ref()).collect();
         assert_eq!(names, vec!["empty_dir", "main.rs"]);
 
-        let empty_dir = rows.iter().find(|r| r.name.as_ref() == "empty_dir").unwrap();
+        let empty_dir = rows
+            .iter()
+            .find(|r| r.name.as_ref() == "empty_dir")
+            .unwrap();
         assert!(empty_dir.is_directory);
         assert!(empty_dir.is_expanded);
 
         // No children at depth 1.
-        let children_at_depth_1: Vec<&str> = rows.iter()
+        let children_at_depth_1: Vec<&str> = rows
+            .iter()
             .filter(|r| r.depth == 1)
             .map(|r| r.name.as_ref())
             .collect();
-        assert!(children_at_depth_1.is_empty(), "empty dir should have no children");
+        assert!(
+            children_at_depth_1.is_empty(),
+            "empty dir should have no children"
+        );
     });
 }
 
@@ -39070,6 +39142,8 @@ async fn test_file_path_nav_deeply_nested_segments(cx: &mut TestAppContext) {
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         build_editor_with_project(project.clone(), multibuffer, window, cx)
     });
+
+    enable_file_path_nav(cx);
 
     editor.update_in(cx, |editor, window, cx| {
         assert!(editor.breadcrumb_prefix(window, cx).is_some());
@@ -39175,7 +39249,10 @@ async fn test_file_path_nav_expand_collapse_keyboard_logic(cx: &mut TestAppConte
 
         // #19: Left arrow on "helper.rs" (not a directory) → collapses its parent "src/utils".
         // (select_parent_override logic: path.parent() → remove parent from expanded)
-        let selected = rows.iter().find(|r| r.name.as_ref() == "helper.rs").unwrap();
+        let selected = rows
+            .iter()
+            .find(|r| r.name.as_ref() == "helper.rs")
+            .unwrap();
         assert!(!selected.is_directory);
         let parent_dir: Arc<RelPath> = selected.path.parent().map(Arc::from).unwrap();
         assert_eq!(parent_dir.as_unix_str(), "src/utils");
@@ -39247,11 +39324,8 @@ async fn test_file_path_nav_open_file_missing_workspace(cx: &mut TestAppContext)
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({ "main.rs": "fn main() {}" }),
-    )
-    .await;
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
@@ -39279,11 +39353,8 @@ async fn test_file_path_nav_open_file_stale_workspace(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({ "main.rs": "fn main() {}" }),
-    )
-    .await;
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
@@ -39348,11 +39419,9 @@ async fn test_file_path_nav_open_file_opens_in_workspace(cx: &mut TestAppContext
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
     let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace
-            .project()
-            .update(cx, |project, cx| {
-                project.visible_worktrees(cx).next().unwrap().read(cx).id()
-            })
+        workspace.project().update(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap().read(cx).id()
+        })
     });
 
     // Open main.rs first so there's an active item.
@@ -39377,12 +39446,7 @@ async fn test_file_path_nav_open_file_opens_in_workspace(cx: &mut TestAppContext
             worktree_id,
             path: Arc::from(rel_path("src/lib.rs")),
         };
-        crate::file_path_nav::open_breadcrumb_file(
-            project_path,
-            &Some(weak_workspace),
-            window,
-            cx,
-        );
+        crate::file_path_nav::open_breadcrumb_file(project_path, &Some(weak_workspace), window, cx);
     });
     cx.run_until_parked();
 
@@ -39393,7 +39457,11 @@ async fn test_file_path_nav_open_file_opens_in_workspace(cx: &mut TestAppContext
             .expect("should have an active item")
             .downcast::<Editor>()
             .expect("active item should be an Editor");
-        let file_path = active_editor.read(cx).buffer().read(cx).as_singleton()
+        let file_path = active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
             .and_then(|buf| {
                 project::File::from_dyn(buf.read(cx).file())
                     .map(|f| f.path.as_std_path().to_string_lossy().to_string())
@@ -39444,6 +39512,8 @@ async fn test_file_path_nav_nested_directory_structure(cx: &mut TestAppContext) 
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         build_editor_with_project(project.clone(), multibuffer, window, cx)
     });
+
+    enable_file_path_nav(cx);
 
     editor.update_in(cx, |editor, window, cx| {
         let prefix = editor.breadcrumb_prefix(window, cx);
