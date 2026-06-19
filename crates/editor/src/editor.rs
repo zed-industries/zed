@@ -11824,6 +11824,13 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
             editor.set_masked(masked, cx);
         });
     }
+
+    fn set_read_only(&self, read_only: bool, cx: &mut App) {
+        self.0.update(cx, |editor, cx| {
+            editor.set_read_only(read_only);
+            cx.notify();
+        });
+    }
 }
 impl<T> Default for InvalidationStack<T> {
     fn default() -> Self {

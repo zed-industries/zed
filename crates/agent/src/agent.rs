@@ -1369,12 +1369,8 @@ impl NativeAgent {
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
-                if thread.model().is_none()
-                    && let Some(model) = default_model.clone()
-                {
-                    thread.set_model(model, cx);
-                    cx.notify();
-                }
+                thread.ensure_model(default_model.as_ref(), cx);
+
                 if let Some(model) = summarization_model.clone() {
                     if thread.summarization_model().is_none()
                         || matches!(event, language_model::Event::ThreadSummaryModelChanged)
@@ -6017,6 +6013,212 @@ mod internal_tests {
                 reloaded_model.id().0.as_ref(),
                 "custom-model-id",
                 "reloaded thread should have the same model, not fall back to the default"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    async fn persist_thread_with_fake_corp_model(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<NativeAgent>,
+        Rc<NativeAgentConnection>,
+        Entity<Project>,
+        acp::SessionId,
+        Arc<FakeLanguageModelProvider>,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_text_chunk("Response.");
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(acp_thread);
+
+        (agent, connection, project, session_id, provider)
+    }
+
+    fn unregister_fake_corp(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.unregister_provider(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    cx,
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_loaded_thread_resolves_model_when_provider_loads_late(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, _connection, project, session_id, provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+
+        // Simulate a restart where the provider hasn't fetched its model list
+        // yet, so the saved selection can't be resolved at load time.
+        unregister_fake_corp(cx);
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.model().is_none(),
+                "should not fall back to an unrelated model"
+            );
+        });
+
+        // The original selection is persisted even while unresolved, so a save
+        // during the window can't overwrite the user's choice with a fallback.
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let saved = db_thread.model.expect("selection should be persisted");
+        assert_eq!(saved.provider, "fake-corp");
+        assert_eq!(saved.model, "custom-model-id");
+
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .model()
+                    .expect("model should resolve once provider loads")
+                    .id()
+                    .0
+                    .as_ref(),
+                "custom-model-id"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    #[gpui::test]
+    async fn test_explicit_model_selection_cancels_pending(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, connection, project, session_id, provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+
+        unregister_fake_corp(cx);
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.model().is_none());
+        });
+
+        // The user explicitly picks a different, available model.
+        let other_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "other-corp",
+            "other-model-id",
+            "Other Model",
+            false,
+        ));
+        let other_provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("other-corp".to_string()),
+                LanguageModelProviderName::from("Other Corp".to_string()),
+            )
+            .with_models(vec![other_model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(other_provider, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("other-corp/other-model-id"), cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().unwrap().id().0.as_ref(), "other-model-id");
+        });
+
+        // The original provider returning must not clobber the explicit choice.
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.model().unwrap().id().0.as_ref(),
+                "other-model-id",
+                "a late provider load must not override the explicit selection"
             );
         });
 

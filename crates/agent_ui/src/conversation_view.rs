@@ -2695,8 +2695,9 @@ impl ConversationView {
         let root_work_dirs = root_thread.work_dirs().cloned();
         let root_title = root_thread.title();
 
-        // TODO: Change this once we have title summarization for external agents.
-        let title = self.agent.agent_id().0;
+        let title = root_title
+            .clone()
+            .unwrap_or_else(|| self.agent.agent_id().0);
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
