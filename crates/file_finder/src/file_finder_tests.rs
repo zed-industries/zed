@@ -198,7 +198,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("bna");
+    simulate_input(cx, "bna");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 3);
     });
@@ -279,7 +279,7 @@ async fn test_matching_paths_with_colon(cx: &mut TestAppContext) {
     let (picker, _, cx) = build_find_picker(project, cx);
 
     // 'foo:' matches both files
-    cx.simulate_input("foo:");
+    simulate_input(cx, "foo:");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 3);
         assert_match_at_position(picker, 0, "foo.rs");
@@ -287,7 +287,7 @@ async fn test_matching_paths_with_colon(cx: &mut TestAppContext) {
     });
 
     // 'foo:b' matches one of the files
-    cx.simulate_input("b");
+    simulate_input(cx, "b");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 2);
         assert_match_at_position(picker, 0, "foo:bar.rs");
@@ -296,7 +296,7 @@ async fn test_matching_paths_with_colon(cx: &mut TestAppContext) {
     cx.dispatch_action(editor::actions::Backspace);
 
     // 'foo:1' matches both files, specifying which row to jump to
-    cx.simulate_input("1");
+    simulate_input(cx, "1");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 3);
         assert_match_at_position(picker, 0, "foo.rs");
@@ -324,7 +324,7 @@ async fn test_unicode_paths(cx: &mut TestAppContext) {
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("g");
+    simulate_input(cx, "g");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 2);
         assert_match_at_position(picker, 1, "g");
@@ -432,7 +432,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("t");
+    simulate_input(cx, "t");
     picker.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 2);
         assert_eq!(
@@ -1433,7 +1433,7 @@ async fn test_history_items_uniqueness_for_multiple_worktree(cx: &mut TestAppCon
     });
 
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("package.json");
+    simulate_input(cx, "package.json");
 
     picker.update(cx, |finder, _| {
         let matches = &finder.delegate.matches.matches;
@@ -1990,7 +1990,7 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
     assert_eq!(history.len(), 1);
 
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("fir");
+    simulate_input(cx, "fir");
     picker.update_in(cx, |finder, window, cx| {
         let matches = &finder.delegate.matches.matches;
         assert_matches!(
@@ -3358,7 +3358,7 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
 
     let finder = open_file_picker(&workspace, cx);
     let query = "collab_ui";
-    cx.simulate_input(query);
+    simulate_input(cx, query);
     finder.update(cx, |picker, _| {
             let search_entries = collect_search_matches(picker).search_paths_only();
             assert_eq!(
@@ -3423,7 +3423,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
 
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("rs");
+    simulate_input(cx, "rs");
 
     picker.update(cx, |picker, _| {
         assert_eq!(
@@ -3461,7 +3461,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
 
     // Initial state
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("rs");
+    simulate_input(cx, "rs");
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "lib.rs");
@@ -3554,7 +3554,7 @@ async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui
     // it. Close the finder without confirming and use CloseActiveItem to close the file instead.
     let initial_history = {
         let picker = open_file_picker(&workspace, cx);
-        cx.simulate_input("new");
+        simulate_input(cx, "new");
         let history_items = picker.update(cx, |finder, _| {
             assert_eq!(
                 finder.delegate.matches.len(),
@@ -3629,7 +3629,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
 
     // Initial state
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("rs");
+    simulate_input(cx, "rs");
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "bar.rs");
@@ -3761,7 +3761,7 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
     });
 
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("package.json");
+    simulate_input(cx, "package.json");
 
     picker.update(cx, |finder, _| {
         let matches = &finder.delegate.matches.matches;
@@ -3854,7 +3854,7 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
 
     // Initial state
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("file");
+    simulate_input(cx, "file");
     let selected_index = 3;
     // Checking only the filename, not the whole path
     let selected_file = format!("file_{}.txt", 10 + selected_index);
@@ -3914,7 +3914,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
 
     // Initial state
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("file");
+    simulate_input(cx, "file");
     // Select even/file_2.txt
     cx.dispatch_action(SelectNext);
 
@@ -4179,6 +4179,7 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
         picker.update_matches(".txt".to_string(), window, cx)
     });
 
+    cx.executor().advance_clock(SEARCH_DEBOUNCE);
     cx.run_until_parked();
 
     picker.update(cx, |picker, _| {
@@ -4220,8 +4221,7 @@ async fn test_open_without_dismiss_keeps_finder_open(cx: &mut TestAppContext) {
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("file");
-    cx.run_until_parked();
+    simulate_input(cx, "file");
     picker.update(cx, |picker, _| {
         assert!(
             picker.delegate.matches.len() >= 3,
@@ -4277,8 +4277,7 @@ async fn test_open_without_dismiss_opens_multiple_files(cx: &mut TestAppContext)
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (_picker, workspace, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("a");
-    cx.run_until_parked();
+    simulate_input(cx, "a");
 
     // Open the first match and stay in the finder.
     cx.dispatch_action(OpenWithoutDismiss);
@@ -4343,8 +4342,7 @@ async fn test_open_without_dismiss_then_confirm_closes_finder(cx: &mut TestAppCo
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("t");
-    cx.run_until_parked();
+    simulate_input(cx, "t");
     picker.update(cx, |picker, _| {
         assert!(picker.delegate.matches.len() >= 2);
     });
@@ -4414,7 +4412,7 @@ async fn open_queried_buffer(
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
     let picker = open_file_picker(workspace, cx);
-    cx.simulate_input(input);
+    simulate_input(cx, input);
 
     let history_items = picker.update(cx, |finder, _| {
         assert_eq!(
@@ -4427,6 +4425,10 @@ async fn open_queried_buffer(
     });
 
     cx.dispatch_action(Confirm);
+    // Opening the buffer can trigger worktree updates that schedule a debounced
+    // refresh; advance past it so a deferred confirm (confirm_on_update) runs.
+    cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
 
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -4478,6 +4480,17 @@ fn open_file_picker(
         separate_history: true,
     });
     active_file_picker(workspace, cx)
+}
+
+/// Type `input` into the file finder and then let the debounced search run.
+///
+/// `update_matches` delays the actual search by [`SEARCH_DEBOUNCE`] (see its
+/// doc comment), and `run_until_parked` does not advance the clock, so tests
+/// must move time forward for the search to execute.
+fn simulate_input(cx: &mut VisualTestContext, input: &str) {
+    cx.simulate_input(input);
+    cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
 }
 
 #[track_caller]
@@ -4631,7 +4644,7 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
     let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
     let (picker, _, cx) = build_find_picker(project, cx);
 
-    cx.simulate_input("layout");
+    simulate_input(cx, "layout");
 
     picker.update(cx, |finder, _| {
         let search_matches = collect_search_matches(finder).search_paths_only();
@@ -4747,7 +4760,7 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
 
     // Verify that file finder shows history items
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("fir");
+    simulate_input(cx, "fir");
     picker.update(cx, |finder, _| {
         let matches = collect_search_matches(finder);
         assert!(
@@ -4783,7 +4796,7 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
 
     // Verify that file finder no longer shows history items
     let picker = open_file_picker(&workspace, cx);
-    cx.simulate_input("fir");
+    simulate_input(cx, "fir");
     picker.update(cx, |finder, _| {
         let matches = collect_search_matches(finder);
         assert!(

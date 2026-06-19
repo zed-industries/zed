@@ -933,7 +933,7 @@ pub struct Editor {
     /// Whenever you want to modify the scroll position of the editor, you should
     /// usually use the existing available APIs as opposed to directly interacting
     /// with the scroll manager.
-    pub(crate) scroll_manager: ScrollManager,
+    pub scroll_manager: ScrollManager,
     /// When inline assist editors are linked, they all render cursors because
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
@@ -11756,6 +11756,21 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
     fn set_placeholder_text(&self, text: &str, window: &mut Window, cx: &mut App) {
         self.0.update(cx, |this, cx| {
             this.set_placeholder_text(text, window, cx);
+        });
+    }
+
+    fn set_multiline(&self, max_lines: Option<usize>, _window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            if let Some(max_lines) = max_lines {
+                this.set_mode(EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(max_lines),
+                });
+                this.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            } else {
+                this.set_mode(EditorMode::SingleLine);
+            }
+            cx.notify();
         });
     }
 
