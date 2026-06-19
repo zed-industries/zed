@@ -36,6 +36,7 @@ use std::{
         Arc,
         atomic::{self, AtomicBool},
     },
+    time::Duration,
 };
 use ui::{HighlightedLabel, Indicator, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{
@@ -371,6 +372,7 @@ pub struct FileFinderDelegate {
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
+    search_in_flight: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
     separate_history: bool,
     first_update: bool,
@@ -795,6 +797,7 @@ impl FoundPath {
 }
 
 const MAX_RECENT_SELECTIONS: usize = 20;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
 
 pub enum Event {
     Selected(ProjectPath),
@@ -935,6 +938,7 @@ impl FileFinderDelegate {
             has_changed_selected_index: false,
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            search_in_flight: Arc::new(AtomicBool::new(false)),
             history_items,
             separate_history,
             first_update: true,
@@ -1761,12 +1765,20 @@ impl PickerDelegate for FileFinderDelegate {
                 self.selected_index = 0;
             }
             cx.notify();
+            self.search_in_flight
+                .store(false, atomic::Ordering::Release);
             Task::ready(())
         } else {
             let query = parse_file_search_query(raw_query);
             let path = query.path_position.path.clone();
 
+            let search_in_flight = self.search_in_flight.clone();
+            let was_in_flight = search_in_flight.swap(true, atomic::Ordering::Relaxed);
+
             cx.spawn_in(window, async move |this, cx| {
+                if was_in_flight {
+                    cx.background_executor().timer(SEARCH_DEBOUNCE).await;
+                }
                 let _ = maybe!(async move {
                     let is_absolute_path = path.is_absolute();
                     let did_resolve_abs_path = is_absolute_path
@@ -1788,6 +1800,7 @@ impl PickerDelegate for FileFinderDelegate {
                     anyhow::Ok(())
                 })
                 .await;
+                search_in_flight.store(false, atomic::Ordering::Relaxed);
             })
         }
     }

@@ -75,6 +75,10 @@ impl EventEmitter<WslPickerDismissed> for Picker<WslPickerDelegate> {}
 impl picker::PickerDelegate for WslPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "WSL-distor-picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
