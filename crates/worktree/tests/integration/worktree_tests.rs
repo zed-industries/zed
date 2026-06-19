@@ -1663,7 +1663,7 @@ async fn test_path_prefix_scan_is_not_starved_by_rescan(cx: &mut TestAppContext)
 
     // Suspend the rescan mid-flight, then emit a watcher "lost sync" rescan for that subtree.
     // The scanner's main loop is now parked, waiting on the blocked read.
-    let mut done = fs
+    let mut scan = fs
         .with_read_dir_blocked("/root/heavy", async {
             fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
             cx.executor().run_until_parked();
@@ -1689,7 +1689,7 @@ async fn test_path_prefix_scan_is_not_starved_by_rescan(cx: &mut TestAppContext)
         })
         .await;
 
-    done.recv().await;
+    scan.recv().await;
     cx.executor().run_until_parked();
 }
 
@@ -1737,12 +1737,12 @@ async fn test_concurrent_path_prefix_requests_do_not_lose_each_other(cx: &mut Te
         .unwrap();
 
     // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight.
-    let mut dones = fs
+    let mut scans = fs
         .with_read_dir_blocked("/root/heavy", async {
             fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
             cx.executor().run_until_parked();
 
-            let dones: Vec<_> = (0..num_dirs)
+            let completion_receivers: Vec<_> = (0..num_dirs)
                 .map(|i| {
                     tree.update(cx, |tree, _| {
                         tree.as_local()
@@ -1752,12 +1752,12 @@ async fn test_concurrent_path_prefix_requests_do_not_lose_each_other(cx: &mut Te
                 })
                 .collect();
             cx.executor().run_until_parked();
-            dones
+            completion_receivers
         })
         .await;
 
-    for done in &mut dones {
-        done.recv().await;
+    for scan in &mut scans {
+        scan.recv().await;
     }
     cx.executor().run_until_parked();
 
@@ -1772,7 +1772,7 @@ async fn test_concurrent_path_prefix_requests_do_not_lose_each_other(cx: &mut Te
     }
 }
 
-#[gpui::test(iterations = 50)]
+#[gpui::test(iterations = 200)]
 async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
     cx: &mut TestAppContext,
 ) {
@@ -1783,13 +1783,18 @@ async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
     fs.insert_tree(
         "/root",
         json!({
-            ".gitignore": "dir\n",
+            ".gitignore": "dir\nheavy\n",
             "dir": {
                 "sub": {
                     "subsub": {
-                        "file.txt": "contents"
+                        "subsubsub": {
+                            "file.txt": "contents"
+                        }
                     }
                 }
+            },
+            "heavy": {
+                "a": { "a1.js": "a1" }
             },
         }),
     )
@@ -1810,30 +1815,44 @@ async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Fire the exact same path-prefix request multiple times back to back,
-    // without yielding in between, so several copies can be picked up by
-    // distinct idle scan workers concurrently.
-    let mut dones: Vec<_> = (0..4)
-        .map(|_| {
-            tree.update(cx, |tree, _| {
-                tree.as_local()
-                    .unwrap()
-                    .add_path_prefix_to_scan(rel_path("dir/sub/subsub").into())
-            })
-        })
-        .collect();
-    cx.executor().run_until_parked();
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
 
-    for done in &mut dones {
-        done.recv().await;
+    // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight.
+    let mut scans = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            // Fire the exact same path-prefix request multiple times back to
+            // back, without yielding in between, so several copies can be
+            // picked up by distinct idle scan workers concurrently.
+            let completion_receivers = (0..8)
+                .map(|_| {
+                    tree.update(cx, |tree, _| {
+                        tree.as_local()
+                            .unwrap()
+                            .add_path_prefix_to_scan(rel_path("dir/sub/subsub/subsubsub").into())
+                    })
+                })
+                .collect::<Vec<_>>();
+            cx.executor().run_until_parked();
+            completion_receivers
+        })
+        .await;
+
+    for scan in &mut scans {
+        scan.recv().await;
     }
     cx.executor().run_until_parked();
 
     tree.read_with(cx, |tree, _| {
         assert!(
-            tree.entry_for_path(rel_path("dir/sub/subsub/file.txt"))
+            tree.entry_for_path(rel_path("dir/sub/subsub/subsubsub/file.txt"))
                 .is_some(),
-            "dir/sub/subsub was starved by a duplicate concurrent path-prefix request"
+            "dir/sub/subsub/subsubsub was starved by a duplicate concurrent path-prefix request"
         );
     });
 }

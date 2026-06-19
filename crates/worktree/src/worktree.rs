@@ -270,7 +270,7 @@ struct BackgroundScannerState {
     scanned_dirs: HashSet<ProjectEntryId>,
     watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
-    paths_to_scan: HashSet<Arc<RelPath>>,
+    paths_to_scan: HashMap<Arc<RelPath>, usize>,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
@@ -4850,7 +4850,7 @@ impl BackgroundScanner {
                                 self.fs.as_ref(),
                             )
                             .await;
-                        state.paths_to_scan.insert(path.clone());
+                        *state.paths_to_scan.entry(path.clone()).or_insert(0) += 1;
                         own_paths_to_scan.push(path.clone());
                         break;
                     }
@@ -4864,7 +4864,12 @@ impl BackgroundScanner {
 
         let mut state = self.state.lock().await;
         for path in &own_paths_to_scan {
-            state.paths_to_scan.remove(path);
+            if let Some(count) = state.paths_to_scan.get_mut(path) {
+                *count -= 1;
+                if *count == 0 {
+                    state.paths_to_scan.remove(path);
+                }
+            }
         }
         !own_paths_to_scan.is_empty()
     }
@@ -5864,7 +5869,7 @@ impl BackgroundScanner {
             || state.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || state
                 .paths_to_scan
-                .iter()
+                .keys()
                 .any(|p| p.starts_with(&entry.path))
             || state
                 .path_prefixes_to_scan
