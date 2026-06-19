@@ -175,6 +175,18 @@ impl Editor {
         cx.notify();
     }
 
+    /// Make all diff hunks render with the "unstaged" appearance, regardless
+    /// of whether they have a secondary hunk. Intended for views whose diffs
+    /// aren't related to the git index (e.g. agent diffs).
+    pub fn set_render_diff_hunks_as_unstaged(
+        &mut self,
+        render_as_unstaged: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.render_diff_hunks_as_unstaged = render_as_unstaged;
+        cx.notify();
+    }
+
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
@@ -230,6 +242,7 @@ impl Editor {
 
     pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
         self.temporary_diff_override = false;
+        self.render_diff_hunks_as_unstaged = false;
         self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_collapsed(cx);
@@ -757,6 +770,19 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
         });
+    }
+
+    pub fn toggle_all_diff_hunks(
+        &mut self,
+        _: &ToggleAllDiffHunks,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_any_expanded_diff_hunks(cx) {
+            self.collapse_all_diff_hunks(&CollapseAllDiffHunks, window, cx);
+        } else {
+            self.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+        }
     }
 
     pub(super) fn toggle_selected_diff_hunks(
@@ -2610,6 +2636,10 @@ pub(super) fn render_diff_hunk_controls(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let show_stage_restore = ProjectSettings::get_global(cx)
+        .git
+        .show_stage_restore_buttons;
+
     h_flex()
         .h(line_height)
         .mr_1()
@@ -2624,79 +2654,88 @@ pub(super) fn render_diff_hunk_controls(
         .gap_1()
         .block_mouse_except_scroll()
         .shadow_md()
-        .child(if status.has_secondary_hunk() {
-            Button::new(("stage", row as u64), "Stage")
-                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Stage Hunk",
-                            &::git::ToggleStaged,
-                            &focus_handle,
-                            cx,
-                        )
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, _window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.stage_or_unstage_diff_hunks(
-                                true,
-                                vec![hunk_range.start..hunk_range.start],
+        .when(show_stage_restore, |el| {
+            el.child(if status.has_secondary_hunk() {
+                Button::new(("stage", row as u64), "Stage")
+                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Stage Hunk",
+                                &::git::ToggleStaged,
+                                &focus_handle,
                                 cx,
-                            );
-                        });
-                    }
-                })
-        } else {
-            Button::new(("unstage", row as u64), "Unstage")
-                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Unstage Hunk",
-                            &::git::ToggleStaged,
-                            &focus_handle,
-                            cx,
-                        )
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, _window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.stage_or_unstage_diff_hunks(
-                                false,
-                                vec![hunk_range.start..hunk_range.start],
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, _window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.stage_or_unstage_diff_hunks(
+                                    true,
+                                    vec![hunk_range.start..hunk_range.start],
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+            } else {
+                Button::new(("unstage", row as u64), "Unstage")
+                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Unstage Hunk",
+                                &::git::ToggleStaged,
+                                &focus_handle,
                                 cx,
-                            );
-                        });
-                    }
-                })
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, _window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.stage_or_unstage_diff_hunks(
+                                    false,
+                                    vec![hunk_range.start..hunk_range.start],
+                                    cx,
+                                );
+                            });
+                        }
+                    })
+            })
         })
-        .child(
-            Button::new(("restore", row as u64), "Restore")
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |_window, cx| {
-                        Tooltip::for_action_in("Restore Hunk", &::git::Restore, &focus_handle, cx)
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
-                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                        });
-                    }
-                })
-                .disabled(is_created_file),
-        )
+        .when(show_stage_restore, |el| {
+            el.child(
+                Button::new(("restore", row as u64), "Restore")
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Restore Hunk",
+                                &::git::Restore,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                            });
+                        }
+                    })
+                    .disabled(is_created_file),
+            )
+        })
         .when(
             !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
             |el| {
