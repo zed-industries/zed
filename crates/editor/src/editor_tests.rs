@@ -32544,9 +32544,7 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
-    use crate::inlays::inlay_hints_tests::tests::{
-        cached_hint_labels, init_test, visible_hint_labels,
-    };
+    use crate::inlays::inlay_hints_tests::{cached_hint_labels, init_test, visible_hint_labels};
     use settings::InlayHintSettingsContent;
     use std::sync::atomic::AtomicU32;
     use std::time::Duration;
@@ -32712,7 +32710,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_click_on_parameter_inlay_hint_places_cursor_correctly(cx: &mut TestAppContext) {
-    use crate::inlays::inlay_hints_tests::tests::{cached_hint_labels, visible_hint_labels};
+    use crate::inlays::inlay_hints_tests::{cached_hint_labels, visible_hint_labels};
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {

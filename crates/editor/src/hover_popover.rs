@@ -1256,7 +1256,7 @@ mod tests {
         PointForPosition,
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
-        inlays::inlay_hints_tests::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints_tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
