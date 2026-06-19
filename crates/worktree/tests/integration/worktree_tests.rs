@@ -1693,6 +1693,151 @@ async fn test_path_prefix_scan_is_not_starved_by_rescan(cx: &mut TestAppContext)
     cx.executor().run_until_parked();
 }
 
+#[gpui::test(iterations = 50)]
+async fn test_concurrent_path_prefix_requests_do_not_lose_each_other(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let num_dirs = 6;
+    let mut root = serde_json::Map::new();
+    let mut gitignore = String::new();
+    for i in 0..num_dirs {
+        root.insert(
+            format!("dir{i}"),
+            json!({ "sub": { "file.txt": "contents" } }),
+        );
+        gitignore.push_str(&format!("dir{i}\n"));
+    }
+    gitignore.push_str("heavy\n");
+    root.insert(".gitignore".to_string(), json!(gitignore));
+    root.insert("heavy".to_string(), json!({ "a": { "a1.js": "a1" } }));
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", serde_json::Value::Object(root))
+        .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight.
+    let mut dones = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            let dones: Vec<_> = (0..num_dirs)
+                .map(|i| {
+                    tree.update(cx, |tree, _| {
+                        tree.as_local()
+                            .unwrap()
+                            .add_path_prefix_to_scan(rel_path(&format!("dir{i}/sub")).into())
+                    })
+                })
+                .collect();
+            cx.executor().run_until_parked();
+            dones
+        })
+        .await;
+
+    for done in &mut dones {
+        done.recv().await;
+    }
+    cx.executor().run_until_parked();
+
+    for i in 0..num_dirs {
+        tree.read_with(cx, |tree, _| {
+            assert!(
+                tree.entry_for_path(rel_path(&format!("dir{i}/sub/file.txt")))
+                    .is_some(),
+                "dir{i}/sub was starved by a concurrent path-prefix request and never loaded"
+            );
+        });
+    }
+}
+
+#[gpui::test(iterations = 50)]
+async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "dir\n",
+            "dir": {
+                "sub": {
+                    "subsub": {
+                        "file.txt": "contents"
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Fire the exact same path-prefix request multiple times back to back,
+    // without yielding in between, so several copies can be picked up by
+    // distinct idle scan workers concurrently.
+    let mut dones: Vec<_> = (0..4)
+        .map(|_| {
+            tree.update(cx, |tree, _| {
+                tree.as_local()
+                    .unwrap()
+                    .add_path_prefix_to_scan(rel_path("dir/sub/subsub").into())
+            })
+        })
+        .collect();
+    cx.executor().run_until_parked();
+
+    for done in &mut dones {
+        done.recv().await;
+    }
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("dir/sub/subsub/file.txt"))
+                .is_some(),
+            "dir/sub/subsub was starved by a duplicate concurrent path-prefix request"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     init_test(cx);

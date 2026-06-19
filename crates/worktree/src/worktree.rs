@@ -4824,6 +4824,7 @@ impl BackgroundScanner {
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
         let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
+        let mut own_paths_to_scan = Vec::new();
         {
             let mut state = self.state.lock().await;
             let root_path = state.snapshot.abs_path.clone();
@@ -4850,6 +4851,7 @@ impl BackgroundScanner {
                             )
                             .await;
                         state.paths_to_scan.insert(path.clone());
+                        own_paths_to_scan.push(path.clone());
                         break;
                     }
                 }
@@ -4860,7 +4862,11 @@ impl BackgroundScanner {
             self.scan_dir(&job).await.log_err();
         }
 
-        !mem::take(&mut self.state.lock().await.paths_to_scan).is_empty()
+        let mut state = self.state.lock().await;
+        for path in &own_paths_to_scan {
+            state.paths_to_scan.remove(path);
+        }
+        !own_paths_to_scan.is_empty()
     }
 
     async fn scan_dirs(
