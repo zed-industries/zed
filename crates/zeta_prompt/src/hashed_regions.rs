@@ -712,11 +712,16 @@ pub fn build_patch_from_spans(
             ));
         }
 
+        // `cursor_in_span` was located in `raw_new_span` before the trailing
+        // newline normalization above, which can drop a byte. Clamp it to the
+        // finalized replacement so the offset never points past `new_span`
+        // (downstream cursor mapping byte-slices `new_text` by this offset).
+        let cursor_offset_in_new_text = cursor_in_span.map(|offset| offset.min(new_span.len()));
         edits.push(ParsedSpanEdit {
             snippet_ix: start_snippet,
             range: start_byte..end_byte,
             new_text: new_span,
-            cursor_offset_in_new_text: cursor_in_span,
+            cursor_offset_in_new_text,
         });
     }
 
