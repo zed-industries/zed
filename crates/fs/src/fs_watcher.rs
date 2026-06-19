@@ -849,7 +849,7 @@ impl GlobalWatcher {
         let registration_state = WatcherRegistrationState {
             callback: Arc::new(cb),
             key: key.clone(),
-            path: path.clone(),
+            path,
             mode,
         };
         state.watchers.insert(id, registration_state);
