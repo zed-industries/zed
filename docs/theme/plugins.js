@@ -154,12 +154,18 @@ const copyPageActions = () => {
     document.querySelector("#content main .content-wrap") ||
     document.querySelector("#content > main");
 
+  const markdownAlternateHref = () =>
+    document
+      .querySelector('link[rel="alternate"][type="text/markdown"]')
+      ?.getAttribute("href");
+
   const insertPageActionButtons = () => {
     const contentRoot = getContentRoot();
     if (
       !contentRoot ||
       contentRoot.querySelector(".page-actions") ||
-      !headerCopyMarkdownButton
+      !headerCopyMarkdownButton ||
+      !markdownAlternateHref()
     ) {
       return;
     }
@@ -183,30 +189,9 @@ const copyPageActions = () => {
     header.append(firstHeading, actions);
   };
 
-  const markdownPathForCurrentPage = () => {
-    const pathname = window.location.pathname;
-    const docsPrefix = pathname.startsWith("/docs/") ? "/docs/" : "/";
-
-    if (pathname === "/docs/" || pathname === "/docs" || pathname === "/") {
-      return `${docsPrefix}getting-started.md`;
-    }
-
-    const cleanPath = pathname
-      .replace(/^\//, "")
-      .replace(/^docs\//, "")
-      .replace(/\.md$/, "")
-      .replace(/\.html$/, "")
-      .replace(/\/$/, "");
-
-    return `${docsPrefix}${cleanPath || "getting-started"}.md`;
-  };
-
   const markdownUrl = () => {
-    const alternateLink = document.querySelector(
-      'link[rel="alternate"][type="text/markdown"]',
-    );
-    const alternateHref = alternateLink?.getAttribute("href");
-    if (!alternateHref) return markdownPathForCurrentPage();
+    const alternateHref = markdownAlternateHref();
+    if (!alternateHref) return null;
 
     const url = new URL(alternateHref, window.location.href);
     if (
@@ -232,7 +217,12 @@ const copyPageActions = () => {
       isLoading = true;
       changeButtonIcon(button, "fa fa-spinner fa-spin", 0); // Don't auto-restore spinner
 
-      const response = await fetch(markdownUrl());
+      const url = markdownUrl();
+      if (!url) {
+        throw new Error("Markdown alternate link not found");
+      }
+
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(
           `Failed to fetch markdown: ${response.status} ${response.statusText}`,
