@@ -150,6 +150,16 @@ pub fn checkout_repo() -> CheckoutStep {
     CheckoutStep::default()
 }
 
+// Audit mode: logs egress, blocks nothing. Namespace requires v2.19.0+.
+pub fn harden_runner() -> Step<Use> {
+    named::uses(
+        "step-security",
+        "harden-runner",
+        "9af89fc71515a100421586dfdb3dc9c984fbf411", // v2.19.4
+    )
+    .add_with(("egress-policy", "audit"))
+}
+
 pub fn setup_pnpm() -> Step<Use> {
     named::uses(
         "pnpm",

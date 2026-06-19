@@ -311,9 +311,10 @@ fn render_api_key_provider(
                         }),
                 )
                 .child(
-                    SettingsInputField::new()
+                    SettingsInputField::new(format!("{}-api-key-input", title))
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                        .aria_label(format!("{} API Key", title))
                         .on_confirm(move |api_key, _window, cx| {
                             write_key(api_key.filter(|key| !key.is_empty()), cx);
                         }),
