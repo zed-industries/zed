@@ -9,7 +9,7 @@
 [![DeepSource](https://app.deepsource.com/gh/animaios/zed.svg/?label=active+issues&show_trend=true&token=seHb8WONAalGDKxbc1L8bHi0)](https://app.deepsource.com/gh/animaios/zed/)
 [![DeepSource](https://app.deepsource.com/gh/animaios/zed.svg/?label=resolved+issues&show_trend=true&token=seHb8WONAalGDKxbc1L8bHi0)](https://app.deepsource.com/gh/animaios/zed/)
 
-Welcome to AnimAIOS Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Welcome to AnimAIOS Zed, a high-performance, multiplayer code editor.
 
 <img width="256" height="384" alt="anima-chan" src="https://github.com/user-attachments/assets/1704ceea-f1c4-44de-a83f-ca0d8d1a0953" />
 
