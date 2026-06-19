@@ -354,10 +354,7 @@ fn is_wsl_drvfs_path(path: &Path) -> bool {
 }
 
 /// Whether the volume backing `path` does case-insensitive name lookups, used to
-/// pick exact vs. folded matching. Only meaningful for an existing path, so it's
-/// probed at registration time and treated as stable (volume case behavior is
-/// fixed at format time; we don't handle a differently-cased volume mounted
-/// underneath a watch root).
+/// pick exact vs. folded matching.
 #[cfg(target_os = "macos")]
 fn case_insensitive_path(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt as _;
@@ -367,6 +364,7 @@ fn case_insensitive_path(path: &Path) -> bool {
     let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
         return true;
     };
+    // SAFETY: We just initialized c_path, so it's a valid pointer
     unsafe { libc::pathconf(c_path.as_ptr(), libc::_PC_CASE_SENSITIVE) == 0 }
 }
 
@@ -381,10 +379,14 @@ fn case_insensitive_path(path: &Path) -> bool {
         return false;
     };
     let mut buf = std::mem::MaybeUninit::<libc::statx>::zeroed();
-    let status = unsafe { libc::statx(libc::AT_FDCWD, c_path.as_ptr(), 0, 0, buf.as_mut_ptr()) };
-    if status != 0 {
+
+    // SAFETY: c_path is still valid, buffer has been zeroed
+    if unsafe { libc::statx(libc::AT_FDCWD, c_path.as_ptr(), 0, 0, buf.as_mut_ptr()) } != 0 {
         return false;
     }
+
+    // SAFETY: libc statx initialized this buffer, otherwise we would've returned on a error
+    // in that function call
     let buf = unsafe { buf.assume_init() };
     buf.stx_attributes_mask & STATX_ATTR_CASEFOLD != 0
         && buf.stx_attributes & STATX_ATTR_CASEFOLD != 0
@@ -392,37 +394,10 @@ fn case_insensitive_path(path: &Path) -> bool {
 
 #[cfg(target_os = "windows")]
 fn case_insensitive_path(path: &Path) -> bool {
-    use std::os::windows::fs::OpenOptionsExt as _;
-    use std::os::windows::io::AsRawHandle as _;
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Storage::FileSystem::{
-        FILE_CASE_SENSITIVE_INFO, FILE_CS_FLAG_CASE_SENSITIVE_DIR, FILE_FLAG_BACKUP_SEMANTICS,
-        FileCaseSensitiveInfo, GetFileInformationByHandleEx,
-    };
-
-    // NTFS/exFAT/ReFS are insensitive by default; a directory can be flagged
-    // case-sensitive (WSL/`fsutil`). Query the flag, defaulting to insensitive on
-    // failure (e.g. pre-1803).
-    let Ok(dir) = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
-        .open(path)
-    else {
-        return true;
-    };
-    let mut info = FILE_CASE_SENSITIVE_INFO::default();
-    let queried = unsafe {
-        GetFileInformationByHandleEx(
-            HANDLE(dir.as_raw_handle() as _),
-            FileCaseSensitiveInfo,
-            (&mut info as *mut FILE_CASE_SENSITIVE_INFO).cast(),
-            std::mem::size_of::<FILE_CASE_SENSITIVE_INFO>() as u32,
-        )
-    };
-    match queried {
-        Ok(()) => info.Flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR == 0,
-        Err(_) => true,
-    }
+    // todo(windows): Windows defaults to case in sensitive, but
+    // they can mark specific directories as case sensitive. Mainly
+    // for WSL use cases
+    true
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
