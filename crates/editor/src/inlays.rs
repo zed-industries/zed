@@ -18,7 +18,10 @@
 pub mod inlay_hints;
 
 #[cfg(test)]
-pub mod inlay_hints_tests;
+mod inlay_hints_tests;
+
+#[cfg(test)]
+pub(crate) use inlay_hints_tests::{cached_hint_labels, init_test, visible_hint_labels};
 
 use std::sync::OnceLock;
 
