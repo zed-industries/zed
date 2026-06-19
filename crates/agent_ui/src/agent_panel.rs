@@ -111,7 +111,8 @@ const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
 const TERMINAL_INIT_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_millis(250);
-const TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+const TERMINAL_INIT_COMMAND_FIRST_EVENT_TIMEOUT: Duration = Duration::from_secs(1);
+const TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
     "agent", // Unfortunately, both Cursor cli + grok
     "agy",
@@ -2137,13 +2138,32 @@ impl AgentPanel {
             .fuse();
         futures::pin_mut!(startup_timeout);
 
+        let first_event_timeout = cx
+            .background_executor()
+            .timer(TERMINAL_INIT_COMMAND_FIRST_EVENT_TIMEOUT)
+            .fuse();
+        let first_event = startup_rx.recv().fuse();
+        futures::pin_mut!(first_event_timeout, first_event);
+
+        futures::select_biased! {
+            _ = startup_timeout => return,
+            result = first_event => {
+                if result.is_err() {
+                    return;
+                }
+            }
+            _ = first_event_timeout => return,
+        }
+
         loop {
             let next_event = startup_rx.recv().fuse();
+            futures::pin_mut!(next_event);
+
             let idle_timeout = cx
                 .background_executor()
                 .timer(TERMINAL_INIT_COMMAND_IDLE_TIMEOUT)
                 .fuse();
-            futures::pin_mut!(next_event, idle_timeout);
+            futures::pin_mut!(idle_timeout);
 
             futures::select_biased! {
                 _ = startup_timeout => return,
@@ -7488,6 +7508,55 @@ mod tests {
                 "the single initial terminal should become active"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_startup_wait_uses_first_event_timeout(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let (_startup_tx, startup_rx) = async_channel::bounded(1);
+        let wait_task = cx.spawn(|mut cx| async move {
+            AgentPanel::wait_for_terminal_startup(startup_rx, &mut cx).await;
+        });
+
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(TERMINAL_INIT_COMMAND_IDLE_TIMEOUT + Duration::from_millis(1));
+        cx.run_until_parked();
+        assert!(
+            !wait_task.is_ready(),
+            "startup wait should not complete from the idle timeout before any startup event"
+        );
+
+        cx.executor()
+            .advance_clock(TERMINAL_INIT_COMMAND_FIRST_EVENT_TIMEOUT);
+        cx.run_until_parked();
+        assert!(
+            wait_task.is_ready(),
+            "startup wait should complete from the first-event timeout before the hard startup timeout"
+        );
+        wait_task.await;
+    }
+
+    #[gpui::test]
+    async fn test_terminal_startup_wait_idles_after_first_event(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let (startup_tx, startup_rx) = async_channel::bounded(1);
+        let wait_task = cx.spawn(|mut cx| async move {
+            AgentPanel::wait_for_terminal_startup(startup_rx, &mut cx).await;
+        });
+
+        startup_tx.try_send(()).expect("startup event should send");
+        cx.run_until_parked();
+        assert!(
+            !wait_task.is_ready(),
+            "startup wait should continue until the terminal is idle after the first event"
+        );
+
+        cx.executor()
+            .advance_clock(TERMINAL_INIT_COMMAND_IDLE_TIMEOUT + Duration::from_millis(1));
+        cx.run_until_parked();
+        assert!(wait_task.is_ready());
+        wait_task.await;
     }
 
     #[gpui::test]
