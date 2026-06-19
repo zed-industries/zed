@@ -288,6 +288,7 @@ dependencies = [
  "regex",
  "reqwest_client",
  "rust-embed",
+ "sandbox",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -2150,6 +2151,7 @@ dependencies = [
  "language",
  "language_model",
  "lsp",
+ "markdown",
  "multi_buffer",
  "project",
  "prompt_store",
@@ -10673,6 +10675,7 @@ name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "buffer_diff",
  "db",
  "editor",
  "fs",
@@ -15910,6 +15913,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "log",
+ "smol",
  "tempfile",
 ]
 
@@ -22446,6 +22451,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "ui_input",
  "url",
  "util",
  "uuid",
@@ -22891,7 +22897,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

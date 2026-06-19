@@ -5,7 +5,7 @@ use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
-    Project, SearchResults, WorktreeSettings,
+    Project, ProjectPath, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use util::RangeExt;
-use util::markdown::MarkdownInlineCode;
+use util::markdown::{MarkdownCodeBlock, MarkdownInlineCode};
 use util::paths::PathMatcher;
 
 /// Searches the contents of files in the project with a regular expression
@@ -178,6 +178,8 @@ impl AgentTool for GrepTool {
             futures::pin_mut!(rx);
 
             let mut output = String::new();
+            let mut content = Vec::new();
+            let mut locations = Vec::new();
             let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
@@ -203,24 +205,38 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
-                    (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
-                }) else {
+                let (Some((path, project_path)), mut parse_status) =
+                    buffer.read_with(cx, |buffer, cx| {
+                        (
+                            buffer.file().map(|file| {
+                                (
+                                    file.full_path(cx),
+                                    ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    },
+                                )
+                            }),
+                            buffer.parse_status(),
+                        )
+                    })
+                else {
                     continue;
                 };
 
                 // Check if this file should be excluded based on its worktree settings
-                if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
-                    project.find_project_path(&path, cx)
+                if cx.update(|cx| {
+                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                    worktree_settings.is_path_excluded(&project_path.path)
+                        || worktree_settings.is_path_private(&project_path.path)
                 }) {
-                    if cx.update(|cx| {
-                        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-                        worktree_settings.is_path_excluded(&project_path.path)
-                            || worktree_settings.is_path_private(&project_path.path)
-                    }) {
-                        continue;
-                    }
+                    continue;
                 }
+
+                let abs_path = project
+                    .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
+                    .ok()
+                    .flatten();
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await.map_err(|e| e.to_string())?;
@@ -298,17 +314,40 @@ impl AgentTool for GrepTool {
                             .ok();
                     }
 
-                    if range.start.row == end_row {
-                        writeln!(output, "L{}", range.start.row + 1)
-                            .ok();
+                    let line_label = if range.start.row == end_row {
+                        format!("L{}", range.start.row + 1)
                     } else {
-                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)
-                            .ok();
-                    }
+                        format!("L{}-{}", range.start.row + 1, end_row + 1)
+                    };
+                    writeln!(output, "{line_label}").ok();
 
+                    let snippet: String = snapshot.text_for_range(range.clone()).collect();
                     output.push_str("```\n");
-                    output.extend(snapshot.text_for_range(range));
+                    output.push_str(&snippet);
                     output.push_str("\n```\n");
+
+                    if let Some(abs_path) = &abs_path {
+                        content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                format!("{}#{}", path.display(), line_label),
+                                format!("file://{}#{}", abs_path.display(), line_label),
+                            )),
+                        )));
+                        locations.push(
+                            acp::ToolCallLocation::new(abs_path).line(Some(range.start.row)),
+                        );
+                    }
+                    // Use a fence longer than any backtick run in the snippet so
+                    // matches containing code fences don't break the rendering.
+                    content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            MarkdownCodeBlock {
+                                tag: "",
+                                text: &snippet,
+                            }
+                            .to_string(),
+                        )),
+                    )));
 
                     if let Some(ancestor_range) = ancestor_range
                         && end_row < ancestor_range.end.row {
@@ -319,6 +358,14 @@ impl AgentTool for GrepTool {
 
                     matches_found += 1;
                 }
+            }
+
+            if !content.is_empty() {
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new()
+                        .content(content)
+                        .locations(locations),
+                );
             }
 
             if matches_found == 0 {
@@ -505,6 +552,158 @@ mod tests {
         assert!(
             result.contains("lowercase"),
             "Case-sensitive search should match lowercase text"
+        );
+    }
+
+    // The grep tool streams a clickable `file://` ResourceLink and a tool-call
+    // location for every match so each result opens the file at the matched line
+    // in the agent panel. The model-facing text output stays link-free.
+    #[gpui::test]
+    async fn test_grep_results_are_clickable_file_links(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": {
+                    "alpha.txt": "the needle is in alpha",
+                },
+                "beta.txt": "the needle is in beta",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let input = GrepToolInput {
+            regex: "needle".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+        let output = task.await.expect("grep tool should succeed");
+        let update = events.expect_update_fields().await;
+
+        // Model-facing output is unchanged: matches are rendered as markdown, but
+        // the clickable `file://` URIs only live in the tool-call UI content.
+        assert!(output.contains("## Matches in"));
+        assert!(
+            !output.contains("file://"),
+            "model-facing output should not embed file:// links, got:\n{output}"
+        );
+
+        // Pull the ResourceLink blocks (the clickable links) out of the content.
+        let content = update.content.expect("expected content blocks");
+        let links = content
+            .iter()
+            .filter_map(|block| match block {
+                acp::ToolCallContent::Content(inner) => match &inner.content {
+                    acp::ContentBlock::ResourceLink(link) => Some(link),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(links.len(), 2, "expected one resource link per match");
+
+        let alpha_uri = format!("file://{}#L1", path!("/root/src/alpha.txt"));
+        assert!(
+            links.iter().any(|link| {
+                link.name.replace('\\', "/") == "root/src/alpha.txt#L1"
+                    && link.uri.replace('\\', "/") == alpha_uri.replace('\\', "/")
+            }),
+            "missing clickable link for alpha.txt, got: {links:?}"
+        );
+
+        let beta_uri = format!("file://{}#L1", path!("/root/beta.txt"));
+        assert!(
+            links.iter().any(|link| {
+                link.name.replace('\\', "/") == "root/beta.txt#L1"
+                    && link.uri.replace('\\', "/") == beta_uri.replace('\\', "/")
+            }),
+            "missing clickable link for beta.txt, got: {links:?}"
+        );
+
+        // Each match also reports a location so the panel can reveal the file at
+        // the matched (0-based) row.
+        let locations = update.locations.expect("expected locations");
+        assert_eq!(locations.len(), 2);
+        assert!(
+            locations.iter().any(|location| {
+                location.path.to_string_lossy().replace('\\', "/")
+                    == path!("/root/src/alpha.txt").replace('\\', "/")
+                    && location.line == Some(0)
+            }),
+            "missing location for alpha.txt, got: {locations:?}"
+        );
+        assert!(
+            locations.iter().any(|location| {
+                location.path.to_string_lossy().replace('\\', "/")
+                    == path!("/root/beta.txt").replace('\\', "/")
+                    && location.line == Some(0)
+            }),
+            "missing location for beta.txt, got: {locations:?}"
+        );
+    }
+
+    // Snippets that themselves contain a ``` code fence (e.g. matches inside
+    // markdown) must be wrapped in a longer fence so they don't break out of the
+    // surrounding code block when rendered in the agent panel.
+    #[gpui::test]
+    async fn test_grep_snippet_fence_outlives_inner_backticks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "doc.md": "before\n```\nNEEDLE inside fence\n```\nafter",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let tool = Arc::new(GrepTool { project });
+        let (event_stream, mut events) = ToolCallEventStream::test();
+        let input = GrepToolInput {
+            regex: "NEEDLE".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+        task.await.expect("grep tool should succeed");
+        let update = events.expect_update_fields().await;
+
+        // Find the snippet text block emitted alongside the clickable link.
+        let content = update.content.expect("expected content blocks");
+        let snippet = content
+            .iter()
+            .find_map(|block| match block {
+                acp::ToolCallContent::Content(inner) => match &inner.content {
+                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("expected a snippet text block in the tool-call content");
+
+        // The snippet embeds a three-backtick fence, so the wrapping fence must be
+        // at least four backticks long to avoid breaking out of the code block.
+        assert!(
+            snippet.contains("NEEDLE inside fence"),
+            "snippet should contain the matched line, got:\n{snippet}"
+        );
+        assert!(
+            snippet.starts_with("````\n"),
+            "snippet should be wrapped in a fence longer than the inner ```, got:\n{snippet}"
         );
     }
 

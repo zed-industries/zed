@@ -487,6 +487,10 @@ impl AgentSettingsContent {
             .allow_unsandboxed = Some(true);
     }
 
+    pub fn disable_sandbox(&mut self) {
+        self.sandbox_permissions.get_or_insert_default().disabled = Some(true);
+    }
+
     pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
         let write_paths = &mut self
             .sandbox_permissions
@@ -748,6 +752,11 @@ pub struct SandboxPermissionsContent {
     /// prompting when they request `unsandboxed: true`.
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
+
+    /// Whether terminal sandboxing is turned off entirely, so agent terminal
+    /// commands always run outside the sandbox.
+    /// Default: false
+    pub disabled: Option<bool>,
 
     /// Directory subtrees that sandboxed terminal commands may always write
     /// to without prompting. Paths written by Zed are absolute.
@@ -1036,6 +1045,7 @@ mod tests {
         );
         settings.allow_sandbox_fs_write_all();
         settings.allow_sandbox_unsandboxed();
+        settings.disable_sandbox();
         settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
@@ -1051,6 +1061,7 @@ mod tests {
         );
         assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
         assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
+        assert_eq!(sandbox_permissions.disabled, Some(true));
         assert_eq!(
             sandbox_permissions
                 .write_paths
