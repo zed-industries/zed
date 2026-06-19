@@ -259,6 +259,10 @@ pub struct ChannelModalDelegate {
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "channel modal"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search collaborator by username...".into()
     }

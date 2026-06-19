@@ -303,6 +303,10 @@ impl TemplatePickerDelegate {
 impl PickerDelegate for TemplatePickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "dev container template picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matching_indices.len()
     }
@@ -485,6 +489,10 @@ impl FeaturePickerDelegate {
 
 impl PickerDelegate for FeaturePickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "dev container feature picker"
+    }
 
     fn match_count(&self) -> usize {
         self.matching_indices.len()
