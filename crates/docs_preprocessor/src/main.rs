@@ -989,10 +989,15 @@ fn write_markdown_redirect_aliases(
                 )
             })?;
         }
-        std::fs::copy(&destination_markdown, &source_markdown).with_context(|| {
+        let contents = format!(
+            "# Moved\n\n> For the complete documentation index and Markdown links, see [llms.txt](/docs/llms.txt).\n\nThis page moved to [the current docs page](https://zed.dev{}).\n",
+            html_path_to_markdown(redirect_destination)
+                .unwrap_or_else(|| redirect_destination.to_string())
+        );
+        std::fs::write(&source_markdown, contents).with_context(|| {
             format!(
-                "failed to copy markdown redirect alias from {} to {}",
-                destination_markdown.display(),
+                "failed to write markdown redirect alias from {} to {}",
+                redirect_destination,
                 source_markdown.display()
             )
         })?;
