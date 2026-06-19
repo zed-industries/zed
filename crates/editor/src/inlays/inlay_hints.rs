@@ -571,7 +571,7 @@ impl Editor {
             .cloned()
     }
 
-    pub(crate) fn allowed_hint_kinds_for_editor(editor: &Editor) -> HashSet<Option<InlayHintKind>> {
+    pub fn allowed_hint_kinds_for_editor(editor: &Editor) -> HashSet<Option<InlayHintKind>> {
         editor
             .inlay_hints
             .as_ref()
