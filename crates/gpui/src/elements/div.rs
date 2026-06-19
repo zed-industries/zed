@@ -2282,9 +2282,6 @@ impl Interactivity {
                 if self.tab_group {
                     tab_group = self.tab_index;
                 }
-                if let Some(focus_handle) = &self.tracked_focus_handle {
-                    window.next_frame.tab_stops.insert(focus_handle);
-                }
 
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
@@ -2293,6 +2290,17 @@ impl Interactivity {
                                 style.overflow_mask(bounds, window.rem_size()),
                                 |window| {
                                     window.with_tab_group(tab_group, |window| {
+                                        // Register the container's own focus handle *inside* its
+                                        // tab group, so that focusing the container and then
+                                        // calling `focus_next` descends into this group's first
+                                        // item. Inserting it before `with_tab_group` would give the
+                                        // container a shallower tab path than its children; with
+                                        // sibling groups every container would then sort ahead of
+                                        // every item, and `focus_next` from a container would jump
+                                        // to the first item in the whole window instead of its own.
+                                        if let Some(focus_handle) = &self.tracked_focus_handle {
+                                            window.next_frame.tab_stops.insert(focus_handle);
+                                        }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
                                             self.paint_debug_info(
@@ -4571,5 +4579,74 @@ mod tests {
         key_up(&mut cx, window, "cmd-enter");
 
         assert!(clicks.borrow().is_empty(), "clicks: {:?}", clicks.borrow());
+    }
+
+    /// Two sibling tab groups, each a focusable container that is *not* itself a
+    /// tab stop and holds a single tab stop. Mirrors how the title bar and
+    /// status bar expose their controls as ARIA toolbars.
+    struct TabGroupFocus {
+        group_a: FocusHandle,
+        item_a: FocusHandle,
+        group_b: FocusHandle,
+        item_b: FocusHandle,
+    }
+
+    impl Render for TabGroupFocus {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            fn group(container: &FocusHandle, item: &FocusHandle) -> Div {
+                div()
+                    .track_focus(container)
+                    .tab_group()
+                    .child(div().track_focus(item))
+            }
+            div()
+                .child(group(&self.group_a, &self.item_a))
+                .child(group(&self.group_b, &self.item_b))
+        }
+    }
+
+    /// Focusing a tab-group container and pressing Tab (`focus_next`) must move
+    /// focus to the first tab stop *inside that container*, as documented on
+    /// [`InteractiveElement::tab_stop`].
+    #[test]
+    fn focus_next_from_tab_group_container_enters_that_group() {
+        let mut cx = TestAppContext::single();
+        let (group_a, item_a, group_b, item_b) = cx.update(|cx| {
+            (
+                cx.focus_handle(),
+                cx.focus_handle().tab_stop(true),
+                cx.focus_handle(),
+                cx.focus_handle().tab_stop(true),
+            )
+        });
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let (group_a, item_a, group_b, item_b) = (
+                    group_a.clone(),
+                    item_a.clone(),
+                    group_b.clone(),
+                    item_b.clone(),
+                );
+                move |_, _| TabGroupFocus {
+                    group_a,
+                    item_a,
+                    group_b,
+                    item_b,
+                }
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+
+        // Focus the *second* group's container, then advance like Tab would.
+        let focused = cx
+            .update_window(window, |_, window, cx| {
+                window.focus(&group_b, cx);
+                window.focus_next(cx);
+                window.focused(cx).map(|handle| handle.id)
+            })
+            .unwrap();
+
+        assert_eq!(focused, Some(item_b.id));
     }
 }
