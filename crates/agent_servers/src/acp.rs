@@ -951,7 +951,7 @@ impl AcpConnection {
             ("terminal_output".into(), true.into()),
             ("terminal-auth".into(), true.into()),
         ]);
-        if id.as_ref() == CURSOR_ID {
+        if agent_id.as_ref() == CURSOR_ID {
             initialize_meta.insert("parameterizedModelPicker".into(), true.into());
         }
 
