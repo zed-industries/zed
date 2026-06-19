@@ -117,6 +117,25 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     );
 }
 
+/// Returns column 0 of the document's first line, imitating `gg` in Helix.
+///
+/// With a count, Helix treats it as a (1-based) line number, so a count of `n`
+/// targets buffer row `n - 1`, clamped to the last line.
+fn start_of_document(map: &DisplaySnapshot, times: Option<usize>) -> DisplayPoint {
+    let buffer_row = match times {
+        None => 0,
+        Some(times) => (times.saturating_sub(1) as u32).min(map.max_row().0),
+    };
+    map.point_to_display_point(Point::new(buffer_row, 0), Bias::Left)
+}
+
+/// Returns column 0 of the document's last line, imitating `ge` in Helix.
+///
+/// Helix ignores any count for `ge`, so it is not taken here.
+fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
+    map.point_to_display_point(Point::new(map.max_row().0, 0), Bias::Left)
+}
+
 impl Vim {
     pub fn helix_normal_motion(
         &mut self,
@@ -162,29 +181,10 @@ impl Vim {
                     }
 
                     let (new_head, goal) = match motion {
-                        // gg lands at col 0. With a count, at that buffer line's col 0.
                         Motion::StartOfDocument => {
-                            let last_buffer_row = map.buffer_snapshot().max_point().row;
-                            let buffer_row = if let Some(n) = times {
-                                ((n - 1) as u32).min(last_buffer_row)
-                            } else {
-                                0
-                            };
-                            let point = map.point_to_display_point(
-                                Point::new(buffer_row, 0),
-                                Bias::Left,
-                            );
-                            (point, SelectionGoal::None)
+                            (start_of_document(map, times), SelectionGoal::None)
                         }
-                        // ge always extends to col 0 of the last line. Counts are ignored.
-                        Motion::EndOfDocument => {
-                            let last_buffer_row = map.buffer_snapshot().max_point().row;
-                            let point = map.point_to_display_point(
-                                Point::new(last_buffer_row, 0),
-                                Bias::Left,
-                            );
-                            (point, SelectionGoal::None)
-                        }
+                        Motion::EndOfDocument => (end_of_document(map), SelectionGoal::None),
                         // EndOfLine positions after the last character, but in
                         // helix visual mode we want the selection to end ON the
                         // last character. Adjust left here so the subsequent
@@ -509,36 +509,20 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
             Motion::StartOfDocument => {
-                // gg lands at column 0. With a count, goes to that buffer line at col 0.
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
-                            let last_buffer_row = map.buffer_snapshot().max_point().row;
-                            let buffer_row = if let Some(n) = times {
-                                ((n - 1) as u32).min(last_buffer_row)
-                            } else {
-                                0
-                            };
-                            let point = map.point_to_display_point(
-                                Point::new(buffer_row, 0),
-                                Bias::Left,
-                            );
-                            selection.collapse_to(point, SelectionGoal::None)
+                            selection
+                                .collapse_to(start_of_document(map, times), SelectionGoal::None)
                         })
                     });
                 });
             }
             Motion::EndOfDocument => {
-                // ge always goes to column 0 of the last line. Counts are ignored.
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
-                            let last_buffer_row = map.buffer_snapshot().max_point().row;
-                            let point = map.point_to_display_point(
-                                Point::new(last_buffer_row, 0),
-                                Bias::Left,
-                            );
-                            selection.collapse_to(point, SelectionGoal::None)
+                            selection.collapse_to(end_of_document(map), SelectionGoal::None)
                         })
                     });
                 });
