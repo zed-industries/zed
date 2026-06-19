@@ -564,9 +564,7 @@ impl Editor {
         Some(invalidate_cache)
     }
 
-    pub(crate) fn visible_inlay_hints(
-        display_map: &DisplayMap,
-    ) -> impl Iterator<Item = Inlay> + use<'_> {
+    pub fn visible_inlay_hints(display_map: &DisplayMap) -> impl Iterator<Item = Inlay> + use<'_> {
         display_map
             .current_inlays()
             .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
