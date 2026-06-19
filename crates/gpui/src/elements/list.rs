@@ -1239,9 +1239,38 @@ impl StateInner {
                         && autoscroll
                     {
                         if autoscroll_bounds.top() < bounds.top() {
+                            let mut item_ix = item.index;
+                            let mut offset_in_item = autoscroll_bounds.top() - item_origin.y;
+
+                            // The requested top can sit above this item's own
+                            // top. Walk into earlier items so the offset stays
+                            // non-negative and no blank space appears above the
+                            // list.
+                            if offset_in_item < Pixels::ZERO {
+                                let mut cursor = self.items.cursor::<Count>(());
+                                cursor.seek(&Count(item_ix), Bias::Right);
+                                while offset_in_item < Pixels::ZERO {
+                                    cursor.prev();
+                                    let Some(prev_item) = cursor.item() else {
+                                        offset_in_item = Pixels::ZERO;
+                                        break;
+                                    };
+                                    let size = prev_item.size().unwrap_or_else(|| {
+                                        let mut element = render_item(cursor.start().0, window, cx);
+                                        let item_available_size = size(
+                                            bounds.size.width.into(),
+                                            AvailableSpace::MinContent,
+                                        );
+                                        element.layout_as_root(item_available_size, window, cx)
+                                    });
+                                    item_ix = cursor.start().0;
+                                    offset_in_item += size.height;
+                                }
+                            }
+
                             return Err(ListOffset {
-                                item_ix: item.index,
-                                offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                                item_ix,
+                                offset_in_item,
                             });
                         } else if autoscroll_bounds.bottom() > bounds.bottom() {
                             let mut cursor = self.items.cursor::<Count>(());
@@ -1638,9 +1667,62 @@ mod test {
     use std::rc::Rc;
 
     use crate::{
-        self as gpui, AppContext, Context, Element, FollowMode, IntoElement, ListState, Render,
-        Styled, TestAppContext, Window, div, list, point, px, size,
+        self as gpui, AppContext, Bounds, Context, Element, FollowMode, IntoElement, ListState,
+        Render, Styled, TestAppContext, Window, canvas, div, list, point, px, size,
     };
+
+    #[gpui::test]
+    fn test_autoscroll_above_item_top_renders_items_above(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    if ix == 2 {
+                        // Request an autoscroll whose top sits 30px above item 2's
+                        // own top, mimicking a scroll-margin overshoot.
+                        canvas(
+                            |bounds, window, _| {
+                                window.request_autoscroll(Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() - px(30.)),
+                                    point(bounds.right(), bounds.top() + px(5.)),
+                                ));
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .h(px(20.))
+                        .w_full()
+                        .into_any()
+                    } else {
+                        div().h(px(20.)).w_full().into_any()
+                    }
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        // 30px above item 2's top, with 20px items, lands 10px into item 0.
+        let scroll_top = state.logical_scroll_top();
+        assert!(
+            scroll_top.offset_in_item >= px(0.),
+            "offset_in_item must never be negative (would leave blank space above), got {:?}",
+            scroll_top.offset_in_item,
+        );
+        assert_eq!(scroll_top.item_ix, 0);
+        assert_eq!(scroll_top.offset_in_item, px(10.));
+    }
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {

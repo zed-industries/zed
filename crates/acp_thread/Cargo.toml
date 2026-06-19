@@ -29,6 +29,7 @@ multi_buffer.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http_proxy.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true

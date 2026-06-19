@@ -25,7 +25,8 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
@@ -194,6 +195,17 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             )
         })
         .into()
+    }
+
+    fn configuration_view_v2(
+        &self,
+        target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        // GitHub Copilot's control is just a sign-in button, so render it inline
+        // rather than behind a sub-page.
+        ProviderConfigurationView::Inline(self.configuration_view(target_agent, window, cx))
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -1062,7 +1074,8 @@ fn into_copilot_chat(
                         | MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
-                        | MessageContent::Image(_) => None,
+                        | MessageContent::Image(_)
+                        | MessageContent::Compaction(_) => None,
                     }) {
                         buffer.push_str(string);
                     }
@@ -1189,6 +1202,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        compact_at_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

@@ -34,3 +34,23 @@
 {"Key":"c"}
 {"Key":"w"}
 {"Get":{"state":"tesˇ-test","mode":"Insert"}}
+{"Put":{"state":"ˇTest test test"}}
+{"Key":"c"}
+{"Key":"2"}
+{"Key":"w"}
+{"Get":{"state":"ˇ test","mode":"Insert"}}
+{"Put":{"state":"Tˇest test test"}}
+{"Key":"c"}
+{"Key":"2"}
+{"Key":"w"}
+{"Get":{"state":"Tˇ test","mode":"Insert"}}
+{"Put":{"state":"tesˇt-test"}}
+{"Key":"c"}
+{"Key":"2"}
+{"Key":"w"}
+{"Get":{"state":"tesˇtest","mode":"Insert"}}
+{"Put":{"state":"Test teˇst-test test Test"}}
+{"Key":"c"}
+{"Key":"2"}
+{"Key":"shift-w"}
+{"Get":{"state":"Test teˇ Test","mode":"Insert"}}
