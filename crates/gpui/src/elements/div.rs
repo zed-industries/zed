@@ -2126,6 +2126,11 @@ impl Interactivity {
                             } else {
                                 None
                             };
+                            if let (Some(global_id), Some(hitbox)) = (global_id, hitbox.as_ref())
+                                && self.tooltip_builder.is_some()
+                            {
+                                window.register_tooltip_owner(global_id, hitbox, Rc::new(|_| true));
+                            }
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
@@ -2304,6 +2309,7 @@ impl Interactivity {
                                             }
 
                                             self.paint_mouse_listeners(
+                                                global_id,
                                                 hitbox,
                                                 element_state.as_mut(),
                                                 window,
@@ -2474,6 +2480,7 @@ impl Interactivity {
 
     fn paint_mouse_listeners(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
@@ -2849,7 +2856,9 @@ impl Interactivity {
                 });
             }
 
-            if let Some(tooltip_builder) = self.tooltip_builder.take() {
+            if let (Some(tooltip_builder), Some(tooltip_owner_id)) =
+                (self.tooltip_builder.take(), global_id.cloned())
+            {
                 let active_tooltip = element_state
                     .active_tooltip
                     .get_or_insert_with(Default::default)
@@ -2863,20 +2872,20 @@ impl Interactivity {
                 let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some(((tooltip_builder.build)(window, cx), tooltip_is_hoverable))
                 });
-                // Use bounds instead of testing hitbox since this is called during prepaint.
                 let check_is_hovered_during_prepaint = Rc::new({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    let source_bounds = hitbox.bounds;
+                    let tooltip_owner_id = tooltip_owner_id.clone();
                     move |window: &Window| {
                         !window.last_input_was_keyboard()
                             && pending_mouse_down.borrow().is_none()
-                            && source_bounds.contains(&window.mouse_position())
+                            && window.is_topmost_tooltip_owner_during_prepaint(&tooltip_owner_id)
                     }
                 });
                 let check_is_hovered = Rc::new({
-                    let hitbox = hitbox.clone();
                     move |window: &Window| {
-                        pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window)
+                        !window.last_input_was_keyboard()
+                            && pending_mouse_down.borrow().is_none()
+                            && window.is_topmost_tooltip_owner(&tooltip_owner_id)
                     }
                 });
                 register_tooltip_mouse_handlers(
@@ -3399,13 +3408,8 @@ pub(crate) fn register_tooltip_mouse_handlers(
 ///
 /// The mouse hovering logic also relies on being called from window prepaint in order to handle the
 /// case where the element the tooltip is on is not rendered - in that case its mouse listeners are
-/// also not registered. During window prepaint, the hitbox information is not available, so
-/// `check_is_hovered_during_prepaint` is used which bases the check off of the absolute bounds of
-/// the element.
-///
-/// TODO: There's a minor bug due to the use of absolute bounds while checking during prepaint - it
-/// does not know if the hitbox is occluded. In the case where a tooltip gets displayed and then
-/// gets occluded after display, it will stick around until the mouse exits the hover bounds.
+/// also not registered. During window prepaint, `check_is_hovered_during_prepaint` checks the
+/// current frame's topmost tooltip owner instead of the rendered frame's hit-test state.
 fn handle_tooltip_mouse_move(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
