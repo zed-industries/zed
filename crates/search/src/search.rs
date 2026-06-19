@@ -4,10 +4,10 @@ pub use editor::HighlightKey;
 use editor::SearchSettings;
 use gpui::{Action, App, ClickEvent, Entity, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
-use util::paths::PathMatcher;
 pub use project_search::ProjectSearchView;
 use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
+use util::paths::PathMatcher;
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 pub use zed_actions::search::ToggleIncludeIgnored;
@@ -18,9 +18,9 @@ use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
 pub mod project_search;
-pub mod text_finder;
 pub(crate) mod search_bar;
 pub mod search_status_button;
+pub mod text_finder;
 
 pub fn init(cx: &mut App) {
     menu::init();
