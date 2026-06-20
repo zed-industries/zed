@@ -10,7 +10,9 @@ use project::Project;
 use settings::SettingsStore;
 use std::any::Any;
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use workspace::{MultiWorkspace, Sidebar as WorkspaceSidebar, SidebarEvent, SidebarSide};
 
 use crate::AgentPanel;
@@ -102,6 +104,9 @@ pub fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        // Use an isolated DB so parallel tests can't see each other's
+        // persisted records (e.g. created-worktree records).
+        cx.set_global(db::AppDatabase::test_new());
         cx.set_global(acp_thread::StubSessionCounter(
             std::sync::atomic::AtomicUsize::new(0),
         ));
@@ -111,6 +116,40 @@ pub fn init_test(cx: &mut TestAppContext) {
         agent_panel::init(cx);
         crate::terminal_thread_metadata_store::TerminalThreadMetadataStore::init_global(cx);
     });
+}
+
+/// Returns the creation time assigned to a linked worktree's git metadata
+/// directory, mirroring `FakeGitRepository::worktree_created_at` (which uses
+/// the FakeFs directory mtime as a stand-in for the creation time).
+pub async fn fake_worktree_created_at(fs: &dyn fs::Fs, worktree_path: &Path) -> SystemTime {
+    let git_file = fs.load(&worktree_path.join(".git")).await.unwrap();
+    let git_dir = worktree_path.join(git_file.strip_prefix("gitdir:").unwrap().trim());
+    let (seconds, nanos) = fs
+        .metadata(&git_dir)
+        .await
+        .unwrap()
+        .unwrap()
+        .mtime
+        .to_seconds_and_nanos_for_persistence()
+        .unwrap();
+    UNIX_EPOCH + Duration::new(seconds, nanos)
+}
+
+/// Records the worktree in the created-worktrees registry with its actual
+/// (fake) creation time, as the worktree creation flow would. Tests that
+/// expect a worktree to be archivable must call this after setting it up.
+pub async fn record_zed_created_worktree(
+    fs: &dyn fs::Fs,
+    worktree_path: &Path,
+    remote: Option<&remote::RemoteConnectionOptions>,
+    cx: &mut TestAppContext,
+) {
+    let created_at = fake_worktree_created_at(fs, worktree_path).await;
+    cx.update(|cx| {
+        git_ui::created_worktrees::record_created_worktree(worktree_path, remote, created_at, cx)
+    })
+    .await
+    .unwrap();
 }
 
 pub struct TestWorkspaceSidebar {

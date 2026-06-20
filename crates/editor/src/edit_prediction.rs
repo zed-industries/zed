@@ -399,7 +399,7 @@ impl Editor {
                                 ));
                             self.highlight_rows::<EditPredictionPreview>(
                                 target..target,
-                                cx.theme().colors().editor_highlighted_line_background,
+                                |cx| cx.theme().colors().editor_highlighted_line_background,
                                 RowHighlightOptions {
                                     autoscroll: true,
                                     ..Default::default()

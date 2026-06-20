@@ -59,6 +59,10 @@ impl IconThemePickerDelegate {
 impl PickerDelegate for IconThemePickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "icon theme picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_themes.len()
     }
@@ -189,6 +193,7 @@ pub fn icon_theme_picker(
 
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
-        .width(rems_from_px(210.))
-        .max_height(Some(rems(18.).into()))
+        .minimum_results_width(rems_from_px(210.))
+        .height(rems(18.))
+        .no_vertical_padding()
 }
