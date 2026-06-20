@@ -258,8 +258,6 @@
       "g w": "vim::PushRewrap",
       "g q": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
-      "] d": "editor::GoToDiagnostic",
-      "[ d": "editor::GoToPreviousDiagnostic",
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments",
@@ -415,6 +413,8 @@
       "\"": "vim::PushRegister",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePreviousItem",
+      "] d": "editor::GoToDiagnostic",
+      "[ d": "editor::GoToPreviousDiagnostic",
     },
   },
   {
@@ -454,6 +454,10 @@
       "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
       "alt-.": "vim::RepeatFind",
+      "] g": "editor::GoToHunk",
+      "[ g": "editor::GoToPreviousHunk",
+      "alt-b": "editor::MoveToStartOfLargerSyntaxNode",
+      "alt-e": "editor::MoveToEndOfLargerSyntaxNode",
 
       // Changes
       "shift-r": "editor::Paste",
@@ -472,6 +476,8 @@
       "alt-d": "editor::Delete", // Delete selection, without yanking
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
+      "] space": "vim::InsertEmptyLineBelow",
+      "[ space": "vim::InsertEmptyLineAbove",
 
       // Selection manipulation
       "s": "vim::HelixSelectRegex",
@@ -483,6 +489,7 @@
       "alt-shift-c": "vim::HelixDuplicateAbove",
       "%": "editor::SelectAll",
       "x": "vim::HelixSelectLine",
+      "*": "buffer_search::UseSelectionForFind",
       "shift-x": "editor::SelectLine",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
@@ -689,7 +696,6 @@
       "x": "editor::SelectSmallerSyntaxNode",
       "d": "editor::GoToDiagnostic",
       "c": "editor::GoToHunk",
-      "space": "vim::InsertEmptyLineBelow",
     },
   },
   {
