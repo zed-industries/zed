@@ -41,7 +41,9 @@ use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
-use crate::{CURSOR_ID, GEMINI_ID};
+use crate::GEMINI_ID;
+
+mod agent_quirks;
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
@@ -53,11 +55,7 @@ fn initialize_meta(agent_id: &AgentId) -> acp::Meta {
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
     ]);
-
-    if agent_id.as_ref() == CURSOR_ID {
-        meta.insert("parameterizedModelPicker".into(), true.into());
-    }
-
+    agent_quirks::apply_client_capability_quirks(&mut meta, agent_id);
     meta
 }
 
@@ -235,6 +233,38 @@ impl AcpDebugLog {
         lines.reverse();
         Some(lines.join("\n"))
     }
+
+    fn response_result_for_request_id(
+        &self,
+        request_id: &serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        let state = self.state.lock().ok()?;
+        state
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| {
+                if message.direction != AcpDebugMessageDirection::Incoming {
+                    return None;
+                }
+                let AcpDebugMessageContent::Response {
+                    id,
+                    result: Ok(Some(result)),
+                } = &message.message
+                else {
+                    return None;
+                };
+                if request_ids_match(request_id, id) {
+                    Some(result.clone())
+                } else {
+                    None
+                }
+            })
+    }
+}
+
+fn request_ids_match(request_id: &serde_json::Value, response_id: &acp::RequestId) -> bool {
+    serde_json::to_value(response_id).ok().as_ref() == Some(request_id)
 }
 
 fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) -> LoadError {
@@ -271,6 +301,21 @@ fn into_foreground_future<T: JsonRpcResponse>(
         rx.await
             .map_err(|_| acp::Error::internal_error().data(ACP_RESPONSE_CHANNEL_CANCELLED))?
     }
+}
+
+async fn send_new_session_request(
+    connection: ConnectionTo<Agent>,
+    request: acp::NewSessionRequest,
+    agent_id: &AgentId,
+    debug_log: &AcpDebugLog,
+) -> Result<acp::NewSessionResponse, acp::Error> {
+    let sent = connection.send_request(request);
+    let request_id = sent.id();
+    let response = into_foreground_future(sent).await?;
+    if let Some(raw_result) = debug_log.response_result_for_request_id(&request_id) {
+        agent_quirks::debug_session_new_shape_mismatch(agent_id, &raw_result);
+    }
+    Ok(response)
 }
 
 #[derive(Debug, Error)]
@@ -1556,10 +1601,11 @@ impl AgentConnection for AcpConnection {
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
-            let response = into_foreground_future(
-                self.connection.send_request(
-                    directories.into_new_session_request(mcp_servers),
-                ),
+            let response = send_new_session_request(
+                self.connection.clone(),
+                directories.into_new_session_request(mcp_servers),
+                &self.id,
+                &self.debug_log,
             )
             .await
             .map_err(map_acp_error)?;
@@ -2497,14 +2543,21 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::CURSOR_ID;
     use settings::Settings as _;
 
     #[test]
     fn initialize_meta_enables_parameterized_model_picker_only_for_cursor() {
         let meta = initialize_meta(&AgentId::new(CURSOR_ID));
 
-        assert_eq!(meta.get("terminal_output"), Some(&serde_json::Value::Bool(true)));
-        assert_eq!(meta.get("terminal-auth"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            meta.get("terminal_output"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            meta.get("terminal-auth"),
+            Some(&serde_json::Value::Bool(true))
+        );
         assert_eq!(
             meta.get("parameterizedModelPicker"),
             Some(&serde_json::Value::Bool(true))
@@ -2515,9 +2568,30 @@ mod tests {
     fn initialize_meta_leaves_other_agents_unchanged() {
         let meta = initialize_meta(&AgentId::new("test-agent"));
 
-        assert_eq!(meta.get("terminal_output"), Some(&serde_json::Value::Bool(true)));
-        assert_eq!(meta.get("terminal-auth"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            meta.get("terminal_output"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            meta.get("terminal-auth"),
+            Some(&serde_json::Value::Bool(true))
+        );
         assert!(!meta.contains_key("parameterizedModelPicker"));
+    }
+
+    #[test]
+    fn response_result_for_request_id_reads_matching_incoming_response() {
+        let debug_log = AcpDebugLog::default();
+        let request_id = serde_json::json!("req-1");
+        debug_log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"req-1","result":{"sessionId":"s1","models":[]}}"#,
+        );
+
+        let raw = debug_log
+            .response_result_for_request_id(&request_id)
+            .expect("matching response");
+        assert_eq!(raw.get("sessionId").and_then(|v| v.as_str()), Some("s1"));
     }
 
     #[test]
