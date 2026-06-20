@@ -6900,7 +6900,7 @@ impl ThreadView {
             .unwrap_or(&command_source)
             .to_string();
 
-        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
+        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;

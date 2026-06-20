@@ -6561,8 +6561,10 @@ impl Render for AgentPanel {
 
         match self.visible_font_size() {
             WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
+                let theme_settings = ThemeSettings::get_global(cx);
+                WithRemSize::new(theme_settings.agent_ui_font_size(cx))
                     .size_full()
+                    .font_family(theme_settings.agent_ui_font_family().clone())
                     .child(content)
                     .into_any()
             }

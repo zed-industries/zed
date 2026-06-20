@@ -182,15 +182,15 @@ impl MarkdownStyle {
             ),
         };
 
-        let body_font_family = if is_preview {
-            theme_settings.markdown_preview_font_family().clone()
-        } else {
-            theme_settings.ui_font.family.clone()
+        let body_font_family = match font {
+            MarkdownFont::Preview => theme_settings.markdown_preview_font_family().clone(),
+            MarkdownFont::Agent => theme_settings.agent_ui_font_family().clone(),
+            MarkdownFont::Editor => theme_settings.ui_font.family.clone(),
         };
-        let code_font_family = if is_preview {
-            theme_settings.markdown_preview_code_font_family().clone()
-        } else {
-            theme_settings.buffer_font.family.clone()
+        let code_font_family = match font {
+            MarkdownFont::Preview => theme_settings.markdown_preview_code_font_family().clone(),
+            MarkdownFont::Agent => theme_settings.agent_ui_font_family().clone(),
+            MarkdownFont::Editor => theme_settings.buffer_font.family.clone(),
         };
 
         let mut text_style = window.text_style();

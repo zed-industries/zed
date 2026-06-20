@@ -2100,7 +2100,9 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = theme::theme_settings(cx).ui_font_size(cx);
+        let theme_settings = theme::theme_settings(cx);
+        let ui_font_size = theme_settings.ui_font_size(cx);
+        let ui_font_family = theme_settings.ui_font(cx).family.clone();
         let window_size = window.viewport_size();
         let rem_size = window.rem_size();
         let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
@@ -2150,6 +2152,7 @@ impl Render for ContextMenu {
         let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
             WithRemSize::new(ui_font_size)
                 .occlude()
+                .font_family(ui_font_family.clone())
                 .elevation_2(cx)
                 .w_full()
                 .p_2()
@@ -2176,6 +2179,7 @@ impl Render for ContextMenu {
 
             WithRemSize::new(ui_font_size)
                 .occlude()
+                .font_family(ui_font_family.clone())
                 .elevation_2(cx)
                 .flex()
                 .flex_row()
