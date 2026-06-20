@@ -293,17 +293,11 @@ async fn test_corruption_retry_attempt_counts(cx: &mut TestAppContext) {
 /// Tests that `CompletionError::Corrupted(CorruptionDetail)` errors go through
 /// the corruption retry path with bounded retries.
 ///
-/// Currently marked `#[ignore]` because `CompletionError::Corrupted` is only
-/// produced by the output quality detector (Phase B). Once the detector is
-/// integrated into `handle_text_event`, this test can be enabled.
-///
-/// When enabled, a fake model helper should inject a corrupted completion that
-/// triggers the detector, then verify:
-/// - `ThreadEvent::Retry` events with `max_attempts == MAX_CORRUPTION_RETRY_ATTEMPTS`
-/// - After `MAX_CORRUPTION_RETRY_ATTEMPTS` retries, the fallback model is attempted
-/// - The corruption retry counter increments correctly
+/// The fake model sends text that triggers both the repetition and
+/// script-switching detectors (periodic Latin + Han + Cyrillic output).
+/// After `MAX_CORRUPTION_RETRY_ATTEMPTS` retries the error propagates
+/// because no fallback model is configured.
 #[gpui::test]
-#[ignore = "requires output quality detector from Phase B"]
 async fn test_corrupted_output_triggers_retry(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -319,83 +313,21 @@ async fn test_corrupted_output_triggers_retry(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
 
-    // TODO(Phase B): Wire the output quality detector so that sending high-entropy
-    // or script-switching text causes a `CompletionError::Corrupted(CorruptionDetail)`
-    // to be constructed inside `handle_text_event`. Then simulate repeated
-    // corrupted completions and verify the retry counter.
+    // Periodic text mixing Latin, Han, and Cyrillic scripts.
+    // Triggers both the repetition detector (period ≈ 62 bytes, ≥3 full
+    // periods in the 512-byte scan window) and the script-switching
+    // detector (3 distinct scripts with ≥5 transitions).
+    let corrupted_text = "Hello世界Приветworld你好мирtest测试Привет".repeat(20);
 
-    // Placeholder: advance through the expected retry cycles
+    // Each round sends one chunk of corrupted text. The output-quality
+    // scorer detects corruption, short-circuits the stream, and the
+    // corruption retry path runs. After MAX_CORRUPTION_RETRY_ATTEMPTS
+    // retries the error propagates (no fallback configured).
     for _ in 0..=MAX_CORRUPTION_RETRY_ATTEMPTS {
-        fake_model.send_last_completion_stream_text_chunk("corrupted output");
-        fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
-            StopReason::EndTurn,
-        ));
-        fake_model.end_last_completion_stream();
-
-        cx.executor().advance_clock(BASE_RETRY_DELAY);
-        cx.run_until_parked();
-    }
-
-    let mut retry_events = Vec::new();
-    while let Some(Ok(event)) = events.next().await {
-        match event {
-            ThreadEvent::Retry(retry_status) => {
-                retry_events.push(retry_status);
-            }
-            ThreadEvent::Stop(..) => break,
-            _ => {}
-        }
-    }
-
-    // TODO(Phase B): Once the detector is active, assert that
-    // retry_events.len() == MAX_CORRUPTION_RETRY_ATTEMPTS and each
-    // retry_status.last_error contains "output corruption detected".
-    assert_eq!(
-        retry_events.len(),
-        MAX_CORRUPTION_RETRY_ATTEMPTS as usize,
-        "expected {MAX_CORRUPTION_RETRY_ATTEMPTS} corruption retries, got {}",
-        retry_events.len()
-    );
-}
-
-/// Tests that after `MAX_CORRUPTION_RETRY_ATTEMPTS` corruption retries are
-/// exhausted, a fallback model is attempted (if the current model has
-/// `refusal_fallback_model_id` configured), or the error propagates otherwise.
-///
-/// Currently marked `#[ignore]` because `CompletionError::Corrupted` is only
-/// produced by the output quality detector (Phase B). Once the detector is
-/// integrated, this test can be enabled.
-///
-/// When enabled, configure a fake model with a `refusal_fallback_model_id`,
-/// simulate corruption exhaustions, and verify:
-/// - The fallback model is selected via `set_model`
-/// - A final `ThreadEvent::Retry` with `meta` containing the fallback name
-/// - On subsequent attempts, the fallback model receives the completion request
-#[gpui::test]
-#[ignore = "requires output quality detector from Phase B + fallback model"]
-async fn test_corruption_fallback_model_on_exhaustion(cx: &mut TestAppContext) {
-    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    thread.update(cx, |thread, _cx| {
-        thread.add_tool(EchoTool);
-    });
-
-    let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Do something"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    // TODO(Phase B): Simulate MAX_CORRUPTION_RETRY_ATTEMPTS + 1 corrupted
-    // completions from the primary model. On the final attempt, the thread
-    // should attempt a fallback model (if configured) or propagate the error.
-    for _ in 0..=MAX_CORRUPTION_RETRY_ATTEMPTS + 1 {
-        fake_model.send_last_completion_stream_text_chunk("corrupted output");
-        fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
-            StopReason::EndTurn,
-        ));
+        fake_model.send_last_completion_stream_text_chunk(&corrupted_text);
+        fake_model.send_last_completion_stream_event(
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
         fake_model.end_last_completion_stream();
 
         cx.executor().advance_clock(BASE_RETRY_DELAY);
@@ -418,11 +350,174 @@ async fn test_corruption_fallback_model_on_exhaustion(cx: &mut TestAppContext) {
         }
     }
 
-    // TODO(Phase B): Assert that after MAX_CORRUPTION_RETRY_ATTEMPTS retries,
-    // either a fallback model retry event was emitted or the error propagated.
-    // The fallback retry should have meta containing the fallback model name.
+    assert_eq!(
+        retry_events.len(),
+        MAX_CORRUPTION_RETRY_ATTEMPTS as usize,
+        "expected {MAX_CORRUPTION_RETRY_ATTEMPTS} corruption retries, got {}",
+        retry_events.len()
+    );
+
+    // Each retry should report the correct attempt number and max.
+    for (i, retry) in retry_events.iter().enumerate() {
+        assert_eq!(
+            retry.attempt,
+            i + 1,
+            "retry attempt should be {}, got {}",
+            i + 1,
+            retry.attempt
+        );
+        assert_eq!(
+            retry.max_attempts, MAX_CORRUPTION_RETRY_ATTEMPTS as usize,
+            "max_attempts should be {}",
+            MAX_CORRUPTION_RETRY_ATTEMPTS
+        );
+    }
+
+    // After retries are exhausted the error should propagate.
+    assert_eq!(errors.len(), 1, "expected 1 error after retries exhausted");
+    let error_msg = errors[0].to_string();
+    assert!(
+        error_msg.contains("corruption"),
+        "error should mention corruption, got: {error_msg}"
+    );
+}
+
+/// Tests that after `MAX_CORRUPTION_RETRY_ATTEMPTS` corruption retries are
+/// exhausted, a fallback model is attempted (if the current model has
+/// `refusal_fallback_model_id` configured), or the error propagates otherwise.
+///
+/// Still marked `#[ignore]` because `FakeLanguageModel` does not yet implement
+/// `refusal_fallback_model_id`. Once the fake provider supports a fallback
+/// model ID, this test can be enabled to verify:
+/// - The fallback model is selected via `set_model`
+/// - A final `ThreadEvent::Retry` with `meta` containing the fallback name
+/// - On subsequent attempts, the fallback model receives the completion request
+#[gpui::test]
+#[ignore = "FakeLanguageModel lacks refusal_fallback_model_id support"]
+async fn test_corruption_fallback_model_on_exhaustion(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do something"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let corrupted_text = "Hello世界Приветworld你好мирtest测试Привет".repeat(20);
+
+    for _ in 0..=MAX_CORRUPTION_RETRY_ATTEMPTS + 1 {
+        fake_model.send_last_completion_stream_text_chunk(&corrupted_text);
+        fake_model.send_last_completion_stream_event(
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        fake_model.end_last_completion_stream();
+
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
+        cx.run_until_parked();
+    }
+
+    let mut retry_events = Vec::new();
+    let mut errors = Vec::new();
+    while let Some(event) = events.next().await {
+        match event {
+            Ok(ThreadEvent::Retry(retry_status)) => {
+                retry_events.push(retry_status);
+            }
+            Ok(ThreadEvent::Stop(..)) => break,
+            Err(error) => {
+                errors.push(error);
+                break;
+            }
+            _ => {}
+        }
+    }
+
     assert!(
         !retry_events.is_empty() || !errors.is_empty(),
         "expected either retry events or a final error"
+    );
+}
+
+/// Verifies that well-formed, task-relevant output does NOT trigger the
+/// output-quality corruption detectors (no false positives).
+#[gpui::test]
+async fn test_clean_output_does_not_trigger_corruption(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Fix the authentication bug in login.rs"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // A long, well-formed response mentioning task-relevant terms.
+    let clean_text = "\
+        I've analyzed the authentication function in login.rs and found \
+        the bug. The session token expiration was being set to zero seconds \
+        which caused immediate expiry. I've updated the token creation \
+        logic to use a proper expiration duration of thirty minutes. The \
+        authentication handler now correctly validates the session tokens \
+        and the login flow should work as expected after this fix. Let me \
+        call the completion tool to finish.\
+    ";
+
+    fake_model.send_last_completion_stream_text_chunk(clean_text);
+
+    // Model calls attempt_completion to end properly.
+    fake_model.send_last_completion_stream_event(
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "ac_1".into(),
+            name: "attempt_completion".into(),
+            raw_input: "{}".to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    fake_model.send_last_completion_stream_event(
+        LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+    );
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // After tool processing, provide a clean follow-up that ends the turn.
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.send_last_completion_stream_event(
+        LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+    );
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let mut retry_events = Vec::new();
+    while let Some(Ok(event)) = events.next().await {
+        match event {
+            ThreadEvent::Retry(retry_status) => {
+                retry_events.push(retry_status);
+            }
+            ThreadEvent::Stop(..) => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        retry_events.len(),
+        0,
+        "clean task-relevant output should not trigger any corruption retries"
     );
 }

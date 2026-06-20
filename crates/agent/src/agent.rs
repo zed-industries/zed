@@ -3,6 +3,7 @@ mod db;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
+pub mod output_quality;
 mod pattern_extraction;
 mod sandboxing;
 mod templates;

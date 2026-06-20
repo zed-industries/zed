@@ -8,6 +8,7 @@ use crate::{
     WriteFileTool,
     corruption::{CorruptionSnapshot, CorruptionSnapshotSettings},
     decide_permission_from_settings,
+    output_quality::{CorruptionConfig, OutputQualityScorer, TaskContext},
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1264,6 +1265,9 @@ pub struct Thread {
     /// Rolling window of the last N bytes of model output, used to build
     /// corruption snapshots when corruption is detected.
     last_output_text: String,
+    /// Keywords extracted from the user's most recent prompt, used by the
+    /// task-irrelevance detector in the output quality scorer.
+    output_quality_context: TaskContext,
 }
 
 impl Thread {
@@ -1396,6 +1400,7 @@ impl Thread {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             last_output_text: String::default(),
+            output_quality_context: TaskContext::default(),
         }
     }
 
@@ -1781,6 +1786,7 @@ impl Thread {
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             last_output_text: String::default(),
+            output_quality_context: TaskContext::default(),
         }
     }
 
@@ -2659,6 +2665,19 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
+            // Reset the output-quality rolling window and rebuild the task
+            // context from the latest user message so the irrelevance
+            // detector always has up-to-date keywords.
+            this.update(cx, |this, _| {
+                this.last_output_text.clear();
+                this.output_quality_context = TaskContext::from_prompt(
+                    &this
+                        .last_user_message()
+                        .map(|m| m.to_markdown())
+                        .unwrap_or_default(),
+                );
+            })?;
+
             let (mut events, error) = match model.stream_completion(request, cx).await {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (
@@ -3397,7 +3416,7 @@ impl Thread {
                 self.flush_pending_message(cx);
                 self.pending_message = Some(AgentMessage::default());
             }
-            Text(new_text) => self.handle_text_event(new_text, event_stream),
+            Text(new_text) => self.handle_text_event(new_text, event_stream)?,
             Thinking { text, signature } => {
                 self.handle_thinking_event(text, signature, event_stream)
             }
@@ -3463,11 +3482,15 @@ impl Thread {
         Ok(None)
     }
 
-    fn handle_text_event(&mut self, new_text: String, event_stream: &ThreadEventStream) {
+    fn handle_text_event(
+        &mut self,
+        new_text: String,
+        event_stream: &ThreadEventStream,
+    ) -> Result<()> {
         event_stream.send_text(&new_text);
 
         // Maintain a rolling window of the last N bytes of output for
-        // corruption snapshots.
+        // corruption snapshots and the output-quality scorer.
         self.last_output_text.push_str(&new_text);
         let max_bytes = CorruptionSnapshot::DEFAULT_MAX_OUTPUT_BYTES;
         if self.last_output_text.len() > max_bytes * 2 {
@@ -3484,6 +3507,30 @@ impl Thread {
             self.last_output_text = self.last_output_text.split_off(split_at);
         }
 
+        // LAYER 1: Output Quality Scoring — run detectors on the rolling
+        // window. If corruption is detected, short-circuit the stream by
+        // returning a `CompletionError::Corrupted`.
+        let config = CorruptionConfig::default();
+        if let Some(assessment) = OutputQualityScorer::assess(
+            &self.last_output_text,
+            &self.output_quality_context,
+            &config,
+        ) {
+            if assessment.is_corrupted(&config) {
+                log::info!(
+                    "Output quality corruption detected: signals={:?}, confidence={:.2}",
+                    assessment.signal_labels(),
+                    assessment.overall_confidence
+                );
+                let detail = CorruptionDetail::new(
+                    assessment.signal_labels(),
+                    assessment.overall_confidence,
+                    None,
+                );
+                return Err(CompletionError::Corrupted(detail).into());
+            }
+        }
+
         let last_message = self.pending_message();
         if let Some(AgentMessageContent::Text(text)) = last_message.content.last_mut() {
             text.push_str(&new_text);
@@ -3492,6 +3539,8 @@ impl Thread {
                 .content
                 .push(AgentMessageContent::Text(new_text));
         }
+
+        Ok(())
     }
 
     fn handle_thinking_event(
