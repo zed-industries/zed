@@ -510,7 +510,7 @@ fn build_open_path_prompt(
             };
             cx.new(|cx| {
                 let picker = Picker::uniform_list(delegate, window, cx)
-                    .width(rems(34.))
+                    .minimum_results_width(rems(34.))
                     .modal(false);
                 let query = lister.default_query(cx);
                 picker.set_query(&query, window, cx);

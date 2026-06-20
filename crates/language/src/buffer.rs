@@ -43,6 +43,7 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -618,8 +619,8 @@ pub struct HighlightedText {
 }
 
 #[derive(Default, Debug)]
-struct HighlightedTextBuilder {
-    pub text: String,
+pub struct HighlightedTextBuilder {
+    text: String,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
@@ -690,6 +691,22 @@ impl HighlightedTextBuilder {
             text: self.text.into(),
             highlights: self.highlights,
         }
+    }
+
+    /// Append a displayable value to the text, highlighting its range with
+    /// `style`.
+    pub fn push_styled(&mut self, value: impl std::fmt::Display, style: HighlightStyle) {
+        let start = self.text.len();
+        let _ = write!(&mut self.text, "{value}");
+        let end = self.text.len();
+        if end > start {
+            self.highlights.push((start..end, style));
+        }
+    }
+
+    /// Append a displayable value to the text without any highlighting.
+    pub fn push_plain(&mut self, value: impl std::fmt::Display) {
+        let _ = write!(&mut self.text, "{value}");
     }
 
     pub fn add_text_from_buffer_range<T: ToOffset>(
