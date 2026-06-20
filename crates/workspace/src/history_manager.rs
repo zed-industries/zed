@@ -49,9 +49,12 @@ impl HistoryManager {
                 .unwrap_or_default()
                 .into_iter()
                 .rev()
-                .filter_map(|(id, location, paths, _timestamp)| {
-                    if matches!(location, SerializedWorkspaceLocation::Local) {
-                        Some(HistoryManagerEntry::new(id, &paths))
+                .filter_map(|workspace| {
+                    if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
+                        Some(HistoryManagerEntry::new(
+                            workspace.workspace_id,
+                            &workspace.paths,
+                        ))
                     } else {
                         None
                     }

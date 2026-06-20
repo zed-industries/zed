@@ -4,7 +4,7 @@ use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
+    SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
@@ -128,6 +128,9 @@ impl StashList {
         let delegate = StashListDelegate::new(repository, workspace, window, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
+                .minimum_results_width(width)
+                .height(rems(24.))
+                .no_vertical_padding()
                 .show_scrollbar(true)
                 .modal(!embedded)
         });
@@ -368,6 +371,10 @@ impl StashListDelegate {
 
 impl PickerDelegate for StashListDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "stash picker"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a stash…".into()

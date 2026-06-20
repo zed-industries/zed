@@ -33,6 +33,7 @@ use gpui::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
 };
+use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
 use objc::{
     class,
@@ -52,11 +53,10 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::{Arc, OnceLock, atomic::AtomicBool},
-};
-use util::{
-    ResultExt,
-    command::{new_command, new_std_command},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 #[allow(non_upper_case_globals)]
@@ -66,7 +66,7 @@ const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
-#[ctor]
+#[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
         APP_CLASS = {
@@ -76,7 +76,7 @@ unsafe fn build_classes() {
         }
     };
     unsafe {
-        APP_DELEGATE_CLASS = unsafe {
+        APP_DELEGATE_CLASS = {
             let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
             decl.add_method(
@@ -179,7 +179,8 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
-    cursor_hidden: Arc<AtomicBool>,
+    /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
+    cursor_visible: Arc<AtomicBool>,
 }
 
 impl MacPlatform {
@@ -190,7 +191,14 @@ impl MacPlatform {
         let text_system = Arc::new(crate::MacTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
-        let text_system = Arc::new(gpui::NoopTextSystem::new());
+        let text_system = {
+            if !headless {
+                log::warn!(
+                    "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
+                );
+            }
+            Arc::new(gpui::NoopTextSystem::new())
+        };
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
@@ -216,7 +224,7 @@ impl MacPlatform {
             on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
-            cursor_hidden: Arc::new(AtomicBool::new(false)),
+            cursor_visible: Arc::new(AtomicBool::new(true)),
         }))
     }
 
@@ -516,17 +524,19 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
-        let app_path = self
-            .app_path()
-            .ok()
-            // When the app is not bundled, `app_path` returns the
-            // directory containing the executable. Disregard this
-            // and get the path to the executable itself.
-            .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+        let app_path = binary_path
+            .or_else(|| {
+                self.app_path()
+                    .ok()
+                    // When the app is not bundled, `app_path` returns the
+                    // directory containing the executable. Disregard this
+                    // and get the path to the executable itself.
+                    .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+            })
             .unwrap_or_else(|| std::env::current_exe().unwrap());
 
         // Wait until this process has exited and then re-open this path.
@@ -621,10 +631,10 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let (cursor_hidden, foreground_executor, background_executor, renderer_context) = {
+        let (cursor_visible, foreground_executor, background_executor, renderer_context) = {
             let guard = self.0.lock();
             (
-                guard.cursor_hidden.clone(),
+                guard.cursor_visible.clone(),
                 guard.foreground_executor.clone(),
                 guard.background_executor.clone(),
                 guard.renderer_context.clone(),
@@ -634,7 +644,7 @@ impl Platform for MacPlatform {
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            cursor_hidden,
+            cursor_visible,
             foreground_executor,
             background_executor,
             renderer_context,
@@ -867,15 +877,16 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_command("open")
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
+                new_std_command("open")
                     .arg("--")
                     .arg(path)
-                    .spawn()
+                    .status()
                     .context("invoking open command")
-                    .log_err()
-                {
-                    child.status().await.log_err();
-                }
+                    .log_err();
             })
             .detach();
     }
@@ -991,10 +1002,23 @@ impl Platform for MacPlatform {
     /// Match cursor style to one of the styles available
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
-        let cursor_hidden = self.0.lock().cursor_hidden.clone();
         unsafe {
-            set_active_window_cursor_style(style, &cursor_hidden);
+            set_active_window_cursor_style(style);
         }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        let cursor_visible = self.0.lock().cursor_visible.clone();
+        if !cursor_visible.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        unsafe {
+            let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: YES];
+        }
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.0.lock().cursor_visible.load(Ordering::Relaxed)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

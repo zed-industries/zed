@@ -5,7 +5,7 @@ use client::{Client, TelemetrySettings, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{Action, Animation, AnimationExt, App, Entity, IntoElement, pulsating_between};
+use gpui::{Action, Animation, AnimationExt, App, Entity, IntoElement, TaskExt, pulsating_between};
 use project::agent_server_store::AllAgentServersSettings;
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent};
@@ -574,8 +574,6 @@ fn render_registry_agent_button(
                     CustomAgentServerSettings::Registry {
                         env: Default::default(),
                         default_mode: None,
-                        default_model: None,
-                        favorite_models: Vec::new(),
                         default_config_options: HashMap::default(),
                         favorite_config_option_values: HashMap::default(),
                     }

@@ -9,9 +9,9 @@ use std::{
     },
 };
 
-use ::util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
+use gpui_util::{ResultExt, get_windows_system_shell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -63,6 +63,8 @@ pub(crate) struct WindowsPlatformState {
     jump_list: RefCell<JumpList>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
+    /// Shared with each window so `WM_SETCURSOR` can read it directly.
+    pub(crate) cursor_visible: Arc<AtomicBool>,
     directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
@@ -87,6 +89,7 @@ impl WindowsPlatformState {
             callbacks,
             jump_list: RefCell::new(jump_list),
             current_cursor: Cell::new(current_cursor),
+            cursor_visible: Arc::new(AtomicBool::new(true)),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
@@ -219,6 +222,7 @@ impl WindowsPlatform {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
             current_cursor: self.inner.state.current_cursor.get(),
+            cursor_visible: self.inner.state.cursor_visible.clone(),
             drop_target_helper: self.drop_target_helper.clone().unwrap(),
             validation_number: self.inner.validation_number,
             main_receiver: self.inner.main_receiver.clone(),
@@ -463,11 +467,10 @@ impl Platform for WindowsPlatform {
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process =
-                    ::util::command::new_std_command(::util::shell::get_windows_system_shell())
-                        .arg("-command")
-                        .arg(script)
-                        .spawn();
+                let restart_process = new_std_command(get_windows_system_shell())
+                    .arg("-command")
+                    .arg(script)
+                    .spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
@@ -680,6 +683,31 @@ impl Platform for WindowsPlatform {
             );
             self.inner.state.current_cursor.set(hcursor);
         }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        if !self
+            .inner
+            .state
+            .cursor_visible
+            .swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+
+        for handle in self.raw_window_handles.read().iter() {
+            let Some(window) = window_from_hwnd(handle.as_raw()) else {
+                continue;
+            };
+            if window.state.hovered.get() {
+                unsafe { SetCursor(None) };
+                break;
+            }
+        }
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.inner.state.cursor_visible.load(Ordering::Relaxed)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
@@ -1015,6 +1043,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) icon: HICON,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) current_cursor: Option<HCURSOR>,
+    pub(crate) cursor_visible: Arc<AtomicBool>,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -1156,8 +1185,8 @@ fn file_save_dialog(
             .context("failed to canonicalize directory")
             .log_err()
     {
-        let full_path = SanitizedPath::new(&full_path);
-        let full_path_string = full_path.to_string();
+        let full_path = dunce::simplified(&full_path);
+        let full_path_string = full_path.display().to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
         unsafe {

@@ -30,16 +30,19 @@ pub use acp::{
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
     new_version_available: Option<watch::Sender<Option<String>>>,
+    loading_status: Option<watch::Sender<Option<String>>>,
 }
 
 impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
+        loading_status_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
             store,
             new_version_available: new_version_tx,
+            loading_status: loading_status_tx,
         }
     }
 }
@@ -68,22 +71,6 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    fn default_model(&self, _cx: &App) -> Option<acp_schema::ModelId> {
-        None
-    }
-
-    fn set_default_model(
-        &self,
-        _model_id: Option<acp_schema::ModelId>,
-        _fs: Arc<dyn Fs>,
-        _cx: &mut App,
-    ) {
-    }
-
-    fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<acp_schema::ModelId> {
-        HashSet::default()
-    }
-
     fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<String> {
         None
     }
@@ -109,15 +96,6 @@ pub trait AgentServer: Send {
         &self,
         _config_id: acp_schema::SessionConfigId,
         _value_id: acp_schema::SessionConfigValueId,
-        _should_be_favorite: bool,
-        _fs: Arc<dyn Fs>,
-        _cx: &App,
-    ) {
-    }
-
-    fn toggle_favorite_model(
-        &self,
-        _model_id: acp_schema::ModelId,
         _should_be_favorite: bool,
         _fs: Arc<dyn Fs>,
         _cx: &App,
