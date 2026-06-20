@@ -17,6 +17,9 @@ use ui::IconName;
 pub const GEMINI_ID: &str = "gemini";
 pub const CLAUDE_AGENT_ID: &str = "claude-acp";
 pub const CODEX_ID: &str = "codex-acp";
+pub const CURSOR_ID: &str = "cursor";
+pub const GROK_ID: &str = "grok";
+pub const KIRO_ID: &str = "kiro";
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {

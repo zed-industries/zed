@@ -43,10 +43,21 @@ use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
 use crate::GEMINI_ID;
 
+mod agent_quirks;
+
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
 const ACP_RESPONSE_CHANNEL_CANCELLED: &str =
     "response channel cancelled — connection may have dropped";
+
+fn initialize_meta(agent_id: &AgentId) -> acp::Meta {
+    let mut meta = acp::Meta::from_iter([
+        ("terminal_output".into(), true.into()),
+        ("terminal-auth".into(), true.into()),
+    ]);
+    agent_quirks::apply_client_capability_quirks(&mut meta, agent_id);
+    meta
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcpDebugMessageDirection {
@@ -947,6 +958,8 @@ impl AcpConnection {
             }
         });
 
+        let initialize_meta = initialize_meta(&agent_id);
+
         let initialize_response = into_foreground_future(
             connection.send_request(
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
@@ -957,10 +970,7 @@ impl AcpConnection {
                                 .write_text_file(true))
                             .terminal(true)
                             .auth(acp::AuthCapabilities::new().terminal(true))
-                            .meta(acp::Meta::from_iter([
-                                ("terminal_output".into(), true.into()),
-                                ("terminal-auth".into(), true.into()),
-                            ])),
+                            .meta(initialize_meta),
                     )
                     .client_info(
                         acp::Implementation::new("zed", version)
