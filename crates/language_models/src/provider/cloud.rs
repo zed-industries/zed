@@ -439,6 +439,11 @@ impl RenderOnce for ZedAiConfiguration {
                 },
                 true,
             ),
+            Some(Plan::ZedVip) => (
+                "You have access to Zed's hosted models through your VIP subscription.",
+                true,
+            ),
+
             Some(Plan::ZedFree) | None => (
                 if self.eligible_for_trial {
                     "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."

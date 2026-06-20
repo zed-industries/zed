@@ -966,9 +966,27 @@ impl Editor {
         self.select_to_syntax_nodes(window, cx, true);
     }
 
-    pub fn select_inside_enclosing_bracket(
+    pub fn select_inside_delimiters(
         &mut self,
-        _: &SelectInsideEnclosingBracket,
+        _: &SelectInsideDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(false, window, cx);
+    }
+
+    pub fn select_around_delimiters(
+        &mut self,
+        _: &SelectAroundDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(true, window, cx);
+    }
+
+    fn select_delimiters_impl(
+        &mut self,
+        include_brackets: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -984,20 +1002,28 @@ impl Editor {
                 let mut best_length = usize::MAX;
 
                 for (open, close) in enclosing_bracket_ranges {
-                    let inside = open.end..close.start;
-                    if inside == (selection.start..selection.end) {
+                    let range = if include_brackets {
+                        open.start..close.end
+                    } else {
+                        open.end..close.start
+                    };
+
+                    // Skip any bracket pair that is already covered by the
+                    // selection so repeated uses of delimiters selection only
+                    // evere expands outwards to the next pair.
+                    if (selection.start..selection.end).contains_inclusive(&range) {
                         continue;
                     }
 
                     let length = close.end - open.start;
                     if length < best_length {
                         best_length = length;
-                        best = Some(inside);
+                        best = Some(range);
                     }
                 }
 
-                if let Some(inside) = best {
-                    selection.set_head_tail(inside.end, inside.start, SelectionGoal::None);
+                if let Some(range) = best {
+                    selection.set_head_tail(range.end, range.start, SelectionGoal::None);
                 }
             })
         });
