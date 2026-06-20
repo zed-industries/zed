@@ -17,8 +17,6 @@ Each DAP server must be registered in the `extension.toml`:
 # Optional relative path to the JSON schema for the debug adapter configuration schema. Defaults to `debug_adapter_schemas/$DEBUG_ADAPTER_NAME_ID.json`.
 # Note that while this field is optional, a schema is mandatory.
 schema_path = "relative/path/to/schema.json"
-# Optional list of language names that this debug adapter depends on.
-languages = ["My Language"]
 ```
 
 Then, in the Rust code for your extension, implement the `get_dap_binary` method on your extension:

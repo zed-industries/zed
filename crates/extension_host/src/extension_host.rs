@@ -184,7 +184,7 @@ impl ExtensionIndex {
 
         for (id, entry) in &self.extensions {
             if entry.manifest.remote_load().is_some() {
-                extensions.insert(self, id);
+                extensions.insert_extension_and_language_dependencies(self, id);
             }
         }
 
@@ -196,14 +196,20 @@ impl ExtensionIndex {
 struct RemoteSyncExtensions(HashMap<Arc<str>, ExtensionIndexEntry>);
 
 impl RemoteSyncExtensions {
-    fn insert(&mut self, index: &ExtensionIndex, id: &Arc<str>) {
+    fn insert_extension_and_language_dependencies(
+        &mut self,
+        index: &ExtensionIndex,
+        id: &Arc<str>,
+    ) {
+        if self.0.contains_key(id) {
+            return;
+        }
+
         let Some(entry) = index.extensions.get(id) else {
             return;
         };
 
-        if self.0.insert(id.clone(), entry.clone()).is_some() {
-            return;
-        }
+        self.0.insert(id.clone(), entry.clone());
 
         let Some(remote_load) = entry.manifest.remote_load() else {
             return;
@@ -211,7 +217,7 @@ impl RemoteSyncExtensions {
 
         for language in remote_load.language_dependencies() {
             if let Some(language_entry) = index.languages.get(&language) {
-                self.insert(index, &language_entry.extension);
+                self.insert_extension_and_language_dependencies(index, &language_entry.extension);
             }
         }
     }

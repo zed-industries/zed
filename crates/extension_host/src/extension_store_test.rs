@@ -192,44 +192,7 @@ fn remote_sync_keeps_remote_loadable_extensions_without_language_dependency() {
 }
 
 #[test]
-fn remote_sync_includes_debug_adapter_language_dependencies() {
-    let index = ExtensionIndex {
-        extensions: [
-            (
-                "foo-dap".into(),
-                remote_sync_entry(
-                    "foo-dap",
-                    r#"
-                    [debug_adapters.foo]
-                    languages = ["Foo"]
-                    "#,
-                ),
-            ),
-            (
-                "foo-language".into(),
-                remote_sync_entry("foo-language", r#"languages = ["languages/foo"]"#),
-            ),
-        ]
-        .into_iter()
-        .collect(),
-        languages: [(
-            "Foo".into(),
-            remote_sync_language_entry("foo-language", "languages/foo"),
-        )]
-        .into_iter()
-        .collect(),
-        themes: BTreeMap::default(),
-        icon_themes: BTreeMap::default(),
-    };
-
-    assert_eq!(
-        remote_sync_extension_ids(&index),
-        ["foo-dap", "foo-language"]
-    );
-}
-
-#[test]
-fn remote_sync_keeps_debug_adapters_without_language_dependency() {
+fn remote_sync_keeps_debug_adapters() {
     let index = ExtensionIndex {
         extensions: [(
             "foo".into(),

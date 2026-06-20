@@ -198,19 +198,10 @@ pub struct RemoteLoad<'a> {
 
 impl RemoteLoad<'_> {
     pub fn language_dependencies(&self) -> impl Iterator<Item = LanguageName> + '_ {
-        let language_server_dependencies = self
-            .manifest
+        self.manifest
             .language_servers
             .values()
-            .flat_map(|language_server_config| language_server_config.languages());
-
-        let debug_adapter_dependencies = self
-            .manifest
-            .debug_adapters
-            .values()
-            .flat_map(|debug_adapter_config| debug_adapter_config.languages());
-
-        language_server_dependencies.chain(debug_adapter_dependencies)
+            .flat_map(|language_server_config| language_server_config.languages())
     }
 }
 
@@ -376,14 +367,6 @@ pub struct SlashCommandManifestEntry {
 pub struct DebugAdapterManifestEntry {
     #[serde(default)]
     pub schema_path: Option<RelPathBuf>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub languages: Vec<LanguageName>,
-}
-
-impl DebugAdapterManifestEntry {
-    pub fn languages(&self) -> impl Iterator<Item = LanguageName> + '_ {
-        self.languages.iter().cloned()
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
