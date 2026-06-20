@@ -8977,6 +8977,15 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         The quickˇ
         fox jumps overˇthe lazy dog"});
+
+    cx.set_state("The quick «ˇbrown» fox");
+    cx.update_editor(|e, window, cx| e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx));
+    cx.assert_editor_state("The quick ˇ");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("brown fox".to_string())
+    );
 }
 
 #[gpui::test]
