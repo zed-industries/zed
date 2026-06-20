@@ -38,13 +38,30 @@ jobs:
         run: |
           mkdir -p release
           cp target/release/zed release/
-          cp target/release/zed-remote-server release/
+          cp target/release/remote_server release/zed-remote-server
+
+      - name: Install Arch packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+
+      - name: Build CLI for Arch package
+        run: cargo build --release --package cli
+
+      - name: Package Arch Linux
+        run: ./script/package-arch-linux
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: zed-linux-x86_64-nightly
           path: release/
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-arch-linux-x86_64-nightly
+          path: target/release/zed-nightly-*.pkg.tar.zst
 
   bundle_mac_aarch64:
     runs-on: macos-14
