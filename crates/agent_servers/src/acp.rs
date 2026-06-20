@@ -48,6 +48,19 @@ const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
 const ACP_RESPONSE_CHANNEL_CANCELLED: &str =
     "response channel cancelled — connection may have dropped";
 
+fn initialize_meta(agent_id: &AgentId) -> acp::Meta {
+    let mut meta = acp::Meta::from_iter([
+        ("terminal_output".into(), true.into()),
+        ("terminal-auth".into(), true.into()),
+    ]);
+
+    if agent_id.as_ref() == CURSOR_ID {
+        meta.insert("parameterizedModelPicker".into(), true.into());
+    }
+
+    meta
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcpDebugMessageDirection {
     Incoming,
@@ -947,13 +960,7 @@ impl AcpConnection {
             }
         });
 
-        let mut initialize_meta = acp::Meta::from_iter([
-            ("terminal_output".into(), true.into()),
-            ("terminal-auth".into(), true.into()),
-        ]);
-        if agent_id.as_ref() == CURSOR_ID {
-            initialize_meta.insert("parameterizedModelPicker".into(), true.into());
-        }
+        let initialize_meta = initialize_meta(&agent_id);
 
         let initialize_response = into_foreground_future(
             connection.send_request(
@@ -2491,6 +2498,27 @@ mod tests {
 
     use super::*;
     use settings::Settings as _;
+
+    #[test]
+    fn initialize_meta_enables_parameterized_model_picker_only_for_cursor() {
+        let meta = initialize_meta(&AgentId::new(CURSOR_ID));
+
+        assert_eq!(meta.get("terminal_output"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(meta.get("terminal-auth"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            meta.get("parameterizedModelPicker"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn initialize_meta_leaves_other_agents_unchanged() {
+        let meta = initialize_meta(&AgentId::new("test-agent"));
+
+        assert_eq!(meta.get("terminal_output"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(meta.get("terminal-auth"), Some(&serde_json::Value::Bool(true)));
+        assert!(!meta.contains_key("parameterizedModelPicker"));
+    }
 
     #[test]
     fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
