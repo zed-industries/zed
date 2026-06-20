@@ -882,6 +882,7 @@ pub fn into_bedrock(
                                 None
                             }
                         }
+                        MessageContent::Compaction(_) => None,
                         MessageContent::Thinking { text, signature } => {
                             if model.contains(Model::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks

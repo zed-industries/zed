@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{App, ElementId, IntoElement, RenderOnce};
+use gpui::{App, ElementId, IntoElement, RenderOnce, SharedString};
 use heck::ToTitleCase as _;
 use ui::{
     ButtonSize, ContextMenu, Disableable as _, DropdownMenu, DropdownStyle, FluentBuilder as _,
@@ -19,6 +19,7 @@ where
     should_do_title_case: bool,
     tab_index: Option<isize>,
     disabled: bool,
+    aria_label: Option<SharedString>,
     on_change: Rc<dyn Fn(T, &mut ui::Window, &mut App) + 'static>,
 }
 
@@ -41,6 +42,7 @@ where
             should_do_title_case: true,
             tab_index: None,
             disabled: false,
+            aria_label: None,
             on_change: Rc::new(on_change),
         }
     }
@@ -57,6 +59,13 @@ where
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Sets the label announced by assistive technology.
+    /// Defaults to the currently selected value's label.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 }
@@ -104,6 +113,7 @@ where
             },
             context_menu,
         )
+        .when_some(self.aria_label, |this, label| this.aria_label(label))
         .disabled(self.disabled)
         .when_some(self.tab_index, |elem, tab_index| elem.tab_index(tab_index))
         .trigger_size(ButtonSize::Medium)
