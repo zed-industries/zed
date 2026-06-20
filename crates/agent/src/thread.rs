@@ -1264,8 +1264,6 @@ pub struct Thread {
     /// Rolling window of the last N bytes of model output, used to build
     /// corruption snapshots when corruption is detected.
     last_output_text: String,
-    /// Whether corruption snapshots are enabled (cached from settings).
-    snapshots_enabled: bool,
 }
 
 impl Thread {
@@ -1397,8 +1395,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
-            last_output_text: String::new(),
-            snapshots_enabled: false,
+            last_output_text: String::default(),
         }
     }
 
@@ -1783,8 +1780,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
-            last_output_text: String::new(),
-            snapshots_enabled: false,
+            last_output_text: String::default(),
         }
     }
 
@@ -3151,19 +3147,7 @@ impl Thread {
         let signals: Vec<crate::corruption::CorruptionSignal> = corruption_detail
             .triggered_signals
             .iter()
-            .filter_map(|s| match s.as_str() {
-                "repetition" => Some(crate::corruption::CorruptionSignal::Repetition),
-                "script_switching" => Some(crate::corruption::CorruptionSignal::ScriptSwitching),
-                "structure_breakdown" => {
-                    Some(crate::corruption::CorruptionSignal::StructureBreakdown)
-                }
-                "semantic_collapse" => Some(crate::corruption::CorruptionSignal::SemanticCollapse),
-                "task_irrelevance" => Some(crate::corruption::CorruptionSignal::TaskIrrelevance),
-                "character_class_chaos" => {
-                    Some(crate::corruption::CorruptionSignal::CharacterClassChaos)
-                }
-                _ => None,
-            })
+            .filter_map(|s| s.parse().ok())
             .collect();
         let mut snapshot = CorruptionSnapshot::new(
             model.telemetry_id(),
@@ -3484,21 +3468,20 @@ impl Thread {
 
         // Maintain a rolling window of the last N bytes of output for
         // corruption snapshots.
-        if self.snapshots_enabled {
-            self.last_output_text.push_str(&new_text);
-            let max_bytes = CorruptionSnapshot::DEFAULT_MAX_OUTPUT_BYTES;
-            if self.last_output_text.len() > max_bytes * 2 {
-                let start = self.last_output_text.len() - max_bytes;
-                // Find the nearest char boundary at or after `start`
-                // so split_off never panics on multi-byte characters.
-                let split_at = self.last_output_text
-                    .char_indices()
-                    .skip_while(|(idx, _)| *idx < start)
-                    .map(|(idx, _)| idx)
-                    .next()
-                    .unwrap_or(self.last_output_text.len());
-                self.last_output_text = self.last_output_text.split_off(split_at);
-            }
+        self.last_output_text.push_str(&new_text);
+        let max_bytes = CorruptionSnapshot::DEFAULT_MAX_OUTPUT_BYTES;
+        if self.last_output_text.len() > max_bytes * 2 {
+            let start = self.last_output_text.len() - max_bytes;
+            // Find the nearest char boundary at or after `start`
+            // so split_off never panics on multi-byte characters.
+            let split_at = self
+                .last_output_text
+                .char_indices()
+                .skip_while(|(idx, _)| *idx < start)
+                .map(|(idx, _)| idx)
+                .next()
+                .unwrap_or(self.last_output_text.len());
+            self.last_output_text = self.last_output_text.split_off(split_at);
         }
 
         let last_message = self.pending_message();

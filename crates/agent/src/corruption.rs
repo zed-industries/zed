@@ -33,6 +33,22 @@ impl CorruptionSignal {
     }
 }
 
+impl std::str::FromStr for CorruptionSignal {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            s if s == Self::Repetition.label() => Ok(Self::Repetition),
+            s if s == Self::ScriptSwitching.label() => Ok(Self::ScriptSwitching),
+            s if s == Self::StructureBreakdown.label() => Ok(Self::StructureBreakdown),
+            s if s == Self::SemanticCollapse.label() => Ok(Self::SemanticCollapse),
+            s if s == Self::TaskIrrelevance.label() => Ok(Self::TaskIrrelevance),
+            s if s == Self::CharacterClassChaos.label() => Ok(Self::CharacterClassChaos),
+            _ => Err(format!("unknown corruption signal: {s}")),
+        }
+    }
+}
+
 /// A point-in-time snapshot of what was happening when corruption was detected.
 ///
 /// This is captured to aid debugging. Snapshots can be disabled via settings
