@@ -253,7 +253,8 @@ impl EditorPreview {
 
         const MIN_LINE_HEIGHT_PX: Pixels = px(6.0);
         const MARGIN: u32 = 2; // scrolling can offset things;
-        let max_rows = (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
+        let max_visible_rows =
+            (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
 
         self.preview_editor.update(cx, |editor, cx| {
             let focus_row = highlight
@@ -264,8 +265,7 @@ impl EditorPreview {
                         .to_point(&buffer.read(cx).text_snapshot())
                         .row
                 })
-                .unwrap_or_default()
-                .min(max_rows);
+                .unwrap_or_default();
 
             let multi_buffer = editor.buffer().clone();
             multi_buffer.update(cx, |multi_buffer, cx| {
@@ -273,7 +273,7 @@ impl EditorPreview {
                 multi_buffer.set_excerpts_for_buffer(
                     buffer,
                     [Point::new(focus_row, 0)..Point::new(focus_row, 0)],
-                    max_rows,
+                    max_visible_rows,
                     cx,
                 );
             });
