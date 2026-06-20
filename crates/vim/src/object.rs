@@ -210,12 +210,34 @@ pub(crate) fn innermost_surrounding_pair(
     map: &DisplaySnapshot,
     relative_to: Range<DisplayPoint>,
 ) -> Option<DelimiterRange> {
+    innermost_surrounding_pair_impl(map, relative_to, false)
+}
+
+pub(crate) fn innermost_surrounding_pair_excluding_exact_match(
+    map: &DisplaySnapshot,
+    relative_to: Range<DisplayPoint>,
+) -> Option<DelimiterRange> {
+    innermost_surrounding_pair_impl(map, relative_to, true)
+}
+
+fn innermost_surrounding_pair_impl(
+    map: &DisplaySnapshot,
+    relative_to: Range<DisplayPoint>,
+    exclude_exact_match: bool,
+) -> Option<DelimiterRange> {
     let snapshot = map.buffer_snapshot();
-    let offset_range = relative_to.start.to_offset(map, Bias::Left)
-        ..relative_to.end.to_offset(map, Bias::Left);
+    let offset_range =
+        relative_to.start.to_offset(map, Bias::Left)..relative_to.end.to_offset(map, Bias::Left);
 
     let results = snapshot.map_excerpt_ranges(offset_range, |buffer, _, input_range| {
         let filter = |open: Range<usize>, close: Range<usize>| {
+            if exclude_exact_match {
+                let input_range = input_range.start.0..input_range.end.0;
+                if input_range == (open.start..close.end) || input_range == (open.end..close.start)
+                {
+                    return false;
+                }
+            }
             is_surround_pair_delimiter(buffer, open, close)
         };
         let Some((open, close)) = buffer.innermost_enclosing_bracket_ranges(

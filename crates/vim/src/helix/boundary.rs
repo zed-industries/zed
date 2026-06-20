@@ -9,7 +9,7 @@ use language::{CharClassifier, CharKind};
 use text::Bias;
 
 use crate::helix::object::HelixTextObject;
-use crate::object::innermost_surrounding_pair;
+use crate::object::innermost_surrounding_pair_excluding_exact_match;
 
 /// Text objects (after helix definition) that can easily be
 /// found by reading a buffer and comparing two neighboring chars
@@ -313,7 +313,7 @@ impl HelixTextObject for NearestPair {
         relative_to: Range<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let pair = innermost_surrounding_pair(map, relative_to)?;
+        let pair = innermost_surrounding_pair_excluding_exact_match(map, relative_to)?;
         Some(pair.to_display_range(map, around))
     }
 

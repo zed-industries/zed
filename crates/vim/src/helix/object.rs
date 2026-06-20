@@ -45,9 +45,13 @@ impl VimObject {
         selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Result<Option<Range<DisplayPoint>>, VimToHelixError> {
-        let cursor = cursor_range(&selection, map);
+        let relative_to = if self == VimObject::AnyPair && !selection.is_empty() {
+            selection.range()
+        } else {
+            cursor_range(&selection, map)
+        };
         if let Some(helix_object) = self.to_helix_object() {
-            Ok(helix_object.range(map, cursor, around))
+            Ok(helix_object.range(map, relative_to, around))
         } else {
             Err(VimToHelixError)
         }
@@ -233,6 +237,28 @@ mod test {
         cx.set_state("let a: Vec<iˇ32> = vec![];", Mode::HelixNormal);
         cx.simulate_keystrokes("m a m m s (");
         cx.assert_state("let a: Vec«(<i32>)ˇ» = vec![];", Mode::HelixNormal);
+
+        // Repeated `m` objects expand from the current selection, not the
+        // cursor position within that selection.
+        cx.set_state(
+            "#[cfg_attr(feature = \"arbitˇrary\", derive(arbitrary::Arbitrary))]",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m a m");
+        cx.assert_state(
+            "#[cfg_attr(feature = «\"arbitrary\"ˇ», derive(arbitrary::Arbitrary))]",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state(
+            "#[cfg_attr(«feature = \"arbitrary\", derive(arbitrary::Arbitrary)ˇ»)]",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state(
+            "#[«cfg_attr(feature = \"arbitrary\", derive(arbitrary::Arbitrary))ˇ»]",
+            Mode::HelixNormal,
+        );
 
         // Like other text objects, `m` also works with `]` and `[`.
         cx.set_state("foo ˇbar (baz)", Mode::HelixNormal);
