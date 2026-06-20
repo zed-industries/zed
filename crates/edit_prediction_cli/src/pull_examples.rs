@@ -1801,10 +1801,19 @@ fn build_rejected_example(
         Some(RejectionInfo { reason, was_shown }),
         zed_version,
     );
-    example.spec.rejected_patch = Some(rejected_patch);
+    example.spec.rejected_patch = Some(rejected_patch.clone());
     if let Some(expected_patch) = expected_patch {
         example.spec.expected_patches = vec![expected_patch];
     }
+    example.predictions.push(ExamplePrediction {
+        provider: PredictionProvider::default(),
+        actual_output: output.clone(),
+        actual_patch: Some(rejected_patch),
+        actual_cursor: None,
+        error: None,
+        cumulative_logprob: None,
+        avg_logprob: None,
+    });
     example.prompt = prompt.map(|prompt| ExamplePrompt {
         input: prompt,
         expected_output: None,

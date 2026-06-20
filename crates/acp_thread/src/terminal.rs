@@ -9,6 +9,7 @@ use http_proxy::{Allowlist, ProxyConfig, ProxyEvent, ProxyHandle, UpstreamProxy}
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     process::ExitStatus,
@@ -76,9 +77,51 @@ impl SandboxNetworkAccess {
     }
 }
 
+/// A structured, serializable reason the OS sandbox could not be created for a
+/// command. Mirrors the Linux/WSL launcher's failure modes (Bubblewrap);
+/// surfaced to the user (and persisted in tool-call metadata) so the UI can
+/// explain what went wrong.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LinuxWslSandboxError {
+    /// No usable `bwrap` binary was found on `PATH`.
+    BwrapNotFound,
+    /// The only `bwrap` found is setuid-root, which Zed refuses to run.
+    SetuidRejected,
+    /// `bwrap` is present but couldn't set up the sandbox (typically because
+    /// unprivileged user namespaces are disabled).
+    SandboxProbeFailed,
+    /// Any other failure, with a human-readable description.
+    Other(String),
+}
+
+impl LinuxWslSandboxError {
+    /// A short, user-facing explanation of why the sandbox couldn't be created,
+    /// suitable for display in the agent panel.
+    pub fn user_facing_message(&self) -> String {
+        match self {
+            LinuxWslSandboxError::BwrapNotFound => {
+                "No usable `bwrap` binary was found on your PATH. Install Bubblewrap to let \
+                 the agent sandbox terminal commands."
+                    .to_string()
+            }
+            LinuxWslSandboxError::SetuidRejected => {
+                "The only `bwrap` available is setuid-root, which Zed refuses to run. Install \
+                 a non-setuid Bubblewrap to let the agent sandbox terminal commands."
+                    .to_string()
+            }
+            LinuxWslSandboxError::SandboxProbeFailed => {
+                "`bwrap` is installed but couldn't create a sandbox, likely because \
+                 unprivileged user namespaces are disabled on this system."
+                    .to_string()
+            }
+            LinuxWslSandboxError::Other(message) => message.clone(),
+        }
+    }
+}
+
 impl SandboxWrap {
     /// Whether the OS sandbox for this request can actually be created right now,
-    /// returning a short human-readable reason when it can't.
+    /// returning a structured [`LinuxWslSandboxError`] when it can't.
     ///
     /// The sandbox implementation never runs a command unsandboxed on its own —
     /// it aborts if it can't create the sandbox. This lets a caller decide, up
@@ -86,9 +129,14 @@ impl SandboxWrap {
     /// (fail-open), or refuse (fail-closed). It runs a brief probe subprocess on
     /// Linux, so call it off the main thread. On platforms whose sandbox can't
     /// fail to set up this way it always returns `Ok`.
-    pub fn can_create_sandbox(&self, cwd: Option<&std::path::Path>) -> Result<(), String> {
+    pub fn can_create_sandbox(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> Result<(), LinuxWslSandboxError> {
         #[cfg(target_os = "linux")]
         {
+            use sandbox::linux_bubblewrap::LauncherStatus;
+
             let writable: Vec<&std::path::Path> = self
                 .writable_paths
                 .iter()
@@ -101,7 +149,15 @@ impl SandboxWrap {
                 allow_fs_write: self.allow_fs_write,
             };
             sandbox::linux_bubblewrap::check_can_create_sandbox(&writable, permissions, cwd)
-                .map_err(|status| status.describe().to_string())
+                .map_err(|status| match status {
+                    LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
+                    LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
+                    LauncherStatus::SandboxProbeFailed => LinuxWslSandboxError::SandboxProbeFailed,
+                    // `Success` never appears in the `Err` arm; map defensively.
+                    LauncherStatus::Success => {
+                        LinuxWslSandboxError::Other(status.describe().to_string())
+                    }
+                })
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -109,6 +165,28 @@ impl SandboxWrap {
             Ok(())
         }
     }
+}
+
+/// Why the OS sandbox was *not* applied to a terminal command, even though
+/// sandboxing is active for the thread. Persisted in tool-call metadata so the
+/// UI can explain the situation after the fact.
+///
+/// This is deliberately platform-agnostic — every variant exists on every
+/// platform — so the serialized form stored in the thread database never
+/// depends on which OS wrote it. Today only Linux/WSL can fail to create a
+/// sandbox (`ErrorLinuxWsl`), but the variant is named so macOS/Windows can
+/// grow their own failure cases later without a migration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SandboxNotAppliedReason {
+    /// Unsandboxed execution is permanently allowed via the `allow_unsandboxed`
+    /// setting.
+    DisabledForever,
+    /// The user allowed unsandboxed execution for the rest of this thread after
+    /// an earlier sandbox failure. There is always a preceding tool call whose
+    /// reason is [`SandboxNotAppliedReason::ErrorLinuxWsl`].
+    DisabledForThisThread,
+    /// The Linux/WSL (Bubblewrap) sandbox could not be created for this command.
+    ErrorLinuxWsl(LinuxWslSandboxError),
 }
 
 /// Opaque RAII handle the sandbox implementation hands back to keep its
@@ -147,9 +225,14 @@ pub(crate) enum NetworkPolicy {
 ///   back over a status channel whether it could enforce the sandbox, and when
 ///   it can't (no usable `bwrap`, user namespaces disabled, …) it runs the
 ///   command unsandboxed and the parent logs a warning rather than failing.
-/// * Windows and all other platforms pass the command through unchanged —
-///   we have no sandbox integration there, so the command runs with the
-///   agent's ambient permissions.
+/// * Windows routes the command through WSL and runs it under Bubblewrap
+///   there, but that path is async (it performs `wsl.exe` round-trips), so it
+///   lives in [`apply_windows_wsl_sandbox_wrap`] rather than this synchronous
+///   function.
+/// * All other platforms pass the command through unchanged — we have no
+///   sandbox integration there, so the command runs with the agent's ambient
+///   permissions.
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn apply_sandbox_wrap(
     program: String,
     args: Vec<String>,
@@ -268,18 +351,7 @@ pub(crate) fn apply_sandbox_wrap(
         // there's no on-disk resource to keep alive.
         Ok((new_program, new_args, None))
     }
-    #[cfg(target_os = "windows")]
-    {
-        // No sandbox integration on Windows; run with ambient permissions.
-        if let NetworkPolicy::Proxied(port) = network_policy {
-            log::debug!(
-                "[sandbox/network] ignoring proxy port {port} because this platform has no sandbox integration"
-            );
-        }
-        let _ = (sandbox_wrap, cwd);
-        Ok((program, args, None))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         // No sandbox integration available; run with ambient permissions.
         if let NetworkPolicy::Proxied(port) = network_policy {
@@ -290,6 +362,72 @@ pub(crate) fn apply_sandbox_wrap(
         let _ = (sandbox_wrap, cwd);
         Ok((program, args, None))
     }
+}
+
+/// Upper bound on preparing a WSL-sandboxed command (the probe and path
+/// resolution `wsl.exe` round-trips in [`apply_windows_wsl_sandbox_wrap`]).
+/// Deliberately generous: the first invocation after the WSL utility VM has
+/// shut down (or after boot) has to start the VM and the distro, which
+/// routinely takes 10-30 seconds on slow disks or under antivirus scanning.
+/// The point is not latency policing but turning a wedged `wsl.exe` (a real
+/// failure mode when the WSL service is unhealthy) into an actionable error
+/// instead of a terminal command that never starts.
+#[cfg(target_os = "windows")]
+pub(crate) const WSL_SANDBOX_WRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wrap a terminal command so it runs under Bubblewrap inside WSL (see
+/// [`sandbox::windows_wsl`]).
+///
+/// Async because it performs `wsl.exe` round-trips and UNC-path stats that
+/// can take seconds when the WSL VM is cold; callers must run it on a
+/// background executor so the UI thread is never blocked, and should bound
+/// it with [`WSL_SANDBOX_WRAP_TIMEOUT`]. Parameters are owned so the future
+/// is `Send + 'static`. Dropping the future (timeout or caller cancellation)
+/// kills any in-flight `wsl.exe` child rather than leaking it.
+///
+/// The Windows sandbox (Bubblewrap inside WSL) can only toggle network access
+/// wholesale, so `network_policy` collapses to allow/deny here just as it does
+/// on Linux. `setup_network_proxy` never resolves to `Proxied` on Windows.
+#[cfg(target_os = "windows")]
+pub(crate) async fn apply_windows_wsl_sandbox_wrap(
+    command: String,
+    args: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
+    sandbox_wrap: SandboxWrap,
+    network_policy: NetworkPolicy,
+    env: collections::HashMap<String, String>,
+) -> anyhow::Result<(String, Vec<String>, Option<SandboxConfigHandle>)> {
+    let allow_network = match network_policy {
+        NetworkPolicy::Denied => false,
+        NetworkPolicy::Unrestricted => true,
+        NetworkPolicy::Proxied(port) => {
+            // Bubblewrap (in WSL) can only toggle network access wholesale, so
+            // it can't confine egress to the proxy's loopback port.
+            // `setup_network_proxy` never resolves to `Proxied` on Windows;
+            // deny network rather than silently widening access.
+            log::debug!(
+                "[sandbox/network] ignoring proxy port {port}; bubblewrap in WSL can't confine to a loopback port"
+            );
+            false
+        }
+    };
+    let (program, args) = task::ShellBuilder::new(&Shell::Program("/bin/sh".to_string()), false)
+        .non_interactive()
+        .redirect_stdin_to_dev_null()
+        .build(Some(command), &args);
+    let writable: Vec<std::path::PathBuf> = sandbox_wrap
+        .writable_paths
+        .into_iter()
+        .chain(sandbox_wrap.extra_write_paths)
+        .collect();
+    let permissions = sandbox::SandboxPermissions {
+        allow_network,
+        allow_fs_write: sandbox_wrap.allow_fs_write,
+    };
+    let (program, args) =
+        sandbox::windows_wsl::wrap_invocation(program, args, writable, permissions, cwd, env)
+            .await?;
+    Ok((program, args, None))
 }
 
 /// Spawn the in-process network proxy for a sandboxed command with restricted

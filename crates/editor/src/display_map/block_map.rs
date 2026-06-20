@@ -119,6 +119,43 @@ impl BlockPoint {
     }
 }
 
+/// Forward-only cursor mapping [`WrapPoint`]s to [`BlockPoint`]s, reusing its
+/// tree position across calls. This is the streaming equivalent of
+/// [`BlockSnapshot::to_block_point`]; callers must provide non-decreasing wrap
+/// points.
+pub struct BlockPointCursor<'a> {
+    snapshot: &'a BlockSnapshot,
+    cursor: sum_tree::Cursor<'a, 'static, Transform, Dimensions<WrapRow, BlockRow>>,
+}
+
+impl BlockPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
+    pub fn map(&mut self, wrap_point: WrapPoint) -> BlockPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&wrap_point.row(), Bias::Right);
+        } else {
+            cursor.seek(&wrap_point.row(), Bias::Right);
+        }
+        if let Some(transform) = cursor.item() {
+            if transform.block.is_some() {
+                BlockPoint::new(cursor.start().1, 0)
+            } else {
+                let input_start = Point::new(cursor.start().0.0, 0);
+                let output_start = Point::new(cursor.start().1.0, 0);
+                let input_overshoot = wrap_point.0 - input_start;
+                BlockPoint(output_start + input_overshoot)
+            }
+        } else {
+            self.snapshot.max_point()
+        }
+    }
+}
+
 pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
 /// Where to place a block.
@@ -331,6 +368,8 @@ impl std::fmt::Display for BlockId {
 #[derive(Clone, Debug)]
 struct Transform {
     summary: TransformSummary,
+    /// When `block` is `None`, the transform is isomorphic and passes input
+    /// wrap rows through as normal text.
     block: Option<Block>,
 }
 
@@ -510,6 +549,7 @@ struct TransformSummary {
     output_rows: BlockRow,
     longest_row: BlockRow,
     longest_row_chars: u32,
+    has_replacement_blocks: bool,
 }
 
 pub struct BlockChunks<'a> {
@@ -1089,6 +1129,7 @@ impl BlockMap {
                     output_rows: BlockRow(block.height()),
                     longest_row: BlockRow(0),
                     longest_row_chars: 0,
+                    has_replacement_blocks: false,
                 };
 
                 let rows_before_block;
@@ -1599,6 +1640,7 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot:
         output_rows: BlockRow(rows.0),
         longest_row: BlockRow(wrap_summary.longest_row),
         longest_row_chars: wrap_summary.longest_row_chars,
+        has_replacement_blocks: false,
     };
     let mut merged = false;
     tree.update_last(
@@ -2145,6 +2187,11 @@ impl BlockMapWriter<'_> {
 }
 
 impl BlockSnapshot {
+    #[inline(always)]
+    pub fn has_replacement_blocks(&self) -> bool {
+        self.transforms.summary().has_replacement_blocks
+    }
+
     #[cfg(test)]
     #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
@@ -2503,6 +2550,13 @@ impl BlockSnapshot {
         }
     }
 
+    pub fn block_point_cursor(&self) -> BlockPointCursor<'_> {
+        BlockPointCursor {
+            snapshot: self,
+            cursor: self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(()),
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapRow, BlockRow>, _>(
@@ -2755,7 +2809,9 @@ impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        self.summary.clone()
+        let mut summary = self.summary.clone();
+        summary.has_replacement_blocks = self.block.as_ref().is_some_and(Block::is_replacement);
+        summary
     }
 }
 
@@ -2771,6 +2827,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         }
         self.input_rows += summary.input_rows;
         self.output_rows += summary.output_rows;
+        self.has_replacement_blocks |= summary.has_replacement_blocks;
     }
 }
 
