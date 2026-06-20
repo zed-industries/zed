@@ -963,11 +963,11 @@ impl ScrollManager {
         target_position: gpui::Point<ScrollOffset>,
         behavior: Option<ScrollBehavior>,
     ) {
-        let behavior = behavior
-            .or(self
-                .smooth_scroll
-                .then_some(ScrollBehavior::RequestAnimation))
-            .unwrap_or_default();
+        let behavior = if self.smooth_scroll {
+            behavior.unwrap_or(ScrollBehavior::RequestAnimation)
+        } else {
+            ScrollBehavior::Instant
+        };
 
         if behavior == ScrollBehavior::Instant {
             self.scroll_animation = Some(ScrollAnimation::Completed {

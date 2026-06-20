@@ -2867,6 +2867,11 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut TestAppContext) 
 #[gpui::test]
 async fn test_instant_scroll_request_during_scroll_animation(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.smooth_scroll = Some(settings::SmoothScrollContent {
+            enabled: Some(true),
+        });
+    });
     let mut cx = EditorTestContext::new(cx).await;
     let line_height = cx.update_editor(|editor, window, cx| {
         editor.set_vertical_scroll_margin(0, cx);
@@ -34043,7 +34048,7 @@ async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut T
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|editor, window, cx| {
-            editor.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            editor.scroll(gpui::Point { x: 0., y: offset }, None, None, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
