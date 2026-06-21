@@ -631,6 +631,10 @@ impl CopilotChat {
         self.oauth_token.is_some()
     }
 
+    pub fn oauth_token(&self) -> Option<&str> {
+        self.oauth_token.as_deref()
+    }
+
     pub fn models(&self) -> Option<&[Model]> {
         self.models.as_deref()
     }
