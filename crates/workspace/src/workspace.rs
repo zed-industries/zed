@@ -8236,8 +8236,8 @@ impl Workspace {
                     .remote_connection_options(cx)
                     .map(RemoteHostLocation::from);
                 let worktree_store = project.worktree_store().downgrade();
-                self.toggle_modal(window, cx, |_, cx| {
-                    SecurityModal::new(worktree_store, remote_host, cx)
+                self.toggle_modal(window, cx, |window, cx| {
+                    SecurityModal::new(worktree_store, remote_host, window, cx)
                 });
             }
         }
@@ -10776,18 +10776,19 @@ pub fn client_side_decorations(
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
                         .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
                         .when(!tiling.is_tiled(), |div| {
-                            div.shadow(vec![gpui::BoxShadow {
-                                color: Hsla {
-                                    h: 0.,
-                                    s: 0.,
-                                    l: 0.,
-                                    a: 0.4,
-                                },
-                                blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
-                                spread_radius: px(0.),
-                                inset: false,
-                                offset: point(px(0.0), px(0.0)),
-                            }])
+                            div.shadow(vec![
+                                gpui::BoxShadow::new(
+                                    px(0.),
+                                    px(0.),
+                                    Hsla {
+                                        h: 0.,
+                                        s: 0.,
+                                        l: 0.,
+                                        a: 0.4,
+                                    },
+                                )
+                                .blur_radius(theme::CLIENT_SIDE_DECORATION_SHADOW / 2.),
+                            ])
                         }),
                 })
                 .on_mouse_move(|_e, _, cx| {

@@ -209,6 +209,10 @@ impl DevContainerPickerDelegate {
 impl PickerDelegate for DevContainerPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "remote dev container picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matching_candidates.len()
     }
@@ -400,7 +404,7 @@ impl ProjectPicker {
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
-                .width(rems(34.))
+                .minimum_results_width(rems(34.))
                 .modal(false);
             picker.set_query(&home_dir.to_string(), window, cx);
             picker
@@ -1624,6 +1628,7 @@ impl RemoteServerProjects {
                                         .on_click(cx.listener({
                                             let connection = connection.clone();
                                             move |this, _, window, cx| {
+                                                cx.emit(DismissEvent);
                                                 this.create_remote_project(
                                                     index,
                                                     connection.clone().into(),
