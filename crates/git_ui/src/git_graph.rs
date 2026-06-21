@@ -1386,6 +1386,9 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
 
+    /// Returns the column fractions in display order:
+    /// `[graph, description, author, date, commit]`.
+    /// For path history there is no graph column, so its fraction is 0.
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
         // todo(git_graph): We should make a column/table api that allows removing table columns
         let fractions = self
@@ -1407,23 +1410,18 @@ impl GitGraph {
     }
 
     fn table_column_width_config(&self, window: &Window, cx: &App) -> ColumnWidthConfig {
-        let [_, description, date, author, commit] = self.preview_column_fractions(window, cx);
-        let table_total = description + date + author + commit;
+        let [_, description, author, date, commit] = self.preview_column_fractions(window, cx);
+        let table_total = description + author + date + commit;
 
         let widths = if table_total > 0.0 {
             vec![
                 DefiniteLength::Fraction(description / table_total),
-                DefiniteLength::Fraction(date / table_total),
                 DefiniteLength::Fraction(author / table_total),
+                DefiniteLength::Fraction(date / table_total),
                 DefiniteLength::Fraction(commit / table_total),
             ]
         } else {
-            vec![
-                DefiniteLength::Fraction(0.25),
-                DefiniteLength::Fraction(0.25),
-                DefiniteLength::Fraction(0.25),
-                DefiniteLength::Fraction(0.25),
-            ]
+            vec![DefiniteLength::Fraction(0.25); 4]
         };
 
         ColumnWidthConfig::explicit(widths)
@@ -1479,40 +1477,31 @@ impl GitGraph {
 
         let column_widths = if matches!(log_source, LogSource::Path(_)) {
             cx.new(|_cx| {
+                // Columns: Description, Author, Date, Commit
                 RedistributableColumnsState::new(
                     4,
                     vec![
                         DefiniteLength::Fraction(0.72),
-                        DefiniteLength::Fraction(0.12),
-                        DefiniteLength::Fraction(0.1),
                         DefiniteLength::Fraction(0.06),
+                        DefiniteLength::Fraction(0.12),
+                        DefiniteLength::Fraction(0.10),
                     ],
-                    vec![
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                    ],
+                    vec![TableResizeBehavior::Resizable; 4],
                 )
             })
         } else {
             cx.new(|_cx| {
+                // Columns: Graph, Description, Author, Date, Commit
                 RedistributableColumnsState::new(
                     5,
                     vec![
                         DefiniteLength::Fraction(0.14),
                         DefiniteLength::Fraction(0.6192),
+                        DefiniteLength::Fraction(0.05),
                         DefiniteLength::Fraction(0.1032),
-                        DefiniteLength::Fraction(0.086),
-                        DefiniteLength::Fraction(0.0516),
+                        DefiniteLength::Fraction(0.0876),
                     ],
-                    vec![
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                        TableResizeBehavior::Resizable,
-                    ],
+                    vec![TableResizeBehavior::Resizable; 5],
                 )
             })
         };
@@ -1776,6 +1765,22 @@ impl GitGraph {
         let row_height = Self::row_height(window, cx);
         let has_context_menu = self.has_context_menu();
 
+        // Resolve the hosting provider once for the whole batch so the author
+        // avatars can be fetched from the host's CDN instead of falling back to
+        // a person icon.
+        let remote = repository.as_ref().and_then(|repository| {
+            repository.update(cx, |repo, cx| {
+                let remote_url = repo.default_remote_url()?;
+                let provider_registry = GitHostingProviderRegistry::default_global(cx);
+                let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
+                Some(GitRemote {
+                    host: provider,
+                    owner: parsed.owner.into(),
+                    repo: parsed.repo.into(),
+                })
+            })
+        });
+
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
         if let Some(repository) = repository.as_ref() {
@@ -1796,12 +1801,9 @@ impl GitGraph {
                 let Some((commit, repository)) =
                     self.graph_data.commits.get(idx).zip(repository.as_ref())
                 else {
-                    return vec![
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                    ];
+                    return (0..4)
+                        .map(|_| div().h(row_height).into_any_element())
+                        .collect();
                 };
 
                 let data = repository.update(cx, |repository, cx| {
@@ -1813,15 +1815,19 @@ impl GitGraph {
                 let short_sha = commit.data.sha.display_short();
                 let mut formatted_time = String::new();
                 let subject: SharedString;
-                let author_name: SharedString;
+                let author_name: Option<SharedString>;
+                let author_email: Option<SharedString>;
 
                 if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
-                    author_name = data.author_name.clone();
+                    author_name = (!data.author_name.is_empty()).then(|| data.author_name.clone());
+                    author_email =
+                        (!data.author_email.is_empty()).then(|| data.author_email.clone());
                     formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
                     subject = "Loading…".into();
-                    author_name = "".into();
+                    author_name = None;
+                    author_email = None;
                 }
 
                 let accent_colors = cx.theme().accents();
@@ -1946,8 +1952,32 @@ impl GitGraph {
                                 .child(subject_label),
                         )
                         .into_any_element(),
+                    {
+                        let avatar_sha: SharedString = commit.data.sha.to_string().into();
+                        let avatar =
+                            CommitAvatar::new(&avatar_sha, author_email.clone(), remote.as_ref())
+                                .size(px(16.))
+                                .render(window, cx);
+                        h_flex()
+                            .id(ElementId::NamedInteger("commit-author".into(), idx as u64))
+                            .h(row_height)
+                            .items_center()
+                            .child(avatar)
+                            .when_some(author_name.clone(), |this, author_name| {
+                                let author_email = author_email.clone();
+                                this.tooltip(move |_window, cx| match &author_email {
+                                    Some(author_email) => Tooltip::with_meta(
+                                        author_name.clone(),
+                                        None,
+                                        author_email.clone(),
+                                        cx,
+                                    ),
+                                    None => Tooltip::simple(author_name.clone(), cx),
+                                })
+                            })
+                            .into_any_element()
+                    },
                     column_label(formatted_time.into()),
-                    column_label(author_name),
                     column_label(short_sha.into()),
                 ]
             })
@@ -3768,12 +3798,12 @@ impl Render for GitGraph {
             let [
                 graph_fraction,
                 description_fraction,
-                date_fraction,
                 author_fraction,
+                date_fraction,
                 commit_fraction,
             ] = self.preview_column_fractions(window, cx);
             let table_fraction =
-                description_fraction + date_fraction + author_fraction + commit_fraction;
+                description_fraction + author_fraction + date_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
 
             h_flex()
@@ -3796,8 +3826,8 @@ impl Render for GitGraph {
                                         Label::new("Description")
                                             .color(Color::Muted)
                                             .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
                                         Label::new("Author").color(Color::Muted).into_any_element(),
+                                        Label::new("Date").color(Color::Muted).into_any_element(),
                                         Label::new("Commit").color(Color::Muted).into_any_element(),
                                     ],
                                     5,
@@ -3808,8 +3838,8 @@ impl Render for GitGraph {
                                         Label::new("Description")
                                             .color(Color::Muted)
                                             .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
                                         Label::new("Author").color(Color::Muted).into_any_element(),
+                                        Label::new("Date").color(Color::Muted).into_any_element(),
                                         Label::new("Commit").color(Color::Muted).into_any_element(),
                                     ],
                                     4,
