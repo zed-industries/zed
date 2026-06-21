@@ -702,18 +702,39 @@ impl MentionSet {
 /// parent path components for files/directories, source for skills) so the user
 /// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
 /// which is the same utility used for buffer tab titles and the sidebar.
+///
+/// Duplicate mentions (same URI added more than once) are deduplicated before
+/// disambiguation so they stay at the base name instead of being driven to the
+/// full absolute path by the collision-resolution loop.
 fn compute_disambiguated_labels<'a>(
     mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
 ) -> HashMap<CreaseId, SharedString> {
     let mentions: Vec<_> = mentions.collect();
-    let details =
-        util::disambiguate::compute_disambiguation_details(&mentions, |(_, uri), detail| {
-            uri.disambiguated_name(detail)
-        });
+
+    // Deduplicate URIs before disambiguating. Without this, two mentions of the
+    // same file collide at every detail level and the algorithm escalates all
+    // the way to the full absolute path before reaching a fixed point.
+    let mut seen: HashSet<&MentionUri> = HashSet::default();
+    let unique_uris: Vec<&MentionUri> = mentions
+        .iter()
+        .map(|(_, uri)| *uri)
+        .filter(|&uri| seen.insert(uri))
+        .collect();
+
+    let details = util::disambiguate::compute_disambiguation_details(
+        &unique_uris,
+        |uri, detail| uri.disambiguated_name(detail),
+    );
+
+    let uri_to_detail: HashMap<&MentionUri, usize> =
+        unique_uris.into_iter().zip(details).collect();
+
     mentions
         .into_iter()
-        .zip(details)
-        .map(|((id, uri), detail)| (id, uri.disambiguated_name(detail).into()))
+        .map(|(id, uri)| {
+            let detail = uri_to_detail.get(uri).copied().unwrap_or(0);
+            (id, uri.disambiguated_name(detail).into())
+        })
         .collect()
 }
 
