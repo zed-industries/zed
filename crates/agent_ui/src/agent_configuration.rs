@@ -506,6 +506,7 @@ impl AgentConfiguration {
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
                 Plan::ZedBusiness => ("Business", Color::Accent, pro_chip_bg),
+                Plan::ZedVip => ("VIP", Color::Accent, pro_chip_bg),
                 Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 

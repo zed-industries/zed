@@ -62,6 +62,8 @@ use uuid::Uuid;
 pub(crate) mod a11y;
 mod prompts;
 
+pub use a11y::A11ySubtreeBuilder;
+
 use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
 use self::a11y::ROOT_NODE_ID;
@@ -1041,6 +1043,9 @@ pub struct Window {
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
+    /// Incremented every time focus moves. Used to invalidate a
+    /// pending keyboard activation state when focus changes.
+    pub(crate) focus_generation: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
@@ -1303,6 +1308,10 @@ impl Window {
             tabbing_identifier,
         } = options;
 
+        let initial_window_title = titlebar
+            .as_ref()
+            .and_then(|titlebar| titlebar.title.clone());
+
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
@@ -1361,8 +1370,12 @@ impl Window {
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
+            let mut initial_root_node = accesskit::Node::new(accesskit::Role::Window);
+            if let Some(title) = &initial_window_title {
+                initial_root_node.set_label(title.to_string());
+            }
             let initial_tree = accesskit::TreeUpdate {
-                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
+                nodes: vec![(ROOT_NODE_ID, initial_root_node)],
                 tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
                 tree_id: accesskit::TreeId::ROOT,
                 focus: ROOT_NODE_ID,
@@ -1735,6 +1748,7 @@ impl Window {
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
+            focus_generation: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
@@ -1744,7 +1758,11 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(a11y_active_flag, accessibility_force_disabled),
+            a11y: A11y::new(
+                a11y_active_flag,
+                accessibility_force_disabled,
+                initial_window_title,
+            ),
         })
     }
 
@@ -1891,6 +1909,7 @@ impl Window {
         }
 
         self.focus = Some(handle.id);
+        self.focus_generation = self.focus_generation.wrapping_add(1);
         self.clear_pending_keystrokes();
 
         // Avoid re-entrant entity updates by deferring observer notifications to the end of the
@@ -1913,6 +1932,9 @@ impl Window {
             return;
         }
 
+        if self.focus.is_some() {
+            self.focus_generation = self.focus_generation.wrapping_add(1);
+        }
         self.focus = None;
         self.refresh();
     }
@@ -2335,6 +2357,7 @@ impl Window {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
+        self.a11y.set_window_title(title.to_string());
     }
 
     /// Sets the position of the macOS traffic light buttons.
@@ -5472,6 +5495,20 @@ impl Window {
     /// with the window, for others it's just a simple global function call.
     pub fn play_system_bell(&self) {
         self.platform_window.play_system_bell()
+    }
+
+    /// Returns whether accessibility features are active for this frame,
+    /// i.e. whether assistive technology (such as a screen reader) is
+    /// connected and an accessibility tree is being built.
+    ///
+    /// Use this to skip computing data during rendering that is only
+    /// observable through the accessibility tree. When accessibility is
+    /// activated, a redraw is forced, so gated work is recomputed before the
+    /// next tree update is sent to the platform.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    pub fn is_a11y_active(&self) -> bool {
+        self.a11y.is_active()
     }
 
     /// Register a listener for an accessibility action on a specific node.

@@ -299,8 +299,9 @@ impl ConfigOptionSelector {
                     Picker::nonsearchable_list(delegate, window, picker_cx)
                 }
                 .show_scrollbar(true)
-                .width(rems(20.))
-                .max_height(Some(rems(20.).into()))
+                .minimum_results_width(rems(20.))
+                .height(rems(20.))
+                .no_vertical_padding()
             })
         };
 
@@ -558,6 +559,10 @@ impl ConfigOptionPickerDelegate {
 
 impl PickerDelegate for ConfigOptionPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "config options"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
