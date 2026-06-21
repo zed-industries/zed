@@ -7946,7 +7946,7 @@ mod tests {
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().sort_by_path = Some(true);
+                    settings.git_panel.get_or_insert_default().sort_by = Some(GitPanelSortBy::Path);
                 })
             });
         });
