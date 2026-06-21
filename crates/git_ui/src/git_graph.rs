@@ -139,6 +139,10 @@ struct CommitTagPickerDelegate {
 impl PickerDelegate for CommitTagPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "commit-tag"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Copy Tag".into()
     }

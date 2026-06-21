@@ -306,6 +306,8 @@ pub struct LanguageModel {
     pub supports_disabling_thinking: bool,
     #[serde(default)]
     pub supports_fast_mode: bool,
+    #[serde(default)]
+    pub supports_server_side_compaction: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,

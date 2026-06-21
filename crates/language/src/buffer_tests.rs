@@ -978,6 +978,35 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_outline_selection_range_for_multiline_c_signature(cx: &mut gpui::TestAppContext) {
+    let text = indoc! {"
+        void
+        evdev_post_scroll(struct evdev_device *device,
+                  usec_t time,
+                  enum libinput_pointer_axis_source source,
+                  const struct normalized_coords *delta)
+        {
+            return;
+        }
+    "};
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
+
+    let item = outline
+        .items
+        .iter()
+        .find(|item| item.text.contains("evdev_post_scroll"))
+        .unwrap()
+        .to_point(&snapshot);
+
+    assert_eq!(item.source_range_for_text.start, Point::new(0, 0));
+    assert_eq!(item.selection_range.start, Point::new(1, 0));
+    assert_eq!(item.text, "void evdev_post_scroll( )");
+}
+
+#[gpui::test]
 fn test_outline_annotations(cx: &mut App) {
     // Add this new test case
     let text = r#"
@@ -4049,6 +4078,20 @@ fn javascript_lang() -> Language {
     .unwrap()
 }
 
+fn c_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
+        .unwrap(),
+    )
+}
+
 pub fn markdown_inline_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -4189,6 +4232,51 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
                     byte_idx, chunk_text, byte as char, is_tab, has_bit
                 );
             }
+        }
+    }
+}
+
+#[gpui::test]
+fn test_formatted_chunks(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+    let buffer = cx.new(|cx| Buffer::local("use std::cmp::Eq;", cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+
+        // Verify chars bitmap
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        assert_eq!(char_indices.len() as u32, chars_bitmap.count_ones());
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
         }
     }
 }

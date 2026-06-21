@@ -26,7 +26,7 @@ pub fn init(cx: &mut App) {
                     let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
                         let delegate = ProjectSymbolsDelegate::new(handle, project);
-                        Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                        Picker::uniform_list(delegate, window, cx).minimum_results_width(rems(34.))
                     })
                 },
             );
@@ -108,6 +108,10 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "project symbols"
+    }
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project symbols...".into()
     }
