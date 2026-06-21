@@ -173,6 +173,7 @@ prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
+resource_monitor.workspace = true
 remote.workspace = true
 repl.workspace = true
 reqwest.workspace = true

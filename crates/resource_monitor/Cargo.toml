@@ -1,0 +1,26 @@
+[package]
+name = "resource_monitor"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/resource_monitor.rs"
+doctest = false
+
+[dependencies]
+collections.workspace = true
+gpui.workspace = true
+human_bytes.workspace = true
+language.workspace = true
+lsp.workspace = true
+project.workspace = true
+sysinfo.workspace = true
+terminal.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true

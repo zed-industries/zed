@@ -15305,6 +15305,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "resource_monitor"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "human_bytes",
+ "language",
+ "lsp",
+ "project",
+ "sysinfo 0.37.2",
+ "terminal",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "resvg"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22977,6 +22994,7 @@ dependencies = [
  "remote",
  "repl",
  "reqwest_client",
+ "resource_monitor",
  "rope",
  "search",
  "semver",
