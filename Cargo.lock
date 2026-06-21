@@ -590,6 +590,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai_credit_status"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "client",
+ "cloud_api_types",
+ "cloud_llm_client",
+ "copilot_chat",
+ "futures 0.3.32",
+ "gpui",
+ "http_client",
+ "language_model",
+ "pretty_assertions",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
@@ -22919,6 +22945,7 @@ dependencies = [
  "agent_settings",
  "agent_skills",
  "agent_ui",
+ "ai_credit_status",
  "anyhow",
  "ashpd",
  "askpass",
