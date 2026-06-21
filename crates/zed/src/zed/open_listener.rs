@@ -1390,8 +1390,6 @@ mod tests {
         );
         assert!(!options.add_dirs_to_sidebar);
 
-        // `ExistingWindow` reuses the current window and adds directories to its
-        // sidebar.
         cx.update(|cx| {
             settings::SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
