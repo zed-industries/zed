@@ -7,8 +7,8 @@ use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy_nucleo::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, rems,
 };
 use language::{Outline, OutlineItem, OutlineSearchEntry};
 use picker::{Picker, PickerDelegate};
@@ -143,7 +143,6 @@ impl ModalView for OutlineView {
 impl Render for OutlineView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(34.))
             .on_action(cx.listener(
                 |_this: &mut OutlineView,
                  _: &zed_actions::outline::ToggleOutline,
@@ -180,7 +179,12 @@ impl OutlineView {
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
-                .max_height(Some(vh(0.75, window)))
+                .minimum_results_width(rems(34.))
+                .height(Rems::from_pixels(
+                    window.viewport_size().height * 0.75,
+                    window,
+                ))
+                .no_vertical_padding()
                 .show_scrollbar(true)
         });
         OutlineView { picker }
@@ -261,6 +265,10 @@ impl OutlineViewDelegate {
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "outline view"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()

@@ -21,6 +21,7 @@ pub trait ErasedEditor: 'static {
     fn move_selection_to_end(&self, window: &mut Window, _: &mut App);
     fn set_masked(&self, masked: bool, window: &mut Window, cx: &mut App);
     fn set_read_only(&self, read_only: bool, cx: &mut App);
+    fn set_multiline(&self, max_lines: Option<usize>, window: &mut Window, cx: &mut App);
 
     fn focus_handle(&self, cx: &App) -> FocusHandle;
 

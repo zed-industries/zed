@@ -12,8 +12,8 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext,
-    SharedString, Subscription, Task, TextStyle, WeakEntity, Window, actions, relative, rems,
+    Action, Entity, EntityId, EventEmitter, FocusHandle, Focusable, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, actions, prelude::*,
 };
 use markdown::Markdown;
 use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot};
@@ -21,10 +21,7 @@ use project::search::SearchQuery;
 use search::{SearchOption, SearchOptions, SearchSource};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
-use ui::{
-    ActiveTheme, ButtonStyle, Color, IconButton, IconButtonShape, IconName, IntoElement, Label,
-    LabelSize, Tooltip, div, h_flex, prelude::*, v_flex,
-};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 use util::paths::PathMatcher;
 
 use crate::entry_view_state::EntryViewState;
@@ -715,20 +712,15 @@ impl Render for ThreadSearchBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.query_editor.focus_handle(cx);
         let theme = cx.theme().colors();
+
         let has_matches = !self.matches.is_empty();
         let query_empty = self.query_editor.read(cx).text(cx).is_empty();
         let in_error_state = self.query_error || (!query_empty && !has_matches);
-        let border_color = theme.border;
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AcpThreadSearchBar");
 
         let counter_text = self.active_match_text(cx).unwrap_or_default();
-        let counter_color = if has_matches {
-            Color::Default
-        } else {
-            Color::Muted
-        };
 
         let bar_row = h_flex()
             .track_focus(&focus_handle)
@@ -742,16 +734,17 @@ impl Render for ThreadSearchBar {
             .on_action(cx.listener(Self::focus_search))
             .w_full()
             .gap_2()
-            .px_2()
-            .py_1()
-            .border_b_1()
-            .border_color(theme.border)
-            .bg(theme.toolbar_background)
             .child(
-                input_box(border_color)
-                    .flex_1()
+                h_flex()
+                    .min_h_8()
                     .min_w_32()
-                    .child(div().flex_1().min_w_0().py_1().child(render_query_input(
+                    .flex_1()
+                    .px_1p5()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.editor_background)
+                    .rounded_md()
+                    .child(div().flex_1().child(render_query_input(
                         &self.query_editor,
                         in_error_state,
                         cx,
@@ -801,7 +794,7 @@ impl Render for ThreadSearchBar {
                         div().ml_1().min_w(rems(2.5)).child(
                             Label::new(counter_text)
                                 .size(LabelSize::Small)
-                                .color(counter_color),
+                                .when(!has_matches, |this| this.color(Color::Muted)),
                         ),
                     )
                     .child(nav_button(
@@ -814,51 +807,44 @@ impl Render for ThreadSearchBar {
                     )),
             );
 
-        let error_row = self.query_error_message.clone().map(|msg| {
-            div()
-                .w_full()
-                .px_2()
-                .py_0p5()
-                .border_b_1()
-                .border_color(theme.border)
-                .bg(theme.toolbar_background)
-                .child(Label::new(msg).size(LabelSize::Small).color(Color::Error))
-        });
+        let error_row = self
+            .query_error_message
+            .clone()
+            .map(|msg| Label::new(msg).size(LabelSize::Small).color(Color::Error));
 
-        v_flex().w_full().child(bar_row).children(error_row)
+        v_flex()
+            .w_full()
+            .p_2()
+            .bg(theme.panel_background)
+            .border_b_1()
+            .border_color(theme.border.opacity(0.6))
+            .child(bar_row)
+            .children(error_row)
     }
-}
-
-fn input_box(border_color: Hsla) -> gpui::Div {
-    h_flex()
-        .min_h_8()
-        .pl_2()
-        .pr_1()
-        .border_1()
-        .border_color(border_color)
-        .rounded_md()
 }
 
 fn render_query_input(editor: &Entity<Editor>, has_error: bool, app: &App) -> impl IntoElement {
     let theme = app.theme().colors();
     let (color, use_syntax) = if has_error {
-        (ui::Color::Error.color(app), false)
+        (Color::Error.color(app), false)
     } else {
         (theme.text, true)
     };
+
     let settings = ThemeSettings::get_global(app);
+
     let text_style = TextStyle {
         color,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_family: settings.ui_font.family.clone(),
+        font_features: settings.ui_font.features.clone(),
+        font_fallbacks: settings.ui_font.fallbacks.clone(),
         font_size: rems(0.875).into(),
-        font_weight: settings.buffer_font.weight,
+        font_weight: settings.ui_font.weight,
         line_height: relative(1.3),
         ..TextStyle::default()
     };
     let mut style = EditorStyle {
-        background: theme.toolbar_background,
+        background: theme.editor_background,
         local_player: app.theme().players().local(),
         text: text_style,
         ..EditorStyle::default()
@@ -879,7 +865,6 @@ fn nav_button(
 ) -> IconButton {
     let action_for_dispatch = action;
     IconButton::new(id, icon)
-        .style(ButtonStyle::Subtle)
         .shape(IconButtonShape::Square)
         .disabled(disabled)
         .on_click({
