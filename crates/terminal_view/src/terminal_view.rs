@@ -106,6 +106,18 @@ actions!(
 #[action(namespace = terminal)]
 pub struct RenameTerminal;
 
+/// Minimum visible rows of the input composer. The editor is top-aligned, so a
+/// short command leaves the remaining rows blank — a deliberate padding strip
+/// below the text, echoing the breathing room a shell prompt leaves for hints.
+const MIN_INPUT_COMPOSER_LINES: usize = 5;
+/// Maximum rows the composer grows to before it scrolls internally instead of
+/// pushing the terminal further. Keeps a long paste from squeezing the terminal
+/// grid down to nothing; past this the composer scrolls within its own height.
+const MAX_INPUT_COMPOSER_LINES: usize = 18;
+/// Blank terminal rows reserved below the editable area, separated from it by a
+/// rule — the breathing room a shell prompt leaves for hints.
+const INPUT_COMPOSER_PADDING_ROWS: f32 = 2.;
+
 /// Toggles a multi-line editor for composing terminal input with full editor
 /// controls (mouse positioning, selection, free editing across rows). Toggle
 /// again to close. Disabled while a full-screen program owns the terminal.
@@ -123,6 +135,27 @@ fn compose_terminal_submission(text: &str) -> String {
         input.push('\r');
     }
     input
+}
+
+/// The composer's font size, resolved exactly like the terminal it feeds: the
+/// terminal's own font size if set, otherwise the buffer font size. Shared by
+/// the composer's text style and its line-height-based padding so the two never
+/// drift apart.
+fn terminal_input_font_size(cx: &App) -> Pixels {
+    let settings = ThemeSettings::get_global(cx);
+    let terminal_settings = TerminalSettings::get_global(cx);
+    terminal_settings
+        .font_size
+        .map_or(settings.buffer_font_size(cx), |size| {
+            theme_settings::adjusted_font_size(size, cx)
+        })
+}
+
+/// The composer's line height in pixels — `font_size * line_height` multiplier,
+/// matching how the terminal grid lays out rows — so spacing expressed in rows
+/// (the padding below the editor) lands on whole terminal lines.
+fn terminal_input_line_height(cx: &App) -> Pixels {
+    terminal_input_font_size(cx) * TerminalSettings::get_global(cx).line_height.value()
 }
 
 /// The terminal's text style as an editor text-style refinement, so the input
@@ -148,11 +181,7 @@ fn terminal_input_text_style(cx: &App) -> TextStyleRefinement {
         .unwrap_or(&FontFeatures::disable_ligatures())
         .clone();
     let font_weight = terminal_settings.font_weight.unwrap_or_default();
-    let font_size = terminal_settings
-        .font_size
-        .map_or(settings.buffer_font_size(cx), |size| {
-            theme_settings::adjusted_font_size(size, cx)
-        });
+    let font_size = terminal_input_font_size(cx);
 
     TextStyleRefinement {
         font_family: Some(font_family),
@@ -584,7 +613,14 @@ impl TerminalView {
             return;
         }
 
-        let editor = cx.new(|cx| Editor::auto_height(3, 3, window, cx));
+        let editor = cx.new(|cx| {
+            Editor::auto_height(
+                MIN_INPUT_COMPOSER_LINES,
+                MAX_INPUT_COMPOSER_LINES,
+                window,
+                cx,
+            )
+        });
         editor.update(cx, |editor, cx| {
             // Render the composer in the terminal's own text style so a typed
             // command looks exactly as it will in the terminal above it.
@@ -1536,6 +1572,10 @@ impl Render for TerminalView {
             .when_some(self.input_overlay.clone(), |this, editor| {
                 let colors = cx.theme().colors();
                 let submit_handle = self.self_handle.clone();
+                // Express the padding below the editor in whole terminal rows so
+                // it reads as blank prompt lines rather than an arbitrary gap.
+                let padding_height =
+                    terminal_input_line_height(cx) * INPUT_COMPOSER_PADDING_ROWS;
                 this.child(
                     div()
                         .key_context("TerminalInputOverlay")
@@ -1544,12 +1584,26 @@ impl Render for TerminalView {
                         // and the terminal above shrinks to fit.
                         .flex_shrink_0()
                         .w_full()
-                        .px_3()
-                        .py_2()
                         .bg(colors.elevated_surface_background)
                         .border_t_1()
+                        .border_b_1()
                         .border_color(colors.border)
-                        .child(editor)
+                        .child(
+                            // The editable area, closed off by a full-width line
+                            // that separates it from the blank padding below.
+                            div()
+                                .w_full()
+                                .px_3()
+                                .py_2()
+                                .border_b_1()
+                                .border_color(colors.border)
+                                .child(editor),
+                        )
+                        .child(
+                            // Blank terminal rows beneath the separator, matching
+                            // the regular terminal's prompt spacing.
+                            div().w_full().h(padding_height),
+                        )
                         .on_action(move |_: &menu::Confirm, window, cx| {
                             submit_handle
                                 .update(cx, |this, cx| this.submit_input_overlay(window, cx))
