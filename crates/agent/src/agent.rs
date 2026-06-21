@@ -205,6 +205,7 @@ struct Session {
     pending_save: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
     ref_count: usize,
+    subagent_session_ids: Vec<acp::SessionId>,
 }
 
 struct PendingSession {
@@ -819,6 +820,7 @@ impl NativeAgent {
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(Ok(())),
                 ref_count,
+                subagent_session_ids: Vec::new(),
             },
         );
 
@@ -1713,12 +1715,24 @@ impl NativeAgent {
         let project_id = session.project_id;
 
         let has_remaining = self.sessions.values().any(|s| s.project_id == project_id);
-        if !has_remaining {
-            self.projects.remove(&project_id);
+        if !has_remaining && self.projects.remove(&project_id).is_some() {
             self.publish_skill_index(cx);
         }
 
-        session.pending_save
+        let pending_save = session.pending_save;
+        let subagent_close_tasks = session
+            .subagent_session_ids
+            .iter()
+            .map(|subagent_session_id| self.close_session(subagent_session_id, cx))
+            .collect::<Vec<_>>();
+
+        cx.background_spawn(async move {
+            pending_save.await?;
+            for task in subagent_close_tasks {
+                task.await?;
+            }
+            Ok(())
+        })
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
@@ -3014,12 +3028,14 @@ impl NativeThreadEnvironment {
         let acp_thread = self
             .agent
             .update(cx, |agent, cx| -> Result<Entity<AcpThread>> {
-                let project_id = agent
+                let parent_session = agent
                     .sessions
-                    .get(&parent_session_id)
-                    .map(|s| s.project_id)
+                    .get_mut(&parent_session_id)
                     .context("parent session not found")?;
-                Ok(agent.register_session(subagent_thread.clone(), project_id, 1, cx))
+                parent_session.subagent_session_ids.push(session_id.clone());
+                let project_id = parent_session.project_id;
+                let acp_thread = agent.register_session(subagent_thread.clone(), project_id, 1, cx);
+                Ok(acp_thread)
             })??;
 
         let depth = current_depth + 1;
@@ -6716,6 +6732,119 @@ mod internal_tests {
         drop(second_loaded_thread);
         agent.read_with(cx, |agent, _| {
             assert!(agent.sessions.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_closing_parent_session_releases_subagent_sessions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "file.txt": "hello"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: thread.downgrade(),
+            acp_thread: acp_thread.downgrade(),
+        };
+
+        // Subagent whose view is never opened in the UI: its only ref is the
+        // one owned by the parent session.
+        let unopened_subagent = cx
+            .update(|cx| environment.create_subagent_thread("unopened".into(), cx))
+            .unwrap();
+        let unopened_session_id = unopened_subagent.id();
+        drop(unopened_subagent);
+
+        // Subagent whose view is opened in the UI: it holds an extra ref via
+        // `open_thread`.
+        let opened_subagent = cx
+            .update(|cx| environment.create_subagent_thread("opened".into(), cx))
+            .unwrap();
+        let opened_session_id = opened_subagent.id();
+        drop(opened_subagent);
+        let opened_subagent_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(opened_session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        let weak_unopened_acp_thread = agent.read_with(cx, |agent, _| {
+            agent
+                .sessions
+                .get(&unopened_session_id)
+                .unwrap()
+                .acp_thread
+                .downgrade()
+        });
+
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _| {
+            assert!(
+                !agent.sessions.contains_key(&session_id),
+                "parent session should be removed"
+            );
+            assert!(
+                !agent.sessions.contains_key(&unopened_session_id),
+                "closing the parent session should release its subagent sessions"
+            );
+            let opened_session = agent
+                .sessions
+                .get(&opened_session_id)
+                .expect("subagent session opened by the UI should survive parent close");
+            assert_eq!(
+                opened_session.ref_count, 1,
+                "only the UI ref should remain after the parent releases its ref"
+            );
+        });
+        assert!(
+            weak_unopened_acp_thread.upgrade().is_none(),
+            "released subagent's AcpThread should be dropped"
+        );
+
+        cx.update(|cx| connection.clone().close_session(&opened_session_id, cx))
+            .await
+            .unwrap();
+        drop(opened_subagent_acp_thread);
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _| {
+            assert!(
+                agent.sessions.is_empty(),
+                "closing the UI's ref should remove the remaining subagent session"
+            );
         });
     }
 
