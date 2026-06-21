@@ -889,7 +889,7 @@ impl ContextProvider for PythonContextProvider {
                     .as_ref()
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
-                    .unwrap_or_else(|| RelPath::empty().into());
+                    .unwrap_or_else(|| RelPath::empty_arc());
 
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)

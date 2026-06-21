@@ -2,6 +2,7 @@ mod agent_profile;
 mod user_agents_md;
 
 use std::cmp::Ordering::{Equal, Greater, Less};
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
@@ -153,6 +154,16 @@ impl AutoCompactThreshold {
     /// The threshold used when none is configured, or when the configured value
     /// is invalid (90% of the context window).
     pub const DEFAULT: Self = Self::Percentage(0.9);
+}
+
+impl fmt::Display for AutoCompactThreshold {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Percentage(percent) => write!(formatter, "{}%", percent * 100.0),
+            Self::TokensUsed(tokens) => write!(formatter, "{tokens}"),
+            Self::TokensRemaining(tokens) => write!(formatter, "-{tokens}"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -920,6 +931,11 @@ mod tests {
             parse_auto_compact_threshold("-20000").unwrap(),
             TokensRemaining(20_000)
         );
+
+        assert_eq!(Percentage(0.9).to_string(), "90%");
+        assert_eq!(Percentage(0.925).to_string(), "92.5%");
+        assert_eq!(TokensUsed(100_000).to_string(), "100000");
+        assert_eq!(TokensRemaining(20_000).to_string(), "-20000");
 
         // 0 is invalid in every form.
         assert!(parse_auto_compact_threshold("0").is_err());

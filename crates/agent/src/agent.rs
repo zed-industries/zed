@@ -14,7 +14,6 @@ mod tools;
 
 use context_server::ContextServerId;
 pub use db::*;
-use feature_flags::{FeatureFlagAppExt as _, HandoffFeatureFlag};
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
@@ -554,10 +553,15 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
-            let subscriptions = vec![cx.subscribe(
-                &LanguageModelRegistry::global(cx),
-                Self::handle_models_updated_event,
-            )];
+            let subscriptions = vec![
+                cx.subscribe(
+                    &LanguageModelRegistry::global(cx),
+                    Self::handle_models_updated_event,
+                ),
+                // Flush thread content on quit so an in-flight async save
+                // can't leave a thread orphaned ("no thread found with ID").
+                cx.on_app_quit(Self::flush_threads_on_quit),
+            ];
 
             if !cx.has_global::<SkillIndex>() {
                 cx.set_global(SkillIndex::default());
@@ -1494,24 +1498,21 @@ impl NativeAgent {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = cx.has_flag::<HandoffFeatureFlag>().then(|| {
-            acp::AvailableCommand::new(
-                COMPACT_COMMAND_NAME,
-                "Summarize the conversation so far to free up context",
-            )
-            .meta(acp_thread::meta_with_command_category(
-                acp_thread::CommandCategory::Native,
-            ))
-        });
+        let compact_command = acp::AvailableCommand::new(
+            COMPACT_COMMAND_NAME,
+            "Summarize the conversation so far to free up context",
+        )
+        .meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ));
 
         let registry = state.context_server_registry.read(cx);
 
-        // Reserve the built-in command name (when active) so a same-named MCP
-        // prompt is force-prefixed (`/<server>.compact`) and stays reachable:
-        // an unqualified `/compact` always routes to the native command.
-        let reserved = compact_command.as_ref().map(|_| COMPACT_COMMAND_NAME);
+        // Reserve the built-in command name so a same-named MCP prompt is
+        // force-prefixed (`/<server>.compact`) and stays reachable: an
+        // unqualified `/compact` always routes to the native command.
         let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
-            reserved,
+            [COMPACT_COMMAND_NAME],
             registry.prompts().map(|p| p.prompt.name.as_str()),
         );
 
@@ -1550,7 +1551,9 @@ impl NativeAgent {
             Some(command)
         });
 
-        compact_command.into_iter().chain(mcp_commands).collect()
+        std::iter::once(compact_command)
+            .chain(mcp_commands)
+            .collect()
     }
 
     pub fn load_thread(
@@ -1765,6 +1768,48 @@ impl NativeAgent {
             thread_store.update(cx, |store, cx| store.reload(cx));
             Ok(())
         });
+    }
+
+    /// Commits every non-empty thread's content on shutdown so the async
+    /// `save_thread` losing the race can't leave metadata without content.
+    fn flush_threads_on_quit(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        let database_future = ThreadsDatabase::connect(cx);
+
+        let mut saves = Vec::new();
+        for session in self.sessions.values() {
+            let thread = session.thread.read(cx);
+            if thread.is_empty() {
+                continue;
+            }
+            let Some(state) = self.projects.get(&session.project_id) else {
+                continue;
+            };
+            let folder_paths = PathList::new(
+                &state
+                    .project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>(),
+            );
+            saves.push((thread.id().clone(), folder_paths, thread.to_db(cx)));
+        }
+
+        async move {
+            let Ok(database) = database_future.await else {
+                return;
+            };
+            for (id, folder_paths, db_thread) in saves {
+                let db_thread = db_thread.await;
+                database
+                    .save_thread(id, db_thread, folder_paths)
+                    .await
+                    .log_err();
+            }
+        }
     }
 
     fn send_mcp_prompt(
@@ -2163,6 +2208,14 @@ impl NativeAgentConnection {
                                     }
                                 })
                                 .detach();
+                            }
+                            ThreadEvent::ToolCallAuthorizationResolved {
+                                tool_call_id,
+                                outcome,
+                            } => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.authorize_tool_call(tool_call_id, outcome, cx);
+                                })?;
                             }
                             ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -2583,9 +2636,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
-            if cx.has_flag::<HandoffFeatureFlag>()
-                && parsed_command.is_unqualified(COMPACT_COMMAND_NAME)
-            {
+            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
                 return self.0.update(cx, |agent, cx| {
                     agent.send_compact_command(id, session_id, cx)
                 });
@@ -3594,7 +3645,7 @@ mod internal_tests {
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
@@ -3666,27 +3717,9 @@ mod internal_tests {
             .collect()
     }
 
-    fn set_handoff_flag_override(value: &str, cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, _| {
-                store.register_setting::<feature_flags::FeatureFlagsSettings>();
-            });
-            cx.update_flags(false, vec![]);
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |content| {
-                    content
-                        .feature_flags
-                        .get_or_insert_default()
-                        .insert("handoff".to_string(), value.to_string());
-                });
-            });
-        });
-    }
-
     #[gpui::test]
-    async fn test_compact_command_requires_handoff_feature_flag(cx: &mut TestAppContext) {
+    async fn test_compact_command_is_available(cx: &mut TestAppContext) {
         init_test(cx);
-        set_handoff_flag_override("off", cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
@@ -3708,28 +3741,9 @@ mod internal_tests {
 
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
-            assert!(commands.is_empty());
-        });
-
-        set_handoff_flag_override("on", cx);
-
-        let acp_thread = cx
-            .update(|cx| {
-                Rc::new(connection.clone()).new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new("/")]),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            let commands = acp_thread.read(cx).available_commands();
 
             let compact = commands.iter().find(|command| command.name == "compact");
-            let compact = compact.expect("compact command should be available behind the flag");
+            let compact = compact.expect("compact command should be available");
             assert_eq!(
                 acp_thread::command_category_from_meta(&compact.meta),
                 Some(acp_thread::CommandCategory::Native),
@@ -3738,43 +3752,8 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_compact_prompt_is_regular_prompt_without_handoff(cx: &mut TestAppContext) {
+    async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
         init_test(cx);
-        set_handoff_flag_override("off", cx);
-
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
-        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
-        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
-
-        let message_id = UserMessageId::new();
-        let prompt_task = cx.update(|cx| {
-            connection.prompt(
-                message_id.clone(),
-                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
-                cx,
-            )
-        });
-        cx.run_until_parked();
-
-        let request = model.pending_completions().pop().unwrap();
-        assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
-        assert_eq!(
-            request_texts_after_system(&request.messages),
-            vec!["/compact".to_string()]
-        );
-
-        model.send_completion_stream_text_chunk(&request, "regular response");
-        model.end_completion_stream(&request);
-        cx.run_until_parked();
-        prompt_task.await.unwrap();
-    }
-
-    #[gpui::test]
-    async fn test_compact_prompt_routes_to_manual_compaction_with_handoff(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| cx.update_flags(true, vec!["handoff".to_string()]));
         let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
@@ -3825,6 +3804,58 @@ mod internal_tests {
         prompt_task.await.unwrap();
     }
 
+    #[gpui::test]
+    async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        // Give the thread content so it's no longer an empty draft.
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(
+                    UserMessageId::new(),
+                    [acp::ContentBlock::from("hello from the user")],
+                    path_style,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        // Reproduce the orphaned state from the bug: the sidebar metadata and
+        // serialized panel still reference the session, but the per-session
+        // async content save never landed, so the content row is absent.
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        database.delete_thread(session_id.clone()).await.unwrap();
+        assert!(
+            database
+                .load_thread(session_id.clone())
+                .await
+                .unwrap()
+                .is_none(),
+            "precondition: content row should be missing before the quit flush"
+        );
+
+        // Quitting must re-commit the content so the thread can be restored.
+        let flush = cx.update(|cx| agent.update(cx, |agent, cx| agent.flush_threads_on_quit(cx)));
+        flush.await;
+
+        let restored = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .expect("thread content should be persisted to the database on quit");
+        assert_eq!(
+            restored.messages.len(),
+            1,
+            "the user message should survive the quit flush"
+        );
+    }
+
     #[test]
     fn test_ambiguous_mcp_prompt_names() {
         // Reserving the built-in `/compact` forces a same-named MCP prompt to be
@@ -3833,7 +3864,7 @@ mod internal_tests {
         assert!(ambiguous.contains("compact"));
         assert!(!ambiguous.contains("deploy"));
 
-        // Without the reservation (handoff off), a unique MCP prompt is left bare.
+        // Without the reservation, a unique MCP prompt is left bare.
         let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
         assert!(ambiguous.is_empty());
 
