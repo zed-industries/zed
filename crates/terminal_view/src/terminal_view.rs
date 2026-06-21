@@ -117,6 +117,14 @@ const MAX_INPUT_COMPOSER_LINES: usize = 18;
 /// Blank terminal rows reserved below the editable area, separated from it by a
 /// rule — the breathing room a shell prompt leaves for hints.
 const INPUT_COMPOSER_PADDING_ROWS: f32 = 2.;
+/// While the composer is open, a full-screen TUI keeps drawing its own input
+/// box and status line pinned to the bottom rows of the grid — redundant with
+/// our composer. We grow the PTY by this many rows beyond the visible area and
+/// clip them, so the program keeps drawing that chrome off-screen behind the
+/// composer. Sized to comfortably cover a typical single-line input box plus a
+/// status line or two; the program never grows its input past this because
+/// typing happens in the composer, not its box.
+const INPUT_COMPOSER_TERMINAL_MASK_ROWS: usize = 6;
 
 /// Toggles a multi-line editor for composing terminal input with full editor
 /// controls (mouse positioning, selection, free editing across rows). Toggle
@@ -640,6 +648,24 @@ impl TerminalView {
         let input = compose_terminal_submission(&editor.read(cx).text(cx));
         self.terminal
             .update(cx, |term, _| term.input(input.into_bytes()));
+
+        // A bottom-pinned TUI treats the trailing carriage return above as a
+        // newline inside its own input box rather than a submit, because it
+        // arrives folded into the same write as the text. Follow up with a lone
+        // carriage return on the next tick so it lands as a discrete Enter
+        // keystroke and the program runs the command — sparing the user a second
+        // manual Return. (A plain shell already ran on the first return; this just
+        // lands on a fresh prompt.)
+        let terminal = self.terminal.downgrade();
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(10))
+                .await;
+            terminal
+                .update(cx, |term, _| term.input(b"\r".to_vec()))
+                .ok();
+        })
+        .detach();
 
         // Keep the overlay open as a persistent composer: clear it and keep
         // focus so the next command can be typed without reopening.
@@ -2605,6 +2631,16 @@ mod tests {
             vec![b"echo hi\rls\r".to_vec()],
         );
 
+        // A discrete carriage return follows on the next tick, so a bottom-pinned
+        // program that folded the trailing return into its input box still
+        // submits without a second manual Return.
+        cx.executor().advance_clock(Duration::from_millis(20));
+        cx.run_until_parked();
+        assert_eq!(
+            terminal.update(&mut cx, |terminal, _| terminal.take_input_log()),
+            vec![b"\r".to_vec()],
+        );
+
         // The overlay stays open as a persistent composer and is cleared for the
         // next command.
         terminal_view.read_with(&cx, |view, cx| {
@@ -2713,7 +2749,10 @@ mod tests {
 
         // The overlay reserves its own height at the bottom of the column, so the
         // terminal grid reflows to fewer visible rows instead of letting its
-        // bottom lines render underneath the overlay.
+        // bottom lines render underneath the overlay. (The reported row count
+        // still includes the `INPUT_COMPOSER_TERMINAL_MASK_ROWS` strip the
+        // composer hides, yet the composer reserves enough height that the net
+        // visible viewport is smaller than the un-overlaid grid.)
         assert!(
             rows_with_overlay < rows_without_overlay,
             "terminal viewport should shrink when the overlay opens: \
