@@ -1,0 +1,173 @@
+# Sync triage state into "Zed weekly triage" (project #84).
+#
+# Runs in two modes:
+#   1. Event-driven (primary): fires on issue events + new issue comments.
+#      Re-derives Status / Stale since / Aged? / Intake week for that one
+#      issue. Latency: ~10–30 seconds end-to-end.
+#   2. Daily cron (safety net): re-derives across all project items at 06:00
+#      UTC. Catches any events that GH dropped under load.
+#
+# Auth: GitHub App `ZED_COMMUNITY_BOT_APP_ID` with
+# `Organization Projects: Read and write` permission added. Token is
+# requested with `owner: zed-industries` so it can mutate org-level project
+# items (the default repo-scoped token is insufficient for org projects).
+#
+# This workflow only mutates the triage project (#84). It does not write
+# labels, comments, or any issue metadata. Adding any other write capability
+# requires a separate workflow.
+
+name: Triage Project Sync (#84)
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+      - closed
+      - labeled
+      - unlabeled
+      - assigned
+      - unassigned
+      - edited
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "0 6 * * *" # daily 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to sync (leave blank to sync all)"
+        type: number
+        required: false
+      dry_run:
+        description: "Dry run (compute but don't mutate)"
+        type: boolean
+        default: false
+
+# Coalesce rapid event bursts on the same issue (e.g., 5 labels added at once
+# = 5 events). Cancel any in-progress run for the same issue when a new event
+# arrives — the latest run will compute the most up-to-date state.
+concurrency:
+  group: triage-sync-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+# Default to no permissions for any job in this workflow. The single job below
+# explicitly opts back in to `contents: read` for the sparse checkout. If a
+# future job is added without its own `permissions:` block, it will inherit
+# this empty default rather than the repo-wide token defaults.
+permissions: {}
+
+jobs:
+  sync:
+    name: Sync triage project
+    # Run only on the canonical repo (not forks); skip PR comments since this
+    # workflow is for issues only.
+    if: |
+      github.repository == 'zed-industries/zed' &&
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request == null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout (sparse — script only)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: script/triage_project_sync.py
+          sparse-checkout-cone-mode: false
+          # Don't write GITHUB_TOKEN into .git/config. We never push from this
+          # workflow; we only read one file. Keeps the token out of any
+          # filesystem state that subsequent steps could access.
+          persist-credentials: false
+
+      - name: Get App installation token
+        id: token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          # IMPORTANT: org-scoped token is required for org-level project
+          # mutations. Without `owner:`, the default token is repo-scoped and
+          # cannot write to org projects.
+          owner: zed-industries
+          # Scope the token down to the minimum needed for this workflow.
+          # Even though the App may have broader permissions for other
+          # automations (e.g., Issues:Write for the dupe-bot), this token
+          # only carries what we list below. Per the action's docs, an
+          # unrequested permission is *not* available on the resulting token.
+          #
+          # Required:
+          #   - organization-projects:write — mutate project items + read
+          #     project schema
+          #   - members:read — query the `staff` team membership
+          #   - issues:read — fetch issue body, labels, comments
+          #   - metadata:read — always required for any GH API access
+          permission-organization-projects: write
+          permission-members: read
+          permission-issues: read
+          permission-metadata: read
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Sync (event-driven, single issue)
+        if: github.event_name == 'issues' || github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          python script/triage_project_sync.py --issue "$ISSUE_NUMBER"
+
+      - name: Sync (cron, all items)
+        if: github.event_name == 'schedule'
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          python script/triage_project_sync.py --all
+
+      - name: Sync (manual dispatch — single)
+        if: github.event_name == 'workflow_dispatch' && inputs.issue_number != ''
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python script/triage_project_sync.py --issue "$ISSUE_NUMBER" --dry-run
+          else
+            python script/triage_project_sync.py --issue "$ISSUE_NUMBER"
+          fi
+
+      - name: Sync (manual dispatch — all)
+        if: github.event_name == 'workflow_dispatch' && inputs.issue_number == ''
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python script/triage_project_sync.py --all --dry-run
+          else
+            python script/triage_project_sync.py --all
+          fi
+
+      - name: Write summary
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          {
+            echo "## Triage sync summary"
+            echo ""
+            echo "- Event: \`$EVENT_NAME\`"
+            if [ -n "$ISSUE_NUMBER" ]; then
+              echo "- Issue: #$ISSUE_NUMBER"
+            fi
+            echo "- Project: [#84 Zed weekly triage](https://github.com/orgs/zed-industries/projects/84)"
+          } >> "$GITHUB_STEP_SUMMARY"

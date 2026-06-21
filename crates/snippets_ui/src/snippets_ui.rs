@@ -2,7 +2,7 @@ use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
-    WeakEntity, Window, actions,
+    TaskExt, WeakEntity, Window, actions,
 };
 use language::{LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;
@@ -198,6 +198,10 @@ impl ScopeSelectorDelegate {
 
 impl PickerDelegate for ScopeSelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "snippet scope selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _: &mut App) -> Arc<str> {
         "Select snippet scope...".into()

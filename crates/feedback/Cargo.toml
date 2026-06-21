@@ -22,4 +22,4 @@ urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-
+client.workspace = true
