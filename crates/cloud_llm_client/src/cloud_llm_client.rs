@@ -335,6 +335,16 @@ pub struct ListModelsResponse {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentUsage {
     pub edit_predictions: UsageData,
+    /// Monthly hosted LLM token spend in cents (including included credit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_spend_cents: Option<TokenSpendUsage>,
+}
+
+/// Monthly token spend relative to the user's spend limit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenSpendUsage {
+    pub spent_cents: u32,
+    pub limit_cents: u32,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

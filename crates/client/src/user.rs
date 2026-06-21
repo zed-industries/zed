@@ -843,6 +843,39 @@ impl UserStore {
         self.edit_prediction_usage
     }
 
+    pub fn token_spend_usage(&self) -> Option<cloud_llm_client::TokenSpendUsage> {
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.usage.token_spend_cents.clone())
+    }
+
+    pub fn refresh_authenticated_user(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if self.client.upgrade().is_none() {
+            return Task::ready(Err(anyhow::anyhow!("client dropped")));
+        }
+
+        cx.spawn(async move |this, cx| {
+            let (cloud_client, system_id) = cx
+                .update(|cx| {
+                    this.read_with(cx, |this, _| {
+                        this.client.upgrade().map(|client| {
+                            let system_id = client.telemetry().system_id().map(|id| id.to_string());
+                            (client.cloud_client(), system_id)
+                        })
+                    })
+                })?
+                .ok_or_else(|| anyhow::anyhow!("client dropped"))?;
+
+            let response = cloud_client.get_authenticated_user(system_id).await?;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.update_authenticated_user(response, cx);
+                })
+            })?;
+            Ok(())
+        })
+    }
+
     pub fn update_edit_prediction_usage(
         &mut self,
         usage: EditPredictionUsage,
