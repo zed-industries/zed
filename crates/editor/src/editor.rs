@@ -218,7 +218,9 @@ use project::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
         LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
     },
-    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
+    project_settings::{
+        DiagnosticSeverity, GitDateSurface, GoToDiagnosticSeverityFilter, ProjectSettings,
+    },
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
@@ -11415,13 +11417,35 @@ impl EditorSnapshot {
                     .map(|max_author_length| {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                         const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
+                        const MAX_ABSOLUTE_TIMESTAMP: &str = "September 30, 2020 11:59 PM";
 
                         /// The number of characters to dedicate to gaps and margins.
                         const SPACING_WIDTH: usize = 4;
 
+                        let git_settings = &ProjectSettings::get_global(cx).git;
+                        let timestamp_width = if git_settings.date_style(GitDateSurface::Blame)
+                            == settings::GitDateStyleSetting::Absolute
+                        {
+                            git_settings
+                                .absolute_date_format(GitDateSurface::Blame)
+                                .and_then(|format| {
+                                    let local_offset = time::UtcOffset::current_local_offset()
+                                        .unwrap_or(time::UtcOffset::UTC);
+                                    format
+                                        .format(
+                                            time::macros::datetime!(2020-09-30 23:59:59 UTC),
+                                            local_offset,
+                                        )
+                                        .map(|timestamp| timestamp.len())
+                                })
+                                .unwrap_or(0)
+                                .max(MAX_ABSOLUTE_TIMESTAMP.len())
+                        } else {
+                            MAX_RELATIVE_TIMESTAMP.len()
+                        };
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
+                            + timestamp_width
                             + SPACING_WIDTH;
 
                         ch_advance * max_char_count

@@ -10,6 +10,7 @@ use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
 pub mod clone;
+mod git_timestamp;
 
 use git::{
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -55,6 +56,9 @@ pub mod worktree_picker;
 pub mod worktree_service;
 
 pub use conflict_view::MergeConflictIndicator;
+pub use git_timestamp::{
+    GitTimestampFormatter, format_git_timestamp, format_git_timestamp_for_surface,
+};
 
 pub fn get_provider_icon(name: &str) -> IconName {
     match name {
