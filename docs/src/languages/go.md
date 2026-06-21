@@ -111,6 +111,26 @@ You can override the default code lens settings in your `settings.json`:
 
 See [gopls code lenses documentation](https://go.dev/gopls/codelenses) for more information.
 
+## Build Tags
+
+To run tests that are guarded by [build constraints](https://pkg.go.dev/cmd/go#hdr-Build_constraints) (e.g. `//go:build integration`), set the `GO_TEST_BUILD_TAGS` task variable. Zed adds the listed tags as `-tags=...` to every `go test` task it generates:
+
+```json [settings]
+{
+  "languages": {
+    "Go": {
+      "tasks": {
+        "variables": {
+          "GO_TEST_BUILD_TAGS": "integration,e2e"
+        }
+      }
+    }
+  }
+}
+```
+
+List only the tag names (comma or space separated); Zed builds the `-tags` flag for you. This applies to all `go test` tasks (including `go test ./...`) but not to `go run` or `go generate`.
+
 ## Debugging
 
 Zed supports zero-configuration debugging of Go tests and entry points (`func main`) using Delve. Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these preconfigured debug tasks.
