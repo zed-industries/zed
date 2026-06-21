@@ -1628,13 +1628,15 @@
     ///
     /// Default: 0
     "gutter_debounce": 0,
-    // Control whether the git blame information is shown inline,
-    // in the currently focused line.
+    // Control whether the git blame information is shown for the currently
+    // focused line, and where it is rendered.
     "inline_blame": {
       "enabled": true,
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // Where to render the blame information when it is enabled.
+      "location": "inline",
       // The amount of padding between the end of the source line and the start
       // of the inline blame in units of em widths.
       "padding": 7,
