@@ -4510,7 +4510,7 @@ impl GitPanel {
     fn render_git_changes_actions_menu(
         &self,
         id: impl Into<ElementId>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
@@ -4525,12 +4525,8 @@ impl GitPanel {
                     .layer(ui::ElevationIndex::ModalSurface)
                     .size(ButtonSize::None)
                     .child(
-                        h_flex()
+                        div()
                             .px_1()
-                            .h_full()
-                            .justify_center()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border)
                             .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
