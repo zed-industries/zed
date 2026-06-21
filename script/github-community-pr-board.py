@@ -784,6 +784,10 @@ if __name__ == "__main__":
         print(f"Skipping draft PR #{pr['number']}")
         sys.exit(0)
 
+    if pr.get("state") != "open":
+        print(f"Skipping PR #{pr['number']} (state: {pr.get('state')})")
+        sys.exit(0)
+
     print(f"Processing PR #{pr['number']}: action={action}")
 
     if action in ("labeled", "unlabeled"):

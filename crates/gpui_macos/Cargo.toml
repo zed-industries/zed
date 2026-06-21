@@ -42,6 +42,7 @@ etagere = "0.2"
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
 foreign-types = "0.5"
 futures.workspace = true
+gpui_util.workspace = true
 image.workspace = true
 itertools.workspace = true
 libc.workspace = true
@@ -59,7 +60,6 @@ raw-window-handle = "0.6"
 semver.workspace = true
 smallvec.workspace = true
 strum.workspace = true
-util.workspace = true
 uuid.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]

@@ -26,6 +26,37 @@ pub enum RemoteConnectionIdentity {
     Mock { id: u64 },
 }
 
+impl RemoteConnectionIdentity {
+    /// A stable string form of this identity, suitable for use in
+    /// persistence keys (e.g. database keys scoped to a remote host).
+    pub fn persistence_key(&self) -> String {
+        match self {
+            Self::Ssh {
+                host,
+                username,
+                port,
+            } => format!(
+                "ssh:{}@{}:{}",
+                username.as_deref().unwrap_or_default(),
+                host,
+                port.map(|port| port.to_string()).unwrap_or_default()
+            ),
+            Self::Wsl { distro_name, user } => format!(
+                "wsl:{}@{}",
+                user.as_deref().unwrap_or_default(),
+                distro_name
+            ),
+            Self::Docker {
+                container_id,
+                name,
+                remote_user,
+            } => format!("docker:{remote_user}@{name}:{container_id}"),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Mock { id } => format!("mock:{id}"),
+        }
+    }
+}
+
 impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
     fn from(options: &RemoteConnectionOptions) -> Self {
         match options {
