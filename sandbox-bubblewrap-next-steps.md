@@ -46,6 +46,24 @@ intent; see `sandbox-bubblewrap-migration.md` for the original rationale.
   `nixos-test` feature) drives the real launcher and reads the status; an
   enforcement probe **skips** (not fails) when the VM can't enforce. Checks
   wired into the flake (`packages.nix`); xtask prefix is now `sandbox-`.
+- **Windows WSL behavior tests.** Parity with the NixOS bwrap tests for the
+  Windows WSL sandbox (`windows_wsl`). New `wsl_sandbox_test_helper` bin (sandbox
+  crate, `wsl-test` feature) drives the real `wrap_invocation`, spawns the
+  produced `wsl.exe` command, and asserts the same grants/restrictions hold
+  end-to-end (writable binds land on host, reads allowed, `/tmp` ephemeral,
+  network on/off, fs-write escape hatch) plus the Windows-specific ones: a
+  native `C:\` writable path is translated and bound, and **WSL interop is
+  blocked** so a sandboxed process can't exec a Windows binary to escape bwrap.
+  Core FS checks run against the WSL rootfs (robust regardless of how drvfs
+  `/mnt` submounts behave under the recursive root bind). Like the Linux helper
+  it **skips** when the environment can't enforce; set
+  `ZED_TEST_SANDBOX_REQUIRE_ENFORCED=1` to turn that into a failure. Run with
+  `cargo xtask wsl-sandbox-tests` or `script/test-wsl-sandbox.ps1` (the latter
+  provisions `bubblewrap` + unprivileged user namespaces in the default distro
+  first). Not wired into CI — matching the NixOS tests, which aren't either.
+  Degraded scenarios (no bwrap / userns disabled) have no boot-level toggle in
+  WSL, so that coverage stays at the unit level (probe parsing + the
+  bad-request-vs-unavailable error classification, also re-checked end-to-end).
 
 ## Remaining
 

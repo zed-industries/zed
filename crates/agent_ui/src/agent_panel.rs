@@ -7503,6 +7503,12 @@ mod tests {
             // rather than merely echoing the keystrokes.
             settings.terminal_init_command = Some("echo init_ran_$((6*7))".to_string());
             AgentSettings::override_global(settings, cx);
+
+            // Force a POSIX shell rather than relying on the developer's login
+            // shell, which may not support `$((...))` arithmetic (e.g. fish).
+            let mut terminal_settings = TerminalSettings::get_global(cx).clone();
+            terminal_settings.shell = task::Shell::Program("/bin/sh".to_string());
+            TerminalSettings::override_global(terminal_settings, cx);
         });
 
         let terminal_id = TerminalId::new();

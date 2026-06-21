@@ -237,6 +237,10 @@ const MAX_TAGS_LINE_LEN: usize = 30;
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "tasks modal"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
