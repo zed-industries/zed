@@ -64,24 +64,12 @@ use workspace::{
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
-// A background-colored ring drawn around each commit node so it stays visually
-// separated from connector lines that pass through or near its lane.
 const COMMIT_CIRCLE_HALO_WIDTH: Pixels = px(2.0);
 const LANE_WIDTH: Pixels = px(18.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(2.0);
-// Horizontal space reserved at the left of the graph column for branch/tag ref
-// labels. The commit lanes are shifted right by this amount so the labels sit
-// in their own gutter instead of overlapping the graph. The gutter sizes to the
-// widest ref label currently loaded, clamped to this range, so short branch
-// names let the graph hug the left edge while long names still get capped
-// instead of pushing the graph arbitrarily far right.
-const REF_LABEL_GUTTER_MIN_WIDTH: Pixels = px(48.0);
-const REF_LABEL_GUTTER_MAX_WIDTH: Pixels = px(200.0);
-// Approximate chrome a single ref chip adds around its label text: leading
-// icon, internal horizontal padding, and the gutter's trailing padding. Used
-// together with the measured label width to size the gutter to its content.
-const REF_CHIP_CHROME_WIDTH: Pixels = px(40.0);
+const REF_LABEL_GUTTER_MIN_WIDTH: Pixels = px(100.0);
+const REF_LABEL_GUTTER_MAX_WIDTH: Pixels = px(220.0);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
@@ -917,8 +905,6 @@ struct GraphData {
     commits: Vec<Rc<CommitEntry>>,
     max_commit_count: AllCommitCount,
     max_lanes: usize,
-    // The longest ref-label display text seen so far (by char count). Used to
-    // size the ref-label gutter to its content instead of a fixed width.
     widest_ref_label: Option<SharedString>,
     lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
@@ -1372,23 +1358,23 @@ fn draw_commit_circle(
     background: Hsla,
     window: &mut Window,
 ) {
-    let radius = COMMIT_CIRCLE_RADIUS;
-
     // Halo: clears space around the node so crossing lines don't touch it.
     fill_circle(
         center_x,
         center_y,
-        radius + COMMIT_CIRCLE_HALO_WIDTH,
+        COMMIT_CIRCLE_RADIUS + COMMIT_CIRCLE_HALO_WIDTH,
         background,
         window,
     );
+
     // Outer ring in the branch color.
-    fill_circle(center_x, center_y, radius, color, window);
+    fill_circle(center_x, center_y, COMMIT_CIRCLE_RADIUS, color, window);
+
     // Inner fill makes the node read as a ring rather than a solid dot.
     fill_circle(
         center_x,
         center_y,
-        (radius - COMMIT_CIRCLE_STROKE_WIDTH).max(px(0.)),
+        (COMMIT_CIRCLE_RADIUS - COMMIT_CIRCLE_STROKE_WIDTH).max(px(0.)),
         background,
         window,
     );
@@ -1486,10 +1472,6 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
 
-    /// Width of the ref-label gutter, sized to fit the widest branch/tag label
-    /// currently loaded and clamped to a min/max range. This lets the graph hug
-    /// the left edge when labels are short while capping how far it gets pushed
-    /// right when they are long.
     fn ref_label_gutter_width(&self, window: &Window, cx: &App) -> Pixels {
         let Some(widest_label) = self.graph_data.widest_ref_label.as_ref() else {
             return REF_LABEL_GUTTER_MIN_WIDTH;
@@ -1514,8 +1496,7 @@ impl GitGraph {
             )
             .width;
 
-        (label_width + REF_CHIP_CHROME_WIDTH)
-            .clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
+        label_width.clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
     }
 
     /// Returns the column fractions in display order:
@@ -1609,7 +1590,6 @@ impl GitGraph {
 
         let column_widths = if matches!(log_source, LogSource::Path(_)) {
             cx.new(|_cx| {
-                // Columns: Description, Author, Date, Commit
                 RedistributableColumnsState::new(
                     4,
                     vec![
@@ -1623,7 +1603,6 @@ impl GitGraph {
             })
         } else {
             cx.new(|_cx| {
-                // Columns: Graph, Description, Author, Date, Commit
                 RedistributableColumnsState::new(
                     5,
                     vec![
@@ -1830,10 +1809,6 @@ impl GitGraph {
         is_head: bool,
         background: gpui::Hsla,
     ) -> impl IntoElement {
-        // Blend the translucent accent tint over the surface color so the chip
-        // has an opaque fill. This keeps chips legible when they sit on top of
-        // the graph lanes, which would otherwise show through a translucent
-        // background and make the badge look like it's behind the graph.
         Chip::new(name.clone())
             .label_size(LabelSize::Small)
             .truncate()
@@ -1865,8 +1840,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let chip = self.render_chip(name, accent_color, is_head, background);
-        // The chip label truncates with an ellipsis in the gutter, so surface the
-        // full ref name on hover.
+
         let tooltip_text = name.clone();
         let chip_id = SharedString::from(format!("git-graph-ref-chip-{commit_idx}-{name}"));
         let Some(ref_name) = Self::ref_name_from_decoration(name) else {
@@ -1878,8 +1852,7 @@ impl GitGraph {
                 .tooltip(move |_window, cx| Tooltip::simple(tooltip_text.clone(), cx))
                 .into_any_element();
         };
-        // `min_w_0` + `overflow_hidden` let the wrapped chip shrink so its label
-        // truncates with an ellipsis instead of being hard-clipped by the gutter.
+
         div()
             .id(chip_id)
             .min_w_0()
@@ -1913,9 +1886,6 @@ impl GitGraph {
         let row_height = Self::row_height(window, cx);
         let has_context_menu = self.has_context_menu();
 
-        // Resolve the hosting provider once for the whole batch so the author
-        // avatars can be fetched from the host's CDN instead of falling back to
-        // a person icon.
         let remote = repository.as_ref().and_then(|repository| {
             repository.update(cx, |repo, cx| {
                 let remote_url = repo.default_remote_url()?;
@@ -3449,14 +3419,15 @@ impl GitGraph {
                 graph_canvas_bounds.set(Some(bounds));
 
                 window.paint_layer(bounds, |window| {
-                    let accent_colors = cx.theme().accents();
-                    let background = cx.theme().colors().editor_background;
+                    let theme = cx.theme();
+                    let accent_colors = theme.accents();
+                    let background = theme.colors().editor_background;
 
-                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+                    let hover_bg = theme.colors().element_hover.opacity(0.6);
                     let selected_bg = if is_focused {
-                        cx.theme().colors().element_selected
+                        theme.colors().element_selected
                     } else {
-                        cx.theme().colors().element_hover
+                        theme.colors().element_hover
                     };
 
                     for visible_row_idx in 0..rows.len() {
@@ -3661,9 +3632,6 @@ impl GitGraph {
 
                         let commit_x = lane_center_x(bounds, row.lane as f32);
 
-                        // Connect a ref label (in the gutter, just left of the
-                        // canvas) to its node with a dashed line from the canvas's
-                        // left edge, mirroring the target design.
                         if !row.data.ref_names.is_empty() {
                             paint_dashed_connector(
                                 bounds.origin.x,
@@ -3741,10 +3709,9 @@ impl GitGraph {
                 .map(|branch| SharedString::from(branch.name().to_string()))
         });
 
-        // Cheap `Arc` clone so we don't hold a borrow of `cx` while building
-        // chips (which need `&mut Context`).
-        let accent_colors = cx.theme().accents().clone();
-        let background = cx.theme().colors().editor_background;
+        let theme = cx.theme();
+        let accent_colors = theme.accents().clone();
+        let background = theme.colors().editor_background;
 
         // Hover/selected highlight colors, matching `render_graph_canvas` so the
         // band painted behind the labels in the gutter lines up with the rest of
@@ -3753,11 +3720,11 @@ impl GitGraph {
         let selected_entry_idx = self.selected_entry_idx;
         let context_menu_entry_idx = self.context_menu.as_ref().map(|menu| menu.entry_idx);
         let is_focused = self.focus_handle.is_focused(window);
-        let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+        let hover_bg = theme.colors().element_hover.opacity(0.6);
         let selected_bg = if is_focused {
-            cx.theme().colors().element_selected
+            theme.colors().element_selected
         } else {
-            cx.theme().colors().element_hover
+            theme.colors().element_hover
         };
 
         // Background highlight bands for hovered/selected rows, painted first so
@@ -3800,19 +3767,11 @@ impl GitGraph {
             let accent_color = accent_colors.color_for_index(commit.color_idx as u32);
             let ref_names = commit.data.ref_names.clone();
 
-            let chips = ref_names
-                .iter()
-                .map(|name| {
-                    let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                    self.render_ref_chip(name, accent_color, is_head, absolute_idx, background, cx)
-                })
-                .collect::<Vec<_>>();
+            let chips = ref_names.iter().map(|name| {
+                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
+                self.render_ref_chip(name, accent_color, is_head, absolute_idx, background, cx)
+            });
 
-            // Right-align the labels so they sit at the right edge of the gutter,
-            // just before the lanes. This keeps each label next to its node (and
-            // its dashed connector short) regardless of how many lanes the graph
-            // has. The chips still truncate with an ellipsis, so the start of the
-            // branch name stays visible.
             elements.push(
                 div()
                     .absolute()
@@ -4274,10 +4233,6 @@ impl Render for GitGraph {
                                                         .min_w_0()
                                                         .overflow_hidden()
                                                         .cursor_pointer()
-                                                        // The whole graph column (ref-label gutter
-                                                        // included) handles scroll/hover/click so
-                                                        // interacting over the labels behaves like
-                                                        // the rest of the row.
                                                         .on_scroll_wheel(
                                                             cx.listener(Self::handle_graph_scroll),
                                                         )
@@ -4305,10 +4260,6 @@ impl Render for GitGraph {
                                                                 }
                                                             },
                                                         ))
-                                                        // Gutter holding the ref labels; it sizes
-                                                        // to the widest label (clamped) and pushes
-                                                        // the graph canvas to the right instead of
-                                                        // overlapping it.
                                                         .child(
                                                             div()
                                                                 .relative()
