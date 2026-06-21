@@ -123,6 +123,7 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/latex_render",
     "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
@@ -381,6 +382,7 @@ language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+latex_render = { path = "crates/latex_render" }
 line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
@@ -504,6 +506,7 @@ accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.33.1"
 agent-client-protocol = { version = "=0.14.0", features = ["unstable"] }
+ab_glyph = "0.2"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -707,6 +710,13 @@ pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
+ratex-font = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-font-loader = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4", features = ["embed-fonts"] }
+ratex-katex-fonts = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-layout = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-parser = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ratex-types = { git = "https://github.com/erweixin/RaTeX", rev = "7a5f242b3f7ae45ae891730f88b0a51559f20ce4" }
+ttf-parser = "0.25"
 rayon = "1.8"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
