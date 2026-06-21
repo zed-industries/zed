@@ -1,5 +1,9 @@
 # Resource Monitor — Implementation Approach
 
+## Related Issues
+- Resolves #58642
+- Resolves #59451
+
 ## Objective
 
 Add a Resource Monitor to Zed — a Zed-aware, in-app view that lists every process Zed is responsible for (language servers, terminals, and the main Zed process) with live CPU, memory, PID, and uptime statistics.
@@ -33,6 +37,35 @@ Implemented as a new crate `crates/resource_monitor/` with the following key com
   - Memory: Default <500MB, Yellow 500MB-2GB, Red >2GB
 - **Copy Report Tool:** A built-in button that generates a formatted markdown report of process stats for easy bug filing.
 - **Seamless Integration:** Uses standard GPUI components, `IconName::Sliders` for the tab icon, and fully implements the `Item` trait.
+
+## Approach Explanation
+
+The implementation follows a pragmatic architecture designed for Zed's existing codebase patterns:
+
+**Why a dedicated crate?**  
+Following Zed's established crate-per-feature pattern (cf. `diagnostics`, `language_tools`, `terminal_view`), the resource monitor lives in `crates/resource_monitor/`. This keeps the feature self-contained, testable, and avoids polluting core crates with monitoring-specific logic.
+
+**Why a workspace Item (tab) instead of a dock Panel?**  
+The monitor is a diagnostic tool users reach for when something goes wrong — not a permanent UI element. Opening it as a tab (like VS Code's Process Explorer) means:
+- No dock space consumed when not needed
+- Can be opened/closed via command palette instantly
+- Multiple views can exist across windows if needed
+- Consistent with Zed's existing `LspLogView` pattern
+
+**Why `sysinfo` for process metrics?**  
+`sysinfo` v0.37 is already a workspace dependency used by 7+ crates (including `lsp_button`, `system_specs`, `pty_info`). It abstracts cross-platform differences (Linux `/proc`, macOS `proc_pidinfo`, Windows `NtQuerySystemInformation`) and provides both CPU and memory with a single refresh. Reusing it avoids adding new dependencies.
+
+**Tree-aggregated memory is critical.**  
+Language servers often spawn child processes (e.g., `rust-analyzer` → `cargo check`, `gopls` → `go build`). A naive per-PID memory read misses these. The collector builds a parent→child map from `sysinfo` and sums memory across the entire process tree — matching what users see in Activity Monitor / Task Manager. This logic was extracted from `lsp_button.rs`'s `ProcessMemoryCache` and generalized.
+
+**CPU % requires two samples.**  
+`sysinfo` computes CPU % by comparing CPU time deltas between refreshes. The first poll after process start returns 0%. The 2-second polling interval naturally handles this — the second poll shows real values. No special handling needed.
+
+**Zero overhead when closed.**  
+The `ProcessCollector` entity is created lazily when the first `ResourceMonitorView` opens and dropped when the last one closes. The background polling task is tied to the entity's lifecycle. When no monitor tabs are open, `sysinfo` is never refreshed — verified via profiling.
+
+**Cross-platform from day one.**  
+All three platforms (Linux, macOS, Windows) work via `sysinfo` without platform-specific code. Terminal PID retrieval uses the existing `Terminal.pid()` abstraction (already implemented in `terminal.rs` via `pty_info.rs`).
 
 ## Testing
 
