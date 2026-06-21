@@ -1,5 +1,6 @@
 mod action;
 mod agent;
+mod ai_credit_status;
 mod editor;
 mod extension;
 mod fallible_options;
@@ -15,6 +16,7 @@ mod workspace;
 
 pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
+pub use ai_credit_status::*;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -145,6 +147,9 @@ pub struct SettingsContent {
 
     pub agent: Option<AgentSettingsContent>,
     pub agent_servers: Option<AllAgentServersSettings>,
+
+    /// Settings for the AI credit usage indicator in the status bar.
+    pub ai_credit_status: Option<AiCreditStatusSettingsContent>,
 
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,
