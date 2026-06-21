@@ -1,7 +1,6 @@
 use crate::git_status_icon;
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
-use itertools::Itertools;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::Repository};
 use std::sync::Arc;
@@ -25,7 +24,6 @@ pub fn open(
 }
 
 pub struct RepositorySelector {
-    width: Rems,
     picker: Entity<Picker<RepositorySelectorDelegate>>,
 }
 
@@ -51,13 +49,6 @@ impl RepositorySelector {
         });
         let filtered_repositories = repository_entries.clone();
 
-        let widest_item_ix = repository_entries.iter().position_max_by(|a, b| {
-            a.read(cx)
-                .display_name()
-                .len()
-                .cmp(&b.read(cx).display_name().len())
-        });
-
         let active_repository = git_store.read(cx).active_repository();
         let selected_index = active_repository
             .as_ref()
@@ -73,12 +64,13 @@ impl RepositorySelector {
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
-                .widest_item(widest_item_ix)
-                .max_height(Some(rems(20.).into()))
+                .minimum_results_width(width)
+                .height(rems(20.))
+                .no_vertical_padding()
                 .show_scrollbar(true)
         });
 
-        RepositorySelector { picker, width }
+        RepositorySelector { picker }
     }
 }
 
@@ -125,7 +117,6 @@ impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("GitRepositorySelector")
-            .w(self.width)
             .child(self.picker.clone())
     }
 }
@@ -158,6 +149,10 @@ impl RepositorySelectorDelegate {
 
 impl PickerDelegate for RepositorySelectorDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "repository selector"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_repositories.len()

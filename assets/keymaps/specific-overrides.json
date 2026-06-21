@@ -1,0 +1,39 @@
+// Put keybindings bound to a tight specific context that need to overwrite the
+// base keymaps here. Only put them here if absolutely needed. In those cases
+// also add a comment to the default keymaps that this binding exists here, to
+// make it a little more discoverable.
+//
+// This is loaded after all the base keymaps (Atom, vim etc) but before the user
+// keymaps, giving it the highest precedence of all the bindings set by us.
+[
+  {
+    "context": "Picker > Editor",
+    "bindings": {
+      "ctrl-shift-a": "picker::ToggleActionsMenu",
+      "ctrl-alt-p": "picker::TogglePreview",
+      "ctrl-alt-right": "picker::SetPreviewRight",
+      "ctrl-alt-down": "picker::SetPreviewBelow",
+      "ctrl-alt-up": "picker::SetPreviewHidden",
+    },
+  },
+  {
+    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
+    "bindings": {
+      "ctrl-shift-p": "file_finder::SelectPrevious",
+      "ctrl-j": "pane::SplitDown",
+      "ctrl-k": "pane::SplitUp",
+      "ctrl-h": "pane::SplitLeft",
+      "ctrl-l": "pane::SplitRight",
+    },
+  },
+  {
+    "context": "TextFinder || (TextFinder > Picker > Editor) || (TextFinder > Picker > menu)",
+    "bindings": {
+      "ctrl-alt-p": "text_finder::ToProjectSearch",
+      "ctrl-j": "pane::SplitDown",
+      "ctrl-k": "pane::SplitUp",
+      "ctrl-h": "pane::SplitLeft",
+      "ctrl-l": "pane::SplitRight",
+    },
+  },
+]
