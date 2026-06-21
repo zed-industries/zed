@@ -155,6 +155,10 @@ impl ToolPickerDelegate {
 impl PickerDelegate for ToolPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "tool picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_items.len()
     }

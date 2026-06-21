@@ -35,8 +35,9 @@ pub fn acp_model_selector(
     let delegate = ModelPickerDelegate::new(selector, focus_handle, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
-        .width(rems(20.))
-        .max_height(Some(rems(20.).into()))
+        .minimum_results_width(rems(20.))
+        .height(rems(20.))
+        .no_vertical_padding()
 }
 
 enum ModelPickerEntry {
@@ -191,6 +192,10 @@ impl ModelPickerDelegate {
 
 impl PickerDelegate for ModelPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "model selector"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
