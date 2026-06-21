@@ -61,6 +61,7 @@
 - [Parallel Agents](./ai/parallel-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [LLM Providers](./ai/llm-providers.md)
+  - [AI Credit Status](./ai/ai-credit-status.md)
   - [Use API Access](./ai/use-api-access.md)
   - [Use an Existing Subscription](./ai/use-an-existing-subscription.md)
   - [Use a Gateway](./ai/use-a-gateway.md)
