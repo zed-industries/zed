@@ -1067,6 +1067,10 @@ impl RemoteServerPickerDelegate {
 impl PickerDelegate for RemoteServerPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "RemoteServerPicker"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -1501,7 +1505,7 @@ impl RemoteServerProjects {
             );
             Picker::list(delegate, window, cx)
                 .modal(false)
-                .max_height(Some(rems(20.).into()))
+                .height(rems(20.))
         });
         let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
