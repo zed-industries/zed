@@ -1,0 +1,42 @@
+// Put keybindings bound to a tight specific context that need to overwrite the
+// base keymaps here. Only put them here if absolutely needed. In those cases
+// also add a comment to the default keymaps that this binding exists here, to
+// make it a little more discoverable.
+//
+// This is loaded after all the base keymaps (Atom, vim etc) but before the user
+// keymaps, giving it the highest precedence of all the bindings set by us.
+[
+  {
+    "context": "Picker > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-a": "picker::ToggleActionsMenu",
+      "cmd-alt-p": "picker::TogglePreview",
+      "cmd-alt-right": "picker::SetPreviewRight",
+      "cmd-alt-down": "picker::SetPreviewBelow",
+      "cmd-alt-up": "picker::SetPreviewHidden",
+    },
+  },
+  {
+    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-p": "file_finder::SelectPrevious",
+      "cmd-j": "pane::SplitDown",
+      "cmd-k": "pane::SplitUp",
+      "cmd-h": "pane::SplitLeft",
+      "cmd-l": "pane::SplitRight",
+    },
+  },
+  {
+    "context": "TextFinder || (TextFinder > Picker > Editor) || (TextFinder > Picker > menu)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-p": "text_finder::ToProjectSearch",
+      "cmd-j": "pane::SplitDown",
+      "cmd-k": "pane::SplitUp",
+      "cmd-h": "pane::SplitLeft",
+      "cmd-l": "pane::SplitRight",
+    },
+  },
+]

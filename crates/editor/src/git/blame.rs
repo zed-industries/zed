@@ -1281,7 +1281,18 @@ mod tests {
         BlameEntry {
             sha: sha.parse().unwrap(),
             range,
-            ..Default::default()
+            original_line_number: 0,
+            author: None,
+            author_mail: None,
+            author_time: None,
+            author_tz: None,
+            committer_name: None,
+            committer_email: None,
+            committer_time: None,
+            committer_tz: None,
+            summary: None,
+            previous: None,
+            filename: String::new(),
         }
     }
 }

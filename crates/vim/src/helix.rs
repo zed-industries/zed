@@ -16,7 +16,7 @@ use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
-use text::{Bias, SelectionGoal};
+use text::{Bias, LineEnding, SelectionGoal};
 use theme::ActiveTheme as _;
 use ui::px;
 use workspace::searchable::{self, Direction, FilteredSearchRange};
@@ -117,6 +117,25 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     );
 }
 
+/// Returns column 0 of the document's first line, imitating `gg` in Helix.
+///
+/// With a count, Helix treats it as a (1-based) line number, so a count of `n`
+/// targets buffer row `n - 1`, clamped to the last line.
+fn start_of_document(map: &DisplaySnapshot, times: Option<usize>) -> DisplayPoint {
+    let buffer_row = match times {
+        None => 0,
+        Some(times) => (times.saturating_sub(1) as u32).min(map.max_row().0),
+    };
+    map.point_to_display_point(Point::new(buffer_row, 0), Bias::Left)
+}
+
+/// Returns column 0 of the document's last line, imitating `ge` in Helix.
+///
+/// Helix ignores any count for `ge`, so it is not taken here.
+fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
+    map.point_to_display_point(Point::new(map.max_row().0, 0), Bias::Left)
+}
+
 impl Vim {
     pub fn helix_normal_motion(
         &mut self,
@@ -162,6 +181,10 @@ impl Vim {
                     }
 
                     let (new_head, goal) = match motion {
+                        Motion::StartOfDocument => {
+                            (start_of_document(map, times), SelectionGoal::None)
+                        }
+                        Motion::EndOfDocument => (end_of_document(map), SelectionGoal::None),
                         // EndOfLine positions after the last character, but in
                         // helix visual mode we want the selection to end ON the
                         // last character. Adjust left here so the subsequent
@@ -485,6 +508,25 @@ impl Vim {
                 let mut is_boundary = Self::subword_boundary_start(ignore_punctuation, true);
                 self.helix_find_range_backward(times, window, cx, &mut is_boundary)
             }
+            Motion::StartOfDocument => {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            selection
+                                .collapse_to(start_of_document(map, times), SelectionGoal::None)
+                        })
+                    });
+                });
+            }
+            Motion::EndOfDocument => {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            selection.collapse_to(end_of_document(map), SelectionGoal::None)
+                        })
+                    });
+                });
+            }
             Motion::EndOfLine { .. } => {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
                 // not after it. We therefore need special handling for it.
@@ -750,13 +792,16 @@ impl Vim {
                     let snapshot = display_map.buffer_snapshot();
                     let grapheme_count = snapshot.grapheme_count_for_range(&byte_range);
                     let anchor = snapshot.anchor_before(byte_range.start);
-
-                    selection_info.push((anchor, grapheme_count, was_empty, was_reversed));
+                    let mut replacement_len = 0;
 
                     if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(grapheme_count);
+                        let mut replacement_text = text.repeat(grapheme_count);
+                        LineEnding::normalize(&mut replacement_text);
+                        replacement_len = replacement_text.len();
                         edits.push((byte_range, replacement_text));
                     }
+
+                    selection_info.push((anchor, replacement_len, was_empty, was_reversed));
                 }
 
                 editor.edit(edits, cx);
@@ -765,12 +810,11 @@ impl Vim {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let ranges: Vec<_> = selection_info
                     .into_iter()
-                    .map(|(start_anchor, grapheme_count, was_empty, was_reversed)| {
+                    .map(|(start_anchor, replacement_len, was_empty, was_reversed)| {
                         let start_point = start_anchor.to_point(&snapshot);
                         if was_empty {
                             start_point..start_point
                         } else {
-                            let replacement_len = text.len() * grapheme_count;
                             let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
                             let end_point = snapshot.offset_to_point(end_offset);
                             if was_reversed {
@@ -2491,6 +2535,23 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_replace_with_crlf(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("«xˇ»z", Mode::HelixNormal);
+
+        let vim =
+            cx.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
+        cx.update(|window, cx| {
+            vim.entity.update(cx, |vim, cx| {
+                vim.helix_replace("a\r\nb", window, cx);
+            });
+        });
+
+        cx.assert_state("«a\nbˇ»z", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_helix_yank(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -2810,6 +2871,10 @@ mod test {
             ˇ»line five"},
             Mode::HelixNormal,
         );
+
+        cx.set_state("oneˇ\ntwo\nthree", Mode::HelixNormal);
+        cx.simulate_keystrokes("d u x");
+        cx.assert_state("«one\nˇ»two\nthree", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -3983,5 +4048,196 @@ mod test {
         cx.set_state("«🙂ˇ»", Mode::HelixNormal);
         cx.simulate_keystrokes("r 1");
         cx.assert_state("«1ˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_start_of_document(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // gg lands at column 0 of the first line, regardless of current column
+        cx.set_state(
+            indoc! {"
+            foo
+              barˇbaz"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g g");
+        cx.assert_state(
+            indoc! {"
+            ˇfoo
+              barbaz"},
+            Mode::HelixNormal,
+        );
+
+        // gg with an active selection collapses to column 0 of the first line
+        cx.set_state(
+            indoc! {"
+            foo
+            «bar bazˇ»"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g g");
+        cx.assert_state(
+            indoc! {"
+            ˇfoo
+            bar baz"},
+            Mode::HelixNormal,
+        );
+
+        // a count goes to that line number at column 0
+        cx.set_state(
+            indoc! {"
+            line one
+            line two
+              line threeˇ"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 g g");
+        cx.assert_state(
+            indoc! {"
+            line one
+            ˇline two
+              line three"},
+            Mode::HelixNormal,
+        );
+
+        // a count larger than the number of lines clips to the last line
+        cx.set_state(
+            indoc! {"
+            line one
+            line two
+            ˇline three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("9 9 9 g g");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            ˇline three"},
+            Mode::HelixNormal,
+        );
+
+        // v gg extends the selection backward to col 0 of the first line
+        cx.set_state(
+            indoc! {"
+            line one
+            ˇline two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("v g g");
+        cx.assert_state(
+            indoc! {"
+            «ˇline one
+            l»ine two
+            line three"},
+            Mode::HelixSelect,
+        );
+
+        // gg in select mode with a reversed selection extends further backward
+        cx.set_state(
+            indoc! {"
+            line one
+            line «ˇtwo»
+            line three"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("g g");
+        cx.assert_state(
+            indoc! {"
+            «ˇline one
+            line two»
+            line three"},
+            Mode::HelixSelect,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_end_of_document(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // ge lands at column 0 of the last line, regardless of current column
+        cx.set_state(
+            indoc! {"
+              fooˇbar
+            baz"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g e");
+        cx.assert_state(
+            indoc! {"
+              foobar
+            ˇbaz"},
+            Mode::HelixNormal,
+        );
+
+        // ge with an active selection collapses to column 0 of the last line
+        cx.set_state(
+            indoc! {"
+            «foo barˇ»
+            baz"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g e");
+        cx.assert_state(
+            indoc! {"
+            foo bar
+            ˇbaz"},
+            Mode::HelixNormal,
+        );
+
+        // a count is ignored; ge always goes to the last line
+        cx.set_state(
+            indoc! {"
+              line oneˇ
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 g e");
+        cx.assert_state(
+            indoc! {"
+              line one
+            line two
+            ˇline three"},
+            Mode::HelixNormal,
+        );
+
+        // v ge extends the selection to col 0 of the last line
+        cx.set_state(
+            indoc! {"
+            ˇline one
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("v g e");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            line two
+            lˇ»ine three"},
+            Mode::HelixSelect,
+        );
+
+        // ge in select mode with a reversed selection extends forward to the last line
+        cx.set_state(
+            indoc! {"
+            line one
+            line «ˇtwo»
+            line three"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("g e");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line tw«o
+            lˇ»ine three"},
+            Mode::HelixSelect,
+        );
     }
 }

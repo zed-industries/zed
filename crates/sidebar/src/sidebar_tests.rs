@@ -28,6 +28,9 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        // Use an isolated DB so parallel tests can't see each other's
+        // persisted records (e.g. created-worktree records).
+        cx.set_global(db::AppDatabase::test_new());
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         ThreadStore::init_global(cx);
@@ -2047,6 +2050,13 @@ async fn test_terminal_close_event_on_archived_linked_worktree_removes_workspace
         },
     )
     .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
+    )
+    .await;
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
@@ -2533,6 +2543,13 @@ async fn test_archive_selected_draft_archives_linked_worktree_after_last_draft(
         },
     )
     .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
+    )
+    .await;
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
@@ -2749,6 +2766,13 @@ async fn test_archive_selected_draft_archives_closed_linked_worktree(cx: &mut Te
             is_main: false,
             is_bare: false,
         },
+    )
+    .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
     )
     .await;
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
@@ -3296,6 +3320,13 @@ async fn test_archive_selected_terminal_archives_closed_linked_worktree(cx: &mut
         },
     )
     .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
+    )
+    .await;
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
@@ -3462,6 +3493,13 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
             is_main: false,
             is_bare: false,
         },
+    )
+    .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
     )
     .await;
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
@@ -8128,6 +8166,13 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
             is_main: false,
             is_bare: false,
         },
+    )
+    .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
     )
     .await;
 
@@ -13488,6 +13533,13 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         },
     )
     .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        None,
+        cx,
+    )
+    .await;
 
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
@@ -13638,6 +13690,13 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
             is_main: false,
             is_bare: false,
         },
+    )
+    .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/main-repo/feature-b/main-repo"),
+        None,
+        cx,
     )
     .await;
 
@@ -13859,6 +13918,13 @@ async fn test_discard_mixed_workspace_draft_closes_only_archived_worktree_items(
             is_main: false,
             is_bare: false,
         },
+    )
+    .await;
+    agent_ui::test_support::record_zed_created_worktree(
+        fs.as_ref(),
+        Path::new("/worktrees/main-repo/feature-b/main-repo"),
+        None,
+        cx,
     )
     .await;
 
@@ -14202,6 +14268,18 @@ async fn test_remote_archive_thread_with_active_connection(
     // parent repo, so `build_root_plan` targets the linked worktree
     // specifically and knows which main repo owns it.
     let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx));
+
+    // Record the worktree as Zed-created on the client, keyed by the remote
+    // connection identity, with the creation time of the gitdir on the
+    // *remote* filesystem (where the archive flow will re-stat it).
+    agent_ui::test_support::record_zed_created_worktree(
+        server_fs.as_ref(),
+        Path::new("/worktrees/project/feature-a/project"),
+        remote_connection.as_ref(),
+        cx,
+    )
+    .await;
+
     let wt_thread_id = acp::SessionId::new(Arc::from("worktree-thread"));
     cx.update(|_window, cx| {
         let metadata = ThreadMetadata {
@@ -14729,4 +14807,68 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
         "cmd-click must not fall back to the main-paths workspace when a \
          linked-worktree workspace was the last-active one for the group"
     );
+}
+
+#[test]
+fn test_split_leading_icon_char() {
+    // A leading symbol set off by whitespace is pulled out and trimmed from the
+    // title.
+    let (icon, title, positions) =
+        split_leading_icon_char(&"✳ Implement separate config".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "✳");
+    assert_eq!(title.as_ref(), "Implement separate config");
+    assert_eq!(positions, Vec::<usize>::new());
+
+    // No prefix when the title starts with a letter.
+    assert!(split_leading_icon_char(&"Implement separate config".into(), &[]).is_none());
+
+    // Leading whitespace is not treated as a prefix.
+    assert!(split_leading_icon_char(&" leading space".into(), &[]).is_none());
+
+    // An alphanumeric prefix such as a version marker is not treated as an icon.
+    assert!(split_leading_icon_char(&"v1 Running".into(), &[]).is_none());
+    assert!(split_leading_icon_char(&"1 first".into(), &[]).is_none());
+
+    // A title consisting only of a symbol (no whitespace separator) is left
+    // untouched.
+    assert!(split_leading_icon_char(&"✳".into(), &[]).is_none());
+    assert!(split_leading_icon_char(&"✳Thinking".into(), &[]).is_none());
+
+    // A run of the same symbol collapses to a single glyph.
+    let (icon, title, _) = split_leading_icon_char(&">>> Thinking".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), ">");
+    assert_eq!(title.as_ref(), "Thinking");
+
+    // Surrounding ASCII brackets are stripped so the inner glyph is used.
+    let (icon, title, _) = split_leading_icon_char(&"[!] codex waiting".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "!");
+    assert_eq!(title.as_ref(), "codex waiting");
+
+    // A run of dots is condensed into an ellipsis.
+    let (icon, title, _) = split_leading_icon_char(&"... working".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "\u{2026}");
+    assert_eq!(title.as_ref(), "working");
+
+    let (icon, title, _) = split_leading_icon_char(&"[...] working".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "\u{2026}");
+    assert_eq!(title.as_ref(), "working");
+
+    let (icon, title, _) = split_leading_icon_char(&"[…] working".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "\u{2026}");
+    assert_eq!(title.as_ref(), "working");
+
+    // Multi-codepoint emoji are kept intact rather than sliced mid-cluster.
+    let (icon, title, _) = split_leading_icon_char(&"🇺🇸 flag".into(), &[]).unwrap();
+    assert_eq!(icon.as_ref(), "🇺🇸");
+    assert_eq!(title.as_ref(), "flag");
+
+    // Highlight positions are shifted to account for the stripped prefix, and
+    // positions that fall inside the stripped prefix are dropped.
+    let title: SharedString = "# abc".into();
+    let abc_offset = title.find('a').unwrap();
+    let (icon, trimmed, positions) =
+        split_leading_icon_char(&title, &[0, abc_offset, abc_offset + 1]).unwrap();
+    assert_eq!(icon.as_ref(), "#");
+    assert_eq!(trimmed.as_ref(), "abc");
+    assert_eq!(positions, vec![0, 1]);
 }

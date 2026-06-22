@@ -10,8 +10,9 @@ use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
     SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, Task,
-    ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity, WindowBounds,
-    WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size, uniform_list,
+    TasksIncluded, ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity,
+    WindowBounds, WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size,
+    uniform_list,
 };
 use rpc::{AnyProtoClient, proto};
 use settings::{RegisterSetting, Settings, SettingsContent, SettingsStore};
@@ -81,7 +82,7 @@ impl Settings for PerformanceProfilerSettings {
 
 pub fn init(startup_time: Instant, cx: &mut App) {
     let initial_enabled = PerformanceProfilerSettings::get_global(cx).enabled;
-    profiler::set_enabled(initial_enabled);
+    profiler::set_trace_enabled(initial_enabled);
     update_command_palette_filter(initial_enabled, cx);
 
     cx.observe_global::<SettingsStore>(|cx| {
@@ -89,7 +90,7 @@ pub fn init(startup_time: Instant, cx: &mut App) {
         // `set_enabled` reports whether the value actually changed, so skip the
         // filter update and window cleanup on the common no-op path — the
         // settings observer fires for every settings change.
-        if !profiler::set_enabled(enabled) {
+        if !profiler::set_trace_enabled(enabled) {
             return;
         }
         update_command_palette_filter(enabled, cx);
@@ -225,14 +226,13 @@ impl ProfilerWindow {
         self.has_remote = self.remote_proto_client(cx).is_some();
         match self.source {
             ProfileSource::Foreground => {
-                let dispatcher = cx.foreground_executor().dispatcher();
-                let current_thread = dispatcher.get_current_thread_timings();
+                let current_thread =
+                    gpui::profiler::get_current_thread_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(vec![current_thread]);
                 self.apply_deltas(deltas);
             }
             ProfileSource::AllThreads => {
-                let dispatcher = cx.foreground_executor().dispatcher();
-                let all_timings = dispatcher.get_all_timings();
+                let all_timings = gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(all_timings);
                 self.apply_deltas(deltas);
             }

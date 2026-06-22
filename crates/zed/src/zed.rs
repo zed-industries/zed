@@ -65,12 +65,14 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
-    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, InvalidSettingsError, KeybindSource,
+    KeymapFile, KeymapFileLoadResult, MigrationStatus, SPECIFIC_OVERRIDES_KEYMAP_PATH, Settings,
+    SettingsFile, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use sidebar::Sidebar;
+#[cfg(debug_assertions)]
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{
     borrow::Cow,
@@ -156,6 +158,15 @@ actions!(
     ]
 );
 
+#[cfg(debug_assertions)]
+actions!(
+    dev,
+    [
+        /// Show an error on the workspace level.
+        ShowWorkspaceError
+    ]
+);
+
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -186,15 +197,22 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
-    cx.on_action(|_: &OpenLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
-            open_log_file(workspace, window, cx);
+
+    // When Zed logs to stdout rather than the log file, avoid registering
+    // handlers for both `OpenLog` and `RevealLogInFileManager`, as the log file
+    // does not exist in that scenario and these actions would error.
+    if !crate::stdout_is_a_pty() {
+        cx.on_action(|_: &OpenLog, cx| {
+            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                open_log_file(workspace, window, cx);
+            });
+        })
+        .on_action(|_: &workspace::RevealLogInFileManager, cx| {
+            cx.reveal_path(paths::log_file().as_path());
         });
-    })
-    .on_action(|_: &workspace::RevealLogInFileManager, cx| {
-        cx.reveal_path(paths::log_file().as_path());
-    })
-    .on_action(|_: &zed_actions::OpenLicenses, cx| {
+    }
+
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -891,7 +909,7 @@ fn register_actions(
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
-                urls: vec![action.url.clone()],
+                urls: vec![String::from(&*action.url)],
                 ..Default::default()
             })
         })
@@ -909,7 +927,7 @@ fn register_actions(
                 }
                 Err(e) => {
                     workspace.show_error(
-                        &anyhow::anyhow!(
+                        format!(
                             "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
                             action.url
                         ),
@@ -929,7 +947,12 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window.unwrap_or_else(|| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    )
+                }),
                 window,
                 cx,
             );
@@ -1293,6 +1316,45 @@ fn register_actions(
     }
 
     workspace.register_action(sidebar::dump_workspace_info);
+
+    #[cfg(debug_assertions)]
+    workspace.register_action(|workspace, _: &ShowWorkspaceError, _, cx| {
+        struct DebugError;
+        struct SecondDebugError;
+
+        impl WorkspaceError for DebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static(
+                    "Error: Prepare rename via rust-analyzer failed: No references found at position",
+                )
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Warning
+            }
+
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
+            }
+        }
+
+        impl WorkspaceError for SecondDebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static("This is some error to ignore.")
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Error
+            }
+
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
+            }
+        }
+
+        workspace.show_error(DebugError, cx);
+        workspace.show_error(SecondDebugError, cx);
+    });
 }
 
 fn initialize_pane(
@@ -1485,7 +1547,7 @@ fn open_about_window(cx: &mut App) {
                                         window.remove_window();
                                     }))
                                     .child(
-                                        Button::new("ok", "Ok")
+                                        Button::new("ok", "OK")
                                             .full_width()
                                             .style(ButtonStyle::OutlinedGhost)
                                             .toggle_state(ok_is_focused)
@@ -1631,13 +1693,16 @@ fn quit(_: &Quit, cx: &mut App) {
         // If the user cancels any save prompt, then keep the app open.
         for window in &workspace_windows {
             let window = *window;
-            let workspaces = window
+            let active_and_workspaces = window
                 .update(cx, |multi_workspace, _, _cx| {
-                    multi_workspace.workspaces().cloned().collect::<Vec<_>>()
+                    (
+                        multi_workspace.workspace().clone(),
+                        multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                    )
                 })
                 .log_err();
 
-            let Some(workspaces) = workspaces else {
+            let Some((originally_active, workspaces)) = active_and_workspaces else {
                 continue;
             };
 
@@ -1653,10 +1718,34 @@ fn quit(_: &Quit, cx: &mut App) {
                     .log_err()
                 {
                     if !should_close.await? {
+                        // Activating each workspace above to surface its save
+                        // prompts changed which workspace is active. Restore the
+                        // user's focused workspace before bailing so the window
+                        // is left as they had it.
+                        window
+                            .update(cx, |multi_workspace, window, cx| {
+                                multi_workspace.activate(
+                                    originally_active.clone(),
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
                         return Ok(());
                     }
                 }
             }
+
+            // The loop above activated each workspace in turn, overwriting the
+            // persisted active workspace. Re-activate the workspace the user
+            // actually had focused so it is the one serialized (and restored on
+            // next launch) as active, rather than whichever happened to be last.
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(originally_active, None, window, cx);
+                })
+                .log_err();
         }
         // Flush all pending workspace serialization before quitting so that
         // session_id/window_id are up-to-date in the database.
@@ -2155,6 +2244,15 @@ pub fn load_default_keymap(cx: &mut App) {
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );
     }
+
+    cx.bind_keys(
+        KeymapFile::load_asset(
+            SPECIFIC_OVERRIDES_KEYMAP_PATH,
+            Some(KeybindSource::Default),
+            cx,
+        )
+        .unwrap(),
+    );
 }
 
 pub fn open_new_ssh_project_from_project(
@@ -5269,6 +5367,7 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
+                "text_finder",
                 "theme",
                 "theme_selector",
                 "toast",
@@ -5478,7 +5577,6 @@ mod tests {
             );
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
-            git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(
@@ -6456,6 +6554,145 @@ mod tests {
                     vec![ProjectGroupKey::new(None, PathList::new(&[dir3]))]
                 );
                 assert_eq!(mw.workspaces().count(), 1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_quit_preserves_focused_workspace_for_restore(cx: &mut TestAppContext) {
+        use session::Session;
+        use workspace::{OpenMode, Workspace};
+
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let dir1 = path!("/dir1");
+        let dir2 = path!("/dir2");
+
+        let fs = app_state.fs.clone();
+        let fake_fs = fs.as_fake();
+        fake_fs.insert_tree(dir1, json!({})).await;
+        fake_fs.insert_tree(dir2, json!({})).await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        // Window with two retained workspaces: dir1 added first, dir2 second.
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![dir1.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open first workspace");
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_project(vec![dir2.into()], OpenMode::Activate, window, cx)
+            })
+            .unwrap()
+            .await
+            .expect("failed to open second workspace");
+        cx.run_until_parked();
+
+        // Focus dir1 (the first workspace). dir2 was activated last when it was
+        // opened and is iterated last by the quit-time close-prompt loop, so
+        // without the fix the persisted active workspace gets clobbered to dir2.
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspaces().next().unwrap().clone();
+                multi_workspace.activate(workspace, None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .read_with(cx, |mw, cx| {
+                assert!(
+                    mw.workspace()
+                        .read(cx)
+                        .root_paths(cx)
+                        .iter()
+                        .any(|p| p.as_ref() == Path::new(dir1)),
+                    "dir1 should be the focused workspace before quitting"
+                );
+            })
+            .unwrap();
+
+        // Quit. With no dirty items there are no save prompts, so the quit flow
+        // runs the prepare_to_close loop (which activates every workspace in
+        // turn to surface prompts) and then flushes serialization. cx.quit() is
+        // a no-op in tests, so the window stays around for inspection.
+        cx.dispatch_action(*window, Quit);
+        cx.run_until_parked();
+
+        // The fix re-activates the originally-focused workspace after the loop,
+        // so the window must still be focused on dir1, not dir2.
+        window
+            .read_with(cx, |mw, cx| {
+                let active = mw.workspace().read(cx).root_paths(cx);
+                assert!(
+                    active.iter().any(|p| p.as_ref() == Path::new(dir1)),
+                    "quitting must not change which workspace is focused"
+                );
+                assert!(
+                    !active.iter().any(|p| p.as_ref() == Path::new(dir2)),
+                    "dir2 must not become the focused workspace after quitting"
+                );
+            })
+            .unwrap();
+
+        // Simulate a fresh launch and verify dir1 is restored as the active
+        // workspace rather than dir2 (or an empty window).
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        let restored_windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect()
+        });
+        assert_eq!(restored_windows.len(), 1);
+
+        restored_windows[0]
+            .read_with(cx, |mw, cx| {
+                let active = mw.workspace().read(cx).root_paths(cx);
+                assert!(
+                    active.iter().any(|p| p.as_ref() == Path::new(dir1)),
+                    "the focused workspace (dir1) must be restored as active"
+                );
+                assert!(
+                    !active.iter().any(|p| p.as_ref() == Path::new(dir2)),
+                    "dir2 must not be restored as the active workspace"
+                );
             })
             .unwrap();
     }
