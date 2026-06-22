@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
-    TokenUsage, env_var,
+    TemplateContext, TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -274,6 +274,7 @@ impl MistralLanguageModel {
     fn stream_completion(
         &self,
         request: mistral::Request,
+        template_context: TemplateContext,
         affinity: Option<String>,
         cx: &AsyncApp,
     ) -> BoxFuture<
@@ -290,12 +291,20 @@ impl MistralLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
+        let background_executor = cx.background_executor().clone();
+
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
                 });
             };
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = mistral::stream_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -368,9 +377,10 @@ impl LanguageModel for MistralLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let template_context = TemplateContext::new(request.project_root.clone());
         let (request, affinity) =
             into_mistral(request, self.model.clone(), self.max_output_tokens());
-        let stream = self.stream_completion(request, affinity, cx);
+        let stream = self.stream_completion(request, template_context, affinity, cx);
 
         async move {
             let stream = stream.await?;
@@ -1006,16 +1016,9 @@ mod tests {
                 },
             ],
             temperature: Some(0.5),
-            tools: vec![],
-            tool_choice: None,
             thread_id: Some("abcdef".into()),
-            prompt_id: None,
-            intent: None,
-            stop: vec![],
             thinking_allowed: true,
-            thinking_effort: None,
-            speed: Default::default(),
-            compact_at_tokens: None,
+            ..Default::default()
         };
 
         let (mistral_request, affinity) =
@@ -1042,17 +1045,8 @@ mod tests {
                 cache: false,
                 reasoning_details: None,
             }],
-            tools: vec![],
-            tool_choice: None,
-            temperature: None,
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            stop: vec![],
             thinking_allowed: true,
-            thinking_effort: None,
-            speed: None,
-            compact_at_tokens: None,
+            ..Default::default()
         };
 
         let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);

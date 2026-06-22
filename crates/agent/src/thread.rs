@@ -1801,6 +1801,17 @@ impl Thread {
         &self.project
     }
 
+    /// Absolute path of the project's first visible worktree root, used as the
+    /// working directory when expanding request-time template variables (e.g.
+    /// `${git:branch}` in provider `custom_headers`).
+    fn project_root(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
@@ -3523,6 +3534,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
+            project_root: self.project_root(cx),
             ..Default::default()
         };
 
@@ -3766,6 +3778,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
+            project_root: self.project_root(cx),
         };
 
         log::debug!("Completion request built successfully");
@@ -4144,6 +4157,7 @@ impl Thread {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(model, cx),
             messages: self.build_request_messages_until(Vec::new(), insertion_ix, cx),
+            project_root: self.project_root(cx),
             ..Default::default()
         };
 

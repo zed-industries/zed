@@ -275,6 +275,7 @@ impl TerminalInlineAssistant {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                project_root: None,
             }
         }))
     }

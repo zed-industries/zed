@@ -608,6 +608,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            project_root: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -714,6 +715,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            project_root: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -772,6 +774,7 @@ mod tests {
             thinking_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            project_root: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -824,6 +827,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            project_root: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -862,6 +866,7 @@ mod tests {
             thinking_allowed: true,
             speed: None,
             compact_at_tokens: None,
+            project_root: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,

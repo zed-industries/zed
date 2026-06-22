@@ -10,7 +10,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderConfigurationView,
-    RateLimiter, Role, StopReason, TokenUsage, env_var,
+    RateLimiter, Role, StopReason, TemplateContext, TokenUsage, env_var,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
@@ -310,6 +310,7 @@ impl OpenRouterLanguageModel {
     fn stream_completion(
         &self,
         request: open_router::Request,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -330,12 +331,19 @@ impl OpenRouterLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
+        let background_executor = cx.background_executor().clone();
         async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
                 });
             };
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = open_router::stream_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -425,8 +433,9 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let template_context = TemplateContext::new(request.project_root.clone());
         let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
-        let request = self.stream_completion(openrouter_request, cx);
+        let request = self.stream_completion(openrouter_request, template_context, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(OpenRouterEventMapper::new().map_stream(response))

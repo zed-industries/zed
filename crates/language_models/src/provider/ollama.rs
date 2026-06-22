@@ -11,7 +11,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TemplateContext,
+    TokenUsage, env_var,
 };
 use menu;
 use ollama::{
@@ -525,6 +526,7 @@ impl LanguageModel for OllamaLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let template_context = TemplateContext::new(request.project_root.clone());
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
@@ -536,7 +538,14 @@ impl LanguageModel for OllamaLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
+        let background_executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let stream = stream_chat_completion(
                 http_client.as_ref(),
                 &api_url,

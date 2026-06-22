@@ -84,6 +84,57 @@ Configure them with `language_models.<provider>.custom_headers`:
 
 Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
 
+### Template Variables in Custom Headers {#custom-header-templates}
+
+Header values may contain `${namespace:value}` template variables that are
+expanded **fresh on every request**, so values like the current git branch
+always reflect the live state of the project. This is useful for tagging gateway
+requests (for example, with LiteLLM) with per-project metadata for observability
+and cost tracking.
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "LiteLLM": {
+        "api_url": "https://llm-gateway.example.com/v1",
+        "custom_headers": {
+          "x-litellm-tags": "branch:${git:branch},remote:${git:remote},sha:${git:sha}",
+          "x-user": "${env:USER}",
+          "x-deployment": "${env:DEPLOYMENT_ENV:-development}"
+        }
+      }
+    }
+  }
+}
+```
+
+The following variables are supported:
+
+| Syntax                    | Description                                                            |
+| ------------------------- | --------------------------------------------------------------------- |
+| `${git:branch}`           | Current branch name (empty when detached or not a git repository).    |
+| `${git:remote}`           | URL(s) of all configured remotes, comma-separated.                    |
+| `${git:sha}`              | Short HEAD commit SHA.                                                 |
+| `${env:VAR_NAME}`         | Value of the `VAR_NAME` environment variable (empty when unset).      |
+| `${env:VAR_NAME:-default}`| Value of `VAR_NAME`, or `default` when the variable is unset or empty.|
+
+Notes and behavior:
+
+- **Git working directory:** `git:*` variables resolve against the active
+  project's worktree root, so multiple Zed windows on different projects send
+  the correct per-project metadata. When there is no project (for example, a
+  request made without an open worktree), `git:*` variables expand to an empty
+  string.
+- **Errors are non-fatal:** an unknown variable, a malformed template, or a git
+  command that fails or times out expands to an empty string and logs a warning;
+  the surrounding literal text is preserved.
+- **No arbitrary shell execution:** only the variables listed above are
+  supported. There is intentionally no `${shell:...}` escape hatch, so a shared
+  or synced settings file cannot be used to run arbitrary commands.
+- **No recursion:** the output of one variable is never re-scanned for further
+  templates.
+
 ## Remote Projects {#remote-projects}
 
 Zed LLM providers for Zed AI features are initialized in the local Zed app. In SSH, dev container, and other remote projects, API keys saved in Zed are read from the local system keychain, and provider environment variables are read from the local Zed process environment.

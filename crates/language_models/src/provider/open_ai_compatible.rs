@@ -8,6 +8,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    TemplateContext,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -181,6 +182,7 @@ impl OpenAiCompatibleLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -201,10 +203,17 @@ impl OpenAiCompatibleLanguageModel {
         });
 
         let provider = self.provider_name.clone();
+        let background_executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = stream_completion(
                 http_client.as_ref(),
                 provider.0.as_str(),
@@ -223,6 +232,7 @@ impl OpenAiCompatibleLanguageModel {
     fn stream_response(
         &self,
         request: ResponseRequest,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
     {
@@ -238,10 +248,17 @@ impl OpenAiCompatibleLanguageModel {
         });
 
         let provider = self.provider_name.clone();
+        let background_executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = stream_response(
                 http_client.as_ref(),
                 provider.0.as_str(),
@@ -340,6 +357,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             request.speed = None;
         }
 
+        let template_context = TemplateContext::new(request.project_root.clone());
+
         if self.model.capabilities.chat_completions {
             let request = into_open_ai(
                 request,
@@ -350,7 +369,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.reasoning_effort,
                 self.model.capabilities.interleaved_reasoning,
             );
-            let completions = self.stream_completion(request, cx);
+            let completions = self.stream_completion(request, template_context, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
@@ -368,7 +387,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                     .filter(|effort| *effort != open_ai::ReasoningEffort::None),
                 self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
             );
-            let completions = self.stream_response(request, cx);
+            let completions = self.stream_response(request, template_context, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())

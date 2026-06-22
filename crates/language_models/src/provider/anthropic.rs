@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    ProviderConfigurationView, RateLimiter, env_var,
+    ProviderConfigurationView, RateLimiter, TemplateContext, env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -403,6 +403,7 @@ impl AnthropicModel {
     fn stream_completion(
         &self,
         request: anthropic::Request,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -422,6 +423,7 @@ impl AnthropicModel {
         });
 
         let beta_headers = self.model.beta_headers();
+        let background_executor = cx.background_executor().clone();
 
         async move {
             let Some(api_key) = api_key else {
@@ -429,6 +431,12 @@ impl AnthropicModel {
                     provider: PROVIDER_NAME,
                 });
             };
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -554,6 +562,7 @@ impl LanguageModel for AnthropicModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
+        let project_root = request.project_root.clone();
         let mut request = into_anthropic(
             request,
             request_id,
@@ -565,7 +574,8 @@ impl LanguageModel for AnthropicModel {
         if !self.model.supports_speed {
             request.speed = None;
         }
-        let request = self.stream_completion(request, cx);
+        let template_context = TemplateContext::new(project_root);
+        let request = self.stream_completion(request, template_context, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(AnthropicEventMapper::new(PROVIDER_NAME).map_stream(response))

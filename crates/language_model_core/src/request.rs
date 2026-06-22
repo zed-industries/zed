@@ -387,6 +387,13 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
+    /// Absolute path to the active project's worktree root, when available.
+    ///
+    /// Used at request time to resolve template variables in user-configured
+    /// settings (e.g. `${git:branch}` in `custom_headers`). Not serialized: it
+    /// is local request context, never sent to a provider.
+    #[serde(skip)]
+    pub project_root: Option<std::path::PathBuf>,
 }
 
 #[derive(

@@ -9,7 +9,7 @@ use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, TemplateContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -221,6 +221,7 @@ impl AnthropicCompatibleLanguageModel {
     fn stream_completion(
         &self,
         request: anthropic::Request,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -242,6 +243,7 @@ impl AnthropicCompatibleLanguageModel {
         });
 
         let beta_headers = self.model.beta_headers();
+        let background_executor = cx.background_executor().clone();
 
         async move {
             let Some(api_key) = api_key else {
@@ -249,6 +251,13 @@ impl AnthropicCompatibleLanguageModel {
                     provider: provider_name,
                 });
             };
+
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
 
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
@@ -332,6 +341,7 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
+        let template_context = TemplateContext::new(request.project_root.clone());
         let mut request = into_anthropic(
             request,
             request_id,
@@ -343,7 +353,7 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
         if !self.model.supports_speed {
             request.speed = None;
         }
-        let completion_request = self.stream_completion(request, cx);
+        let completion_request = self.stream_completion(request, template_context, cx);
         let provider_name = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
             let response = completion_request.await?;

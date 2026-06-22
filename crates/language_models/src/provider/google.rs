@@ -15,6 +15,7 @@ use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter,
+    TemplateContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -274,6 +275,7 @@ impl GoogleLanguageModel {
     fn stream_completion(
         &self,
         request: google_ai::GenerateContentRequest,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -289,8 +291,16 @@ impl GoogleLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
+        let background_executor = cx.background_executor().clone();
+
         async move {
             let api_key = api_key.context("Missing Google API key")?;
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = google_ai::stream_generate_content(
                 http_client.as_ref(),
                 &api_url,
@@ -384,12 +394,13 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let template_context = TemplateContext::new(request.project_root.clone());
         let request = into_google(
             request,
             self.model.request_id().to_string(),
             self.model.mode(),
         );
-        let request = self.stream_completion(request, cx);
+        let request = self.stream_completion(request, template_context, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(LanguageModelCompletionError::from)?;
             Ok(GoogleEventMapper::new().map_stream(response))

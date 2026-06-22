@@ -36,7 +36,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, TemplateContext, TokenUsage, env_var,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -614,6 +614,7 @@ impl BedrockModel {
     fn stream_completion(
         &self,
         request: bedrock::Request,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -634,11 +635,29 @@ impl BedrockModel {
                 .clone()
         });
 
-        let task = Tokio::spawn(
-            cx,
-            bedrock::stream_completion(runtime_client, request, extra_headers),
-        );
-        async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
+        let background_executor = cx.background_executor().clone();
+        // Capture the Tokio runtime handle (which is `Send`) rather than `cx`
+        // (which is not), so the returned future stays `Send`. Header expansion
+        // runs on the background executor before the Bedrock request is spawned
+        // on the Tokio runtime.
+        let handle = self.handle.clone();
+        async move {
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
+            let join_handle = handle.spawn(bedrock::stream_completion(
+                runtime_client,
+                request,
+                extra_headers,
+            ));
+            join_handle
+                .await
+                .map_err(|e| BedrockError::Other(e.into()))?
+        }
+        .boxed()
     }
 }
 
@@ -761,6 +780,7 @@ impl LanguageModel for BedrockModel {
         };
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
+        let template_context = TemplateContext::new(request.project_root.clone());
 
         let request = match into_bedrock(
             request,
@@ -777,7 +797,7 @@ impl LanguageModel for BedrockModel {
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
 
-        let request = self.stream_completion(request, cx);
+        let request = self.stream_completion(request, template_context, cx);
         let display_name = self.model.display_name().to_string();
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| match err {

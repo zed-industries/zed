@@ -24,5 +24,6 @@ partial-json-fixer.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smol.workspace = true
 strum.workspace = true
 thiserror.workspace = true

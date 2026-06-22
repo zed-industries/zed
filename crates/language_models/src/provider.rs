@@ -1,6 +1,15 @@
 use collections::HashMap;
+use futures::FutureExt;
+use gpui::BackgroundExecutor;
 use http_client::CustomHeaders;
 use http_client::http::{HeaderName, HeaderValue};
+use language_model::TemplateContext;
+use std::time::Duration;
+
+/// Upper bound on how long request-time template expansion may take before the
+/// original (unexpanded) headers are used instead. Prevents a slow or hung git
+/// helper from delaying an LLM request indefinitely.
+const TEMPLATE_EXPANSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub mod anthropic;
 pub mod anthropic_compatible;
@@ -23,6 +32,40 @@ pub mod vercel_ai_gateway;
 pub mod x_ai;
 
 const COMMON_RESERVED_HEADER_NAMES: &[&str] = &["Authorization", "Content-Type", "Accept"];
+
+/// Expand request-time template variables (e.g. `${git:branch}`) in `headers`,
+/// running off the foreground thread.
+///
+/// Template helpers may spawn short-lived subprocesses, so expansion is
+/// performed on the background executor. When `headers` contains no templates
+/// this is effectively free (the work returns the original `Arc`-backed headers
+/// unchanged). Providers call this inside their streaming future with the
+/// `TemplateContext` derived from `request.project_root` and a
+/// `BackgroundExecutor` captured before the future (the executor is `'static`
+/// and cheaply cloned, so it crosses into the `'static` future without borrowing
+/// `cx`).
+pub(crate) async fn expand_custom_headers(
+    headers: CustomHeaders,
+    context: TemplateContext,
+    background_executor: BackgroundExecutor,
+) -> CustomHeaders {
+    if headers.is_empty() {
+        return headers;
+    }
+    let fallback = headers.clone();
+    let expansion = background_executor
+        .spawn(async move { language_model::expand_custom_headers(&headers, &context).await });
+    let timeout = background_executor.timer(TEMPLATE_EXPANSION_TIMEOUT);
+    futures::select_biased! {
+        expanded = expansion.fuse() => expanded,
+        _ = timeout.fuse() => {
+            log::warn!(
+                "custom header template expansion timed out after {TEMPLATE_EXPANSION_TIMEOUT:?}; using unexpanded headers"
+            );
+            fallback
+        }
+    }
+}
 
 /// Validate the user-supplied custom-headers map once at settings load time,
 /// dropping reserved or malformed entries (each with a `log::warn!`) and

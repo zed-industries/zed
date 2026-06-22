@@ -13,6 +13,7 @@ use language_model::{
 use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    TemplateContext,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -452,6 +453,7 @@ impl LmStudioLanguageModel {
     fn stream_completion(
         &self,
         request: lmstudio::ChatCompletionRequest,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -467,7 +469,14 @@ impl LmStudioLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
+        let background_executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let stream = lmstudio::stream_chat_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -536,8 +545,9 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let template_context = TemplateContext::new(request.project_root.clone());
         let request = self.to_lmstudio_request(request);
-        let completions = self.stream_completion(request, cx);
+        let completions = self.stream_completion(request, template_context, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())

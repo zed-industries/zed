@@ -2965,6 +2965,7 @@ impl GitPanel {
                     thinking_effort: None,
                     speed: None,
                     compact_at_tokens: None,
+                    project_root: Some(repo_work_dir.to_path_buf()),
                 };
 
                 let stream = model.stream_completion_text(request, cx);

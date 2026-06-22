@@ -9,7 +9,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderConfigurationView, RateLimiter, env_var,
+    LanguageModelToolSchemaFormat, ProviderConfigurationView, RateLimiter, TemplateContext,
+    env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -245,6 +246,7 @@ impl XAiLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
+        template_context: TemplateContext,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -263,11 +265,18 @@ impl XAiLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
+        let background_executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let provider = PROVIDER_NAME;
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
+            let extra_headers = crate::provider::expand_custom_headers(
+                extra_headers,
+                template_context,
+                background_executor,
+            )
+            .await;
             let request = open_ai::stream_completion(
                 http_client.as_ref(),
                 provider.0.as_str(),
@@ -437,6 +446,7 @@ impl LanguageModel for XAiLanguageModel {
         >,
     > {
         let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
+        let template_context = TemplateContext::new(request.project_root.clone());
         let request = crate::provider::open_ai::into_open_ai(
             request,
             self.model.id(),
@@ -446,7 +456,7 @@ impl LanguageModel for XAiLanguageModel {
             reasoning_effort,
             false,
         );
-        let completions = self.stream_completion(request, cx);
+        let completions = self.stream_completion(request, template_context, cx);
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())

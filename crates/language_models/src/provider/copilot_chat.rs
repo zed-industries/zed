@@ -1203,6 +1203,7 @@ fn into_copilot_responses(
         thinking_effort,
         speed: _,
         compact_at_tokens: _,
+        project_root: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
