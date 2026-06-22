@@ -549,12 +549,15 @@ impl EditorElement {
                                 }
                             };
 
-                            let current_scroll_position = editor
+                            let current_scroll_position = match editor
                                 .scroll_manager
                                 .scroll_animation()
-                                .filter(|animation| animation.is_animating())
                                 .map(|animation| animation.target_position())
-                                .unwrap_or_else(|| position_map.snapshot.scroll_position());
+                            {
+                                Some(target) => target,
+                                None => editor.scroll_position(cx),
+                            };
+
                             let x = (current_scroll_position.x
                                 * ScrollPixelOffset::from(glyph_width)
                                 - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
