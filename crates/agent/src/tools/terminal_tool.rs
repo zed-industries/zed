@@ -115,11 +115,11 @@ pub struct SandboxedTerminalToolInput {
         `https://` URLs rather than `git@`/`ssh://`."
     )]
     #[cfg_attr(
-        target_os = "linux",
-        doc = "\nNOTE: on Linux the sandbox cannot restrict network access to specific \
-        hosts. Any value here grants the command unrestricted outbound network access \
-        (exactly like `allow_all_hosts`), and the user is asked to approve access to \
-        all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
+        any(target_os = "linux", target_os = "windows"),
+        doc = "\nNOTE: on Linux and Windows the sandbox cannot restrict network access to \
+        specific hosts. Any value here grants the command unrestricted outbound network \
+        access (exactly like `allow_all_hosts`), and the user is asked to approve access \
+        to all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
         directly when per-host restriction isn't available."
     )]
     #[serde(default)]
@@ -168,6 +168,15 @@ pub struct SandboxedTerminalToolInput {
     /// `allow_fs_write_all`); use this only when the command needs behavior
     /// the sandbox can't grant on a per-permission basis. Requesting it
     /// triggers a user approval prompt.
+    #[cfg_attr(
+        target_os = "windows",
+        doc = "\nOn Windows, running unsandboxed also switches the shell. Sandboxed \
+        commands run under WSL's Linux bash; an unsandboxed command instead runs in the \
+        host's default shell — Git Bash (or scoop's bash) when one is installed, otherwise \
+        PowerShell/cmd. Path conventions change accordingly (e.g. `C:\\...` or `/c/...` \
+        rather than WSL's `/mnt/c/...`), so a command written for the sandboxed shell may \
+        behave differently here."
+    )]
     #[serde(default)]
     pub unsandboxed: Option<bool>,
     /// A short justification for why this command needs the sandbox
@@ -474,6 +483,13 @@ async fn run_terminal_tool(
     // create the sandbox it aborts. As the consumer we may still run the command
     // without a sandbox (when the user has opted into that), but we record
     // *why* in `sandbox_not_applied` so we can warn the user and tell the agent.
+    // Only the Linux/Windows sandbox-creation fallbacks (and the matching
+    // "for this thread" grant) ever reassign this, so on other platforms the
+    // binding stays `None` and wouldn't need `mut`.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "windows")),
+        allow(unused_mut)
+    )]
     let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         let sandbox_permissions = cx.update(|cx| {
@@ -482,13 +498,7 @@ async fn run_terminal_tool(
                 .clone()
         });
 
-        if sandbox_permissions.allow_unsandboxed {
-            // Unsandboxed execution is permanently allowed in settings: skip
-            // the sandbox machinery entirely and run the command the same way
-            // the unsandboxed terminal tool does.
-            sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::DisabledForever);
-            None
-        } else if event_stream.sandbox_fallback_granted_for_thread() {
+        if event_stream.sandbox_fallback_granted_for_thread() {
             // The user allowed unsandboxed execution for the rest of this
             // thread after an earlier sandbox failure (Linux and Windows, which
             // share the `authorize_sandbox_fallback` flow).
@@ -698,22 +708,41 @@ async fn run_terminal_tool(
     // chose to run through), tell the agent so it can account for the weaker
     // isolation. Computed here — after the Windows fallback above may have set
     // the reason — so every affected command communicates the state.
-    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
-        acp_thread::SandboxNotAppliedReason::DisabledForever => {
-            "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
-             enabled in settings."
-                .to_string()
+    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| {
+        // Only the Windows-specific block below mutates this; on other
+        // platforms the note is returned exactly as built.
+        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+        let mut note = match reason {
+            acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
+                "Note: this command ran WITHOUT an OS sandbox because the user allowed unsandboxed \
+                 execution for the rest of this thread."
+                    .to_string()
+            }
+            acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
+                "Note: this command ran WITHOUT an OS sandbox because one could not be \
+                 created ({}).",
+                error.user_facing_message()
+            ),
+        };
+        // On Windows, running without a sandbox also changes the interpreter:
+        // the sandboxed path runs the command under WSL's Linux shell, but
+        // every unsandboxed path that reaches here falls back to the host
+        // shell (Git Bash, or PowerShell/cmd when no bash is installed) against
+        // native Windows paths. The model writes commands for the WSL/Linux
+        // sandbox, so the loss of isolation isn't the whole story — warn it
+        // that the shell and path conventions differ too, or a command that
+        // worked sandboxed may silently misbehave or fail here.
+        #[cfg(target_os = "windows")]
+        {
+            note.push(' ');
+            note.push_str(
+                "It also ran under the host shell (Git Bash, or PowerShell/cmd when no bash is \
+                 installed) instead of WSL's Linux shell, so the interpreter and path \
+                 conventions differ from the sandbox: Linux-only commands and `/mnt/...` paths \
+                 may fail. Rewrite the command for the host shell if it doesn't work.",
+            );
         }
-        acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
-            "Note: this command ran WITHOUT an OS sandbox because you allowed unsandboxed \
-             execution for the rest of this thread."
-                .to_string()
-        }
-        acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
-            "Note: I tried to run this command inside an OS sandbox, but it could not be \
-             created ({}). It ran WITHOUT a sandbox.",
-            error.user_facing_message()
-        ),
+        note
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;

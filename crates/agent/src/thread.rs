@@ -5729,8 +5729,10 @@ impl ToolCallEventStream {
         })
     }
 
-    /// Persist the `allow_unsandboxed` setting so future commands skip the
-    /// sandbox when it can't be created, without prompting again.
+    /// Persist the `allow_unsandboxed` setting. Going forward this turns
+    /// sandboxing off for the model-facing surface: later turns expose the
+    /// plain `terminal` tool (with no sandbox prompt section) and commands run
+    /// without an OS sandbox. On Windows, WSL sandbox setup is skipped.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn persist_sandbox_unsandboxed_permission(fs: Option<Arc<dyn Fs>>, cx: &AsyncApp) {
         let Some(fs) = fs else {

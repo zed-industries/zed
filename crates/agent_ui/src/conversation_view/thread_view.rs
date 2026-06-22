@@ -7211,7 +7211,7 @@ impl ThreadView {
                     .child(command_element),
             )
             .when_some(tool_call.sandbox_not_applied.as_ref(), |this, reason| {
-                this.child(self.render_sandbox_not_applied_warning(reason, terminal, cx))
+                this.child(self.render_sandbox_not_applied_warning(reason, cx))
             })
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
@@ -7265,45 +7265,36 @@ impl ThreadView {
     fn render_sandbox_not_applied_warning(
         &self,
         reason: &SandboxNotAppliedReason,
-        terminal: &Entity<acp_thread::Terminal>,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // (title, optional detail line, whether to offer the settings shortcut)
-        let (title, detail, show_settings_button): (SharedString, Option<SharedString>, bool) =
-            match reason {
-                SandboxNotAppliedReason::DisabledForever => (
-                    "Ran without sandbox".into(),
-                    Some("Unsandboxed execution is enabled in settings.".into()),
-                    true,
-                ),
-                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
-                    "Couldn't create a sandbox".into(),
-                    Some(error.user_facing_message().into()),
-                    false,
-                ),
-                SandboxNotAppliedReason::DisabledForThisThread => {
-                    // The grant only exists because an earlier command failed to
-                    // create a sandbox; surface that same explanation here.
-                    let detail = self
-                        .find_thread_sandbox_error(cx)
-                        .map(|error| {
-                            SharedString::from(format!(
-                                "Allowed for this thread after the sandbox failed: {}",
-                                error.user_facing_message()
-                            ))
-                        })
-                        .unwrap_or_else(|| {
-                            "Unsandboxed execution is allowed for the rest of this thread.".into()
-                        });
-                    ("Ran without sandbox".into(), Some(detail), false)
-                }
-            };
+        // (title, optional detail line)
+        let (title, detail): (SharedString, Option<SharedString>) = match reason {
+            SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                "Couldn't create a sandbox".into(),
+                Some(error.user_facing_message().into()),
+            ),
+            SandboxNotAppliedReason::DisabledForThisThread => {
+                // The grant only exists because an earlier command failed to
+                // create a sandbox; surface that same explanation here.
+                let detail = self
+                    .find_thread_sandbox_error(cx)
+                    .map(|error| {
+                        SharedString::from(format!(
+                            "Allowed for this thread after the sandbox failed: {}",
+                            error.user_facing_message()
+                        ))
+                    })
+                    .unwrap_or_else(|| {
+                        "Unsandboxed execution is allowed for the rest of this thread.".into()
+                    });
+                ("Ran without sandbox".into(), Some(detail))
+            }
+        };
 
         h_flex()
             .px_2()
             .py_1()
             .gap_1()
-            .justify_between()
             .border_t_1()
             .border_color(cx.theme().status().warning_border)
             .bg(cx.theme().status().warning_background.opacity(0.5))
@@ -7332,29 +7323,6 @@ impl ThreadView {
                             }),
                     ),
             )
-            .when(show_settings_button, |this| {
-                this.child(
-                    IconButton::new(
-                        SharedString::from(format!(
-                            "open-sandbox-setting-{}",
-                            terminal.entity_id()
-                        )),
-                        IconName::Settings,
-                    )
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text("Open the sandbox permission settings"))
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(
-                            Box::new(zed_actions::OpenSettingsAt {
-                                path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                                target: None,
-                            }),
-                            cx,
-                        );
-                    }),
-                )
-            })
             .into_any_element()
     }
 
