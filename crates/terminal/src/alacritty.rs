@@ -798,6 +798,11 @@ pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
     }
 }
 
+pub(super) fn release_scrollback(term: &mut Term<ZedListener>) {
+    term.grid_mut().clear_history();
+    term.grid_mut().truncate();
+}
+
 pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
     let content = term.renderable_content();
 
