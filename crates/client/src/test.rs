@@ -247,6 +247,7 @@ pub fn make_get_authenticated_user_response(
             name: None,
             is_staff: false,
             accepted_tos_at: None,
+            has_connected_to_collab_once: false,
         },
         feature_flags: vec![],
         organizations: vec![],

@@ -41,6 +41,9 @@ pub struct InputField {
     tab_stop: bool,
     /// Whether the field content is masked (for sensitive fields like passwords or API keys).
     masked: Option<bool>,
+    /// An optional validation error. When set, the field's border turns red
+    /// and the message is shown as hint subtext below the field.
+    error: Option<SharedString>,
 }
 
 impl Focusable for InputField {
@@ -67,6 +70,7 @@ impl InputField {
             tab_index: None,
             tab_stop: true,
             masked: None,
+            error: None,
         }
     }
 
@@ -104,6 +108,14 @@ impl InputField {
     pub fn masked(mut self, masked: bool) -> Self {
         self.masked = Some(masked);
         self
+    }
+
+    /// Sets a validation error message, turning the field's border red and
+    /// showing the message as hint subtext below the field. Pass `None` to
+    /// clear the error.
+    pub fn set_error(&mut self, error: Option<impl Into<SharedString>>, cx: &mut Context<Self>) {
+        self.error = error.map(Into::into);
+        cx.notify();
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
@@ -149,6 +161,9 @@ impl Render for InputField {
 
         let focus_handle = self.editor.focus_handle(cx);
 
+        let has_error = self.error.is_some();
+        let error_border = cx.theme().status().error_border;
+
         let configured_handle = if let Some(tab_index) = self.tab_index {
             focus_handle.tab_index(tab_index).tab_stop(self.tab_stop)
         } else if !self.tab_stop {
@@ -176,7 +191,7 @@ impl Render for InputField {
                     .w_full()
                     .px_2()
                     .py_1p5()
-                    .flex_grow()
+                    .flex_grow_1()
                     .text_color(style.text_color)
                     .rounded_md()
                     .bg(style.background_color)
@@ -186,6 +201,7 @@ impl Render for InputField {
                         editor.focus_handle(cx).contains_focused(window, cx),
                         |this| this.border_color(theme_color.border_focused),
                     )
+                    .when(has_error, |this| this.border_color(error_border))
                     .when_some(self.start_icon, |this, icon| {
                         this.gap_1()
                             .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
@@ -216,6 +232,9 @@ impl Render for InputField {
                         )
                     }),
             )
+            .when_some(self.error.clone(), |this, error| {
+                this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
     }
 }
 
@@ -224,7 +243,13 @@ impl Component for InputField {
         ComponentScope::Input
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A single-line text field used for search inputs, \
+        form fields, and similar inputs, supporting labels, placeholders, \
+        leading icons, and masked content."
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
         let input_small =
             cx.new(|cx| InputField::new(window, cx, "placeholder").label("Small Label"));
 
@@ -234,20 +259,18 @@ impl Component for InputField {
                 .label_size(LabelSize::Default)
         });
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group(vec![
-                    single_example(
-                        "Small Label (Default)",
-                        div().child(input_small).into_any_element(),
-                    ),
-                    single_example(
-                        "Regular Label",
-                        div().child(input_regular).into_any_element(),
-                    ),
-                ])])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example(
+                    "Small Label (Default)",
+                    div().child(input_small).into_any_element(),
+                ),
+                single_example(
+                    "Regular Label",
+                    div().child(input_regular).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }

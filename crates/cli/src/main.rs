@@ -459,7 +459,14 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     Ok(source.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("error: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -480,6 +487,14 @@ fn main() -> Result<()> {
             return mac_os::spawn_channel_cli(channel, std::env::args().skip(2).collect());
         }
     }
+
+    // Must happen before clap — SSH invokes cli.exe directly as SSH_ASKPASS
+    // and passes the socket path via env var to avoid argument parsing.
+    if let Ok(socket) = std::env::var("ZED_ASKPASS_SOCKET") {
+        askpass::main_from_args(&socket, std::env::args().skip(1));
+        return Ok(());
+    }
+
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
@@ -601,10 +616,15 @@ fn main() -> Result<()> {
         .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
 
     for path in args.diff.chunks(2) {
-        diff_paths.push([
-            parse_path_with_position(&path[0])?,
-            parse_path_with_position(&path[1])?,
-        ]);
+        let left = parse_path_with_position(&path[0])?;
+        let right = parse_path_with_position(&path[1])?;
+        for diff_path in [&left, &right] {
+            anyhow::ensure!(
+                Path::new(diff_path).exists(),
+                "--diff path does not exist: {diff_path}"
+            );
+        }
+        diff_paths.push([left, right]);
     }
 
     let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
@@ -679,6 +699,7 @@ fn main() -> Result<()> {
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
+                    cwd: env::current_dir().ok(),
                 };
 
                 tx.send(open_request)?;
