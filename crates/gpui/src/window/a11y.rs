@@ -64,8 +64,26 @@
 //! a frame have been prepainted, we send the resulting [`TreeUpdate`] object to
 //! the adapter and the screen reader can announce the changes.
 //!
+//! #### Synthetic children
+//!
+//! Additionally, some nodes can register "synthetic children" using
+//! [`Element::a11y_synthetic_children`]. Normally, one accesskit node is pushed
+//! for every [`Element`] with a role and id. However, sometimes a single
+//! element may want to produce many accesskit nodes. These extra nodes are
+//! referred to as "synthetic children" of the element providing a non-default
+//! [`Element::a11y_synthetic_children`] implementation.
+//!
+//! The user is provided a builder-style API using [`A11ySubtreeBuilder`], which
+//! allows them to create push nodes that are children of the current node, as
+//! well as modify the current node itself.
+//!
+//! GPUI calls this callback *after* prepainting (and just before popping the
+//! corresponding element), since this step may need prepaint information to be
+//! available. In the future, we may want to add prepaint information more
+//! generally to [`Element::write_a11y_info`], but for now that's not necessary.
+//!
 //! ### Responding to actions
-//!  
+//!
 //! On adapter creation, we provide a callback to the adapter, which can be used
 //! to dispatch actions. This callback forwards to [`A11y::action_listeners`], a
 //! mapping from [`NodeId`]s to action handlers (basically just `Box<dyn
@@ -74,22 +92,19 @@
 //! This is populated in:
 //! - [`Window::on_a11y_action`], which is called by:
 //! - [`Interactivity::paint`], which is called by:
-//! - [`InteractiveElement::on_a11y_action`], which is a public-facing API
+//! - [`StatefulInteractiveElement::on_a11y_action`], which is a public-facing API
 //!
 //! These are cleared at the start of a frame, and re-populated during painting.
 //!
-//! [`Element`]: crate::Element
-//! [`GlobalElementId`]: crate::GlobalElementId
-//! [`div()`]: crate::div
-//! [`Interactivity::paint`]: crate::Interactivity::paint
-//! [`InteractiveElement::on_a11y_action`]: crate::InteractiveElement::on_a11y_action
 //! [`NodeId`]: accesskit::NodeId
-//! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
-use crate::{App, Bounds, FocusId, Pixels, Window};
+use crate::*;
+
+use crate::{App, Bounds, FocusId, Pixels, SharedString, Window};
 use accesskit::{Action, NodeId, TreeUpdate};
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -132,10 +147,17 @@ pub(crate) struct A11y {
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    /// The window's title, used to label the root node so assistive
+    /// technology can tell windows apart.
+    window_title: Option<SharedString>,
 }
 
 impl A11y {
-    pub(crate) fn new(active_flag: Arc<AtomicBool>, force_disabled: bool) -> Self {
+    pub(crate) fn new(
+        active_flag: Arc<AtomicBool>,
+        force_disabled: bool,
+        window_title: Option<SharedString>,
+    ) -> Self {
         Self {
             force_disabled,
             active_flag,
@@ -144,7 +166,12 @@ impl A11y {
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
+            window_title,
         }
+    }
+
+    pub(crate) fn set_window_title(&mut self, title: impl Into<SharedString>) {
+        self.window_title = Some(title.into());
     }
 
     /// Ensures that [`Self::is_active`] returns up to date information.
@@ -159,31 +186,99 @@ impl A11y {
         self.active_this_frame
     }
 
+    pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
+        self.focus_ids.insert(node_id, focus_id);
+    }
+
+    /// Report `node_id` as the currently-focused node, if it is present in the
+    /// tree.
+    ///
+    /// Must only be called once per frame.
+    pub(crate) fn set_focus(&mut self, node_id: NodeId) {
+        // A focused node must have been registered as focusable this frame.
+        if !self.focus_ids.contains_key(&node_id) {
+            if cfg!(debug_assertions) {
+                panic!("set_focus called for a node that was not registered with set_focusable");
+            } else {
+                log::warn!(
+                    "a11y: set_focus called for a node that was not registered with \
+                     set_focusable ({node_id:?})"
+                );
+            }
+        }
+        if self.nodes.has_node(node_id) {
+            self.nodes.set_focus(node_id);
+        }
+    }
+
+    pub(crate) fn set_active_descendant(&mut self, node_id: NodeId) {
+        // The active descendant must be a descendant of the focused container,
+        // not the focused node itself.
+        if self.nodes.node_is_focused(node_id) {
+            if cfg!(debug_assertions) {
+                panic!("set_active_descendant called on the focused node");
+            } else {
+                log::warn!("a11y: set_active_descendant called on the focused node ({node_id:?})");
+            }
+            return;
+        }
+        if self.nodes.has_node(node_id) && self.nodes.focus_is_ancestor_of_current() {
+            self.nodes.set_active_descendant(node_id);
+        }
+    }
+
     /// Clear per-frame state and push the root node to start a new frame.
     pub(crate) fn begin_frame(&mut self) {
         self.focus_ids.clear();
         self.node_bounds.clear();
         self.action_listeners.clear();
-        self.nodes.begin_frame();
+        self.nodes.begin_frame(self.window_title.as_ref());
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
-        let tree_update = self.nodes.finalize();
+        self.nodes.finalize()
+    }
+}
 
-        // Zed currently doesn't set any a11y APIs on *any* UI elements, so a
-        // tree with nodes other than the root indicates a bug in the
-        // `TreeUpdate`-producing logic.
-        //
-        // Remove this when adding aria attributes.
-        if tree_update.nodes.len() > 1 {
-            log::warn!(
-                "expected an empty a11y tree update (only the root node), but got {} nodes; Zed has no accessible UI elements yet",
-                tree_update.nodes.len()
-            );
-        }
+/// Builder API for synthetic children. See the docs for
+/// [`Element::a11y_synthetic_children`].
+pub struct A11ySubtreeBuilder<'a> {
+    parent_id: NodeId,
+    nodes: &'a mut A11yNodeBuilder,
+}
 
-        tree_update
+impl<'a> A11ySubtreeBuilder<'a> {
+    pub(crate) fn new(parent_id: NodeId, nodes: &'a mut A11yNodeBuilder) -> Self {
+        Self { parent_id, nodes }
+    }
+
+    /// Derive a [`NodeId`] for a synthetic child.
+    ///
+    /// The generated ID is based on the hash of `key`, as well as the parent's
+    /// ID. This means that `key`s must be unique within the same
+    /// [`Element::a11y_synthetic_children`] call, but may be duplicated across
+    /// different calls.
+    pub fn synthetic_node_id(&self, key: impl Hash) -> NodeId {
+        let mut hasher = std::hash::DefaultHasher::default();
+        self.parent_id.0.hash(&mut hasher);
+        key.hash(&mut hasher);
+        NodeId(hasher.finish())
+    }
+
+    /// Append a synthetic leaf node as a child of this element's node.
+    ///
+    /// Returns `false` if a node with this id is already present in the tree,
+    /// in which case the node is discarded.
+    pub fn push_child(&mut self, id: NodeId, node: accesskit::Node) -> bool {
+        self.nodes.push_leaf(id, node)
+    }
+
+    /// A mutable reference to the parent node.
+    pub fn parent_node(&mut self) -> &mut accesskit::Node {
+        self.nodes
+            .current_node_mut()
+            .expect("A11ySubtreeBuilder exists only while its element's node is on the stack")
     }
 }
 
@@ -194,9 +289,14 @@ pub(crate) struct A11yNodeBuilder {
     /// `HashMap<NodeId, Node>` to remove the need for `seen_ids`
     all_nodes: Vec<(NodeId, accesskit::Node)>,
     seen_ids: FxHashSet<NodeId>,
-    focus: NodeId,
-    #[cfg(debug_assertions)]
-    has_set_focus: bool,
+    /// The node that GPUI considers focused. Note that this may be different to
+    /// what is reported to accesskit - see [`Self::active_descendant`]
+    focus: Option<NodeId>,
+    /// If a node calls `.aria_active_descendant()`, AND an ancestor is focused,
+    /// override it as the focused node. This supports the "active descendant"
+    /// pattern, which allows a focused container to act as if a descendant is
+    /// focused.
+    active_descendant: Option<NodeId>,
 }
 
 impl A11yNodeBuilder {
@@ -206,10 +306,24 @@ impl A11yNodeBuilder {
             nodes_stack: SmallVec::new(),
             all_nodes: Vec::new(),
             seen_ids: FxHashSet::default(),
-            focus: ROOT_NODE_ID,
-            #[cfg(debug_assertions)]
-            has_set_focus: false,
+            focus: None,
+            active_descendant: None,
         }
+    }
+
+    #[must_use]
+    fn can_push(&mut self, id: NodeId) -> bool {
+        debug_assert!(!self.ids_stack.is_empty(), "node pushed before push_root");
+
+        if !self.seen_ids.insert(id) {
+            debug_assert!(
+                false,
+                "Duplicate a11y node id: {id:?}. In a release build, this node would be silently discarded from the a11y tree."
+            );
+            return false;
+        }
+
+        true
     }
 
     /// Push a new node onto the stack. It becomes a child of the current
@@ -217,15 +331,7 @@ impl A11yNodeBuilder {
     ///
     /// Returns `true` if the node was successfully pushed.
     pub(crate) fn push(&mut self, id: NodeId, node: accesskit::Node) -> bool {
-        debug_assert!(!self.ids_stack.is_empty(), "push called before push_root");
-
-        if !self.seen_ids.insert(id) {
-            debug_assert!(
-                false,
-                "Duplicate a11y node id: {id:?}. In a release build, this node would be silently discarded from the a11y tree."
-            );
-            // We need to return `false` here because inserting a duplicate
-            // node will cause a panic in accesskit
+        if !self.can_push(id) {
             return false;
         }
 
@@ -235,6 +341,27 @@ impl A11yNodeBuilder {
         self.ids_stack.push(id);
         self.nodes_stack.push(node);
         true
+    }
+
+    /// Add a leaf node as a child of the current top-of-stack node, without
+    /// pushing it onto the stack. Semantically equivalent to a [`Self::push`]
+    /// followed by a [`Self::pop`].
+    ///
+    /// Returns `true` if the node was successfully pushed.
+    pub(crate) fn push_leaf(&mut self, id: NodeId, node: accesskit::Node) -> bool {
+        if !self.can_push(id) {
+            return false;
+        }
+
+        if let Some(parent) = self.nodes_stack.last_mut() {
+            parent.push_child(id);
+        }
+        self.all_nodes.push((id, node));
+        true
+    }
+
+    pub(crate) fn current_node_mut(&mut self) -> Option<&mut accesskit::Node> {
+        self.nodes_stack.last_mut()
     }
 
     /// Pop the current node off the stack and finalize it into the all_nodes
@@ -248,20 +375,20 @@ impl A11yNodeBuilder {
     }
 
     /// Push the root node to start a new frame.
-    fn begin_frame(&mut self) {
+    fn begin_frame(&mut self, window_title: Option<&SharedString>) {
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
         self.seen_ids.clear();
-        #[cfg(debug_assertions)]
-        {
-            self.has_set_focus = false;
+        let mut root_node = accesskit::Node::new(accesskit::Role::Window);
+        if let Some(title) = window_title {
+            root_node.set_label(title.to_string());
         }
-        let root_node = accesskit::Node::new(accesskit::Role::Window);
 
         self.ids_stack.push(ROOT_NODE_ID);
         self.nodes_stack.push(root_node);
-        self.focus = ROOT_NODE_ID;
+        self.focus = None;
+        self.active_descendant = None;
     }
 
     /// Returns whether a node with the given ID has been pushed in this frame.
@@ -269,17 +396,51 @@ impl A11yNodeBuilder {
         id == ROOT_NODE_ID || self.seen_ids.contains(&id)
     }
 
-    /// Set the focused node for this frame.
-    pub(crate) fn set_focus(&mut self, id: NodeId) {
-        #[cfg(debug_assertions)]
+    /// Returns whether `id` is the node currently reported as focused.
+    pub(crate) fn node_is_focused(&self, id: NodeId) -> bool {
+        self.focus == Some(id)
+    }
+
+    pub(crate) fn focus_is_ancestor_of_current(&self) -> bool {
+        let Some(focus) = self.focus else {
+            return false;
+        };
+
+        // The current node is on top of the stack; everything below it is an
+        // ancestor.
+        let ancestor_count = self.ids_stack.len().saturating_sub(1);
+        self.ids_stack[..ancestor_count].contains(&focus)
+    }
+
+    pub(crate) fn set_active_descendant(&mut self, id: NodeId) {
+        if self
+            .active_descendant
+            .is_some_and(|existing| existing != id)
         {
-            debug_assert!(
-                !self.has_set_focus,
-                "set_focus called more than once in a single frame"
-            );
-            self.has_set_focus = true;
+            if cfg!(debug_assertions) {
+                panic!("active descendant claimed by multiple nodes in one frame");
+            } else {
+                log::warn!(
+                    "a11y: multiple nodes claimed the active descendant this frame; \
+                     using last-wins ({id:?})"
+                );
+            }
         }
-        self.focus = id;
+        self.active_descendant = Some(id);
+    }
+
+    pub(crate) fn set_focus(&mut self, id: NodeId) {
+        if self.focus.is_some() {
+            if cfg!(debug_assertions) {
+                panic!("set_focus called more than once in a single frame");
+            } else {
+                log::warn!(
+                    "a11y: set_focus called more than once in a single frame; \
+                     using last-wins ({id:?})"
+                );
+            }
+        }
+        self.focus = Some(id);
     }
 
     fn finalize(&mut self) -> TreeUpdate {
@@ -302,12 +463,26 @@ impl A11yNodeBuilder {
             }
         }
 
+        let focus = match self.active_descendant {
+            Some(id) if self.has_node(id) => id,
+            Some(id) => {
+                if cfg!(debug_assertions) {
+                    panic!("active_descendant set to {id:?}, which is not in the tree");
+                } else {
+                    log::warn!("active_descendant set to {id:?}, which is not in the tree");
+                    self.focus.unwrap_or(ROOT_NODE_ID)
+                }
+            }
+
+            _ => self.focus.unwrap_or(ROOT_NODE_ID),
+        };
+
         let nodes = std::mem::take(&mut self.all_nodes);
         let update = TreeUpdate {
             nodes,
             tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
             tree_id: accesskit::TreeId::ROOT,
-            focus: self.focus,
+            focus,
         };
 
         Self::repair_tree_update(update)
@@ -357,5 +532,263 @@ impl A11yNodeBuilder {
         }
 
         update
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Import specific items rather than glob-importing `super`, which would pull
+    // in gpui's own `test` attribute macro and shadow the standard one.
+    use super::{A11y, A11yNodeBuilder, ROOT_NODE_ID};
+    use crate::FocusId;
+    use accesskit::{NodeId, Role};
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    fn test_node() -> accesskit::Node {
+        accesskit::Node::new(Role::GenericContainer)
+    }
+
+    fn new_builder() -> A11yNodeBuilder {
+        let mut builder = A11yNodeBuilder::new();
+        builder.begin_frame(None);
+        builder
+    }
+
+    fn new_a11y() -> A11y {
+        let mut a11y = A11y::new(Arc::new(AtomicBool::new(true)), false, None);
+        a11y.begin_frame();
+        a11y
+    }
+
+    #[test]
+    fn active_descendant_honored_when_container_focused() {
+        let mut builder = new_builder();
+        let container = NodeId(1);
+        let item = NodeId(2);
+
+        assert!(builder.push(container, test_node()));
+        builder.set_focus(container);
+        assert!(builder.push(item, test_node()));
+
+        // The item is on top of the stack; the focused container is its
+        // ancestor, so the claim is honored.
+        assert!(builder.focus_is_ancestor_of_current());
+        builder.set_active_descendant(item);
+
+        builder.pop(); // item
+        builder.pop(); // container
+        let update = builder.finalize();
+        assert_eq!(update.focus, item);
+    }
+
+    #[test]
+    fn active_descendant_honored_for_deep_descendant() {
+        let mut builder = new_builder();
+        let container = NodeId(1);
+        let group = NodeId(2);
+        let item = NodeId(3);
+
+        assert!(builder.push(container, test_node()));
+        builder.set_focus(container);
+        assert!(builder.push(group, test_node()));
+        assert!(builder.push(item, test_node()));
+
+        // The item is a grandchild of the focused container; depth doesn't
+        // matter, the focused ancestor is still on the stack.
+        assert!(builder.focus_is_ancestor_of_current());
+        builder.set_active_descendant(item);
+
+        builder.pop(); // item
+        builder.pop(); // group
+        builder.pop(); // container
+        let update = builder.finalize();
+        assert_eq!(update.focus, item);
+    }
+
+    #[test]
+    fn active_descendant_ignored_when_focus_in_other_subtree() {
+        let mut builder = new_builder();
+        let focused_container = NodeId(1);
+        let focused_leaf = NodeId(2);
+        let other_container = NodeId(3);
+        let other_item = NodeId(4);
+
+        // First subtree holds real focus.
+        assert!(builder.push(focused_container, test_node()));
+        assert!(builder.push(focused_leaf, test_node()));
+        builder.set_focus(focused_leaf);
+        builder.pop(); // focused_leaf
+        builder.pop(); // focused_container
+
+        // Second subtree: its item would claim the active descendant, but the
+        // focus is not on any of its ancestors, so the gate rejects it.
+        assert!(builder.push(other_container, test_node()));
+        assert!(builder.push(other_item, test_node()));
+        assert!(!builder.focus_is_ancestor_of_current());
+        builder.pop(); // other_item
+        builder.pop(); // other_container
+
+        let update = builder.finalize();
+        assert_eq!(update.focus, focused_leaf);
+    }
+
+    #[test]
+    fn active_descendant_ignored_when_nothing_focused() {
+        let mut builder = new_builder();
+        let container = NodeId(1);
+        let item = NodeId(2);
+
+        assert!(builder.push(container, test_node()));
+        assert!(builder.push(item, test_node()));
+
+        // Nothing is focused (focus defaults to the root window node), so the
+        // gate rejects the claim.
+        assert!(!builder.focus_is_ancestor_of_current());
+        builder.pop();
+        builder.pop();
+
+        let update = builder.finalize();
+        assert_eq!(update.focus, ROOT_NODE_ID);
+    }
+
+    #[test]
+    fn regular_focus_used_when_no_active_descendant() {
+        let mut builder = new_builder();
+        let focused = NodeId(1);
+
+        assert!(builder.push(focused, test_node()));
+        builder.set_focus(focused);
+        builder.pop();
+
+        let update = builder.finalize();
+        assert_eq!(update.focus, focused);
+    }
+
+    #[test]
+    fn focus_is_ancestor_excludes_self_and_non_ancestors() {
+        let mut builder = new_builder();
+        let container = NodeId(1);
+        let item = NodeId(2);
+
+        assert!(builder.push(container, test_node()));
+        builder.set_focus(container);
+
+        // With the focused container itself on top, it is not its own (strict)
+        // ancestor, so the gate is false.
+        assert!(!builder.focus_is_ancestor_of_current());
+
+        assert!(builder.push(item, test_node()));
+        // Now the focused container is a strict ancestor of the item on top.
+        assert!(builder.focus_is_ancestor_of_current());
+
+        builder.pop();
+        builder.pop();
+    }
+
+    // The double-claim guard panics only in debug builds; in release it falls
+    // back to last-wins with a warning.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "active descendant claimed by multiple nodes")
+    )]
+    fn multiple_active_descendant_claims_panic_in_debug() {
+        let mut builder = new_builder();
+        builder.set_active_descendant(NodeId(1));
+        builder.set_active_descendant(NodeId(2));
+    }
+
+    // Setting focus twice in one frame means two elements both claimed window
+    // focus; that panics in debug and falls back to last-wins in release.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "set_focus called more than once")
+    )]
+    fn setting_focus_twice_panics_in_debug() {
+        let mut builder = new_builder();
+        builder.set_focus(NodeId(1));
+        builder.set_focus(NodeId(2));
+    }
+
+    // Focusing a node that was never registered as focusable is a bug: panic in
+    // debug, warn in release.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "was not registered with set_focusable")
+    )]
+    fn set_focus_without_set_focusable() {
+        let mut a11y = new_a11y();
+        let node = NodeId(1);
+        assert!(a11y.nodes.push(node, test_node()));
+        // set_focusable was never called for `node`.
+        a11y.set_focus(node);
+    }
+
+    // The focused node cannot also be its own active descendant: panic in
+    // debug, warn in release.
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "on the focused node"))]
+    fn set_active_descendant_on_focused_node() {
+        let mut a11y = new_a11y();
+        let node = NodeId(1);
+        assert!(a11y.nodes.push(node, test_node()));
+        a11y.set_focusable(node, FocusId::default());
+        a11y.set_focus(node);
+        a11y.set_active_descendant(node);
+    }
+
+    // Two sibling children of a focused container both claim the active
+    // descendant (both pass the focus gate). The second claim is a bug: panic
+    // in debug, last-wins + warn in release.
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "active descendant claimed by multiple nodes")
+    )]
+    fn two_siblings_claiming_active_descendant() {
+        let mut a11y = new_a11y();
+        let container = NodeId(1);
+        let first = NodeId(2);
+        let second = NodeId(3);
+
+        assert!(a11y.nodes.push(container, test_node()));
+        a11y.set_focusable(container, FocusId::default());
+        a11y.set_focus(container);
+
+        assert!(a11y.nodes.push(first, test_node()));
+        a11y.set_active_descendant(first);
+        a11y.nodes.pop(); // first
+
+        assert!(a11y.nodes.push(second, test_node()));
+        a11y.set_active_descendant(second);
+        a11y.nodes.pop(); // second
+
+        a11y.nodes.pop(); // container
+    }
+
+    // Node A is focused; node C (a child of the unfocused node B) claims the
+    // active descendant. The final tree must still report A as focused.
+    #[test]
+    fn active_descendant_in_unfocused_subtree_keeps_real_focus() {
+        let mut a11y = new_a11y();
+        let a = NodeId(1);
+        let b = NodeId(2);
+        let c = NodeId(3);
+
+        assert!(a11y.nodes.push(a, test_node()));
+        a11y.set_focusable(a, FocusId::default());
+        a11y.set_focus(a);
+        a11y.nodes.pop(); // a
+
+        assert!(a11y.nodes.push(b, test_node()));
+        assert!(a11y.nodes.push(c, test_node()));
+        a11y.set_active_descendant(c);
+        a11y.nodes.pop(); // c
+        a11y.nodes.pop(); // b
+
+        let update = a11y.end_frame();
+        assert_eq!(update.focus, a);
     }
 }

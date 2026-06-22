@@ -260,6 +260,7 @@ Tasks that define `hooks` are still available from the task modal like any other
 The Git Graph supports running custom Git command tasks from the commit context menu.
 To add a command, define a task in your global `tasks.json` file with the `git-command` tag (worktree-local tasks are not supported yet).
 When shown from a commit's context menu, the task is resolved against the selected commit and repository, and runs from the selected repository root by default.
+Right-clicking a ref label (a branch, remote ref, or tag) opens a ref-specific context menu, where the task is additionally resolved against the clicked ref via `ZED_GIT_REF`.
 
 Git Graph command tasks support the Git-specific task variables below.
 These variables are provided only when resolving Git Graph command tasks.
@@ -269,6 +270,7 @@ Other task variables, such as `ZED_FILE`, `ZED_SELECTED_TEXT`, `ZED_WORKTREE_ROO
 - `ZED_GIT_SHA_SHORT`: short SHA of the selected commit.
 - `ZED_GIT_REPOSITORY_NAME`: name of the selected Git repository.
 - `ZED_GIT_REPOSITORY_PATH`: absolute path to the selected Git repository's working directory.
+- `ZED_GIT_REF`: name of the clicked ref (a branch, remote ref, or tag). Only provided when the menu is opened from a ref label.
 
 For example:
 
@@ -278,6 +280,12 @@ For example:
     "label": "Branches containing commit: $ZED_GIT_SHA_SHORT",
     "command": "git",
     "args": ["branch", "-a", "--contains", "$ZED_GIT_SHA"],
+    "tags": ["git-command"]
+  },
+  {
+    "label": "Check out $ZED_GIT_REF",
+    "command": "git",
+    "args": ["checkout", "$ZED_GIT_REF"],
     "tags": ["git-command"]
   }
 ]

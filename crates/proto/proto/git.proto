@@ -666,6 +666,16 @@ message GitRenameWorktree {
   string new_path = 4;
 }
 
+message GitWorktreeCreatedAt {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string worktree_path = 3;
+}
+
+message GitWorktreeCreatedAtResponse {
+  optional Timestamp created_at = 1;
+}
+
 message RunGitHook {
   enum GitHook {
     PRE_COMMIT = 0;

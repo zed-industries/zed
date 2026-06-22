@@ -33,6 +33,7 @@ use gpui::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
 };
+use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
 use objc::{
     class,
@@ -56,10 +57,6 @@ use std::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-};
-use util::{
-    ResultExt,
-    command::{new_command, new_std_command},
 };
 
 #[allow(non_upper_case_globals)]
@@ -194,7 +191,14 @@ impl MacPlatform {
         let text_system = Arc::new(crate::MacTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
-        let text_system = Arc::new(gpui::NoopTextSystem::new());
+        let text_system = {
+            if !headless {
+                log::warn!(
+                    "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
+                );
+            }
+            Arc::new(gpui::NoopTextSystem::new())
+        };
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
@@ -873,15 +877,16 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_command("open")
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "running on a background thread, so blocking is fine"
+                )]
+                new_std_command("open")
                     .arg("--")
                     .arg(path)
-                    .spawn()
+                    .status()
                     .context("invoking open command")
-                    .log_err()
-                {
-                    child.status().await.log_err();
-                }
+                    .log_err();
             })
             .detach();
     }

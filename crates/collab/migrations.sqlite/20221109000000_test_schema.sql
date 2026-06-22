@@ -3,24 +3,17 @@
 
 CREATE TABLE "users" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "github_login" VARCHAR,
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
     "name" TEXT,
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
-    "github_user_id" INTEGER,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
-    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
     "custom_llm_monthly_allowance_in_cents" INTEGER
 );
 
-CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
-
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
-
-CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +156,7 @@ CREATE TABLE "worktree_diagnostic_summaries" (
     "language_server_id" INTEGER NOT NULL,
     "error_count" INTEGER NOT NULL,
     "warning_count" INTEGER NOT NULL,
+    "info_count" INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_id, worktree_id, path),
     FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );

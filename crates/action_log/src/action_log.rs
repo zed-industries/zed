@@ -159,11 +159,8 @@ impl ActionLog {
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
-                let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&text_snapshot, cx);
-                    diff.language_changed(language, language_registry, cx);
-                    diff
-                });
+                let diff =
+                    cx.new(|cx| BufferDiff::new(&text_snapshot, language, language_registry, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
@@ -465,29 +462,15 @@ impl ActionLog {
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, language) = this.read_with(cx, |this, cx| {
+        let diff = this.read_with(cx, |this, _cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
                 .context("buffer not tracked")?;
-            anyhow::Ok((
-                tracked_buffer.diff.clone(),
-                buffer.read(cx).language().cloned(),
-            ))
+            anyhow::Ok(tracked_buffer.diff.clone())
         })??;
-        let update = diff
-            .update(cx, |diff, cx| {
-                diff.update_diff(
-                    buffer_snapshot.clone(),
-                    Some(new_base_text),
-                    Some(true),
-                    language,
-                    cx,
-                )
-            })
-            .await;
         diff.update(cx, |diff, cx| {
-            diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
+            diff.set_base_text(Some(new_base_text), buffer_snapshot.clone(), cx)
         })
         .await;
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));

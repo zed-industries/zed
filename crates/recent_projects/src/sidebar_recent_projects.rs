@@ -134,6 +134,10 @@ impl EventEmitter<DismissEvent> for SidebarRecentProjectsDelegate {}
 impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "sidebar recent projects"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()
     }
@@ -401,7 +405,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child({
                     let open_action = workspace::Open {
-                        create_new_window: false,
+                        create_new_window: Some(false),
                     };
 
                     ButtonLike::new("open_local_folder")
@@ -429,7 +433,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
                                         from_existing_connection: false,
-                                        create_new_window: false,
+                                        create_new_window: Some(false),
                                     },
                                     cx,
                                 )),
@@ -438,7 +442,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
-                                    create_new_window: false,
+                                    create_new_window: Some(false),
                                 }
                                 .boxed_clone(),
                                 cx,

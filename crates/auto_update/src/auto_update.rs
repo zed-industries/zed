@@ -281,7 +281,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
             Some(&message),
-            &["Ok"],
+            &["OK"],
             cx,
         ));
         return;
@@ -301,7 +301,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             gpui::PromptLevel::Info,
             "Could not check for updates",
             Some("Auto-updates disabled for non-bundled app."),
-            &["Ok"],
+            &["OK"],
             cx,
         ));
     }
@@ -719,8 +719,30 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let new_binary_path = Self::install_release(installer_dir, &target_path, cx)
+        #[cfg(test)]
+        let install_result = match cx
+            .try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
+            .map(|test_install| test_install(&target_path, cx))
+        {
+            Some(result) => result,
+            None => return Ok(()),
+        };
+
+        #[cfg(not(test))]
+        let install_result = {
+            let running_app_path = cx.update(|cx| cx.app_path())?;
+            let background_executor = cx.background_executor().clone();
+            let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
+            cx.background_spawn(Self::install_release(
+                installer_dir,
+                target_path.clone(),
+                running_app_path,
+                channel,
+                background_executor,
+            ))
             .await
+        };
+        let new_binary_path = install_result
             .with_context(|| format!("Failed to install update at: {}", target_path.display()))?;
         if let Some(new_binary_path) = new_binary_path {
             cx.update(|cx| cx.set_restart_path(new_binary_path));
@@ -819,21 +841,28 @@ impl AutoUpdater {
         Ok(installer_dir.path().join(filename))
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn install_release(
         installer_dir: InstallerDir,
-        target_path: &Path,
-        cx: &AsyncApp,
+        target_path: PathBuf,
+        running_app_path: PathBuf,
+        channel: &str,
+        background_executor: BackgroundExecutor,
     ) -> Result<Option<PathBuf>> {
-        #[cfg(test)]
-        if let Some(test_install) =
-            cx.try_read_global::<tests::InstallOverride, _>(|g, _| g.0.clone())
-        {
-            return test_install(target_path, cx);
-        }
         match OS {
-            "macos" => install_release_macos(&installer_dir, target_path, cx).await,
-            "linux" => install_release_linux(&installer_dir, target_path, cx).await,
-            "windows" => install_release_windows(target_path).await,
+            "macos" => {
+                install_release_macos(
+                    &installer_dir,
+                    &target_path,
+                    running_app_path,
+                    &background_executor,
+                )
+                .await
+            }
+            "linux" => {
+                install_release_linux(&installer_dir, &target_path, channel, running_app_path).await
+            }
+            "windows" => install_release_windows(&target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }
     }
@@ -978,11 +1007,10 @@ async fn download_release(
 async fn install_release_linux(
     temp_dir: &InstallerDir,
     downloaded_tar_gz: &Path,
-    cx: &AsyncApp,
+    channel: &str,
+    running_app_path: PathBuf,
 ) -> Result<Option<PathBuf>> {
-    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name());
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
-    let running_app_path = cx.update(|cx| cx.app_path())?;
 
     let extracted = temp_dir.path().join("zed");
     fs::create_dir_all(&extracted)
@@ -1047,9 +1075,9 @@ async fn install_release_linux(
 async fn install_release_macos(
     temp_dir: &InstallerDir,
     downloaded_dmg: &Path,
-    cx: &AsyncApp,
+    running_app_path: PathBuf,
+    background_executor: &BackgroundExecutor,
 ) -> Result<Option<PathBuf>> {
-    let running_app_path = cx.update(|cx| cx.app_path())?;
     let running_app_filename = running_app_path
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
@@ -1077,7 +1105,7 @@ async fn install_release_macos(
     // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
     let _unmounter = MacOsUnmounter {
         mount_path: mount_path.clone(),
-        background_executor: cx.background_executor(),
+        background_executor,
     };
 
     let mut cmd = new_command("rsync");
