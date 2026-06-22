@@ -290,7 +290,7 @@ pub fn deploy_context_menu(
                 .separator()
                 .when(has_git_repo && commit_file_abs_path.is_some(), |menu| {
                     menu.submenu("Git", |menu, _window, _cx| {
-                        menu.entry("Commit File...", None, |window, cx| {
+                        menu.entry("Commit File", None, |window, cx| {
                             window.dispatch_action(Box::new(OpenGitPanelAndStageFile), cx);
                         })
                     })
