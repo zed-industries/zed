@@ -1045,7 +1045,7 @@ fn render_kv_section(
                     h_flex()
                         .gap_1()
                         .items_center()
-                        .child(div().flex_1().min_w_0().child(input_box(&row.key, cx)))
+                        .child(input_box(&row.key, cx))
                         .child(
                             IconButton::new((kind.remove_id(), ix), IconName::Close)
                                 .icon_size(IconSize::Small)
