@@ -5,12 +5,28 @@
 //! zed.dev in development).
 
 use gpui::App;
+use release_channel::ReleaseChannel;
 use settings::Settings;
 
 use crate::ClientSettings;
 
 fn server_url(cx: &App) -> &str {
     &ClientSettings::get_global(cx).server_url
+}
+
+fn docs_url(cx: &App) -> String {
+    let server_url = server_url(cx);
+    match ReleaseChannel::try_global(cx).unwrap_or_default() {
+        ReleaseChannel::Stable => {
+            format!("{server_url}/docs")
+        }
+        ReleaseChannel::Preview => {
+            format!("{server_url}/docs/preview")
+        }
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => {
+            format!("{server_url}/docs/nightly")
+        }
+    }
 }
 
 /// Returns the URL to the account page on zed.dev.
@@ -39,25 +55,18 @@ pub fn terms_of_service(cx: &App) -> String {
 /// Returns the URL to Zed AI's privacy and security docs.
 pub fn ai_privacy_and_security(cx: &App) -> String {
     format!(
-        "{server_url}/docs/ai/privacy-and-security",
-        server_url = server_url(cx)
+        "{docs_url}/ai/privacy-and-security",
+        docs_url = docs_url(cx)
     )
 }
 
 /// Returns the URL to Zed's edit prediction documentation.
 pub fn edit_prediction_docs(cx: &App) -> String {
-    format!(
-        "{server_url}/docs/ai/edit-prediction",
-        server_url = server_url(cx)
-    )
+    format!("{docs_url}/ai/edit-prediction", docs_url = docs_url(cx))
 }
 
 pub fn skills_docs(cx: &App) -> String {
-    format!("{server_url}/docs/ai/skills", server_url = server_url(cx))
-}
-
-pub fn rules_docs(cx: &App) -> String {
-    format!("{server_url}/docs/ai/rules", server_url = server_url(cx))
+    format!("{docs_url}/ai/skills", docs_url = docs_url(cx))
 }
 
 /// Returns the URL to Zed's ACP registry blog post.

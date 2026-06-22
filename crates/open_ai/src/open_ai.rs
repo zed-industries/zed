@@ -5,7 +5,8 @@ pub mod responses;
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
-    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
     http::{HeaderMap, HeaderValue},
 };
 pub use language_model_core::ReasoningEffort;
@@ -341,6 +342,34 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+
+    /// Whether this model supports server-side compaction via the
+    /// `context_management` request parameter. OpenAI doesn't publish a
+    /// support matrix, but the GPT-5.5 guide notes compaction is a feature
+    /// shared with GPT-5.4, and the compaction docs exercise the GPT-5.3
+    /// Codex line, so we treat everything from GPT-5.3 onward as supported.
+    ///
+    /// <https://developers.openai.com/api/docs/guides/compaction>
+    pub fn supports_compaction(&self) -> bool {
+        match self {
+            Self::FivePointThreeCodex
+            | Self::FivePointFourNano
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
+            Self::Four
+            | Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::Custom { .. } => false,
+        }
     }
 
     /// Whether OpenAI's Priority processing tier is available for this model.
@@ -758,15 +787,15 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
         ))

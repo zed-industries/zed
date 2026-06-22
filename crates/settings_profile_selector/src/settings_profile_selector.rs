@@ -149,6 +149,10 @@ impl SettingsProfileSelectorDelegate {
 impl PickerDelegate for SettingsProfileSelectorDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "settings profile selector"
+    }
+
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> std::sync::Arc<str> {
         "Select a settings profile...".into()
     }
