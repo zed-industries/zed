@@ -982,6 +982,7 @@ impl ConversationView {
                 (session_id, work_dirs, title)
             });
 
+        self.clear_resolved_request_elicitations(cx);
         self.loading_status = None;
 
         let state = Self::initial_state(
@@ -1159,6 +1160,7 @@ impl ConversationView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
+                        this.clear_resolved_request_elicitations_for_connection(&connection, cx);
                         let root_session_id = thread.read(cx).session_id().clone();
 
                         let conversation = cx.new(|cx| {
@@ -2700,6 +2702,26 @@ impl ConversationView {
         }
     }
 
+    fn clear_resolved_request_elicitations(&mut self, cx: &mut App) {
+        if let Some(connection) = self.request_elicitation_connection() {
+            self.clear_resolved_request_elicitations_for_connection(&connection, cx);
+        }
+    }
+
+    fn clear_resolved_request_elicitations_for_connection(
+        &mut self,
+        connection: &Rc<dyn AgentConnection>,
+        cx: &mut App,
+    ) {
+        let Some(store) = connection.request_elicitations() else {
+            return;
+        };
+        let cleared_ids = store.update(cx, |store, cx| store.clear_resolved(cx));
+        for id in cleared_ids {
+            self.request_elicitation_form_states.remove(&id);
+        }
+    }
+
     fn emit_load_error_telemetry(&self, error: &LoadError) {
         let error_kind = match error {
             LoadError::Unsupported { .. } => "unsupported",
@@ -4013,6 +4035,87 @@ pub(crate) mod tests {
             response.lock().as_ref(),
             Some(acp::ElicitationAction::Cancel)
         ));
+    }
+
+    #[gpui::test]
+    async fn test_successful_session_creation_clears_resolved_request_elicitations(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let response = Arc::new(Mutex::new(None));
+        let server = SessionCreationRequestElicitationServer {
+            store: store.clone(),
+            response: response.clone(),
+        };
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+        let first_request_id = acp::RequestId::Number(1);
+        let second_request_id = acp::RequestId::Number(2);
+        let first_elicitation_id = store.read_with(cx, |store, _cx| {
+            assert_eq!(
+                store.elicitations().len(),
+                2,
+                "session creation should be waiting on one prompt with another prompt still pending"
+            );
+            store
+                .elicitations()
+                .iter()
+                .find_map(|elicitation| {
+                    let acp::ElicitationScope::Request(scope) = elicitation.request.scope() else {
+                        return None;
+                    };
+                    (&scope.request_id == &first_request_id).then(|| elicitation.id.clone())
+                })
+                .expect("first request-scoped elicitation should exist")
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &first_elicitation_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert!(matches!(
+            response.lock().as_ref(),
+            Some(acp::ElicitationAction::Accept(_))
+        ));
+        conversation_view.read_with(cx, |view, _cx| {
+            let connected = view
+                .as_connected()
+                .expect("session creation should complete successfully");
+            assert!(
+                connected.active_id.is_some(),
+                "successful session creation should install an active thread"
+            );
+        });
+        store.read_with(cx, |store, _cx| {
+            let [remaining] = store.elicitations() else {
+                panic!(
+                    "expected only the pending request elicitation to remain, got {:?}",
+                    store.elicitations()
+                );
+            };
+            let acp::ElicitationScope::Request(scope) = remaining.request.scope() else {
+                panic!("expected request-scoped elicitation");
+            };
+            assert_eq!(scope.request_id, second_request_id);
+            assert!(matches!(
+                remaining.status,
+                ElicitationStatus::Pending { .. }
+            ));
+        });
+
+        store.update(cx, |store, cx| store.clear(cx));
+        cx.run_until_parked();
     }
 
     #[gpui::test]
@@ -5876,6 +5979,136 @@ pub(crate) mod tests {
             });
             *self.elicitation_id.lock() = elicitation_id;
             Task::ready(Ok(thread))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: acp_thread::UserMessageId,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct SessionCreationRequestElicitationServer {
+        store: Entity<ElicitationStore>,
+        response: Arc<Mutex<Option<acp::ElicitationAction>>>,
+    }
+
+    impl AgentServer for SessionCreationRequestElicitationServer {
+        fn logo(&self) -> ui::IconName {
+            ui::IconName::ZedAgent
+        }
+
+        fn agent_id(&self) -> AgentId {
+            "SessionCreationRequestElicitation".into()
+        }
+
+        fn connect(
+            &self,
+            _delegate: AgentServerDelegate,
+            _project: Entity<Project>,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            let connection = SessionCreationRequestElicitationConnection {
+                store: self.store.clone(),
+                response: self.response.clone(),
+            };
+            Task::ready(Ok(Rc::new(connection)))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    struct SessionCreationRequestElicitationConnection {
+        store: Entity<ElicitationStore>,
+        response: Arc<Mutex<Option<acp::ElicitationAction>>>,
+    }
+
+    impl AgentConnection for SessionCreationRequestElicitationConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("session-creation-request-elicitation")
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "session-creation-request-elicitation".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _work_dirs: PathList,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self.clone(),
+                project,
+                "SessionCreationRequestElicitationConnection",
+                acp::SessionId::new("session-creation-request-elicitation-session"),
+                cx,
+            );
+            let first_response_task = self.store.update(cx, |store, cx| {
+                store
+                    .request_elicitation(
+                        acp::CreateElicitationRequest::new(
+                            acp::ElicitationFormMode::new(
+                                acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                                acp::ElicitationSchema::new().string("name", true),
+                            ),
+                            "Provide a name",
+                        ),
+                        cx,
+                    )
+                    .expect("first request-scoped elicitation should be accepted")
+            });
+            self.store
+                .update(cx, |store, cx| {
+                    store
+                        .request_elicitation(
+                            acp::CreateElicitationRequest::new(
+                                acp::ElicitationFormMode::new(
+                                    acp::ElicitationRequestScope::new(acp::RequestId::Number(2)),
+                                    acp::ElicitationSchema::new().string("account", true),
+                                ),
+                                "Provide an account",
+                            ),
+                            cx,
+                        )
+                        .expect("second request-scoped elicitation should be accepted")
+                })
+                .detach();
+
+            let response = self.response.clone();
+            cx.spawn(async move |_cx| {
+                let elicitation_response = first_response_task.await;
+                *response.lock() = Some(elicitation_response.action);
+                Ok(thread)
+            })
+        }
+
+        fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
+            Some(self.store.clone())
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {

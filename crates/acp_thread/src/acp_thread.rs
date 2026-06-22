@@ -529,6 +529,30 @@ impl ElicitationStore {
         cx.notify();
     }
 
+    pub fn clear_resolved(&mut self, cx: &mut Context<Self>) -> Vec<ElicitationEntryId> {
+        let mut cleared_ids = Vec::new();
+        self.elicitations.retain(|elicitation| {
+            let keep = matches!(
+                (&elicitation.status, &elicitation.request.mode),
+                (ElicitationStatus::Pending { .. }, _)
+                    | (ElicitationStatus::Accepted, acp::ElicitationMode::Url(_))
+            );
+            if !keep {
+                cleared_ids.push(elicitation.id.clone());
+            }
+            keep
+        });
+
+        if !cleared_ids.is_empty() {
+            for id in &cleared_ids {
+                cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
+            }
+            cx.notify();
+        }
+
+        cleared_ids
+    }
+
     pub fn cancel_request(&mut self, request_id: &acp::RequestId, cx: &mut Context<Self>) {
         let canceled_ids = self.cancel_pending(|elicitation| {
             matches!(
@@ -7071,6 +7095,120 @@ mod tests {
             acp::ElicitationAction::Cancel
         );
         store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_clear_resolved_preserves_outstanding(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+
+        let accepted_response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+        let pending_response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(2)),
+                            acp::ElicitationSchema::new().string("account", true),
+                        ),
+                        "Provide an account",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+        let accepted_url_response_task = store.update(cx, |store, cx| {
+            store
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(3)),
+                            url_elicitation_id,
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let (accepted_id, pending_id, accepted_url_id) = store.read_with(cx, |store, _| {
+            let [accepted, pending, accepted_url] = store.elicitations() else {
+                panic!(
+                    "expected three request-scoped elicitations, got {:?}",
+                    store.elicitations()
+                );
+            };
+            (
+                accepted.id.clone(),
+                pending.id.clone(),
+                accepted_url.id.clone(),
+            )
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &accepted_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+            store.respond_to_elicitation(
+                &accepted_url_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            accepted_response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+        assert!(matches!(
+            accepted_url_response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+
+        let cleared_ids = store.update(cx, |store, cx| store.clear_resolved(cx));
+        assert_eq!(cleared_ids, vec![accepted_id]);
+        store.read_with(cx, |store, _| {
+            let [pending, accepted_url] = store.elicitations() else {
+                panic!(
+                    "expected pending and accepted url elicitations, got {:?}",
+                    store.elicitations()
+                );
+            };
+            assert_eq!(pending.id, pending_id);
+            assert!(matches!(pending.status, ElicitationStatus::Pending { .. }));
+            assert_eq!(accepted_url.id, accepted_url_id);
+            assert!(matches!(accepted_url.status, ElicitationStatus::Accepted));
+        });
+
+        store.update(cx, |store, cx| store.clear(cx));
+        assert_eq!(
+            pending_response_task.await.action,
+            acp::ElicitationAction::Cancel
+        );
     }
 
     #[gpui::test]
