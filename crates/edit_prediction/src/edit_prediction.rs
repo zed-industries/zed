@@ -3,8 +3,8 @@ use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{
-    EditPredictionSettledKeptChars, OrganizationId, SubmitEditPredictionFeedbackBody,
-    SubmitEditPredictionSettledBody,
+    EditPredictionRecentFile, EditPredictionSettledKeptChars, OrganizationId,
+    SettledEditPrediction, SettledEditPredictionSampleData, SubmitEditPredictionFeedbackBody,
 };
 use cloud_llm_client::predict_edits_v3::{
     PREDICT_EDITS_MODE_HEADER_NAME, PREDICT_EDITS_REQUEST_ID_HEADER_NAME,
@@ -74,7 +74,6 @@ pub mod cursor_excerpt;
 pub mod data_collection;
 pub mod example_spec;
 pub mod fim;
-mod jump_example;
 mod license_detection;
 pub mod mercury;
 pub mod metrics;
@@ -85,7 +84,7 @@ mod prediction;
 
 pub mod udiff;
 
-mod capture_example;
+mod capture_prediction_context;
 pub mod open_ai_compatible;
 mod zed_edit_prediction_delegate;
 pub mod zeta;
@@ -93,14 +92,9 @@ pub mod zeta;
 #[cfg(test)]
 mod edit_prediction_tests;
 
+use crate::capture_prediction_context::{CapturedPredictionContext, capture_prediction_context};
 use crate::cursor_excerpt::expand_context_syntactically_then_linewise;
-use crate::data_collection::uncommitted_diffs_for_events;
-use crate::example_spec::ExampleSpec;
 use crate::example_spec::RecentFile;
-use crate::jump_example::{
-    JUMP_EXAMPLE_NAVIGATION_COUNT, JumpExampleTrigger, PendingJumpExampleCapture,
-    PendingJumpExampleCaptureKey,
-};
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
@@ -136,6 +130,10 @@ const REQUEST_TIMEOUT_BACKOFF: Duration = Duration::from_secs(10);
 
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
+const EDIT_PREDICTION_CAPTURE_MAX_FUTURE_EVENTS: usize = 4;
+/// The server rejects settled bodies larger than 64 KiB (compressed).
+const EDIT_PREDICTION_SETTLED_MAX_BODY_BYTES: usize = 63 * 1024;
+const EDIT_PREDICTION_SETTLED_MAX_EDITABLE_REGION_BYTES: usize = 4 * 1024;
 
 pub struct EditPredictionJumpsFeatureFlag;
 
@@ -206,7 +204,6 @@ pub struct EditPredictionModelInput {
     snapshot: BufferSnapshot,
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
-    stored_events: Vec<StoredEvent>,
     related_files: Vec<RelatedFile>,
     mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
@@ -358,6 +355,7 @@ fn push_recent_file(files: &mut VecDeque<RecentFile>, mut file: RecentFile) {
 struct ProjectState {
     events: VecDeque<StoredEvent>,
     last_event: Option<LastEvent>,
+    next_last_event_seq: u64,
     recently_viewed_files: VecDeque<RecentFile>,
     recently_opened_files: VecDeque<RecentFile>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -366,8 +364,7 @@ struct ProjectState {
     last_edit_source: Option<BufferEditSource>,
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
-    pending_jump_example_captures: Vec<PendingJumpExampleCapture>,
-    starting_jump_example_captures: Vec<PendingJumpExampleCaptureKey>,
+    pending_prediction_captures: Vec<PendingPredictionCapture>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
     last_jump_prediction_refresh: Option<(EntityId, Instant)>,
@@ -471,21 +468,35 @@ impl ProjectState {
     }
 
     fn finalize_last_event(&mut self, cx: &mut Context<EditPredictionStore>) {
-        let Some(event) = self.last_event.take() else {
+        let Some(last_event) = self.last_event.take() else {
             return;
         };
-        let Some(event) = event.finalize(&self.license_detection_watchers, cx) else {
-            return;
-        };
+        let event = last_event.finalize(&self.license_detection_watchers, cx);
 
-        for capture in &mut self.pending_jump_example_captures {
-            capture.future_events.push(event.event.clone());
+        for capture in &mut self.pending_prediction_captures {
+            capture.try_record_future_event(
+                &last_event,
+                event.as_ref(),
+                &self.license_detection_watchers,
+                cx,
+            );
         }
-        jump_example::drain_completed_jump_example_captures(self, cx);
+
+        let Some(event) = event else {
+            return;
+        };
         if self.events.len() + 1 >= EVENT_COUNT_MAX {
             self.events.pop_front();
         }
         self.events.push_back(event);
+    }
+
+    fn clear_history(&mut self) {
+        self.events.clear();
+        self.last_event.take();
+        for capture in &mut self.pending_prediction_captures {
+            capture.sample_data = None;
+        }
     }
 }
 
@@ -588,9 +599,9 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
     }
 }
 
-#[derive(Clone)]
-struct PendingSettledPrediction {
+struct PendingPredictionCapture {
     request_id: EditPredictionId,
+    edited_buffer_id: EntityId,
     editable_anchor_range: Range<Anchor>,
     editable_region_before_prediction: String,
     predicted_editable_region: String,
@@ -599,23 +610,104 @@ struct PendingSettledPrediction {
     organization_id: Option<OrganizationId>,
     can_collect_data: bool,
     is_in_open_source_repo: bool,
-    example: Option<ExampleSpec>,
+    sample_data: Option<PendingPredictionCaptureSampleData>,
     model_version: Option<String>,
     enqueued_at: Instant,
     last_edit_at: Instant,
     e2e_latency: std::time::Duration,
 }
 
+struct PendingPredictionCaptureSampleData {
+    context_task: Task<Result<CapturedPredictionContext>>,
+    editable_path: Arc<Path>,
+    editable_offset_range: Range<usize>,
+    next_edit_cursor_offset: Option<usize>,
+    future_edit_history_events: Vec<Arc<zeta_prompt::Event>>,
+    navigation_history: VecDeque<RecentFile>,
+    edit_events_before_quiescence: u32,
+    prompt_history_boundary: Option<PromptHistoryBoundary>,
+}
+
+/// Marks where the prompt's edit history ended. Sample data may only include
+/// content the user produced after this point.
+struct PromptHistoryBoundary {
+    /// The seq of the first event this capture is expected to observe: the
+    /// event that was pending when the prediction was requested, or the next
+    /// event to be created if none was pending. Observing a later seq first
+    /// means events were lost while the prediction request was in flight.
+    first_event_seq: u64,
+    /// The prompt's end snapshot within the event that was pending when the
+    /// prediction was requested, if any. The first observed event is trimmed
+    /// to its suffix after this snapshot.
+    snapshot: Option<TextBufferSnapshot>,
+}
+
+impl PendingPredictionCapture {
+    /// Records the project's last event (pending or finalizing) into this
+    /// sample's future edit history. Returns false if the sample must be
+    /// dropped because its future history can't be captured accurately.
+    fn try_record_future_event(
+        &mut self,
+        last_event: &LastEvent,
+        finalized_event: Option<&StoredEvent>,
+        license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
+        cx: &App,
+    ) {
+        let Some(sample) = &mut self.sample_data else {
+            return;
+        };
+        let boundary = sample.prompt_history_boundary.take();
+        let suffix_snapshot = match &boundary {
+            Some(boundary) => {
+                if last_event.seq != boundary.first_event_seq {
+                    // Events were finalized before this capture was enqueued,
+                    // so events are missing from the future history.
+                    self.sample_data.take();
+                    return;
+                }
+                boundary.snapshot.as_ref()
+            }
+            None => None,
+        };
+
+        let event = match suffix_snapshot {
+            Some(snapshot) => {
+                let suffix = last_event
+                    .suffix_after(snapshot)
+                    .and_then(|suffix| suffix.finalize(license_detection_watchers, cx));
+                let Some(suffix) = suffix else {
+                    return;
+                };
+                suffix.event
+            }
+            None => match finalized_event {
+                Some(event) => event.event.clone(),
+                None => return,
+            },
+        };
+
+        if !event.in_open_source_repo() {
+            self.sample_data.take();
+            return;
+        }
+        sample.edit_events_before_quiescence += 1;
+        if sample.future_edit_history_events.len() < EDIT_PREDICTION_CAPTURE_MAX_FUTURE_EVENTS {
+            sample.future_edit_history_events.push(event);
+        }
+    }
+}
+
 struct RegisteredBuffer {
     file: Option<Arc<dyn File>>,
     snapshot: TextBufferSnapshot,
-    pending_predictions: Vec<PendingSettledPrediction>,
     last_position: Option<Anchor>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
 #[derive(Clone)]
 struct LastEvent {
+    /// Project-wide monotonic sequence number identifying this event.
+    seq: u64,
     old_snapshot: TextBufferSnapshot,
     new_snapshot: TextBufferSnapshot,
     old_file: Option<Arc<dyn File>>,
@@ -649,7 +741,7 @@ impl LastEvent {
                     })
                 });
 
-        let (diff, edit_range) = compute_diff_between_snapshots_in_range(
+        let (diff, old_range, new_range) = compute_diff_between_snapshots_in_range(
             &self.old_snapshot,
             &self.new_snapshot,
             &self.total_edit_range,
@@ -663,13 +755,15 @@ impl LastEvent {
                     old_path,
                     path,
                     diff,
+                    old_range,
+                    new_range: new_range.clone(),
                     in_open_source_repo,
                     predicted: self.predicted,
                 }),
                 old_snapshot: self.old_snapshot.clone(),
                 new_snapshot_version: self.new_snapshot.version.clone(),
-                total_edit_range: self.new_snapshot.anchor_before(edit_range.start)
-                    ..self.new_snapshot.anchor_before(edit_range.end),
+                total_edit_range: self.new_snapshot.anchor_before(new_range.start)
+                    ..self.new_snapshot.anchor_before(new_range.end),
                 file_context: self.file_context.clone(),
             })
         }
@@ -680,49 +774,40 @@ impl LastEvent {
             return (self.clone(), None);
         };
 
+        let Some(after) = self.suffix_after(boundary_snapshot) else {
+            return (self.clone(), None);
+        };
+
         let total_edit_range_before_pause = self
             .total_edit_range_at_last_pause_boundary
             .clone()
             .unwrap_or_else(|| self.total_edit_range.clone());
 
-        let Some(total_edit_range_after_pause) =
-            compute_total_edit_range_between_snapshots(boundary_snapshot, &self.new_snapshot)
-        else {
-            return (self.clone(), None);
-        };
-
-        let latest_edit_range_before_pause = total_edit_range_before_pause.clone();
-        let latest_edit_range_after_pause = total_edit_range_after_pause.clone();
-
         let before = LastEvent {
-            old_snapshot: self.old_snapshot.clone(),
             new_snapshot: boundary_snapshot.clone(),
-            old_file: self.old_file.clone(),
-            new_file: self.new_file.clone(),
-            latest_edit_range: latest_edit_range_before_pause,
+            latest_edit_range: total_edit_range_before_pause.clone(),
             total_edit_range: total_edit_range_before_pause,
             total_edit_range_at_last_pause_boundary: None,
-            predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
-            last_edit_time: self.last_edit_time,
-            file_context: self.file_context.clone(),
-        };
-
-        let after = LastEvent {
-            old_snapshot: boundary_snapshot.clone(),
-            new_snapshot: self.new_snapshot.clone(),
-            old_file: self.old_file.clone(),
-            new_file: self.new_file.clone(),
-            latest_edit_range: latest_edit_range_after_pause,
-            total_edit_range: total_edit_range_after_pause,
-            total_edit_range_at_last_pause_boundary: None,
-            predicted: self.predicted,
-            snapshot_after_last_editing_pause: None,
-            last_edit_time: self.last_edit_time,
-            file_context: self.file_context.clone(),
+            ..self.clone()
         };
 
         (before, Some(after))
+    }
+
+    /// The portion of this event that happened after `boundary_snapshot`, or
+    /// None if the buffer hasn't changed since.
+    pub fn suffix_after(&self, boundary_snapshot: &TextBufferSnapshot) -> Option<LastEvent> {
+        let total_edit_range =
+            compute_total_edit_range_between_snapshots(boundary_snapshot, &self.new_snapshot)?;
+        Some(LastEvent {
+            old_snapshot: boundary_snapshot.clone(),
+            latest_edit_range: total_edit_range.clone(),
+            total_edit_range,
+            total_edit_range_at_last_pause_boundary: None,
+            snapshot_after_last_editing_pause: None,
+            ..self.clone()
+        })
     }
 }
 
@@ -791,12 +876,16 @@ fn compute_diff_between_snapshots_in_range(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
     total_edit_range: &Range<Anchor>,
-) -> Option<(String, Range<Point>)> {
-    let new_start_point = total_edit_range.start.to_point(new_snapshot);
-    let new_end_point = total_edit_range.end.to_point(new_snapshot);
+) -> Option<(String, Range<usize>, Range<usize>)> {
+    let new_start_offset = total_edit_range.start.to_offset(new_snapshot);
+    let new_end_offset = total_edit_range.end.to_offset(new_snapshot);
+    let new_start_point = new_snapshot.offset_to_point(new_start_offset);
+    let new_end_point = new_snapshot.offset_to_point(new_end_offset);
     let old_range = compute_old_range_for_new_range(old_snapshot, new_snapshot, total_edit_range)?;
     let old_start_point = old_range.start;
     let old_end_point = old_range.end;
+    let old_start_offset = old_snapshot.point_to_offset(old_start_point);
+    let old_end_offset = old_snapshot.point_to_offset(old_end_point);
 
     const CONTEXT_LINES: u32 = 3;
 
@@ -832,7 +921,11 @@ fn compute_diff_between_snapshots_in_range(
         new_context_start_row,
     );
 
-    Some((diff, new_start_point..new_end_point))
+    Some((
+        diff,
+        old_start_offset..old_end_offset,
+        new_start_offset..new_end_offset,
+    ))
 }
 
 pub(crate) fn buffer_path_with_id_fallback(
@@ -1131,15 +1224,13 @@ impl EditPredictionStore {
 
     pub fn clear_history(&mut self) {
         for project_state in self.projects.values_mut() {
-            project_state.events.clear();
-            project_state.last_event.take();
+            project_state.clear_history();
         }
     }
 
     pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
         if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
-            project_state.events.clear();
-            project_state.last_event.take();
+            project_state.clear_history();
         }
     }
 
@@ -1337,6 +1428,7 @@ impl EditPredictionStore {
                 },
                 events: VecDeque::new(),
                 last_event: None,
+                next_last_event_seq: 0,
                 recently_viewed_files: VecDeque::new(),
                 recently_opened_files: VecDeque::new(),
                 debug_tx: None,
@@ -1346,8 +1438,7 @@ impl EditPredictionStore {
                 last_edit_source: None,
                 cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
-                pending_jump_example_captures: Vec::new(),
-                starting_jump_example_captures: Vec::new(),
+                pending_prediction_captures: Vec::new(),
                 next_pending_prediction_id: 0,
                 last_edit_prediction_refresh: None,
                 last_jump_prediction_refresh: None,
@@ -1475,14 +1566,23 @@ impl EditPredictionStore {
                         path: path.path.as_std_path().into(),
                         cursor_position,
                     };
-                    for capture in &mut project_state.pending_jump_example_captures {
-                        capture.navigation_history.push(recent_file.clone());
-                        if capture.navigation_history.len() > JUMP_EXAMPLE_NAVIGATION_COUNT {
-                            capture.navigation_history.remove(0);
+                    let can_collect_navigation = project_state
+                        .license_detection_watchers
+                        .get(&path.worktree_id)
+                        .is_some_and(|watcher| watcher.is_project_open_source());
+                    for capture in &mut project_state.pending_prediction_captures {
+                        if let Some(sample_data) = capture.sample_data.as_mut() {
+                            if can_collect_navigation {
+                                push_recent_file(
+                                    &mut sample_data.navigation_history,
+                                    recent_file.clone(),
+                                );
+                            } else {
+                                capture.sample_data = None;
+                            }
                         }
                     }
                     push_recent_file(&mut project_state.recently_viewed_files, recent_file);
-                    jump_example::drain_completed_jump_example_captures(project_state, cx);
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
@@ -1549,7 +1649,6 @@ impl EditPredictionStore {
                     snapshot,
                     file,
                     last_position: None,
-                    pending_predictions: Vec::new(),
                     _subscriptions: [
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
@@ -1617,9 +1716,19 @@ impl EditPredictionStore {
             return;
         };
 
-        for pending_prediction in &mut registered_buffer.pending_predictions {
-            if edit_range.overlaps(&pending_prediction.editable_anchor_range, &new_snapshot) {
-                pending_prediction.last_edit_at = now;
+        for pending_capture in &mut project_state.pending_prediction_captures {
+            if pending_capture.edited_buffer_id == buffer.entity_id()
+                && edit_range.overlaps(&pending_capture.editable_anchor_range, &new_snapshot)
+            {
+                pending_capture.last_edit_at = now;
+                if is_local
+                    && !is_predicted
+                    && let Some(sample_data) = pending_capture.sample_data.as_mut()
+                    && sample_data.next_edit_cursor_offset.is_none()
+                {
+                    sample_data.next_edit_cursor_offset =
+                        Some(edit_range.start.to_offset(&new_snapshot));
+                }
             }
         }
 
@@ -1697,7 +1806,10 @@ impl EditPredictionStore {
             file_context
         });
 
+        let seq = project_state.next_last_event_seq;
+        project_state.next_last_event_seq += 1;
         project_state.last_event = Some(LastEvent {
+            seq,
             old_file,
             new_file,
             old_snapshot,
@@ -1900,48 +2012,79 @@ impl EditPredictionStore {
             let mut oldest_edited_at = None;
             let mut ready_predictions = Vec::new();
 
-            this.update(cx, |this, _| {
-                for (_, project_state) in this.projects.iter_mut() {
-                    for (_, registered_buffer) in project_state.registered_buffers.iter_mut() {
-                        let mut pending_index = 0;
-                        while pending_index < registered_buffer.pending_predictions.len() {
-                            let pending_prediction =
-                                &registered_buffer.pending_predictions[pending_index];
-                            let age = now.saturating_duration_since(pending_prediction.enqueued_at);
-                            if age >= EDIT_PREDICTION_SETTLED_TTL {
-                                registered_buffer.pending_predictions.remove(pending_index);
-                                continue;
-                            }
-
-                            let quiet_for =
-                                now.saturating_duration_since(pending_prediction.last_edit_at);
-                            if quiet_for >= EDIT_PREDICTION_SETTLED_QUIESCENCE {
-                                let pending_prediction =
-                                    registered_buffer.pending_predictions.remove(pending_index);
-                                let settled_editable_region = registered_buffer
-                                    .snapshot
-                                    .text_for_range(
-                                        pending_prediction.editable_anchor_range.clone(),
-                                    )
-                                    .collect::<String>();
-                                ready_predictions
-                                    .push((pending_prediction, settled_editable_region));
-                                continue;
-                            }
-
-                            if oldest_edited_at
-                                .is_none_or(|time| pending_prediction.last_edit_at < time)
-                            {
-                                oldest_edited_at = Some(pending_prediction.last_edit_at);
-                            }
-                            pending_index += 1;
+            this.update(cx, |this, cx| {
+                for project_state in this.projects.values_mut() {
+                    let ProjectState {
+                        last_event,
+                        registered_buffers,
+                        license_detection_watchers,
+                        pending_prediction_captures,
+                        ..
+                    } = project_state;
+                    let pending_last_event = last_event.as_ref().map(|last_event| {
+                        (
+                            last_event,
+                            last_event.finalize(license_detection_watchers, cx),
+                        )
+                    });
+                    let mut pending_index = 0;
+                    while pending_index < pending_prediction_captures.len() {
+                        let pending_capture = &pending_prediction_captures[pending_index];
+                        let age = now.saturating_duration_since(pending_capture.enqueued_at);
+                        if age >= EDIT_PREDICTION_SETTLED_TTL {
+                            pending_prediction_captures.remove(pending_index);
+                            continue;
                         }
+
+                        let quiet_for = now.saturating_duration_since(pending_capture.last_edit_at);
+                        if quiet_for >= EDIT_PREDICTION_SETTLED_QUIESCENCE {
+                            let Some(registered_buffer) =
+                                registered_buffers.get(&pending_capture.edited_buffer_id)
+                            else {
+                                pending_prediction_captures.remove(pending_index);
+                                continue;
+                            };
+                            let editable_offset_range = pending_capture
+                                .editable_anchor_range
+                                .to_offset(&registered_buffer.snapshot);
+                            if editable_offset_range.len()
+                                > EDIT_PREDICTION_SETTLED_MAX_EDITABLE_REGION_BYTES
+                            {
+                                // The prediction was obliterated by a huge edit;
+                                // kept-rate against it would be meaningless and the
+                                // region would blow the body size cap.
+                                pending_prediction_captures.remove(pending_index);
+                                continue;
+                            }
+                            let settled_editable_region = registered_buffer
+                                .snapshot
+                                .text_for_range(editable_offset_range)
+                                .collect::<String>();
+                            let mut pending_capture =
+                                pending_prediction_captures.remove(pending_index);
+                            if let Some((last_event, finalized_event)) = pending_last_event.as_ref()
+                            {
+                                pending_capture.try_record_future_event(
+                                    last_event,
+                                    finalized_event.as_ref(),
+                                    license_detection_watchers,
+                                    cx,
+                                );
+                            }
+                            ready_predictions.push((pending_capture, settled_editable_region));
+                            continue;
+                        }
+
+                        if oldest_edited_at.is_none_or(|time| pending_capture.last_edit_at < time) {
+                            oldest_edited_at = Some(pending_capture.last_edit_at);
+                        }
+                        pending_index += 1;
                     }
                 }
             });
 
-            for (pending_prediction, settled_editable_region) in ready_predictions {
-                let PendingSettledPrediction {
+            for (pending_capture, settled_editable_region) in ready_predictions {
+                let PendingPredictionCapture {
                     request_id,
                     editable_region_before_prediction,
                     predicted_editable_region,
@@ -1950,11 +2093,11 @@ impl EditPredictionStore {
                     organization_id,
                     can_collect_data,
                     is_in_open_source_repo,
-                    example,
+                    sample_data,
                     model_version,
                     e2e_latency,
                     ..
-                } = pending_prediction;
+                } = pending_capture;
                 let settled_editable_region_for_metrics = settled_editable_region.clone();
                 #[cfg(test)]
                 {
@@ -1978,21 +2121,46 @@ impl EditPredictionStore {
                         );
 
                         let result: anyhow::Result<()> = async {
-                            let settled_editable_region =
-                                can_collect_data.then_some(settled_editable_region);
-                            let example = if can_collect_data {
-                                example.map(serde_json::to_value).transpose()?
+                            let sample_data = if can_collect_data
+                                && let Some(sample_data) = sample_data
+                                && let Ok(context) = sample_data.context_task.await
+                            {
+                                Some(SettledEditPredictionSampleData {
+                                    repository_url: context.repository_url,
+                                    revision: context.revision,
+                                    uncommitted_diff: context.uncommitted_diff,
+                                    editable_path: sample_data.editable_path,
+                                    editable_offset_range: sample_data.editable_offset_range,
+                                    buffer_diagnostics: context.buffer_diagnostics,
+                                    future_edit_history_events: sample_data
+                                        .future_edit_history_events,
+                                    navigation_history: sample_data
+                                        .navigation_history
+                                        .into_iter()
+                                        .map(|file| EditPredictionRecentFile {
+                                            path: file.path,
+                                            cursor_position: file.cursor_position,
+                                        })
+                                        .collect(),
+                                    edit_events_before_quiescence: sample_data
+                                        .edit_events_before_quiescence,
+                                    next_edit_cursor_offset: sample_data.next_edit_cursor_offset,
+                                })
                             } else {
                                 None
                             };
 
-                            let body = SubmitEditPredictionSettledBody {
+                            let settled_editable_region =
+                                can_collect_data.then_some(settled_editable_region);
+
+                            let mut body = SettledEditPrediction {
                                 request_id: request_id.0.to_string(),
                                 settled_editable_region,
                                 ts_error_count_before_prediction,
                                 ts_error_count_after_prediction,
                                 can_collect_data,
                                 is_in_open_source_repo,
+                                sample_data,
                                 kept_chars: EditPredictionSettledKeptChars {
                                     candidate_new: kept_rate_result.candidate_new_chars,
                                     reference_new: kept_rate_result.reference_new_chars,
@@ -2005,13 +2173,18 @@ impl EditPredictionStore {
                                     kept_rate: kept_rate_result.kept_rate,
                                     recall_rate: kept_rate_result.recall_rate,
                                 },
-                                example,
+                                example: None,
                                 model_version,
-                                e2e_latency_ms: e2e_latency.as_millis(),
+                                e2e_latency_ms: e2e_latency.as_millis().min(u128::from(u64::MAX))
+                                    as u64,
                             };
 
-                            let json_bytes = serde_json::to_vec(&body)?;
-                            let compressed = zstd::encode_all(&json_bytes[..], 3)?;
+                            let mut compressed =
+                                zstd::encode_all(&serde_json::to_vec(&body)?[..], 3)?;
+                            if compressed.len() > EDIT_PREDICTION_SETTLED_MAX_BODY_BYTES {
+                                body.sample_data = None;
+                                compressed = zstd::encode_all(&serde_json::to_vec(&body)?[..], 3)?;
+                            }
 
                             let url = client
                                 .http_client()
@@ -2053,7 +2226,8 @@ impl EditPredictionStore {
         edited_buffer_snapshot: &BufferSnapshot,
         editable_offset_range: Range<usize>,
         edit_preview: &EditPreview,
-        example: Option<ExampleSpec>,
+        context_task: Option<Task<Result<CapturedPredictionContext>>>,
+        prompt_history_boundary: Option<PromptHistoryBoundary>,
         model_version: Option<String>,
         e2e_latency: std::time::Duration,
         cx: &mut Context<Self>,
@@ -2073,12 +2247,12 @@ impl EditPredictionStore {
             .current_organization()
             .map(|organization| organization.id.clone());
         let project_state = this.get_or_init_project(project, cx);
-        let Some(registered_buffer) = project_state
+        if !project_state
             .registered_buffers
-            .get_mut(&edited_buffer.entity_id())
-        else {
+            .contains_key(&edited_buffer.entity_id())
+        {
             return;
-        };
+        }
 
         let editable_region_before_prediction = edited_buffer_snapshot
             .text_for_range(editable_offset_range.clone())
@@ -2101,12 +2275,30 @@ impl EditPredictionStore {
             ),
         );
         let editable_anchor_range =
-            edited_buffer_snapshot.anchor_range_inside(editable_offset_range);
+            edited_buffer_snapshot.anchor_range_inside(editable_offset_range.clone());
         let now = cx.background_executor().now();
-        registered_buffer
-            .pending_predictions
-            .push(PendingSettledPrediction {
+        let sample_data = if can_collect_data
+            && let Some(context_task) = context_task
+            && let Some(file) = edited_buffer_snapshot.file()
+        {
+            Some(PendingPredictionCaptureSampleData {
+                context_task,
+                editable_path: file.path().as_std_path().into(),
+                editable_offset_range,
+                next_edit_cursor_offset: None,
+                future_edit_history_events: Vec::new(),
+                navigation_history: VecDeque::new(),
+                edit_events_before_quiescence: 0,
+                prompt_history_boundary,
+            })
+        } else {
+            None
+        };
+        project_state
+            .pending_prediction_captures
+            .push(PendingPredictionCapture {
                 request_id,
+                edited_buffer_id: edited_buffer.entity_id(),
                 editable_anchor_range,
                 editable_region_before_prediction,
                 predicted_editable_region,
@@ -2115,7 +2307,7 @@ impl EditPredictionStore {
                 organization_id,
                 can_collect_data,
                 is_in_open_source_repo,
-                example,
+                sample_data,
                 model_version,
                 e2e_latency,
                 enqueued_at: now,
@@ -2749,6 +2941,18 @@ impl EditPredictionStore {
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
+        let prompt_history_boundary = Some(PromptHistoryBoundary {
+            first_event_seq: project_state
+                .last_event
+                .as_ref()
+                .map_or(project_state.next_last_event_seq, |last_event| {
+                    last_event.seq
+                }),
+            snapshot: project_state
+                .last_event
+                .as_ref()
+                .map(|last_event| last_event.new_snapshot.clone()),
+        });
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.iter().map(|e| e.event.clone()).collect();
@@ -2768,15 +2972,28 @@ impl EditPredictionStore {
         };
 
         let buffer_id = active_buffer.read(cx).remote_id();
-        let repo_url = project
+        let (repository_url, revision) = project
             .read(cx)
             .git_store()
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
-            .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+            .map(|(repository, _)| {
+                let snapshot = repository.read(cx).snapshot();
+                (
+                    snapshot
+                        .remote_origin_url
+                        .clone()
+                        .or_else(|| snapshot.remote_upstream_url.clone()),
+                    snapshot
+                        .head_commit
+                        .as_ref()
+                        .map(|commit| commit.sha.to_string()),
+                )
+            })
+            .unwrap_or_default();
 
         let is_staff_zed_repo = cx.is_staff()
-            && repo_url
+            && repository_url
                 .as_ref()
                 .is_some_and(|url| is_zed_industries_repo(url));
         let is_open_source = is_staff_zed_repo
@@ -2790,14 +3007,12 @@ impl EditPredictionStore {
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
-        let capture_worktree_id = snapshot.file().map(|file| file.worktree_id(cx));
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
             snapshot,
             position,
             events,
-            stored_events: stored_events.clone(),
             related_files,
             mode,
             trigger,
@@ -2809,41 +3024,27 @@ impl EditPredictionStore {
 
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta => {
-                let capture_data = if let Some(worktree_id) = capture_worktree_id
-                    && can_collect_data
-                {
-                    let uncommitted_diff_snapshot = uncommitted_diffs_for_events(
-                        project.clone(),
-                        worktree_id,
-                        stored_events.clone(),
-                        cx,
-                    )
-                    .shared();
-                    jump_example::try_start_jump_example_capture(
-                        project_state,
-                        uncommitted_diff_snapshot.clone(),
-                        inputs.project.clone(),
-                        inputs.snapshot.clone(),
-                        inputs.position,
-                        match trigger {
-                            PredictEditsRequestTrigger::Diagnostics
-                            | PredictEditsRequestTrigger::DiagnosticNavigation => {
-                                JumpExampleTrigger::Diagnostic
-                            }
-                            _ => JumpExampleTrigger::Prediction,
-                        },
-                        stored_events,
-                        inputs.diagnostic_search_range.clone(),
-                        can_collect_data,
-                        is_open_source,
-                        cx,
-                    );
-                    rand::random_ratio(1, 10).then(|| uncommitted_diff_snapshot)
-                } else {
-                    None
-                };
-
-                zeta::request_prediction_with_zeta(self, inputs, capture_data, repo_url, cx)
+                let context_task = can_collect_data
+                    .then(|| {
+                        capture_prediction_context(
+                            inputs.project.clone(),
+                            inputs.buffer.clone(),
+                            inputs.position,
+                            stored_events,
+                            repository_url.clone(),
+                            revision,
+                            cx,
+                        )
+                    })
+                    .flatten();
+                zeta::request_prediction_with_zeta(
+                    self,
+                    inputs,
+                    context_task,
+                    prompt_history_boundary,
+                    repository_url,
+                    cx,
+                )
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Mercury => {
@@ -3440,7 +3641,7 @@ fn merge_trailing_events_if_needed(
             merge_anchor_ranges(&merged_edit_range, &event.total_edit_range, latest_snapshot);
     }
 
-    if let Some((diff, edit_range)) = compute_diff_between_snapshots_in_range(
+    if let Some((diff, old_range, new_range)) = compute_diff_between_snapshots_in_range(
         &oldest_snapshot,
         newest_snapshot,
         &merged_edit_range,
@@ -3456,6 +3657,8 @@ fn merge_trailing_events_if_needed(
                     old_path: old_path.clone(),
                     path: path.clone(),
                     diff,
+                    old_range,
+                    new_range: new_range.clone(),
                     in_open_source_repo: *in_open_source_repo,
                     predicted: events.range(merge_start..).all(|event| {
                         matches!(
@@ -3469,8 +3672,8 @@ fn merge_trailing_events_if_needed(
                 }),
                 old_snapshot: oldest_snapshot.clone(),
                 new_snapshot_version: newest_snapshot.version.clone(),
-                total_edit_range: newest_snapshot.anchor_before(edit_range.start)
-                    ..newest_snapshot.anchor_before(edit_range.end),
+                total_edit_range: newest_snapshot.anchor_before(new_range.start)
+                    ..newest_snapshot.anchor_before(new_range.end),
                 file_context: oldest_event.file_context.clone(),
             },
         };
