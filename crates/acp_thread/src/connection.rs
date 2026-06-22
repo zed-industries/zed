@@ -1,5 +1,5 @@
 use crate::AcpThread;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -366,7 +366,7 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
-    fn supports_delete(&self, _cx: &App) -> bool {
+    fn supports_delete(&self) -> bool {
         false
     }
 

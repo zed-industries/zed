@@ -4,7 +4,7 @@ use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
-    EditPredictionIconSet, SuggestionDisplayType,
+    EditPredictionIconSet, EditPredictionRequestTrigger, SuggestionDisplayType,
 };
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
@@ -143,6 +143,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
         _debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let store = self.store.read(cx);
@@ -163,7 +164,13 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             }
 
             store.refresh_context(&self.project, &buffer, cursor_position, cx);
-            store.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
+            store.refresh_prediction_from_buffer(
+                self.project.clone(),
+                buffer,
+                cursor_position,
+                trigger,
+                cx,
+            )
         });
     }
 

@@ -9,8 +9,8 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderConfigurationView,
+    RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
@@ -59,13 +59,20 @@ impl State {
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        self.api_key_state.store(
+        let task = self.api_key_state.store(
             api_url,
             api_key,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
-        )
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await?;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            Ok(result)
+        })
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
@@ -103,12 +110,7 @@ impl State {
         cx.spawn(async move |this, cx| {
             let models = list_models(http_client.as_ref(), &api_url, &api_key, &extra_headers)
                 .await
-                .map_err(|e| {
-                    LanguageModelCompletionError::Other(anyhow::anyhow!(
-                        "OpenRouter error: {:?}",
-                        e
-                    ))
-                })?;
+                .map_err(LanguageModelCompletionError::from)?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
@@ -125,7 +127,7 @@ impl State {
             let task = self.fetch_models(cx);
             self.fetch_models_task.replace(task);
         } else {
-            self.available_models = Vec::new();
+            self.available_models.clear();
         }
     }
 }
@@ -269,6 +271,30 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
+    }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://openrouter.ai/keys",
+                    "sk-or-...",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
     }
 }
 
@@ -442,6 +468,7 @@ pub fn into_open_router(
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
+                MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {

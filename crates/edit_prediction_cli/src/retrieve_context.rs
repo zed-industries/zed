@@ -27,6 +27,7 @@ pub enum ContextRetrievalType {
     EditHistory,
     EditHistoryFile,
     GitLog,
+    Bm25,
     OracleFile,
     #[default]
     All,
@@ -42,6 +43,7 @@ impl std::fmt::Display for ContextRetrievalType {
             ContextRetrievalType::EditHistory => write!(f, "edit-history"),
             ContextRetrievalType::EditHistoryFile => write!(f, "edit-history-file"),
             ContextRetrievalType::GitLog => write!(f, "git-log"),
+            ContextRetrievalType::Bm25 => write!(f, "bm25"),
             ContextRetrievalType::OracleFile => write!(f, "oracle-file"),
             ContextRetrievalType::All => write!(f, "all"),
             ContextRetrievalType::None => write!(f, "none"),
@@ -50,35 +52,54 @@ impl std::fmt::Display for ContextRetrievalType {
 }
 
 impl ContextRetrievalType {
-    fn includes_lsp(self) -> bool {
-        matches!(self, ContextRetrievalType::Lsp | ContextRetrievalType::All)
-    }
-
-    fn editable_context_sources(self) -> Option<Vec<ContextSource>> {
+    pub fn context_sources(self) -> Vec<ContextSource> {
         match self {
-            ContextRetrievalType::Editable | ContextRetrievalType::All => Some(vec![
-                ContextSource::CursorExcerpt,
-                ContextSource::CurrentFile,
-                ContextSource::EditHistory,
-                ContextSource::EditHistoryFile,
-                ContextSource::GitLog,
-                ContextSource::OracleFile,
-            ]),
-            ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CurrentFile]),
-            ContextRetrievalType::EditHistory => Some(vec![ContextSource::EditHistory]),
-            ContextRetrievalType::EditHistoryFile => Some(vec![ContextSource::EditHistoryFile]),
-            ContextRetrievalType::GitLog => Some(vec![ContextSource::GitLog]),
-            ContextRetrievalType::OracleFile => Some(vec![ContextSource::OracleFile]),
-            ContextRetrievalType::Lsp | ContextRetrievalType::None => None,
+            ContextRetrievalType::Lsp => vec![ContextSource::Lsp],
+            ContextRetrievalType::Editable => editable_context_sources(),
+            ContextRetrievalType::CurrentFile => vec![ContextSource::CurrentFile],
+            ContextRetrievalType::EditHistory => vec![ContextSource::EditHistory],
+            ContextRetrievalType::EditHistoryFile => vec![ContextSource::EditHistoryFile],
+            ContextRetrievalType::GitLog => vec![ContextSource::GitLog],
+            ContextRetrievalType::Bm25 => vec![ContextSource::Bm25],
+            ContextRetrievalType::OracleFile => vec![ContextSource::OracleFile],
+            ContextRetrievalType::All => {
+                let mut sources = vec![ContextSource::Lsp];
+                sources.extend(editable_context_sources());
+                sources
+            }
+            ContextRetrievalType::None => Vec::new(),
         }
     }
+}
+
+pub fn context_sources_for_types(context_types: &[ContextRetrievalType]) -> Vec<ContextSource> {
+    let mut context_sources = Vec::new();
+    for context_type in context_types {
+        for context_source in context_type.context_sources() {
+            if !context_sources.contains(&context_source) {
+                context_sources.push(context_source);
+            }
+        }
+    }
+    context_sources
+}
+
+fn editable_context_sources() -> Vec<ContextSource> {
+    vec![
+        ContextSource::CursorExcerpt,
+        ContextSource::CurrentFile,
+        ContextSource::EditHistory,
+        ContextSource::EditHistoryFile,
+        ContextSource::GitLog,
+        ContextSource::Bm25,
+    ]
 }
 
 pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
     example_progress: &ExampleProgress,
-    context_type: ContextRetrievalType,
+    context_types: Vec<ContextRetrievalType>,
     force: bool,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
@@ -104,8 +125,9 @@ pub async fn run_context_retrieval(
         .context("EditPredictionStore not initialized")?;
 
     let mut context_files = Vec::new();
+    let context_sources = context_sources_for_types(&context_types);
 
-    if context_type.includes_lsp() {
+    if context_sources.contains(&ContextSource::Lsp) {
         let _lsp_handle = project.update(&mut cx, |project, cx| {
             project.register_buffer_with_language_servers(&state.buffer, cx)
         });
@@ -131,8 +153,12 @@ pub async fn run_context_retrieval(
             .extend(ep_store.update(&mut cx, |store, cx| store.context_for_project(&project, cx)));
     }
 
-    if let Some(context_sources) = context_type.editable_context_sources() {
-        let oracle_paths = if context_sources.contains(&ContextSource::OracleFile) {
+    let editable_context_sources = context_sources
+        .into_iter()
+        .filter(|context_source| *context_source != ContextSource::Lsp)
+        .collect::<Vec<_>>();
+    if !editable_context_sources.is_empty() {
+        let oracle_paths = if editable_context_sources.contains(&ContextSource::OracleFile) {
             let oracle_paths = oracle_paths_from_expected_patches(example);
             refresh_paths(&project, &oracle_paths, &mut cx).await?;
             oracle_paths
@@ -147,7 +173,7 @@ pub async fn run_context_retrieval(
                     state.buffer.clone(),
                     state.cursor_position,
                     oracle_paths,
-                    context_sources,
+                    editable_context_sources,
                     cx,
                 )
             })

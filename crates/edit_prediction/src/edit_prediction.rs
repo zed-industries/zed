@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
@@ -22,6 +22,7 @@ use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
+use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
@@ -141,6 +142,10 @@ pub struct EditPredictionJumpsFeatureFlag;
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
     type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
@@ -175,7 +180,7 @@ pub struct EditPredictionStore {
     legacy_data_collection_enabled: bool,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
-    shown_predictions: VecDeque<EditPrediction>,
+    rateable_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
     #[cfg(test)]
     settled_event_callback: Option<Box<dyn Fn(EditPredictionId, String)>>,
@@ -842,6 +847,28 @@ pub(crate) fn buffer_path_with_id_fallback(
     }
 }
 
+fn predict_edits_request_trigger_from_editor_trigger(
+    trigger: EditPredictionRequestTrigger,
+) -> PredictEditsRequestTrigger {
+    match trigger {
+        EditPredictionRequestTrigger::DiagnosticNavigation => {
+            PredictEditsRequestTrigger::DiagnosticNavigation
+        }
+        EditPredictionRequestTrigger::Explicit => PredictEditsRequestTrigger::Explicit,
+        EditPredictionRequestTrigger::BufferEdit => PredictEditsRequestTrigger::BufferEdit,
+        EditPredictionRequestTrigger::LSPCompletionAccepted => {
+            PredictEditsRequestTrigger::LSPCompletionAccepted
+        }
+        EditPredictionRequestTrigger::PredictionAccepted => {
+            PredictEditsRequestTrigger::PredictionAccepted
+        }
+        EditPredictionRequestTrigger::PredictionPartiallyAccepted => {
+            PredictEditsRequestTrigger::PredictionPartiallyAccepted
+        }
+        EditPredictionRequestTrigger::Other => PredictEditsRequestTrigger::Other,
+    }
+}
+
 impl EditPredictionStore {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<EditPredictionStoreGlobal>()
@@ -938,7 +965,7 @@ impl EditPredictionStore {
             reject_predictions_tx: reject_tx,
             settled_predictions_tx,
             rated_predictions: Default::default(),
-            shown_predictions: Default::default(),
+            rateable_predictions: Default::default(),
             #[cfg(test)]
             settled_event_callback: None,
 
@@ -1007,7 +1034,7 @@ impl EditPredictionStore {
 
     pub fn active_experiment(&self) -> Option<&str> {
         self.preferred_experiment.as_deref().or_else(|| {
-            self.shown_predictions
+            self.rateable_predictions
                 .iter()
                 .find_map(|p| p.model_version.as_ref())
                 .and_then(|model_version| model_version.strip_prefix("zeta2:"))
@@ -1027,6 +1054,8 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let experiments = cx
                 .background_spawn(async move {
+                    let organization_id =
+                        organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
                     let url = client
                         .http_client()
                         .build_zed_llm_url("/edit_prediction_experiments", &[])?;
@@ -2145,10 +2174,10 @@ impl EditPredictionStore {
         }
 
         if is_first_non_jump_show {
-            self.shown_predictions
+            self.rateable_predictions
                 .push_front(current_prediction.prediction.clone());
-            if self.shown_predictions.len() > 50 {
-                let completion = self.shown_predictions.pop_back().unwrap();
+            if self.rateable_predictions.len() > 50 {
+                let completion = self.rateable_predictions.pop_back().unwrap();
                 self.rated_predictions.remove(&completion.id);
             }
         }
@@ -2215,21 +2244,25 @@ impl EditPredictionStore {
         project: Entity<Project>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
+        let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
+
         self.queue_prediction_refresh(
             project.clone(),
-            PredictEditsRequestTrigger::Other,
+            trigger,
             buffer.entity_id(),
             cx,
             move |this, cx| {
                 let Some(request_task) = this
                     .update(cx, |this, cx| {
-                        this.request_prediction(
-                            &project,
-                            &buffer,
+                        this.request_prediction_internal(
+                            project.clone(),
+                            buffer.clone(),
                             position,
-                            PredictEditsRequestTrigger::Other,
+                            trigger,
+                            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
                             cx,
                         )
                     })
@@ -2333,11 +2366,12 @@ impl EditPredictionStore {
 
                     let Some(prediction_result) = this
                         .update(cx, |this, cx| {
-                            this.request_prediction(
-                                &project,
-                                &jump_buffer,
+                            this.request_prediction_internal(
+                                project.clone(),
+                                jump_buffer.clone(),
                                 jump_position,
                                 PredictEditsRequestTrigger::Diagnostics,
+                                cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
                                 cx,
                             )
                         })?
@@ -2356,10 +2390,10 @@ impl EditPredictionStore {
                                 prediction_result
                             } else {
                                 EditPredictionResult {
-                                    id: prediction_result.id,
-                                    prediction: Err(EditPredictionRejectReason::CurrentPreferred),
-                                    model_version: prediction_result.model_version,
-                                    e2e_latency: prediction_result.e2e_latency,
+                                    reject_reason: Some(
+                                        EditPredictionRejectReason::CurrentPreferred,
+                                    ),
+                                    ..prediction_result
                                 }
                             },
                             PredictionRequestedBy::DiagnosticsUpdate,
@@ -2454,7 +2488,8 @@ impl EditPredictionStore {
             request_trigger: PredictEditsRequestTrigger,
         ) -> &mut Option<(EntityId, Instant)> {
             match request_trigger {
-                PredictEditsRequestTrigger::Diagnostics => {
+                PredictEditsRequestTrigger::Diagnostics
+                | PredictEditsRequestTrigger::DiagnosticNavigation => {
                     &mut project_state.last_jump_prediction_refresh
                 }
                 _ => &mut project_state.last_edit_prediction_refresh,
@@ -2530,9 +2565,12 @@ impl EditPredictionStore {
             }
 
             let new_prediction_result = do_refresh(this.clone(), cx).await.log_err().flatten();
-            let new_prediction_metadata = new_prediction_result
-                .as_ref()
-                .map(|(prediction, _)| (prediction.id.clone(), prediction.model_version.clone()));
+            let new_prediction_metadata = new_prediction_result.as_ref().map(|(result, _)| {
+                (
+                    result.prediction.id.clone(),
+                    result.prediction.model_version.clone(),
+                )
+            });
 
             // When a prediction completes, remove it from the pending list, and cancel
             // any pending predictions that were enqueued before it.
@@ -2546,53 +2584,72 @@ impl EditPredictionStore {
                 let new_current_prediction = if !is_cancelled
                     && let Some((prediction_result, requested_by)) = new_prediction_result
                 {
-                    match prediction_result.prediction {
-                        Ok(prediction) => {
-                            let new_prediction = CurrentEditPrediction {
-                                requested_by,
-                                prediction,
-                                was_shown: false,
-                                shown_with: None,
-                                e2e_latency: prediction_result.e2e_latency,
-                            };
+                    let EditPredictionResult {
+                        prediction,
+                        reject_reason,
+                        e2e_latency,
+                    } = prediction_result;
 
-                            if let Some(current_prediction) =
-                                project_state.current_prediction.as_ref()
+                    if let Some(reject_reason) = reject_reason {
+                        let should_allow_rating_prediction = matches!(
+                            reject_reason,
+                            EditPredictionRejectReason::Empty
+                                | EditPredictionRejectReason::InterpolatedEmpty
+                        );
+                        let prediction_id = prediction.id.clone();
+                        let model_version = prediction.model_version.clone();
+
+                        this.reject_prediction(
+                            prediction_id,
+                            reject_reason,
+                            false,
+                            model_version,
+                            Some(e2e_latency),
+                            cx,
+                        );
+
+                        if should_allow_rating_prediction {
+                            this.rateable_predictions.push_front(prediction);
+                            if this.rateable_predictions.len() > 50
+                                && let Some(completion) = this.rateable_predictions.pop_back()
                             {
-                                if new_prediction.should_replace_prediction(&current_prediction, cx)
-                                {
-                                    this.reject_current_prediction(
-                                        EditPredictionRejectReason::Replaced,
-                                        &project,
-                                        cx,
-                                    );
-
-                                    Some(new_prediction)
-                                } else {
-                                    this.reject_prediction(
-                                        new_prediction.prediction.id,
-                                        EditPredictionRejectReason::CurrentPreferred,
-                                        false,
-                                        new_prediction.prediction.model_version,
-                                        Some(new_prediction.e2e_latency),
-                                        cx,
-                                    );
-                                    None
-                                }
-                            } else {
-                                Some(new_prediction)
+                                this.rated_predictions.remove(&completion.id);
                             }
                         }
-                        Err(reject_reason) => {
-                            this.reject_prediction(
-                                prediction_result.id,
-                                reject_reason,
-                                false,
-                                prediction_result.model_version,
-                                Some(prediction_result.e2e_latency),
-                                cx,
-                            );
-                            None
+
+                        None
+                    } else {
+                        let new_prediction = CurrentEditPrediction {
+                            requested_by,
+                            prediction,
+                            was_shown: false,
+                            shown_with: None,
+                            e2e_latency,
+                        };
+
+                        if let Some(current_prediction) = project_state.current_prediction.as_ref()
+                        {
+                            if new_prediction.should_replace_prediction(&current_prediction, cx) {
+                                this.reject_current_prediction(
+                                    EditPredictionRejectReason::Replaced,
+                                    &project,
+                                    cx,
+                                );
+
+                                Some(new_prediction)
+                            } else {
+                                this.reject_prediction(
+                                    new_prediction.prediction.id,
+                                    EditPredictionRejectReason::CurrentPreferred,
+                                    false,
+                                    new_prediction.prediction.model_version,
+                                    Some(new_prediction.e2e_latency),
+                                    cx,
+                                );
+                                None
+                            }
+                        } else {
+                            Some(new_prediction)
                         }
                     }
                 } else {
@@ -2769,7 +2826,8 @@ impl EditPredictionStore {
                         inputs.snapshot.clone(),
                         inputs.position,
                         match trigger {
-                            PredictEditsRequestTrigger::Diagnostics => {
+                            PredictEditsRequestTrigger::Diagnostics
+                            | PredictEditsRequestTrigger::DiagnosticNavigation => {
                                 JumpExampleTrigger::Diagnostic
                             }
                             _ => JumpExampleTrigger::Prediction,
@@ -2802,7 +2860,11 @@ impl EditPredictionStore {
             if prediction.is_none()
                 && allow_jump
                 && has_events
-                && !matches!(trigger, PredictEditsRequestTrigger::Diagnostics)
+                && !matches!(
+                    trigger,
+                    PredictEditsRequestTrigger::Diagnostics
+                        | PredictEditsRequestTrigger::DiagnosticNavigation
+                )
             {
                 this.update(cx, |this, cx| {
                     this.refresh_prediction_from_diagnostics(
@@ -3019,6 +3081,9 @@ impl EditPredictionStore {
     where
         Res: DeserializeOwned,
     {
+        let organization_id =
+            organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
+
         let response = client
             .authenticated_llm_request(&llm_token, organization_id, |token| {
                 build(
@@ -3247,12 +3312,12 @@ impl EditPredictionStore {
             })
     }
 
-    pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
-        self.shown_predictions.iter()
+    pub fn rateable_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
+        self.rateable_predictions.iter()
     }
 
-    pub fn shown_completions_len(&self) -> usize {
-        self.shown_predictions.len()
+    pub fn rateable_predictions_count(&self) -> usize {
+        self.rateable_predictions.len()
     }
 
     pub fn is_prediction_rated(&self, id: &EditPredictionId) -> bool {

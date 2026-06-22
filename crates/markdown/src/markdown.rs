@@ -16,6 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
+use smallvec::SmallVec;
 use theme_settings::ThemeSettings;
 use util::maybe;
 
@@ -36,7 +37,7 @@ use gpui::{
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, actions, img, point, quad,
+    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -108,9 +109,11 @@ pub struct MarkdownStyle {
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
+    pub heading_border_color: Option<Hsla>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
+    pub soft_break_as_hard_break: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -131,9 +134,11 @@ impl Default for MarkdownStyle {
             selection_background_color: Default::default(),
             heading: Default::default(),
             heading_level_styles: None,
+            heading_border_color: None,
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
+            soft_break_as_hard_break: false,
         }
     }
 }
@@ -188,8 +193,6 @@ impl MarkdownStyle {
             theme_settings.buffer_font.family.clone()
         };
 
-        let text_color = colors.text;
-
         let mut text_style = window.text_style();
         let line_height = buffer_font_size * 1.75;
 
@@ -199,11 +202,11 @@ impl MarkdownStyle {
             font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
             line_height: Some(line_height.into()),
-            color: Some(text_color),
+            color: Some(colors.text),
             ..Default::default()
         });
 
-        MarkdownStyle {
+        let style = MarkdownStyle {
             base_text_style: text_style.clone(),
             syntax: syntax.clone(),
             selection_background_color: colors.element_selection_background,
@@ -271,6 +274,7 @@ impl MarkdownStyle {
                 }),
                 ..Default::default()
             },
+            soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
             heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
                 HeadingLevelStyles {
                     h1: Some(TextStyleRefinement {
@@ -300,7 +304,54 @@ impl MarkdownStyle {
                 },
             ),
             ..Default::default()
+        };
+
+        if is_preview {
+            style.with_preview_overrides(ui_font_size, colors)
+        } else {
+            style
         }
+    }
+
+    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
+        let body_font_size = ui_font_size * 0.92;
+        self.base_text_style.font_size = body_font_size.into();
+        self.container_style.text.font_size = Some(body_font_size.into());
+
+        self.base_text_style.color = colors.text_muted.blend(colors.text.opacity(0.25));
+        self.inline_code.color = Some(colors.text);
+        self.heading.text.color = Some(colors.text);
+
+        self.heading_level_styles = Some(HeadingLevelStyles {
+            h1: Some(TextStyleRefinement {
+                font_size: Some(rems(1.45).into()),
+                ..Default::default()
+            }),
+            h2: Some(TextStyleRefinement {
+                font_size: Some(rems(1.3).into()),
+                ..Default::default()
+            }),
+            h3: Some(TextStyleRefinement {
+                font_size: Some(rems(1.1).into()),
+                ..Default::default()
+            }),
+            h4: Some(TextStyleRefinement {
+                font_size: Some(rems(1.01).into()),
+                ..Default::default()
+            }),
+            h5: Some(TextStyleRefinement {
+                font_size: Some(rems(0.95).into()),
+                ..Default::default()
+            }),
+            h6: Some(TextStyleRefinement {
+                font_size: Some(rems(0.85).into()),
+                ..Default::default()
+            }),
+        });
+
+        self.heading_border_color = Some(colors.border_variant);
+
+        self
     }
 
     pub fn with_buffer_font(mut self, cx: &App) -> Self {
@@ -564,11 +615,13 @@ impl Markdown {
         }
     }
 
-    fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
-        self.code_block_scroll_handles
-            .entry(id)
-            .or_insert_with(ScrollHandle::new)
-            .clone()
+    fn code_block_scroll_handle(&mut self, id: usize) -> Option<ScrollHandle> {
+        (!self.is_code_block_wrapped(id)).then(|| {
+            self.code_block_scroll_handles
+                .entry(id)
+                .or_insert_with(ScrollHandle::new)
+                .clone()
+        })
     }
 
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
@@ -641,7 +694,7 @@ impl Markdown {
         }
     }
 
-    pub fn source(&self) -> &str {
+    pub fn source(&self) -> &SharedString {
         &self.source
     }
 
@@ -709,7 +762,7 @@ impl Markdown {
     }
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
-        if source == self.source() {
+        if &source == self.source() {
             return;
         }
         self.source = source;
@@ -760,8 +813,14 @@ impl Markdown {
         active: Option<usize>,
         cx: &mut Context<Self>,
     ) {
+        debug_assert!(
+            highlights
+                .windows(2)
+                .all(|ranges| (ranges[0].start, ranges[0].end) <= (ranges[1].start, ranges[1].end))
+        );
         self.search_highlights = highlights;
-        self.active_search_highlight = active;
+        self.active_search_highlight =
+            active.filter(|active| *active < self.search_highlights.len());
         cx.notify();
     }
 
@@ -774,6 +833,7 @@ impl Markdown {
     }
 
     pub fn set_active_search_highlight(&mut self, active: Option<usize>, cx: &mut Context<Self>) {
+        let active = active.filter(|active| *active < self.search_highlights.len());
         if self.active_search_highlight != active {
             self.active_search_highlight = active;
             cx.notify();
@@ -1262,7 +1322,11 @@ impl MarkdownElement {
             builder.pop_text_style();
             builder.pop_text_style();
         } else {
-            builder.push_text_style(self.style.inline_code.clone());
+            let mut code_style = self.style.inline_code.clone();
+            if builder.link_depth > 0 {
+                code_style.color = self.style.link.color.or(code_style.color);
+            }
+            builder.push_text_style(code_style);
             builder.push_text(text, range);
             builder.pop_text_style();
         }
@@ -1334,7 +1398,12 @@ impl MarkdownElement {
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mt_4().mb_2();
-        heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+        heading = apply_heading_style(
+            heading,
+            level,
+            self.style.heading_level_styles.as_ref(),
+            self.style.heading_border_color,
+        );
 
         heading = match align {
             TextAlign::Center => heading.text_center(),
@@ -1585,19 +1654,27 @@ impl MarkdownElement {
         let active_index = markdown.active_search_highlight;
         let colors = cx.theme().colors();
 
-        for (i, highlight_range) in markdown.search_highlights.iter().enumerate() {
-            let color = if Some(i) == active_index {
+        let highlight_bounds = rendered_text.bounds_for_sorted_source_ranges(
+            markdown
+                .search_highlights
+                .iter()
+                .enumerate()
+                .map(|(ix, range)| (ix, range.clone())),
+        );
+        for (highlight_ix, bounds) in highlight_bounds {
+            let color = if Some(highlight_ix) == active_index {
                 colors.search_active_match_background
             } else {
                 colors.search_match_background
             };
-            Self::paint_highlight_range(
-                highlight_range.start,
-                highlight_range.end,
+            window.paint_quad(quad(
+                bounds,
+                Pixels::ZERO,
                 color,
-                rendered_text,
-                window,
-            );
+                Edges::default(),
+                Hsla::transparent_black(),
+                BorderStyle::default(),
+            ));
         }
     }
 
@@ -2087,13 +2164,15 @@ impl Element for MarkdownElement {
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
                             let scroll_handle = if self.style.code_block_overflow_x_scroll {
-                                code_block_ids.insert(range.start);
-                                Some(self.markdown.update(cx, |markdown, _| {
+                                self.markdown.update(cx, |markdown, _| {
                                     markdown.code_block_scroll_handle(range.start)
-                                }))
+                                })
                             } else {
                                 None
                             };
+                            if scroll_handle.is_some() {
+                                code_block_ids.insert(range.start);
+                            }
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
@@ -2133,18 +2212,11 @@ impl Element for MarkdownElement {
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
-                                    let is_wrapped =
-                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
-
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
                                         .map(|mut code_block| {
-                                            if is_wrapped {
-                                                code_block.w_full()
-                                            } else if let Some(scroll_handle) =
-                                                scroll_handle.as_ref()
-                                            {
+                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
                                                 code_block
@@ -2221,6 +2293,7 @@ impl Element for MarkdownElement {
                         }),
                         MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
                             font_weight: Some(FontWeight::BOLD),
+                            color: Some(cx.theme().colors().text),
                             ..Default::default()
                         }),
                         MarkdownTag::Strikethrough => {
@@ -2424,7 +2497,7 @@ impl Element for MarkdownElement {
                                         == WrapButtonVisibility::AlwaysVisible;
                                 let use_hover = any_hover && !any_always;
 
-                                let mut button_row = h_flex()
+                                let button_row = h_flex()
                                     .gap_0p5()
                                     .absolute()
                                     .bg(cx.theme().colors().editor_background)
@@ -2434,25 +2507,32 @@ impl Element for MarkdownElement {
                                             this.top_1().right_1().visible_on_hover("code_block")
                                         },
                                         |this| this.top_1p5().right_1p5(),
+                                    )
+                                    .when(
+                                        wrap_button_visibility != WrapButtonVisibility::Hidden,
+                                        |this| {
+                                            let is_wrapped = self
+                                                .markdown
+                                                .read(cx)
+                                                .is_code_block_wrapped(range.start);
+
+                                            this.child(render_wrap_code_block_button(
+                                                range.start,
+                                                is_wrapped,
+                                                self.markdown.clone(),
+                                            ))
+                                        },
+                                    )
+                                    .when(
+                                        copy_button_visibility != CopyButtonVisibility::Hidden,
+                                        |this| {
+                                            this.child(render_copy_code_block_button(
+                                                range.end,
+                                                code,
+                                                self.markdown.clone(),
+                                            ))
+                                        },
                                     );
-
-                                if wrap_button_visibility != WrapButtonVisibility::Hidden {
-                                    let is_wrapped =
-                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
-                                    button_row = button_row.child(render_wrap_code_block_button(
-                                        range.start,
-                                        is_wrapped,
-                                        self.markdown.clone(),
-                                    ));
-                                }
-
-                                if copy_button_visibility != CopyButtonVisibility::Hidden {
-                                    button_row = button_row.child(render_copy_code_block_button(
-                                        range.end,
-                                        code,
-                                        self.markdown.clone(),
-                                    ));
-                                }
 
                                 el.child(button_row)
                             });
@@ -2567,7 +2647,13 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
+                MarkdownEvent::SoftBreak => {
+                    if self.style.soft_break_as_hard_break {
+                        builder.push_text("\n", range.clone())
+                    } else {
+                        builder.push_text(" ", range.clone())
+                    }
+                }
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
@@ -2695,6 +2781,7 @@ fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
     custom_styles: Option<&HeadingLevelStyles>,
+    border_color: Option<Hsla>,
 ) -> Div {
     heading = match level {
         pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
@@ -2704,6 +2791,22 @@ fn apply_heading_style(
         pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
         pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
     };
+
+    heading = match level {
+        pulldown_cmark::HeadingLevel::H1 => heading,
+        _ => heading.mt_6(),
+    };
+
+    if let Some(border_color) = border_color
+        && matches!(
+            level,
+            pulldown_cmark::HeadingLevel::H1
+                | pulldown_cmark::HeadingLevel::H2
+                | pulldown_cmark::HeadingLevel::H3
+        )
+    {
+        heading = heading.pb_1().border_b_1().border_color(border_color);
+    }
 
     if let Some(styles) = custom_styles {
         let style_opt = match level {
@@ -3477,6 +3580,13 @@ struct RenderedText {
     footnote_refs: Rc<[RenderedFootnoteRef]>,
 }
 
+struct WrappedLineSegment {
+    start: usize,
+    end: usize,
+    row_top: Pixels,
+    layout: Arc<WrappedLineLayout>,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
@@ -3491,81 +3601,158 @@ struct RenderedFootnoteRef {
 
 impl RenderedText {
     fn bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
+        self.bounds_for_sorted_source_ranges([(0, range)])
+            .into_iter()
+            .map(|(_, bounds)| bounds)
+            .collect()
+    }
+
+    fn bounds_for_sorted_source_ranges(
+        &self,
+        ranges: impl IntoIterator<Item = (usize, Range<usize>)>,
+    ) -> Vec<(usize, Bounds<Pixels>)> {
+        let ranges = ranges.into_iter().collect::<Vec<_>>();
         let mut all_bounds = Vec::new();
+        let mut first_possible_range_ix = 0;
 
         for line in self.lines.iter() {
             let line_source_start = line.source_mappings.first().unwrap().source_index;
-            if line_source_start >= range.end {
-                break;
+            while ranges
+                .get(first_possible_range_ix)
+                .is_some_and(|(_, range)| range.end <= line_source_start)
+            {
+                first_possible_range_ix += 1;
             }
-            if line.source_end <= range.start {
+
+            let Some((_, first_possible_range)) = ranges.get(first_possible_range_ix) else {
+                break;
+            };
+            if first_possible_range.start >= line.source_end {
                 continue;
             }
 
-            let layout = &line.layout;
-            let line_bounds = layout.bounds();
-            let line_height = layout.line_height();
+            let wrapped_line_segments = Self::wrapped_line_segments(line);
+            if wrapped_line_segments.is_empty() {
+                continue;
+            }
 
-            let rendered_start =
-                line.rendered_index_for_source_index(range.start.max(line_source_start));
-            let rendered_end = line.rendered_index_for_source_index(range.end.min(line.source_end));
-
-            let mut wrapped_line_start = 0;
-            let mut row_top = line_bounds.top();
-
-            while wrapped_line_start < rendered_end {
-                let Some(wrapped_line) = layout.line_layout_for_index(wrapped_line_start) else {
+            let mut range_ix = first_possible_range_ix;
+            while let Some((highlight_ix, range)) = ranges.get(range_ix) {
+                if range.start >= line.source_end {
                     break;
-                };
-
-                let unwrapped_layout = &wrapped_line.unwrapped_layout;
-                let wrapped_line_end = wrapped_line_start + wrapped_line.len();
-
-                let row_ends = wrapped_line
-                    .wrap_boundaries()
-                    .iter()
-                    .map(|wrap_boundary| {
-                        let glyph = &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs
-                            [wrap_boundary.glyph_ix];
-                        (wrapped_line_start + glyph.index, glyph.position.x)
-                    })
-                    .chain([(wrapped_line_end, unwrapped_layout.width)]);
-
-                let mut row_start = wrapped_line_start;
-                let mut row_start_x = Pixels::ZERO;
-
-                for (row_end, row_end_x) in row_ends {
-                    let selection_start = rendered_start.max(row_start);
-                    let selection_end = rendered_end.min(row_end);
-
-                    if selection_start < selection_end {
-                        let alignment_offset = line.alignment_offset_for_segment(
-                            line_bounds.size.width,
-                            row_start_x,
-                            row_end_x,
-                        );
-                        let x_for_index = |index| {
-                            line_bounds.left()
-                                + alignment_offset
-                                + unwrapped_layout.x_for_index(index - wrapped_line_start)
-                                - row_start_x
-                        };
-                        all_bounds.push(Bounds::from_corners(
-                            point(x_for_index(selection_start), row_top),
-                            point(x_for_index(selection_end), row_top + line_height),
-                        ));
-                    }
-
-                    row_start = row_end;
-                    row_start_x = row_end_x;
-                    row_top += line_height;
                 }
-
-                wrapped_line_start = wrapped_line_end + 1;
+                Self::push_bounds_for_line_source_range(
+                    &mut all_bounds,
+                    *highlight_ix,
+                    line,
+                    &wrapped_line_segments,
+                    range.start.max(line_source_start)..range.end.min(line.source_end),
+                );
+                range_ix += 1;
             }
         }
 
         all_bounds
+    }
+
+    fn wrapped_line_segments(line: &RenderedLine) -> SmallVec<[WrappedLineSegment; 1]> {
+        let layout = &line.layout;
+        let line_height = layout.line_height();
+        let mut row_top = layout.bounds().top();
+        let mut wrapped_line_start = 0;
+        let mut segments = SmallVec::new();
+
+        for wrapped_line in layout.line_layouts() {
+            let wrapped_line_end = wrapped_line_start + wrapped_line.len();
+            let wrapped_line_height = wrapped_line.size(line_height).height;
+            segments.push(WrappedLineSegment {
+                start: wrapped_line_start,
+                end: wrapped_line_end,
+                row_top,
+                layout: wrapped_line,
+            });
+            row_top += wrapped_line_height;
+            wrapped_line_start = wrapped_line_end + 1;
+        }
+
+        segments
+    }
+
+    fn push_bounds_for_line_source_range(
+        all_bounds: &mut Vec<(usize, Bounds<Pixels>)>,
+        highlight_ix: usize,
+        line: &RenderedLine,
+        wrapped_line_segments: &[WrappedLineSegment],
+        range: Range<usize>,
+    ) {
+        if range.start >= range.end {
+            return;
+        }
+
+        let layout = &line.layout;
+        let line_bounds = layout.bounds();
+        let line_height = layout.line_height();
+
+        let rendered_start = line.rendered_index_for_source_index(range.start);
+        let rendered_end = line.rendered_index_for_source_index(range.end);
+
+        for wrapped_line_segment in wrapped_line_segments {
+            if wrapped_line_segment.start >= rendered_end {
+                break;
+            }
+            if wrapped_line_segment.end <= rendered_start {
+                continue;
+            }
+
+            let wrapped_line = &wrapped_line_segment.layout;
+            let unwrapped_layout = &wrapped_line.unwrapped_layout;
+            let wrapped_line_start = wrapped_line_segment.start;
+            let wrapped_line_end = wrapped_line_segment.end;
+            let mut row_top = wrapped_line_segment.row_top;
+
+            let row_ends = wrapped_line
+                .wrap_boundaries()
+                .iter()
+                .map(|wrap_boundary| {
+                    let glyph =
+                        &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
+                    (wrapped_line_start + glyph.index, glyph.position.x)
+                })
+                .chain([(wrapped_line_end, unwrapped_layout.width)]);
+
+            let mut row_start = wrapped_line_start;
+            let mut row_start_x = Pixels::ZERO;
+
+            for (row_end, row_end_x) in row_ends {
+                let selection_start = rendered_start.max(row_start);
+                let selection_end = rendered_end.min(row_end);
+
+                if selection_start < selection_end {
+                    let alignment_offset = line.alignment_offset_for_segment(
+                        line_bounds.size.width,
+                        row_start_x,
+                        row_end_x,
+                    );
+                    let x_for_index = |index| {
+                        line_bounds.left()
+                            + alignment_offset
+                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
+                            - row_start_x
+                    };
+                    all_bounds.push((
+                        highlight_ix,
+                        Bounds::from_corners(
+                            point(x_for_index(selection_start), row_top),
+                            point(x_for_index(selection_end), row_top + line_height),
+                        ),
+                    ));
+                }
+
+                row_start = row_end;
+                row_start_x = row_end_x;
+                row_top += line_height;
+            }
+        }
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
@@ -3800,6 +3987,42 @@ mod tests {
 
     fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
         render_markdown_with_language_registry(markdown, None, cx)
+    }
+
+    #[gpui::test]
+    fn test_active_search_highlight_uses_match_index(cx: &mut TestAppContext) {
+        let markdown = cx.new(|cx| Markdown::new("zero one two".into(), None, None, cx));
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![0..4, 5..8, 9..12], Some(0), cx);
+            assert_eq!(markdown.search_highlights(), &[0..4, 5..8, 9..12]);
+            assert_eq!(markdown.active_search_highlight(), Some(0));
+
+            markdown.set_active_search_highlight(Some(1), cx);
+            assert_eq!(markdown.active_search_highlight(), Some(1));
+
+            markdown.set_active_search_highlight(Some(2), cx);
+            assert_eq!(markdown.active_search_highlight(), Some(2));
+
+            markdown.set_active_search_highlight(Some(3), cx);
+            assert_eq!(markdown.active_search_highlight(), None);
+        });
+    }
+
+    #[gpui::test]
+    fn test_wrapped_code_block_has_no_scroll_handle(cx: &mut TestAppContext) {
+        let markdown =
+            cx.new(|cx| Markdown::new("```rust\nlet value = 1;\n```".into(), None, None, cx));
+
+        markdown.update(cx, |markdown, _| {
+            assert!(markdown.code_block_scroll_handle(0).is_some());
+
+            markdown.toggle_code_block_wrap(0);
+            assert!(markdown.code_block_scroll_handle(0).is_none());
+
+            markdown.toggle_code_block_wrap(0);
+            assert!(markdown.code_block_scroll_handle(0).is_some());
+        });
     }
 
     #[gpui::test]

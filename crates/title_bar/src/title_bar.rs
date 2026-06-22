@@ -24,7 +24,6 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_api_types::Plan;
 use command_palette_hooks::CommandPaletteFilter;
 
 use gpui::{
@@ -269,13 +268,18 @@ impl Render for TitleBar {
                 };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    let name = if let Ok(relative) =
-                        worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
-                    {
-                        if relative.as_os_str().is_empty() {
-                            repo_name.to_string()
+                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let name = if visible_worktrees_in_repo == 1 {
+                        if let Ok(relative) =
+                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        {
+                            if relative.as_os_str().is_empty() {
+                                repo_name.to_string()
+                            } else {
+                                format!("{}/{}", repo_name, relative.display())
+                            }
                         } else {
-                            format!("{}/{}", repo_name, relative.display())
+                            repo_name.to_string()
                         }
                     } else {
                         repo_name.to_string()
@@ -362,7 +366,7 @@ impl Render for TitleBar {
                 })
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .children(self.render_call_controls(window, cx))
+                .child(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .child(self.update_version.clone())
                 .when(
@@ -575,6 +579,22 @@ impl TitleBar {
             .cloned()
     }
 
+    fn visible_worktrees_in_repository(
+        &self,
+        repository: &project::git_store::Repository,
+        cx: &App,
+    ) -> usize {
+        let repo_path = &repository.work_directory_abs_path;
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter(|worktree| {
+                let worktree_path = worktree.read(cx).abs_path();
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+            })
+            .count()
+    }
+
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
 
@@ -631,7 +651,7 @@ impl TitleBar {
                     Some(recent_projects::RemoteServerProjects::popover(
                         fs,
                         workspace.clone(),
-                        false,
+                        None,
                         window,
                         cx,
                     ))
@@ -658,10 +678,7 @@ impl TitleBar {
                     move |_window, cx| {
                         Tooltip::with_meta(
                             tooltip_title,
-                            Some(&OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            }),
+                            Some(&OpenRemote::default()),
                             meta.clone(),
                             cx,
                         )
@@ -817,7 +834,7 @@ impl TitleBar {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
                     window_project_groups.clone(),
-                    false,
+                    None,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -836,13 +853,7 @@ impl TitleBar {
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &zed_actions::OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
+                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
                 },
             )
             .anchor(gpui::Anchor::TopLeft)
@@ -874,7 +885,7 @@ impl TitleBar {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
                     window_project_groups.clone(),
-                    false,
+                    None,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -893,13 +904,7 @@ impl TitleBar {
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .when(!is_project_selected, |s| s.color(Color::Muted)),
                 move |_window, cx| {
-                    Tooltip::for_action(
-                        "Recent Projects",
-                        &zed_actions::OpenRecent {
-                            create_new_window: false,
-                        },
-                        cx,
-                    )
+                    Tooltip::for_action("Recent Projects", &zed_actions::OpenRecent::default(), cx)
                 },
             )
             .anchor(gpui::Anchor::TopLeft)
@@ -1208,32 +1213,24 @@ impl TitleBar {
 
         let user_store = self.user_store.clone();
         let workspace = self.workspace.clone();
-        let user_store_read = user_store.read(cx);
-        let user = user_store_read.current_user();
+        let user = user_store.read(cx).current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
         let user_login = user.as_ref().map(|u| u.github_login.clone());
 
         let is_signed_in = user.is_some();
 
-        let has_subscription_period = user_store_read.subscription_period().is_some();
-        let plan = user_store_read.plan().filter(|_| {
-            // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
-            has_subscription_period
-        });
-
-        let has_organization = user_store_read.current_organization().is_some();
-
-        let current_organization = user_store_read.current_organization();
+        let current_organization = user_store.read(cx).current_organization();
         let business_organization = current_organization
             .as_ref()
             .filter(|organization| !organization.is_personal);
-        let organizations: Vec<_> = user_store_read
+        let organizations: Vec<_> = user_store
+            .read(cx)
             .organizations()
             .iter()
-            .map(|org| {
-                let plan = user_store_read.plan_for_organization(&org.id);
-                (org.clone(), plan)
+            .map(|organization| {
+                let plan = user_store.read(cx).plan_for_organization(&organization.id);
+                (organization.clone(), plan)
             })
             .collect();
 
@@ -1254,7 +1251,7 @@ impl TitleBar {
                 }
             });
 
-            ButtonLike::new("user-menu").child(
+            ButtonLike::new("user-menu").aria_label("User menu").child(
                 h_flex()
                     .when_some(business_organization, |this, organization| {
                         this.gap_2()
@@ -1264,6 +1261,7 @@ impl TitleBar {
             )
         } else {
             ButtonLike::new("user-menu")
+                .aria_label("User menu")
                 .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
         };
 
@@ -1293,9 +1291,6 @@ impl TitleBar {
                                     .w_full()
                                     .justify_between()
                                     .child(Label::new(user_login))
-                                    .when(!has_organization, |parent| {
-                                        parent.child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
-                                    })
                                     .into_any_element()
                             },
                             move |_, cx| {
@@ -1325,7 +1320,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .when(has_organization, |this| {
+                    .map(|this| {
                         let mut this = this.header("Organization");
 
                         for (organization, plan) in &organizations {

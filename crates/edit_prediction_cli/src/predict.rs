@@ -72,7 +72,7 @@ pub async fn run_prediction(
             example,
             app_state.clone(),
             example_progress,
-            ContextRetrievalType::Lsp,
+            vec![ContextRetrievalType::Lsp],
             false,
             cx.clone(),
         )
@@ -123,7 +123,7 @@ pub async fn run_prediction(
         example,
         app_state.clone(),
         example_progress,
-        ContextRetrievalType::Lsp,
+        vec![ContextRetrievalType::Lsp],
         false,
         cx.clone(),
     )
@@ -302,7 +302,7 @@ pub async fn run_prediction(
             .await?;
 
         let actual_patch = prediction.and_then(|prediction| {
-            let prediction = prediction.prediction.ok()?;
+            let prediction = prediction.prediction;
             prediction
                 .edit_preview
                 .as_unified_diff(prediction.snapshot.file(), &prediction.edits)

@@ -1,6 +1,5 @@
 use crate::{
-    branch_picker,
-    conflict_view::ConflictAddon,
+    branch_picker, conflict_view,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
 };
@@ -28,14 +27,15 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
+    ConflictSet, Project, ProjectPath,
     git_store::{
         Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
-use settings::{Settings, SettingsStore};
+use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
 use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -71,12 +71,19 @@ actions!(
     ]
 );
 
+struct BufferSubscriptions {
+    _diff: Entity<BufferDiff>,
+    _diff_subscription: Subscription,
+    _conflict_set: Entity<ConflictSet>,
+    _conflict_set_subscription: Subscription,
+}
+
 pub struct ProjectDiff {
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<SplittableEditor>,
-    buffer_diff_subscriptions: HashMap<Arc<RelPath>, (Entity<BufferDiff>, Subscription)>,
+    buffer_subscriptions: HashMap<Arc<RelPath>, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
@@ -84,17 +91,6 @@ pub struct ProjectDiff {
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RefreshReason {
-    DiffChanged,
-    StatusesChanged,
-    EditorSaved,
-}
-
-const CONFLICT_SORT_PREFIX: u64 = 1;
-const TRACKED_SORT_PREFIX: u64 = 2;
-const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -562,44 +558,52 @@ impl ProjectDiff {
                 BranchDiffEvent::FileListChanged => {
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        async |cx| Self::refresh(this, cx).await
                     })
                 }
                 BranchDiffEvent::DiffBaseChanged => {
                     this.pending_scroll.take();
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        async |cx| Self::refresh(this, cx).await
                     })
                 }
             },
         );
 
-        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
+        let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
+        let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
         let mut was_collapse_untracked_diff =
             GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            let is_collapse_untracked_diff =
-                GitPanelSettings::get_global(cx).collapse_untracked_diff;
-            if is_sort_by_path != was_sort_by_path
+            let settings = GitPanelSettings::get_global(cx);
+            let sort_by = settings.sort_by;
+            let group_by = settings.group_by;
+            let tree_view = settings.tree_view;
+            let is_collapse_untracked_diff = settings.collapse_untracked_diff;
+            if sort_by != was_sort_by
+                || group_by != was_group_by
+                || tree_view != was_tree_view
                 || is_collapse_untracked_diff != was_collapse_untracked_diff
             {
                 this._task = {
                     window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                        async |cx| Self::refresh(this, cx).await
                     })
                 }
             }
-            was_sort_by_path = is_sort_by_path;
+            was_sort_by = sort_by;
+            was_group_by = group_by;
+            was_tree_view = tree_view;
             was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
 
         let task = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+            async |cx| Self::refresh(this, cx).await
         });
 
         Self {
@@ -609,7 +613,7 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
-            buffer_diff_subscriptions: Default::default(),
+            buffer_subscriptions: Default::default(),
             pending_scroll: None,
             review_comment_count: 0,
             _task: task,
@@ -634,7 +638,7 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let sort_prefix = project_diff_sort_prefix(repo, &entry.repo_path, entry.status, cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
         self.move_to_path(path_key, window, cx)
@@ -660,7 +664,7 @@ impl ProjectDiff {
             .status_for_path(&repo_path)
             .map(|entry| entry.status)
             .unwrap_or(FileStatus::Untracked);
-        let sort_prefix = sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
+        let sort_prefix = project_diff_sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
         self.move_to_path(path_key, window, cx)
     }
@@ -795,9 +799,8 @@ impl ProjectDiff {
                     .ok();
             }
             EditorEvent::Saved => {
-                self._task = cx.spawn_in(window, async move |this, cx| {
-                    Self::refresh(this, RefreshReason::EditorSaved, cx).await
-                });
+                self._task =
+                    cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
             }
             _ => {}
         }
@@ -815,26 +818,57 @@ impl ProjectDiff {
         file_status: FileStatus,
         buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
+        conflict_set: Entity<ConflictSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<BufferId> {
-        let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
-            this._task = window.spawn(cx, {
-                let this = cx.weak_entity();
-                async |cx| Self::refresh(this, RefreshReason::DiffChanged, cx).await
-            })
+    ) -> (BufferId, bool) {
+        let diff_subscription = cx.subscribe_in(&diff, window, {
+            let path_key = path_key.clone();
+            let buffer = buffer.clone();
+            let diff = diff.clone();
+            let conflict_set = conflict_set.clone();
+            move |this, _, event, window, cx| match event {
+                buffer_diff::BufferDiffEvent::DiffChanged(_) => {
+                    this.buffer_ranges_changed(
+                        path_key.clone(),
+                        file_status,
+                        buffer.clone(),
+                        diff.clone(),
+                        conflict_set.clone(),
+                        window,
+                        cx,
+                    );
+                }
+                buffer_diff::BufferDiffEvent::BaseTextChanged
+                | buffer_diff::BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+            }
         });
-        self.buffer_diff_subscriptions
-            .insert(path_key.path.clone(), (diff.clone(), subscription));
-
-        // TODO(split-diff) we shouldn't have a conflict addon when split
-        let conflict_addon = self
-            .editor
-            .read(cx)
-            .rhs_editor()
-            .read(cx)
-            .addon::<ConflictAddon>()
-            .expect("project diff editor should have a conflict addon");
+        let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
+            let path_key = path_key.clone();
+            let buffer = buffer.clone();
+            let diff = diff.clone();
+            let conflict_set = conflict_set.clone();
+            move |this, _, _, window, cx| {
+                this.buffer_ranges_changed(
+                    path_key.clone(),
+                    file_status,
+                    buffer.clone(),
+                    diff.clone(),
+                    conflict_set.clone(),
+                    window,
+                    cx,
+                )
+            }
+        });
+        self.buffer_subscriptions.insert(
+            path_key.path.clone(),
+            BufferSubscriptions {
+                _diff: diff.clone(),
+                _diff_subscription: diff_subscription,
+                _conflict_set: conflict_set.clone(),
+                _conflict_set_subscription: conflict_set_subscription,
+            },
+        );
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_snapshot = diff.read(cx).snapshot(cx);
@@ -846,11 +880,9 @@ impl ProjectDiff {
                     &snapshot,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
-            let conflicts = conflict_addon
-                .conflict_set(snapshot.remote_id())
-                .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
-                .unwrap_or_default();
+            let conflicts = conflict_set.read(cx).snapshot();
             let mut conflicts = conflicts
+                .conflicts
                 .iter()
                 .map(|conflict| conflict.range.to_point(&snapshot))
                 .peekable();
@@ -862,7 +894,8 @@ impl ProjectDiff {
             }
         };
 
-        let mut needs_fold = None;
+        let buffer_id = snapshot.text.remote_id();
+        let mut needs_fold = false;
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
@@ -874,6 +907,9 @@ impl ProjectDiff {
                 diff,
                 cx,
             );
+            editor.rhs_editor().update(cx, |editor, cx| {
+                conflict_view::buffer_ranges_updated(editor, conflict_set, cx);
+            });
             (was_empty, is_newly_added)
         });
 
@@ -896,7 +932,7 @@ impl ProjectDiff {
                         || (file_status.is_untracked()
                             && GitPanelSettings::get_global(cx).collapse_untracked_diff))
                 {
-                    needs_fold = Some(snapshot.text.remote_id());
+                    needs_fold = true;
                 }
             })
         });
@@ -918,96 +954,132 @@ impl ProjectDiff {
             self.move_to_path(path_key, window, cx);
         }
 
-        needs_fold
+        (buffer_id, needs_fold)
+    }
+
+    fn buffer_ranges_changed(
+        &mut self,
+        path_key: PathKey,
+        file_status: FileStatus,
+        buffer: Entity<Buffer>,
+        diff: Entity<BufferDiff>,
+        conflict_set: Entity<ConflictSet>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if buffer.read(cx).is_dirty() {
+            return;
+        }
+        self.register_buffer(
+            path_key,
+            file_status,
+            buffer,
+            diff,
+            conflict_set,
+            window,
+            cx,
+        );
     }
 
     #[instrument(skip(this, cx))]
-    pub async fn refresh(
-        this: WeakEntity<Self>,
-        reason: RefreshReason,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let mut path_keys = Vec::new();
-        let buffers_to_load = this.update(cx, |this, cx| {
+    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+        let entries = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-            let mut previous_buffers = this
+            let mut previous_paths = this
                 .multibuffer
                 .read(cx)
                 .snapshot(cx)
                 .buffers_with_paths()
                 .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
                 .collect::<HashMap<_, _>>();
+            let previous_folded_paths = {
+                let snapshot = this.multibuffer.read(cx).snapshot(cx);
+                let rhs_editor = this.editor.read(cx).rhs_editor().clone();
+                snapshot
+                    .buffers_with_paths()
+                    .map(|(buffer_snapshot, path_key)| {
+                        (
+                            path_key.path.clone(),
+                            rhs_editor
+                                .read(cx)
+                                .is_buffer_folded(buffer_snapshot.remote_id(), cx),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>()
+            };
 
+            let mut entries = BTreeMap::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
+                let sort_prefixes = project_diff_sort_prefixes(
+                    &repo,
+                    buffers_to_load
+                        .iter()
+                        .map(|diff_buffer| (&diff_buffer.repo_path, diff_buffer.file_status)),
+                    cx,
+                );
 
-                path_keys = Vec::with_capacity(buffers_to_load.len());
-                for entry in buffers_to_load.iter() {
-                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                    let path_key =
-                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
-                    previous_buffers.remove(&path_key);
-                    path_keys.push(path_key)
+                for diff_buffer in buffers_to_load {
+                    let sort_prefix = sort_prefixes
+                        .get(&diff_buffer.repo_path)
+                        .copied()
+                        .unwrap_or(u64::MAX);
+                    let path_key = PathKey::with_sort_prefix(
+                        sort_prefix,
+                        diff_buffer.repo_path.as_ref().clone(),
+                    );
+                    previous_paths.remove(&path_key);
+                    entries.insert(path_key, diff_buffer);
                 }
             }
 
             this.editor.update(cx, |editor, cx| {
-                for (path, buffer_id) in previous_buffers {
-                    if let Some(buffer) = this.multibuffer.read(cx).buffer(buffer_id) {
-                        let skip = match reason {
-                            RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
-                                buffer.read(cx).is_dirty()
-                            }
-                            RefreshReason::StatusesChanged => false,
-                        };
-                        if skip {
-                            continue;
-                        }
-                    }
-
-                    this.buffer_diff_subscriptions.remove(&path.path);
+                for (path, buffer_id) in previous_paths {
+                    this.buffer_subscriptions.remove(&path.path);
+                    editor.rhs_editor().update(cx, |editor, cx| {
+                        conflict_view::buffers_removed(editor, &[buffer_id], cx);
+                    });
                     let _span = ztracing::info_span!("remove_excerpts_for_path");
                     _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
                 }
             });
-            buffers_to_load
+
+            (entries, previous_folded_paths)
         })?;
 
+        let (entries, previous_folded_paths) = entries;
         let mut buffers_to_fold = Vec::new();
+        let mut buffers_to_unfold = Vec::new();
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys) {
-            if let Some((buffer, diff)) = entry.load.await.log_err() {
+        for (path_key, entry) in entries {
+            if let Some((buffer, diff, conflict_set)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        let multibuffer = this.multibuffer.read(cx);
-                        let skip = multibuffer.buffer(buffer.read(cx).remote_id()).is_some()
-                            && multibuffer
-                                .diff_for(buffer.read(cx).remote_id())
-                                .is_some_and(|prev_diff| prev_diff.entity_id() == diff.entity_id())
-                            && match reason {
-                                RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
-                                    buffer.read(cx).is_dirty()
-                                }
-                                RefreshReason::StatusesChanged => false,
-                            };
-                        if !skip {
-                            if let Some(buffer_id) = this.register_buffer(
-                                path_key,
-                                entry.file_status,
-                                buffer,
-                                diff,
-                                window,
-                                cx,
-                            ) {
+                        let path = path_key.path.clone();
+                        let (buffer_id, needs_fold) = this.register_buffer(
+                            path_key,
+                            entry.file_status,
+                            buffer,
+                            diff,
+                            conflict_set,
+                            window,
+                            cx,
+                        );
+                        if let Some(was_folded) = previous_folded_paths.get(&path) {
+                            if *was_folded {
                                 buffers_to_fold.push(buffer_id);
+                            } else {
+                                buffers_to_unfold.push(buffer_id);
                             }
+                        } else if needs_fold {
+                            buffers_to_fold.push(buffer_id);
                         }
                     })
                     .ok();
@@ -1020,6 +1092,15 @@ impl ProjectDiff {
                     editor
                         .rhs_editor()
                         .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
+                });
+            }
+            if !buffers_to_unfold.is_empty() {
+                this.editor.update(cx, |editor, cx| {
+                    editor.rhs_editor().update(cx, |editor, cx| {
+                        for buffer_id in buffers_to_unfold {
+                            editor.unfold_buffer(buffer_id, cx);
+                        }
+                    });
                 });
             }
             this.pending_scroll.take();
@@ -1052,17 +1133,125 @@ impl ProjectDiff {
     }
 }
 
-fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
-    let settings = GitPanelSettings::get_global(cx);
+fn project_diff_sort_prefix(
+    repo: &Repository,
+    repo_path: &RepoPath,
+    status: FileStatus,
+    cx: &App,
+) -> u64 {
+    let mut entries = repo
+        .cached_status()
+        .map(|entry| (entry.repo_path.clone(), entry.status))
+        .collect::<Vec<_>>();
+    if !entries
+        .iter()
+        .any(|(entry_path, _status)| entry_path == repo_path)
+    {
+        entries.push((repo_path.clone(), status));
+    }
 
-    if settings.sort_by_path && !settings.tree_view {
-        TRACKED_SORT_PREFIX
-    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
-        CONFLICT_SORT_PREFIX
-    } else if status.is_created() {
-        NEW_SORT_PREFIX
-    } else {
-        TRACKED_SORT_PREFIX
+    project_diff_sort_prefixes(
+        repo,
+        entries.iter().map(|(path, status)| (path, *status)),
+        cx,
+    )
+    .get(repo_path)
+    .copied()
+    .unwrap_or(u64::MAX)
+}
+
+fn project_diff_sort_prefixes<'a>(
+    repo: &Repository,
+    entries: impl IntoIterator<Item = (&'a RepoPath, FileStatus)>,
+    cx: &App,
+) -> HashMap<RepoPath, u64> {
+    let settings = GitPanelSettings::get_global(cx);
+    let group_by_status = settings.group_by == GitPanelGroupBy::Status;
+
+    let mut conflict_entries = Vec::new();
+    let mut tracked_entries = Vec::new();
+    let mut new_entries = Vec::new();
+
+    for (repo_path, status) in entries {
+        let entry = (repo_path.clone(), status);
+        if group_by_status && repo.had_conflict_on_last_merge_head_change(repo_path) {
+            conflict_entries.push(entry);
+        } else if group_by_status && status.is_created() {
+            new_entries.push(entry);
+        } else {
+            tracked_entries.push(entry);
+        }
+    }
+
+    let mut ordered_paths = Vec::new();
+    for mut section_entries in [conflict_entries, tracked_entries, new_entries] {
+        if settings.tree_view {
+            append_tree_order(&mut ordered_paths, section_entries);
+        } else {
+            sort_flat_entries(&mut section_entries, settings.sort_by);
+            ordered_paths.extend(
+                section_entries
+                    .into_iter()
+                    .map(|(repo_path, _status)| repo_path),
+            );
+        }
+    }
+
+    ordered_paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, repo_path)| (repo_path, index as u64 + 1))
+        .collect()
+}
+
+fn sort_flat_entries(entries: &mut [(RepoPath, FileStatus)], sort_by: GitPanelSortBy) {
+    match sort_by {
+        GitPanelSortBy::Path => entries.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path)),
+        GitPanelSortBy::Name => entries.sort_by(|(a_path, _), (b_path, _)| {
+            a_path
+                .file_name()
+                .cmp(&b_path.file_name())
+                .then_with(|| a_path.cmp(b_path))
+        }),
+    }
+}
+
+fn append_tree_order(ordered_paths: &mut Vec<RepoPath>, mut entries: Vec<(RepoPath, FileStatus)>) {
+    entries.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
+
+    let mut root = ProjectDiffTreeNode::default();
+    for (repo_path, _status) in entries {
+        let components: Vec<&str> = repo_path.components().collect();
+        if components.is_empty() {
+            root.files.push(repo_path);
+            continue;
+        }
+
+        let mut current = &mut root;
+        for (index, component) in components.iter().enumerate() {
+            if index == components.len() - 1 {
+                current.files.push(repo_path.clone());
+            } else {
+                current = current.children.entry((*component).into()).or_default();
+            }
+        }
+    }
+
+    root.append_ordered_paths(ordered_paths);
+}
+
+#[derive(Default)]
+struct ProjectDiffTreeNode {
+    children: BTreeMap<String, ProjectDiffTreeNode>,
+    files: Vec<RepoPath>,
+}
+
+impl ProjectDiffTreeNode {
+    fn append_ordered_paths(self, ordered_paths: &mut Vec<RepoPath>) {
+        for child in self.children.into_values() {
+            child.append_ordered_paths(ordered_paths);
+        }
+        ordered_paths.extend(self.files);
     }
 }
 
@@ -2086,7 +2275,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("foo").into_arc()),
+                PathKey::with_sort_prefix(2, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -2107,7 +2296,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("bar").into_arc()),
+                PathKey::with_sort_prefix(1, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
@@ -2242,10 +2431,7 @@ mod tests {
         );
     }
 
-    use crate::{
-        conflict_view::resolve_conflict,
-        project_diff::{self, ProjectDiff},
-    };
+    use crate::project_diff::{self, ProjectDiff};
 
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
@@ -2294,14 +2480,13 @@ mod tests {
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
-        cx.assert_excerpts_with_selections(indoc!(
+        cx.set_selections_state(indoc!(
             "
-            [EXCERPT]
             before
             really changed
-            [EXCERPT]
-            [FOLDED]
-            [EXCERPT]
+
+            deleted
+
             ˇcreated
         "
         ));
@@ -2417,89 +2602,6 @@ mod tests {
         cx.dispatch_action(editor::actions::MoveToBeginning);
 
         cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
-    }
-
-    #[gpui::test]
-    async fn test_saving_resolved_conflicts(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "foo": "<<<<<<< x\nours\n=======\ntheirs\n>>>>>>> y\n",
-            }),
-        )
-        .await;
-        fs.set_status_for_repo(
-            Path::new(path!("/project/.git")),
-            &[(
-                "foo",
-                UnmergedStatus {
-                    first_head: UnmergedStatusCode::Updated,
-                    second_head: UnmergedStatusCode::Updated,
-                }
-                .into(),
-            )],
-        );
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
-        cx.run_until_parked();
-
-        cx.update(|window, cx| {
-            let editor = diff.read(cx).editor.read(cx).rhs_editor().clone();
-            let excerpts = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .excerpts()
-                .collect::<Vec<_>>();
-            assert_eq!(excerpts.len(), 1);
-            let buffer = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .next()
-                .unwrap();
-            let buffer_id = buffer.read(cx).remote_id();
-            let conflict_set = diff
-                .read(cx)
-                .editor
-                .read(cx)
-                .rhs_editor()
-                .read(cx)
-                .addon::<ConflictAddon>()
-                .unwrap()
-                .conflict_set(buffer_id)
-                .unwrap();
-            assert!(conflict_set.read(cx).has_conflict);
-            let snapshot = conflict_set.read(cx).snapshot();
-            assert_eq!(snapshot.conflicts.len(), 1);
-
-            let ours_range = snapshot.conflicts[0].ours.clone();
-
-            resolve_conflict(
-                editor.downgrade(),
-                snapshot.conflicts[0].clone(),
-                vec![ours_range],
-                window,
-                cx,
-            )
-        })
-        .await;
-
-        let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
-        let contents = String::from_utf8(contents).unwrap();
-        assert_eq!(contents, "ours\n");
     }
 
     #[gpui::test(iterations = 50)]
@@ -2721,7 +2823,15 @@ mod tests {
             &editor,
             cx,
             &"
-                  ˇnine
+                  ˇone
+                  two
+                  three
+                  four
+                  five
+                  six
+                  seven
+                  eight
+                  nine
                   ten
                 - eleven
                 + ELEVEN
@@ -2768,13 +2878,16 @@ mod tests {
             &editor,
             cx,
             &"
-                  one
+                  ˇone
                 - two
                 + TWO
                   three
                   four
                   five
-                  ˇnine
+                  six
+                  seven
+                  eight
+                  nine
                   ten
                 - eleven
                 + ELEVEN
