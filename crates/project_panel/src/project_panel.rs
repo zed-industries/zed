@@ -2184,9 +2184,14 @@ impl ProjectPanel {
                 });
                 let file_name = entry.path.file_name().unwrap_or_default().to_string();
                 let selection = selection.unwrap_or_else(|| {
-                    let file_stem = entry.path.file_stem().map(|s| s.to_string());
-                    let selection_end =
-                        file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
+                    // Folders have no extension, so select the whole name. Only
+                    // files keep their extension unselected for quick renames.
+                    let selection_end = if entry.is_dir() {
+                        file_name.len()
+                    } else {
+                        let file_stem = entry.path.file_stem();
+                        file_stem.map_or(file_name.len(), |file_stem| file_stem.len())
+                    };
                     0..selection_end
                 });
                 self.filename_editor.update(cx, |editor, cx| {

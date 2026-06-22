@@ -108,6 +108,16 @@
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary",
   },
+  // Markdown preview settings
+  "markdown_preview": {
+    // Whether to limit the width of the rendered markdown content. When
+    // enabled, content is constrained to `max_width` and centered
+    // horizontally within the preview pane.
+    "limit_content_width": true,
+    // The maximum width, in pixels, of the rendered markdown content when
+    // limit_content_width is enabled.
+    "max_width": 800,
+  },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //
   // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
@@ -968,10 +978,14 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-    // Whether to sort entries in the panel by path or by status (the default).
+    // How to sort entries in the git panel.
     //
-    // Default: false
-    "sort_by_path": false,
+    // Default: path
+    "sort_by": "path",
+    // How to group entries in the git panel.
+    //
+    // Default: status
+    "group_by": "status",
     // Whether to collapse untracked files in the diff panel.
     //
     // Default: false
@@ -1004,6 +1018,11 @@
     //
     // Default: 0
     "commit_title_max_length": 0,
+    // Default action when clicking a changed file in the Git panel.
+    //
+    // Choices: project_diff, file_diff, view_file
+    // Default: project_diff
+    "entry_primary_click_action": "project_diff",
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1209,6 +1228,13 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    // The command is sent to the shell as if typed, so it is interpreted by your
+    // configured shell (including on Windows and remote/WSL projects).
+    // Set to "" to disable.
+    //
+    // Example: "terminal_init_command": "claude"
+    "terminal_init_command": "",
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto
