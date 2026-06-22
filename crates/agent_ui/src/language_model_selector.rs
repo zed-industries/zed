@@ -52,7 +52,7 @@ pub fn language_model_selector(
     } else {
         Picker::list(delegate, window, cx)
             .show_scrollbar(true)
-            .initial_width(rems(20.))
+            .embedded()
     }
 }
 
