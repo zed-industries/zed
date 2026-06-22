@@ -1633,6 +1633,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
@@ -5300,6 +5301,37 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    async fn handle_telemetry_event(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TelemetryEvent>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let payload = envelope.payload;
+        this.update(&mut cx, |this, cx| {
+            // The remote OS and architecture are already known from connection
+            // setup, so they don't need to be sent with each event. `os_version`
+            // (distro/build detail) is not captured by connection-time platform
+            // detection, so it is omitted.
+            let Some(platform) = this
+                .remote_client
+                .as_ref()
+                .map(|client| client.read(cx).remote_platform())
+            else {
+                return;
+            };
+            this.client()
+                .telemetry()
+                .report_remote_event(
+                    &payload.event_json,
+                    platform.os.display_name().to_string(),
+                    None,
+                    platform.arch.as_str().to_string(),
+                )
+                .log_err();
+        });
+        Ok(())
     }
 
     async fn handle_language_server_prompt_request(

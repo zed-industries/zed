@@ -71,6 +71,16 @@ impl RemoteOs {
     pub fn is_windows(&self) -> bool {
         matches!(self, RemoteOs::Windows)
     }
+
+    /// A human-readable OS name, matching the conventions used by
+    /// `client::telemetry::os_name` so remote and local telemetry align.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "Linux",
+            RemoteOs::MacOs => "macOS",
+            RemoteOs::Windows => "Windows",
+        }
+    }
 }
 
 impl std::fmt::Display for RemoteOs {
@@ -320,6 +330,7 @@ pub struct RemoteClient {
     unique_identifier: String,
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
+    platform: RemotePlatform,
     state: Option<State>,
 }
 
@@ -418,11 +429,13 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let platform = remote_connection.remote_platform();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
                     connection_options: remote_connection.connection_options(),
                     path_style,
+                    platform,
                     state: Some(State::Connecting),
                 });
 
@@ -994,6 +1007,12 @@ impl RemoteClient {
         self.path_style
     }
 
+    /// The platform (OS and architecture) of the remote host, detected during
+    /// connection setup.
+    pub fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
     /// Forcibly disconnects from the remote server by killing the underlying connection.
     /// This will trigger the reconnection logic if reconnection attempts remain.
     /// Useful for testing reconnection behavior in real environments.
@@ -1525,6 +1544,8 @@ pub trait RemoteConnection: Send + Sync {
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
+    /// The remote platform (OS and architecture), detected during connection setup.
+    fn remote_platform(&self) -> RemotePlatform;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;

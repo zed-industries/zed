@@ -292,6 +292,13 @@ impl RemoteConnection for MockRemoteConnection {
         PathStyle::local()
     }
 
+    fn remote_platform(&self) -> crate::RemotePlatform {
+        crate::RemotePlatform {
+            os: crate::RemoteOs::Linux,
+            arch: crate::RemoteArch::X86_64,
+        }
+    }
+
     fn shell(&self) -> String {
         "sh".to_owned()
     }

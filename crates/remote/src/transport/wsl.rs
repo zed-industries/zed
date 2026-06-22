@@ -521,6 +521,10 @@ impl RemoteConnection for WslRemoteConnection {
         PathStyle::Posix
     }
 
+    fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
     fn shell(&self) -> String {
         self.shell.clone()
     }

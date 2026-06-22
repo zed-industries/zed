@@ -15152,6 +15152,7 @@ dependencies = [
  "smol",
  "sysinfo 0.37.2",
  "task",
+ "telemetry",
  "tempfile",
  "theme",
  "theme_settings",

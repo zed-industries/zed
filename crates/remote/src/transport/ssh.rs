@@ -512,6 +512,10 @@ impl RemoteConnection for SshRemoteConnection {
         self.ssh_path_style
     }
 
+    fn remote_platform(&self) -> RemotePlatform {
+        self.ssh_platform
+    }
+
     fn has_wsl_interop(&self) -> bool {
         false
     }

@@ -25,7 +25,8 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use rpc::proto::Envelope;
 
 use crate::{
-    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs,
+    RemotePlatform,
     remote_client::{CommandTemplate, Interactive},
     transport::parse_platform,
 };
@@ -830,6 +831,15 @@ impl RemoteConnection for DockerExecConnection {
 
     fn path_style(&self) -> PathStyle {
         self.path_style.unwrap_or(PathStyle::Posix)
+    }
+
+    fn remote_platform(&self) -> RemotePlatform {
+        // Docker containers are always Linux; the platform is populated during
+        // setup, so this fallback is only for the brief pre-detection window.
+        self.remote_platform.unwrap_or(RemotePlatform {
+            os: RemoteOs::Linux,
+            arch: RemoteArch::X86_64,
+        })
     }
 
     fn shell(&self) -> String {
