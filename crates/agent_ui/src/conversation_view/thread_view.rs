@@ -4073,7 +4073,7 @@ impl ThreadView {
         let fills_container = !has_messages || editor_expanded;
 
         h_flex()
-            .p_2()
+            .py_2()
             .bg(editor_bg_color)
             .justify_center()
             .on_action(cx.listener(Self::handle_message_editor_move_up))
@@ -4092,6 +4092,7 @@ impl ThreadView {
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
                     .when(fills_container, |this| this.h_full())
+                    .px_2()
                     .flex_shrink_1()
                     .flex_grow_0()
                     .justify_between()
