@@ -945,24 +945,14 @@ impl AcpConnection {
             match futures::future::select(initialize_response, status_fut).await {
                 futures::future::Either::Left((Ok(response), status_fut)) => (response, status_fut),
                 futures::future::Either::Left((Err(error), status_fut)) => {
-                    let response_never_received = error.code == ErrorCode::InternalError
-                        && error
-                            .data
-                            .as_ref()
-                            .and_then(|data| data.as_str())
-                            .is_some_and(|data| {
-                                data.starts_with("response to `initialize` never received:")
-                            });
-                    if response_never_received {
-                        let timer = cx
-                            .background_executor()
-                            .timer(std::time::Duration::from_millis(250))
-                            .boxed_local();
-                        if let futures::future::Either::Left((load_error, _timer)) =
-                            futures::future::select(status_fut, timer).await
-                        {
-                            return Err(load_error?.into());
-                        }
+                    let timer = cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_millis(250))
+                        .boxed_local();
+                    if let futures::future::Either::Left((load_error, _timer)) =
+                        futures::future::select(status_fut, timer).await
+                    {
+                        return Err(load_error?.into());
                     }
 
                     return Err(error.into());
