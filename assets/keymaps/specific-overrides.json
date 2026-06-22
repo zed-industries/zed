@@ -29,7 +29,7 @@
   {
     "context": "TextFinder || (TextFinder > Picker > Editor) || (TextFinder > Picker > menu)",
     "bindings": {
-      "ctrl-alt-p": "text_finder::ToProjectSearch",
+      "ctrl-alt-f": "text_finder::ToProjectSearch",
       "ctrl-j": "pane::SplitDown",
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",

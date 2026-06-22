@@ -105,6 +105,16 @@ enum Presentation {
     Embedded,
 }
 
+/// The default size for a given preview layout. With the preview hidden the
+/// picker uses its standard size; showing a preview expands it to the larger
+/// "telescope" size so the results pane isn't cramped beside the preview.
+fn default_shape_for_layout(hidden: shape::Centered, layout: preview::Layout) -> shape::Centered {
+    match layout {
+        preview::Layout::Hidden => hidden,
+        preview::Layout::Right | preview::Layout::Below => shape::Centered::default(),
+    }
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
@@ -494,14 +504,15 @@ impl<D: PickerDelegate> Picker<D> {
             persistence::try_load_shape(D::name(), preview.as_ref().map(|p| p.layout), cx)
                 .log_err()
                 .flatten();
-        // Pickers with a preview default to the larger, resizable "telescope"
-        // size; plain pickers default to a fixed standard width and standard
-        // max height that they shrink below when there's little content.
-        let default_shape = if has_preview {
-            shape::Centered::default()
-        } else {
-            shape::Centered::simple()
-        };
+        // Every picker opens at the standard "simple" size: a fixed width and a
+        // standard max height it shrinks below when there's little content.
+        // Showing a preview expands it to the larger "telescope" size (see
+        // `default_shape_for_layout`).
+        let default_shape = shape::Centered::simple();
+        let initial_layout = preview
+            .as_ref()
+            .map(|p| p.layout)
+            .unwrap_or(preview::Layout::Hidden);
         let mut size_bounds = shape::SizeBounds::default();
         // For a plain picker the whole-picker minimum is just its opening width,
         // so it can't be resized/clamped narrower than it opens. Preview pickers
@@ -517,7 +528,12 @@ impl<D: PickerDelegate> Picker<D> {
             confirm_on_update: None,
             preview,
             shape_loaded_from_persistence: persisted_shape.is_some(),
-            shape: persisted_shape.unwrap_or(shape::Shape::HorizontallyCentered(default_shape)),
+            shape: persisted_shape.unwrap_or_else(|| {
+                shape::Shape::HorizontallyCentered(default_shape_for_layout(
+                    default_shape,
+                    initial_layout,
+                ))
+            }),
             default_shape,
             show_scrollbar: false,
             presentation: Presentation::Modal {
@@ -1240,12 +1256,17 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         preview.layout = layout;
-        if let Some(previously_resized) = persistence::try_load_shape(D::name(), layout, cx)
+        // Restore the size the user last left this layout at, or fall back to the
+        // layout's default (simple when hidden, larger when a preview is shown).
+        self.shape = persistence::try_load_shape(D::name(), layout, cx)
             .log_err()
             .flatten()
-        {
-            self.shape = previously_resized;
-        }
+            .unwrap_or_else(|| {
+                shape::Shape::HorizontallyCentered(default_shape_for_layout(
+                    self.default_shape,
+                    layout,
+                ))
+            });
         self.delegate
             .preview_layout_changed(matches!(layout, preview::Layout::Right));
         cx.notify();

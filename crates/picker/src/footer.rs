@@ -127,7 +127,6 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-        let toggle_focus_handle = focus_handle.clone();
         let right_focus_handle = focus_handle.clone();
         let below_focus_handle = focus_handle.clone();
         let current = self.preview_layout().unwrap_or(preview::Layout::Hidden);
@@ -142,22 +141,12 @@ impl<D: PickerDelegate> Picker<D> {
                         KeyBinding::for_action_in(&TogglePreview, &focus_handle, cx)
                             .size(rems_from_px(12.)),
                     )
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Toggle Preview",
-                            &TogglePreview,
-                            &toggle_focus_handle,
-                            cx,
-                        )
-                    })
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_preview_visible(window, cx)),
                     ),
             )
-            // The layout buttons (preview to the right / below) are only relevant
-            // once the preview is showing, so hide them while it's hidden.
             .when(preview_visible, |this| {
-                this.child(div().child(Divider::vertical().color(ui::DividerColor::Border)))
+                this.child(Divider::vertical().flex_1())
                     .child(
                         IconButton::new("picker-preview-right", IconName::DiffSplit)
                             .icon_size(IconSize::Small)
