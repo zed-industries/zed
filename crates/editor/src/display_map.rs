@@ -181,6 +181,7 @@ pub enum HighlightKey {
     NavigationOverlay(NavigationOverlayKey),
     PendingInput,
     ProjectSearchView,
+    RedundantSetting,
     Rename,
     SearchWithinRange,
     SelectedTextHighlight,

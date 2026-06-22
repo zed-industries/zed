@@ -5,6 +5,75 @@ use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
 
+/// Returns every key as (key path, byte range of its `"key": value` pair),
+/// descending into nested objects, parents before children.
+pub fn all_pairs(text: &str) -> Vec<(Vec<String>, Range<usize>)> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return Vec::new();
+    };
+
+    // Descend the top-level object.
+    let mut object = None;
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "object" {
+            object = Some(node);
+            break;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    let Some(object) = object else {
+        return Vec::new();
+    };
+
+    let mut pairs = Vec::new();
+    let mut path = Vec::new();
+    collect_pairs(object, text, &mut path, &mut pairs);
+    pairs
+}
+
+fn collect_pairs(
+    object: tree_sitter::Node,
+    text: &str,
+    path: &mut Vec<String>,
+    pairs: &mut Vec<(Vec<String>, Range<usize>)>,
+) {
+    let mut cursor = object.walk();
+    for child in object.children(&mut cursor) {
+        if child.kind() != "pair" {
+            continue;
+        }
+        let Some(key_node) = child.child_by_field_name("key") else {
+            continue;
+        };
+        let Some(key_text) = text.get(key_node.byte_range()) else {
+            continue;
+        };
+        // The key node includes the quotes; parse it to unescape.
+        let Ok(key) = serde_json::from_str::<String>(key_text) else {
+            continue;
+        };
+        path.push(key);
+        pairs.push((path.clone(), child.byte_range()));
+        if let Some(value_node) = child.child_by_field_name("value")
+            && value_node.kind() == "object"
+        {
+            collect_pairs(value_node, text, path, pairs);
+        }
+        path.pop();
+    }
+}
+
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
     key_path: &mut Vec<&'a str>,
@@ -750,6 +819,43 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use unindent::Unindent;
+
+    #[test]
+    fn all_pairs_nested_and_escaped() {
+        let text = r#"{
+            // a comment
+            "theme": "One Dark",
+            "git": { "inline_blame": { "enabled": true } },
+            "wei\"rd": 1
+        }"#;
+        let pairs: Vec<_> = all_pairs(text)
+            .into_iter()
+            .map(|(path, range)| (path, text[range].to_string()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                (vec!["theme".to_string()], "\"theme\": \"One Dark\"".to_string()),
+                (
+                    vec!["git".to_string()],
+                    "\"git\": { \"inline_blame\": { \"enabled\": true } }".to_string()
+                ),
+                (
+                    vec!["git".to_string(), "inline_blame".to_string()],
+                    "\"inline_blame\": { \"enabled\": true }".to_string()
+                ),
+                (
+                    vec![
+                        "git".to_string(),
+                        "inline_blame".to_string(),
+                        "enabled".to_string()
+                    ],
+                    "\"enabled\": true".to_string()
+                ),
+                (vec!["wei\"rd".to_string()], "\"wei\\\"rd\": 1".to_string()),
+            ]
+        );
+    }
 
     #[test]
     fn object_replace() {
