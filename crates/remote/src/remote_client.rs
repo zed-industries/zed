@@ -1022,6 +1022,12 @@ impl RemoteClient {
         self.os_version.clone()
     }
 
+    /// A stable identifier for the kind of remote connection (e.g. `"ssh"`,
+    /// `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        self.connection_options.connection_type()
+    }
+
     /// Forcibly disconnects from the remote server by killing the underlying connection.
     /// This will trigger the reconnection logic if reconnection attempts remain.
     /// Useful for testing reconnection behavior in real environments.
@@ -1324,6 +1330,24 @@ impl RemoteConnectionOptions {
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
+        }
+    }
+
+    /// A stable identifier for the kind of remote connection, suitable for
+    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        match self {
+            RemoteConnectionOptions::Ssh(_) => "ssh",
+            RemoteConnectionOptions::Wsl(_) => "wsl",
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    "podman"
+                } else {
+                    "docker"
+                }
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => "mock",
         }
     }
 }

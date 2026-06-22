@@ -511,6 +511,7 @@ impl Telemetry {
     pub fn report_remote_event(
         self: &Arc<Self>,
         event_json: &str,
+        connection_type: &str,
         os_name: String,
         os_version: Option<String>,
         architecture: String,
@@ -522,6 +523,9 @@ impl Telemetry {
         flexible
             .event_properties
             .insert("remote".into(), true.into());
+        flexible
+            .event_properties
+            .insert("remote_connection_type".into(), connection_type.into());
         flexible
             .event_properties
             .insert("remote_os_name".into(), os_name.into());
@@ -879,6 +883,7 @@ mod tests {
             telemetry
                 .report_remote_event(
                     &event_json,
+                    "ssh",
                     "Linux Wayland".to_string(),
                     Some("ubuntu 24.04".to_string()),
                     "aarch64".to_string(),
@@ -900,6 +905,10 @@ mod tests {
         assert_eq!(
             event.event_properties.get("remote"),
             Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_connection_type"),
+            Some(&serde_json::Value::String("ssh".to_string()))
         );
         assert_eq!(
             event.event_properties.get("remote_os_name"),

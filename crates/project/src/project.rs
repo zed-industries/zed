@@ -5310,18 +5310,26 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         this.update(&mut cx, |this, cx| {
-            // The remote OS, version, and architecture are already known from
-            // connection setup, so they don't need to be sent with each event.
-            let Some((platform, os_version)) = this.remote_client.as_ref().map(|client| {
-                let client = client.read(cx);
-                (client.remote_platform(), client.remote_os_version())
-            }) else {
+            // The remote connection type, OS, version, and architecture are all
+            // already known from connection setup, so they don't need to be sent
+            // with each event.
+            let Some((connection_type, platform, os_version)) =
+                this.remote_client.as_ref().map(|client| {
+                    let client = client.read(cx);
+                    (
+                        client.connection_type(),
+                        client.remote_platform(),
+                        client.remote_os_version(),
+                    )
+                })
+            else {
                 return;
             };
             this.client()
                 .telemetry()
                 .report_remote_event(
                     &payload.event_json,
+                    connection_type,
                     platform.os.display_name().to_string(),
                     os_version,
                     platform.arch.as_str().to_string(),
