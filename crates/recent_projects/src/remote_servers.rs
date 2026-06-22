@@ -1505,7 +1505,8 @@ impl RemoteServerProjects {
             );
             Picker::list(delegate, window, cx)
                 .modal(false)
-                .height(rems(20.))
+                .initial_width(rems(34.))
+                .height(rems(24.))
         });
         let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
