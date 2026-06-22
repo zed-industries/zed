@@ -3637,6 +3637,53 @@ mod tests {
             "session should be removed after final close"
         );
     }
+
+    #[gpui::test]
+    async fn test_create_acp_display_terminal_caps_scroll_history(cx: &mut gpui::TestAppContext) {
+        let (
+            connection,
+            project,
+            _load_coumt,
+            _close_count,
+            _load_session_updates,
+            _load_session_gate,
+            _keep_agent_alive,
+        ) = connect_fake_agent(cx).await;
+
+        let session_id = acp::SessionId::new("session-cap-test");
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .load_session(session_id, project, work_dirs, None, cx)
+            })
+            .await
+            .expect("load_session failed");
+
+        cx.run_until_parked();
+
+        let terminal = thread.update(cx, |_thread, cx| {
+            create_acp_display_terminal(util::paths::PathStyle::local(), cx)
+        });
+
+        let payload = "x\n".repeat(MAX_SCROLL_HISTORY_LINES * 5).into_bytes();
+
+        terminal.update(cx, |terminal, cx| terminal.write_output(&payload, cx));
+
+        cx.run_until_parked();
+
+        let total = terminal.read_with(cx, |term, _| term.total_lines());
+        let cap = MAX_SCROLL_HISTORY_LINES;
+
+        assert!(
+            total <= cap + 100,
+            "total_lines={} exceeded cap={} + slack — scroll history not capped",
+            total,
+            cap
+        );
+    }
 }
 
 fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
@@ -4072,6 +4119,10 @@ fn handle_session_notification(
     }
 }
 
+// Mirror of terminal_view::TerminalView::MAX_EMBEDDED_LINES. Not imported
+// because adding terminal_view as a dep breaks workspace's test build.
+const MAX_SCROLL_HISTORY_LINES: usize = 1_000;
+
 fn create_acp_display_terminal(
     path_style: PathStyle,
     cx: &mut Context<AcpThread>,
@@ -4080,7 +4131,7 @@ fn create_acp_display_terminal(
         TerminalBuilder::new_display_only(
             CursorShape::default(),
             AlternateScroll::On,
-            None,
+            Some(MAX_SCROLL_HISTORY_LINES),
             0,
             cx.background_executor(),
             path_style,
