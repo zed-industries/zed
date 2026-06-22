@@ -32,7 +32,9 @@ pub use editable_context::{
     EditHistoryContextEntry, collect_editable_context, limit_retrieved_context_to_bytes,
 };
 
-pub use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
+pub use zeta_prompt::{
+    ContextSource, EditableContextExcerpt, EditableContextFile, RelatedExcerpt, RelatedFile,
+};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
 const MAX_CONTEXT_IDENTIFIER_COUNT: usize = 32;

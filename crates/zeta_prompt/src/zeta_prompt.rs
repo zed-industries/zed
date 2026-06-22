@@ -268,6 +268,25 @@ pub enum ContextSource {
     OracleFile,
 }
 
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct EditableContextFile {
+    pub path: Arc<Path>,
+    pub max_row: u32,
+    pub excerpts: Vec<EditableContextExcerpt>,
+    #[serde(default)]
+    pub in_open_source_repo: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
+pub struct EditableContextExcerpt {
+    pub row_range: Range<u32>,
+    pub text: Arc<str>,
+    #[serde(default)]
+    pub order: usize,
+    #[serde(default)]
+    pub context_source: ContextSource,
+}
+
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
     special_tokens_for_format(format).iter().any(|token| {
         if let Some(line_token) = token.strip_suffix('\n') {

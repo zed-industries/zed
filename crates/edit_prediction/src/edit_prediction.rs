@@ -21,7 +21,9 @@ use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
-use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
+use edit_prediction_context::{
+    EditableContextFile, RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile,
+};
 use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
@@ -56,7 +58,6 @@ use std::env;
 use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
-#[cfg(feature = "cli-support")]
 use zeta_prompt::ContextSource;
 use zeta_prompt::{ZetaFormat, ZetaPromptInput};
 
@@ -2076,6 +2077,7 @@ impl EditPredictionStore {
                                     editable_path: sample_data.editable_path,
                                     editable_offset_range: sample_data.editable_offset_range,
                                     buffer_diagnostics: context.buffer_diagnostics,
+                                    editable_context: context.editable_context,
                                     future_edit_history_events: sample_data
                                         .future_edit_history_events,
                                     navigation_history: sample_data
@@ -2795,6 +2797,14 @@ impl EditPredictionStore {
             EditPredictionModel::Zeta => {
                 let context_task = can_collect_data
                     .then(|| {
+                        let editable_context_task = self.collect_editable_context(
+                            inputs.project.clone(),
+                            inputs.buffer.clone(),
+                            inputs.position,
+                            Vec::new(),
+                            vec![ContextSource::CurrentFile, ContextSource::EditHistory],
+                            cx,
+                        );
                         capture_prediction_context(
                             inputs.project.clone(),
                             inputs.buffer.clone(),
@@ -2802,6 +2812,7 @@ impl EditPredictionStore {
                             stored_events,
                             repository_url.clone(),
                             revision,
+                            editable_context_task,
                             cx,
                         )
                     })
@@ -2978,7 +2989,6 @@ impl EditPredictionStore {
             });
     }
 
-    #[cfg(feature = "cli-support")]
     pub fn collect_editable_context(
         &mut self,
         project: Entity<Project>,
@@ -2987,7 +2997,7 @@ impl EditPredictionStore {
         oracle_paths: Vec<Arc<Path>>,
         context_sources: Vec<ContextSource>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
+    ) -> Task<anyhow::Result<Vec<EditableContextFile>>> {
         use edit_prediction_context::{EditHistoryContextEntry, collect_editable_context};
 
         let buffers_by_id = project.read(cx).opened_buffers(cx).into_iter().fold(

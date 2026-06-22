@@ -177,7 +177,24 @@ pub async fn run_context_retrieval(
                     cx,
                 )
             })
-            .await?;
+            .await?
+            .into_iter()
+            .map(|file| zeta_prompt::RelatedFile {
+                path: file.path,
+                max_row: file.max_row,
+                excerpts: file
+                    .excerpts
+                    .into_iter()
+                    .map(|excerpt| zeta_prompt::RelatedExcerpt {
+                        row_range: excerpt.row_range,
+                        text: excerpt.text,
+                        order: excerpt.order,
+                        context_source: excerpt.context_source,
+                    })
+                    .collect(),
+                in_open_source_repo: file.in_open_source_repo,
+            })
+            .collect();
         merge_context_files(&mut context_files, editable_context);
     }
 
