@@ -482,7 +482,7 @@ async fn test_simple_request(cx: &mut TestAppContext) {
         ))
         .unwrap();
 
-    let prediction = prediction_task.await.unwrap().unwrap().prediction.unwrap();
+    let prediction = prediction_task.await.unwrap().unwrap().prediction;
 
     assert_eq!(prediction.edits.len(), 1);
     assert_eq!(
@@ -565,7 +565,7 @@ async fn test_request_events(cx: &mut TestAppContext) {
         ))
         .unwrap();
 
-    let prediction = prediction_task.await.unwrap().unwrap().prediction.unwrap();
+    let prediction = prediction_task.await.unwrap().unwrap().prediction;
 
     assert_eq!(prediction.edits.len(), 1);
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
@@ -1478,7 +1478,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
                 .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
-        let shown_predictions = ep_store.shown_predictions().collect::<Vec<_>>();
+        let shown_predictions = ep_store.rateable_predictions().collect::<Vec<_>>();
         assert_eq!(shown_predictions.len(), 1);
         assert_eq!(shown_predictions[0].id.to_string(), id);
         assert!(shown_predictions[0].edits.is_empty());
@@ -1556,7 +1556,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
                 .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
-        let shown_predictions = ep_store.shown_predictions().collect::<Vec<_>>();
+        let shown_predictions = ep_store.rateable_predictions().collect::<Vec<_>>();
         assert_eq!(shown_predictions.len(), 1);
         assert_eq!(shown_predictions[0].id.to_string(), id);
         assert!(shown_predictions[0].edits.is_empty());
@@ -1777,7 +1777,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             first_id
         );
         let shown_prediction_ids = ep_store
-            .shown_predictions()
+            .rateable_predictions()
             .map(|prediction| prediction.id.to_string())
             .collect::<Vec<_>>();
         assert!(shown_prediction_ids.is_empty());
@@ -3351,7 +3351,7 @@ async fn run_edit_prediction(
             cx,
         )
     });
-    prediction_task.await.unwrap().unwrap().prediction.unwrap()
+    prediction_task.await.unwrap().unwrap().prediction
 }
 
 async fn make_test_ep_store(
