@@ -1963,6 +1963,81 @@ async fn test_duplicate_concurrent_path_prefix_requests_scan_subtree_once(cx: &m
     );
 }
 
+#[gpui::test(iterations = 200)]
+async fn test_coalesced_path_prefix_completion_implies_visibility(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "dup\nheavy\n",
+            "dup": {
+                "a": { "b": { "file.txt": "contents" } },
+            },
+            "heavy": {
+                "a": { "a1.js": "a1" },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight,
+    // keeping scan workers busy long enough for the duplicate "dup" requests to
+    // land on distinct workers and coalesce onto a single in-flight crawl.
+    fs.with_read_dir_blocked("/root/heavy", async {
+        fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+        cx.executor().run_until_parked();
+
+        let mut completion_receivers = (0..8)
+            .map(|_| {
+                tree.update(cx, |tree, _| {
+                    tree.as_local()
+                        .unwrap()
+                        .add_path_prefix_to_scan(rel_path("dup").into())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Awaiting each completion drives the executor, but the moment a barrier
+        // resolves the scanned entries must already be applied to the snapshot.
+        for receiver in &mut completion_receivers {
+            receiver.recv().await;
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("dup/a/b/file.txt")).is_some(),
+                    "a coalesced path-prefix request reported completion before its \
+                     scanned entries were visible on the foreground worktree"
+                );
+            });
+        }
+    })
+    .await;
+
+    cx.executor().run_until_parked();
+}
+
 #[gpui::test]
 async fn test_path_prefix_expansion_reports_incremental_progress(cx: &mut TestAppContext) {
     init_test(cx);

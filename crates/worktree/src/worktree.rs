@@ -4193,13 +4193,8 @@ impl BackgroundScanner {
 
         // Perform an initial scan of the directory.
         drop(scan_job_tx);
-        self.with_scan(
-            false,
-            SmallVec::new(),
-            &[],
-            self.scan_dirs(true, scan_job_rx),
-        )
-        .await;
+        self.with_scan(self.scan_dirs(true, scan_job_rx)).await;
+        self.send_status_update(false, SmallVec::new(), &[]).await;
 
         if self.defer_watch {
             let (events, watcher) = self
@@ -4294,27 +4289,18 @@ impl BackgroundScanner {
         }
     }
 
-    async fn with_scan(
-        &self,
-        scanning: bool,
-        done: SmallVec<[barrier::Sender; 1]>,
-        event_roots: &[EventRoot],
-        scan: impl Future<Output = ()>,
-    ) -> bool {
+    async fn with_scan(&self, scan: impl Future<Output = ()>) {
         {
             let mut state = self.state.lock().await;
             state.snapshot.scan_id += 1;
             state.scans_in_flight += 1;
         }
         scan.await;
-        {
-            let mut state = self.state.lock().await;
-            state.scans_in_flight -= 1;
-            if state.scans_in_flight == 0 {
-                state.snapshot.completed_scan_id = state.snapshot.scan_id;
-            }
+        let mut state = self.state.lock().await;
+        state.scans_in_flight -= 1;
+        if state.scans_in_flight == 0 {
+            state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
-        self.send_status_update(scanning, done, event_roots).await
     }
 
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
@@ -4344,19 +4330,15 @@ impl BackgroundScanner {
             })
             .collect::<Vec<_>>();
 
-        self.with_scan(
-            scanning,
-            request.done,
-            &[],
-            self.reload_entries_for_paths(
-                &root_path,
-                &root_canonical_path,
-                &request.relative_paths,
-                abs_paths,
-                None,
-            ),
-        )
-        .await
+        self.with_scan(self.reload_entries_for_paths(
+            &root_path,
+            &root_canonical_path,
+            &request.relative_paths,
+            abs_paths,
+            None,
+        ))
+        .await;
+        self.send_status_update(scanning, request.done, &[]).await
     }
 
     async fn process_path_prefix_request(
@@ -4366,46 +4348,38 @@ impl BackgroundScanner {
     ) -> bool {
         let PathPrefixScanRequest { path, done } = request;
 
-        let owns_crawl = {
-            let mut state = self.state.lock().await;
-            if let Some(waiters) = state.prefix_scans_in_flight.get_mut(&path) {
-                // A crawl of this prefix is already running; wait on it rather than
-                // crawling the same subtree again. This barrier fires when the
-                // owning crawl finishes and the in-flight entry is removed.
-                waiters.extend(done);
-                return true;
-            }
-            let already_loaded = state.path_prefixes_to_scan.contains(&path);
-            if !already_loaded {
-                state
-                    .prefix_scans_in_flight
-                    .insert(path.clone(), SmallVec::new());
-            }
-            !already_loaded
-        };
-
-        if !owns_crawl {
-            return self.send_status_update(scanning, done, &[]).await;
+        enum Outcome {
+            Waiting,
+            AlreadyLoaded(SmallVec<[barrier::Sender; 1]>),
+            Crawl,
         }
 
-        let alive = self.load_path_prefix(&path, done, scanning).await;
+        let outcome = {
+            let mut state = self.state.lock().await;
+            if let Some(waiters) = state.prefix_scans_in_flight.get_mut(&path) {
+                waiters.extend(done);
+                Outcome::Waiting
+            } else if state.path_prefixes_to_scan.contains(&path) {
+                Outcome::AlreadyLoaded(done)
+            } else {
+                state.prefix_scans_in_flight.insert(path.clone(), done);
+                Outcome::Crawl
+            }
+        };
 
-        self.state.lock().await.prefix_scans_in_flight.remove(&path);
-
-        alive
+        match outcome {
+            Outcome::Waiting => true,
+            Outcome::AlreadyLoaded(done) => self.send_status_update(scanning, done, &[]).await,
+            Outcome::Crawl => self.load_path_prefix(&path, scanning).await,
+        }
     }
 
-    async fn load_path_prefix(
-        &self,
-        path: &Arc<RelPath>,
-        done: SmallVec<[barrier::Sender; 1]>,
-        scanning: bool,
-    ) -> bool {
+    async fn load_path_prefix(&self, path: &Arc<RelPath>, scanning: bool) -> bool {
         log::trace!("adding path prefix {:?}", path);
 
         let did_scan = self.forcibly_load_paths(std::slice::from_ref(path)).await;
         if !did_scan {
-            return self.send_status_update(scanning, done, &[]).await;
+            return self.notify_prefix_waiters(path, scanning).await;
         }
 
         let (root_path, abs_path) = {
@@ -4418,19 +4392,19 @@ impl BackgroundScanner {
         };
 
         let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() else {
-            return self.send_status_update(scanning, done, &[]).await;
+            return self.notify_prefix_waiters(path, scanning).await;
         };
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
             Ok(canonical) => SanitizedPath::new(canonical),
             Err(err) => {
                 log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
-                return self.send_status_update(scanning, done, &[]).await;
+                return self.notify_prefix_waiters(path, scanning).await;
             }
         };
 
         let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
-        self.with_scan(scanning, done, &[], async {
+        self.with_scan(async {
             self.reload_entries_for_paths(
                 &root_path,
                 root_canonical_path,
@@ -4442,7 +4416,19 @@ impl BackgroundScanner {
             drop(scan_job_tx);
             self.drain_scan_jobs(scan_job_rx).await;
         })
-        .await
+        .await;
+        self.notify_prefix_waiters(path, scanning).await
+    }
+
+    async fn notify_prefix_waiters(&self, path: &Arc<RelPath>, scanning: bool) -> bool {
+        let done = self
+            .state
+            .lock()
+            .await
+            .prefix_scans_in_flight
+            .remove(path)
+            .unwrap_or_default();
+        self.send_status_update(scanning, done, &[]).await
     }
 
     fn normalized_events_for_worktree(
@@ -4801,7 +4787,7 @@ impl BackgroundScanner {
             }
         }
 
-        self.with_scan(false, SmallVec::new(), &relative_paths, async {
+        self.with_scan(async {
             let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
             if !relative_paths.is_empty() {
                 log::debug!(
@@ -4849,6 +4835,8 @@ impl BackgroundScanner {
             }
         })
         .await;
+        self.send_status_update(false, SmallVec::new(), &relative_paths)
+            .await;
     }
 
     async fn update_global_gitignore(&self, abs_path: &Path) {
