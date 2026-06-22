@@ -1276,6 +1276,25 @@ mod tests {
         cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay.0 })
     }
 
+    #[gpui::test]
+    fn test_hover_markdown_preserves_soft_break_indentation(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let cx = cx.add_empty_window();
+        let text = concat!(
+            "class super(object)\n",
+            "|  super(type) -> unbound super object\n",
+            "|  super(type, obj) -> bound super object"
+        );
+        let markdown = cx.new(|cx| Markdown::new(text.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            MarkdownElement::rendered_text(markdown, cx, hover_markdown_style),
+            text
+        );
+    }
+
     impl InfoPopover {
         fn get_rendered_text(&self, cx: &gpui::App) -> String {
             let mut rendered_text = String::new();
