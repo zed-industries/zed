@@ -780,6 +780,14 @@ pub struct SearchCommitArgs {
     pub case_sensitive: bool,
 }
 
+pub fn commit_hash_search_query(query: &str) -> Option<&str> {
+    let query = query.trim();
+    (7..=40)
+        .contains(&query.len())
+        .then_some(query)
+        .filter(|query| query.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 pub fn delete_branch_flag(is_remote_tracking_ref: bool, force: bool) -> &'static str {
     match (is_remote_tracking_ref, force) {
         (true, true) => "-Dr",
@@ -3139,15 +3147,19 @@ impl GitRepository for RealGitRepository {
 
         async move {
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
+            let hash_query = commit_hash_search_query(search_args.query.as_str())
+                .map(|query| query.to_ascii_lowercase());
 
-            args.push("--fixed-strings");
+            if hash_query.is_none() {
+                args.push("--fixed-strings");
 
-            if !search_args.case_sensitive {
-                args.push("--regexp-ignore-case");
+                if !search_args.case_sensitive {
+                    args.push("--regexp-ignore-case");
+                }
+
+                args.push("--grep");
+                args.push(search_args.query.as_str());
             }
-
-            args.push("--grep");
-            args.push(search_args.query.as_str());
 
             args.extend(log_source.get_args()?);
             let mut command = git.build_command(&args);
@@ -3169,6 +3181,11 @@ impl GitRepository for RealGitRepository {
                 }
 
                 let sha = line_buffer.trim_end_matches('\n');
+                if let Some(hash_query) = hash_query.as_ref()
+                    && !sha.to_ascii_lowercase().starts_with(hash_query)
+                {
+                    continue;
+                }
 
                 if let Ok(oid) = Oid::from_str(sha)
                     && request_tx.send(oid).await.is_err()
