@@ -129,6 +129,7 @@ impl WorktreePicker {
                 .list_measure_all()
                 .show_scrollbar(true)
                 .modal(false)
+                .initial_width(rems(34.))
                 .minimum_results_width(rems(34.))
                 .height(rems(20.))
                 .no_vertical_padding()
@@ -243,7 +244,6 @@ impl Render for WorktreePicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("WorktreePicker")
-            .w(rems(34.))
             .elevation_3(cx)
             .child(self.picker.clone())
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))

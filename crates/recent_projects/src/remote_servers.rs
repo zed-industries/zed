@@ -404,7 +404,10 @@ impl ProjectPicker {
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
                 .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
                 .modal(false);
             picker.set_query(&home_dir.to_string(), window, cx);
             picker

@@ -25,7 +25,14 @@ impl ToolPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .modal(false)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 
@@ -34,7 +41,14 @@ impl ToolPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| {
+            Picker::list(delegate, window, cx)
+                .modal(false)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
@@ -49,7 +63,7 @@ impl Focusable for ToolPicker {
 
 impl Render for ToolPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 

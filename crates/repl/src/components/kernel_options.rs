@@ -484,6 +484,7 @@ where
                 .minimum_results_width(rems(34.))
                 .height(rems(24.))
                 .no_vertical_padding()
+                .modal(false)
         });
 
         PopoverMenu::new("kernel-switcher")

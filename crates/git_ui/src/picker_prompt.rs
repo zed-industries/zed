@@ -4,8 +4,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use core::cmp;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task, WeakEntity,
-    Window, rems,
+    IntoElement, ParentElement, Render, SharedString, Subscription, Task, WeakEntity, Window, rems,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -15,7 +14,6 @@ use workspace::{ModalView, Workspace};
 
 pub struct PickerPrompt {
     pub picker: Entity<Picker<PickerPromptDelegate>>,
-    rem_width: f32,
     _subscription: Subscription,
 }
 
@@ -57,11 +55,16 @@ impl PickerPrompt {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(rem_width))
+                .minimum_results_width(rems(rem_width))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
             picker,
-            rem_width,
             _subscription,
         }
     }
@@ -78,7 +81,6 @@ impl Focusable for PickerPrompt {
 impl Render for PickerPrompt {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(self.rem_width))
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 this.picker.update(cx, |this, cx| {
