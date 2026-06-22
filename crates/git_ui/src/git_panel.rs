@@ -290,8 +290,6 @@ pub enum Event {
 #[derive(Default, Serialize, Deserialize)]
 struct SerializedGitPanel {
     #[serde(default)]
-    amend_pending: bool,
-    #[serde(default)]
     signoff_enabled: bool,
     #[serde(default)]
     commit_messages: BTreeMap<String, SerializedCommitMessage>,
@@ -303,6 +301,8 @@ struct SerializedCommitMessage {
     message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     original_message: Option<String>,
+    #[serde(default)]
+    amend_pending: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -779,9 +779,6 @@ impl GitPanel {
         let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
-        let amend_pending = serialized_panel
-            .as_ref()
-            .is_some_and(|panel| panel.amend_pending);
         let signoff_enabled = serialized_panel
             .as_ref()
             .is_some_and(|panel| panel.signoff_enabled);
@@ -805,6 +802,7 @@ impl GitPanel {
         // draft across repositories. `reopen_commit_buffer` still performs the
         // one-shot restore into the loaded buffer; applying the same draft
         // there is idempotent.
+        let amend_pending = active_draft.is_some_and(|draft| draft.amend_pending);
         let original_commit_message = active_draft.and_then(|draft| draft.original_message.clone());
         let initial_commit_message = active_draft
             .and_then(|draft| draft.message.clone())
@@ -1037,7 +1035,6 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
         let commit_messages = self.serialized_commit_messages(cx);
         let kvp = KeyValueStore::global(cx);
@@ -1064,7 +1061,6 @@ impl GitPanel {
                     kvp.write_kvp(
                         serialization_key,
                         serde_json::to_string(&SerializedGitPanel {
-                            amend_pending,
                             signoff_enabled,
                             commit_messages,
                         })?,
@@ -1107,6 +1103,7 @@ impl GitPanel {
                         SerializedCommitMessage {
                             message: Some(text),
                             original_message: None,
+                            amend_pending: false,
                         },
                     );
                 }
@@ -1116,12 +1113,14 @@ impl GitPanel {
             let text = self.commit_message_buffer(cx).read(cx).text();
             let message = (!text.trim().is_empty()).then_some(text);
             let original_message = self.original_commit_message.clone();
-            if message.is_some() || original_message.is_some() {
+            let amend_pending = self.amend_pending;
+            if message.is_some() || original_message.is_some() || amend_pending {
                 commit_messages.insert(
                     work_directory_abs_path,
                     SerializedCommitMessage {
                         message,
                         original_message,
+                        amend_pending,
                     },
                 );
             } else {
@@ -3677,7 +3676,18 @@ impl GitPanel {
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = cx.entity().downgrade();
-        self.active_repository = self.project.read(cx).active_repository(cx);
+        let new_active_repository = self.project.read(cx).active_repository(cx);
+        let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
+            != new_active_repository.as_ref().map(Entity::entity_id);
+        if active_repository_changed && self.amend_pending {
+            // Leaving a repository with a pending amend: undo it so the amend
+            // state doesn't carry over to the newly active repository. The
+            // commit editor still holds the previous repository's buffer here
+            // (`reopen_commit_buffer` swaps it asynchronously below), so this
+            // restores the pre-amend draft into that repository's buffer.
+            self.set_amend_pending(false, cx);
+        }
+        self.active_repository = new_active_repository;
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
@@ -3726,8 +3736,10 @@ impl GitPanel {
                         .pending_commit_message_restores
                         .remove(&active_repository_abs_path);
                     if let Some(restored_commit_message) = restored_commit_message {
+                        git_panel.amend_pending = restored_commit_message.amend_pending;
                         git_panel.original_commit_message =
                             restored_commit_message.original_message;
+                        cx.notify();
                         if let Some(message) = restored_commit_message.message
                             && buffer.read(cx).text().trim().is_empty()
                         {
@@ -8428,7 +8440,6 @@ mod tests {
             });
 
             SerializedGitPanel {
-                amend_pending: false,
                 signoff_enabled: false,
                 commit_messages: panel.serialized_commit_messages(cx),
             }
@@ -8473,13 +8484,13 @@ mod tests {
         });
 
         let mismatched_serialized_panel = SerializedGitPanel {
-            amend_pending: false,
             signoff_enabled: false,
             commit_messages: BTreeMap::from_iter([(
                 path!("/root/other-project").to_string(),
                 SerializedCommitMessage {
                     message: Some(message_a.to_string()),
                     original_message: None,
+                    ..Default::default()
                 },
             )]),
         };
@@ -8498,6 +8509,118 @@ mod tests {
             // does not match the active repository, so it cannot leak across
             // repositories.
             assert_eq!(panel.commit_message_buffer(cx).read(cx).text(), "");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_amend_state_is_per_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project-a": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                },
+                "project-b": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project-a/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project-b/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new(path!("/root/project-a")),
+                Path::new(path!("/root/project-b")),
+            ],
+            cx,
+        )
+        .await;
+        let (repository_a, repository_b) = project.read_with(cx, |project, cx| {
+            let git_store = project.git_store().clone();
+            let mut repository_a = None;
+            let mut repository_b = None;
+            for repository in git_store.read(cx).repositories().values() {
+                let work_directory_abs_path = &repository.read(cx).work_directory_abs_path;
+                if work_directory_abs_path.as_ref() == Path::new(path!("/root/project-a")) {
+                    repository_a = Some(repository.clone());
+                } else if work_directory_abs_path.as_ref() == Path::new(path!("/root/project-b")) {
+                    repository_b = Some(repository.clone());
+                }
+            }
+            (
+                repository_a.expect("should have repository for project-a"),
+                repository_b.expect("should have repository for project-b"),
+            )
+        });
+        repository_a.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.run_until_parked();
+
+        // Enter an amend on repository A, then simulate the amend flow loading
+        // the last commit message into the editor.
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "Draft for A")], None, cx);
+            });
+            panel.set_amend_pending(true, cx);
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "Amended message")], None, cx);
+            });
+            assert!(panel.amend_pending());
+        });
+
+        // Switching the active repository away exits the amend state instead of
+        // carrying it over to repository B.
+        repository_b.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.run_until_parked();
+
+        panel.update(cx, |panel, cx| {
+            assert!(!panel.amend_pending());
+            // Only the active repository may serialize a pending amend, and we
+            // just left repository A's amend, so nothing is left pending.
+            let serialized = panel.serialized_commit_messages(cx);
+            assert!(serialized.values().all(|message| !message.amend_pending));
+        });
+
+        // Repository A's pre-amend draft is restored, discarding the amend edit.
+        let buffer_a = repository_a.read_with(cx, |repository, _| {
+            repository
+                .commit_message_buffer()
+                .expect("repository commit message buffer should be open")
+                .clone()
+        });
+        buffer_a.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "Draft for A");
         });
     }
 
