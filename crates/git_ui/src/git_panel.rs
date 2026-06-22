@@ -1315,12 +1315,6 @@ impl GitPanel {
         }
     }
 
-    /// If: `selected_entry >= entries.len()`
-    ///
-    /// Then: select last entry
-    ///
-    /// Note: `select_last` is no-op for `self.entries.last().is_none()`
-    /// that's why I don't check if it have entries at all.
     fn select_last_entry_if_out_of_bounds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(idx) = self.selected_entry
             && idx >= self.entries.len()
