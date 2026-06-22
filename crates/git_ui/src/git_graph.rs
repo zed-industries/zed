@@ -4624,7 +4624,7 @@ mod tests {
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
     use git::Oid;
-    use git::repository::InitialGraphCommitData;
+    use git::repository::{CommitData, InitialGraphCommitData};
     use gpui::{TestAppContext, UpdateGlobal};
     use project::git_store::{GitStoreEvent, RepositoryEvent};
     use project::{Project, TaskSourceKind, task_store::TaskSettingsLocation};
@@ -5970,6 +5970,132 @@ mod tests {
                 editor_text, "some query",
                 "search query text should be restored in editor"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_git_graph_search_matches_commit_hash_prefix(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let first_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let target_sha = Oid::from_bytes(&[2; 20]).unwrap();
+        let third_sha = Oid::from_bytes(&[3; 20]).unwrap();
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: first_sha,
+                parents: smallvec![target_sha],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: target_sha,
+                parents: smallvec![third_sha],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: third_sha,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [
+                (
+                    CommitData {
+                        sha: first_sha,
+                        parents: smallvec![target_sha],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 1,
+                        subject: "Add feature".into(),
+                        message: "Add feature".into(),
+                    },
+                    false,
+                ),
+                (
+                    CommitData {
+                        sha: target_sha,
+                        parents: smallvec![third_sha],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 2,
+                        subject: "Fix branch loading".into(),
+                        message: "Fix branch loading".into(),
+                    },
+                    false,
+                ),
+                (
+                    CommitData {
+                        sha: third_sha,
+                        parents: smallvec![],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 3,
+                        subject: "Update docs".into(),
+                        message: "Update docs".into(),
+                    },
+                    false,
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.search_for_test("0202020".into(), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.search_matches_for_test(), vec![target_sha]);
+            let selected_sha = graph
+                .selected_entry_idx
+                .and_then(|idx| graph.graph_data.commits.get(idx))
+                .map(|commit| commit.data.sha);
+            assert_eq!(selected_sha, Some(target_sha));
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.search_for_test("docs".into(), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.search_matches_for_test(), vec![third_sha]);
         });
     }
 
