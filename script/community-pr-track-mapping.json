@@ -80,8 +80,12 @@
       "labels": ["area:tooling/flatpak", "platform:linux", "platform:linux/wayland", "platform:linux/x11"]
     },
     {
-      "name": "Windows, WSL, Remote, dev containers",
-      "labels": ["area:dev containers", "platform:remote", "platform:windows", "platform:windows/wsl"]
+      "name": "WSL, Remote, dev containers",
+      "labels": ["area:dev containers", "platform:remote", "platform:windows/wsl"]
+    },
+    {
+      "name": "Windows",
+      "labels": ["platform:windows"]
     },
     {
       "name": "Workspace & Navigation",

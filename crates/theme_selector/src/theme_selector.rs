@@ -119,7 +119,11 @@ impl ThemeSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+        });
         Self { picker }
     }
 }
@@ -377,6 +381,10 @@ fn retain_original_opposing_theme(
 
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "theme selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Theme...".into()

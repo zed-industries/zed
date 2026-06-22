@@ -45,7 +45,11 @@ impl IconThemeSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+        });
         Self { picker }
     }
 }
@@ -161,6 +165,10 @@ impl IconThemeSelectorDelegate {
 
 impl PickerDelegate for IconThemeSelectorDelegate {
     type ListItem = ui::ListItem;
+
+    fn name() -> &'static str {
+        "icon theme selector"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Icon Theme...".into()
