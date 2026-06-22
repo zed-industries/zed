@@ -23,10 +23,8 @@ impl std::fmt::Display for EditPredictionId {
 
 /// A prediction response that was returned from the provider, whether it was ultimately valid or not.
 pub struct EditPredictionResult {
-    pub id: EditPredictionId,
-    pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
-    pub display_prediction: Option<EditPrediction>,
-    pub model_version: Option<String>,
+    pub prediction: EditPrediction,
+    pub reject_reason: Option<EditPredictionRejectReason>,
     pub e2e_latency: std::time::Duration,
 }
 
@@ -44,65 +42,38 @@ impl EditPredictionResult {
         e2e_latency: std::time::Duration,
         cx: &mut AsyncApp,
     ) -> Self {
-        if edits.is_empty() {
-            let empty_edits = Arc::new([]);
-            return Self {
-                id: id.clone(),
-                prediction: Err(EditPredictionRejectReason::Empty),
-                display_prediction: Some(EditPrediction {
-                    id,
-                    edits: empty_edits,
-                    cursor_position: None,
-                    editable_range,
-                    snapshot: edited_buffer_snapshot.clone(),
-                    edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
-                    buffer: edited_buffer.clone(),
-                    inputs,
-                    model_version: model_version.clone(),
-                    trigger,
-                }),
-                model_version,
-                e2e_latency,
-            };
-        }
+        let (edits, new_snapshot) = (!edits.is_empty())
+            .then(|| {
+                edited_buffer.read_with(cx, |buffer, _cx| {
+                    let new_snapshot = buffer.snapshot();
+                    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
+                        interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits)
+                            .map(Arc::from)
+                            .unwrap_or_default();
+                    let snapshot = (!edits.is_empty()).then_some(new_snapshot);
+                    (Some(edits), snapshot)
+                })
+            })
+            .unwrap_or_default();
+        let snapshot = new_snapshot.unwrap_or_else(|| edited_buffer_snapshot.clone());
 
-        let (edits, snapshot) = edited_buffer.read_with(cx, |buffer, _cx| {
-            let new_snapshot = buffer.snapshot();
-            let edits: Option<Arc<[(Range<Anchor>, Arc<str>)]>> =
-                interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits).map(Arc::from);
+        let reject_reason = match edits.as_ref() {
+            None => Some(EditPredictionRejectReason::Empty),
+            Some(edits) if edits.is_empty() => Some(EditPredictionRejectReason::InterpolatedEmpty),
+            Some(_) => None,
+        };
+        let edits = edits.unwrap_or_default();
 
-            (edits, new_snapshot)
-        });
-
-        let Some(edits) = edits else {
-            let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
-            return Self {
-                id: id.clone(),
-                prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
-                display_prediction: Some(EditPrediction {
-                    id,
-                    edits: empty_edits,
-                    cursor_position: None,
-                    editable_range,
-                    snapshot: edited_buffer_snapshot.clone(),
-                    edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
-                    inputs,
-                    buffer: edited_buffer.clone(),
-                    model_version: model_version.clone(),
-                    trigger,
-                }),
-                model_version,
-                e2e_latency,
-            };
+        let edit_preview = if !edits.is_empty() {
+            edited_buffer
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+                .await
+        } else {
+            EditPreview::unchanged(edited_buffer_snapshot)
         };
 
-        let edit_preview = edited_buffer
-            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
-            .await;
-
         Self {
-            id: id.clone(),
-            prediction: Ok(EditPrediction {
+            prediction: EditPrediction {
                 id,
                 edits,
                 cursor_position,
@@ -111,11 +82,10 @@ impl EditPredictionResult {
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                model_version: model_version.clone(),
+                model_version,
                 trigger,
-            }),
-            display_prediction: None,
-            model_version,
+            },
+            reject_reason,
             e2e_latency,
         }
     }

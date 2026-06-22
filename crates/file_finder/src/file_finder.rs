@@ -13,8 +13,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
+    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
+    TaskExt, WeakEntity, Window, actions, rems,
 };
 use language::{BufferSnapshot, Point};
 use open_path_prompt::{
@@ -36,12 +36,9 @@ use std::{
         Arc,
         atomic::{self, AtomicBool},
     },
+    time::Duration,
 };
-use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
-};
-use ui_input::ErasedEditor;
+use ui::{HighlightedLabel, Indicator, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},
@@ -59,35 +56,13 @@ actions!(
     [
         /// Selects the previous item in the file finder.
         SelectPrevious,
-        /// Toggles the file filter menu.
-        ToggleFilterMenu,
-        /// Toggles the split direction menu.
-        ToggleSplitMenu,
         /// Opens the selected file in the editor without dismissing the file finder,
         /// so additional files can be opened in sequence.
         OpenWithoutDismiss
     ]
 );
 
-impl ModalView for FileFinder {
-    fn on_before_dismiss(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> workspace::DismissDecision {
-        let submenu_focused = self.picker.update(cx, |picker, cx| {
-            picker
-                .delegate
-                .filter_popover_menu_handle
-                .is_focused(window, cx)
-                || picker
-                    .delegate
-                    .split_popover_menu_handle
-                    .is_focused(window, cx)
-        });
-        workspace::DismissDecision::Dismiss(!submenu_focused)
-    }
-}
+impl ModalView for FileFinder {}
 
 pub struct FileFinder {
     picker: Entity<Picker<FileFinderDelegate>>,
@@ -191,7 +166,23 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let modal_max_width_setting = FileFinderSettings::get_global(cx).modal_max_width;
+
+        let project = delegate.project.clone();
+        let picker = cx.new(|cx| {
+            let picker = Picker::uniform_list_with_preview(delegate, project, window, cx)
+                .height(gpui::rems(24.))
+                .no_vertical_padding();
+            // The dedicated file finder width setting has been removed in favor of
+            // persisted picker sizes. For migration we still honor it as the initial
+            // width, but only if the user actually changed it from the default;
+            if modal_max_width_setting != FileFinderWidth::default() {
+                let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
+                picker.initial_width(Rems::from_pixels(modal_max_width, window))
+            } else {
+                picker
+            }
+        });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -228,38 +219,6 @@ impl FileFinder {
     ) {
         self.init_modifiers = Some(window.modifiers());
         window.dispatch_action(Box::new(menu::SelectPrevious), cx);
-    }
-
-    fn handle_filter_toggle_menu(
-        &mut self,
-        _: &ToggleFilterMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker.update(cx, |picker, cx| {
-            let menu_handle = &picker.delegate.filter_popover_menu_handle;
-            if menu_handle.is_deployed() {
-                menu_handle.hide(cx);
-            } else {
-                menu_handle.show(window, cx);
-            }
-        });
-    }
-
-    fn handle_split_toggle_menu(
-        &mut self,
-        _: &ToggleSplitMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker.update(cx, |picker, cx| {
-            let menu_handle = &picker.delegate.split_popover_menu_handle;
-            if menu_handle.is_deployed() {
-                menu_handle.hide(cx);
-            } else {
-                menu_handle.show(window, cx);
-            }
-        });
     }
 
     fn handle_toggle_ignored(
@@ -385,16 +344,10 @@ impl Render for FileFinder {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(window, cx);
 
-        let file_finder_settings = FileFinderSettings::get_global(cx);
-        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, window);
-
         v_flex()
             .key_context(key_context)
-            .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
-            .on_action(cx.listener(Self::handle_filter_toggle_menu))
-            .on_action(cx.listener(Self::handle_split_toggle_menu))
             .on_action(cx.listener(Self::handle_toggle_ignored))
             .on_action(cx.listener(Self::go_to_file_split_left))
             .on_action(cx.listener(Self::go_to_file_split_right))
@@ -419,11 +372,10 @@ pub struct FileFinderDelegate {
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
+    search_in_flight: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
     separate_history: bool,
     first_update: bool,
-    filter_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-    split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
@@ -845,6 +797,7 @@ impl FoundPath {
 }
 
 const MAX_RECENT_SELECTIONS: usize = 20;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
 
 pub enum Event {
     Selected(ProjectPath),
@@ -985,11 +938,10 @@ impl FileFinderDelegate {
             has_changed_selected_index: false,
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            search_in_flight: Arc::new(AtomicBool::new(false)),
             history_items,
             separate_history,
             first_update: true,
-            filter_popover_menu_handle: PopoverMenuHandle::default(),
-            split_popover_menu_handle: PopoverMenuHandle::default(),
             focus_handle: cx.focus_handle(),
             include_ignored: FileFinderSettings::get_global(cx).include_ignored,
             include_ignored_refresh: Task::ready(()),
@@ -1493,17 +1445,9 @@ impl FileFinderDelegate {
         0
     }
 
-    fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+    fn key_context(&self, _window: &Window, _cx: &App) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("FileFinder");
-
-        if self.filter_popover_menu_handle.is_focused(window, cx) {
-            key_context.add("filter_menu_open");
-        }
-
-        if self.split_popover_menu_handle.is_focused(window, cx) {
-            key_context.add("split_menu_open");
-        }
         key_context
     }
 
@@ -1674,8 +1618,52 @@ fn full_path_budget(
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "file finder"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project files...".into()
+    }
+
+    fn searchbar_trailer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let focus_handle = self.focus_handle.clone();
+        let including_ignored = self.include_ignored == Some(true);
+        // Clicking includes ignored files unless they're already included, in
+        // which case it excludes them again (see `handle_toggle_ignored`).
+        let tooltip_label = if including_ignored {
+            "Exclude Ignored Files"
+        } else {
+            "Include Ignored Files"
+        };
+
+        let filter_button = IconButton::new("filter-ignored", IconName::Sliders)
+            .icon_size(IconSize::Small)
+            .toggle_state(including_ignored)
+            .when(self.include_ignored.is_some(), |this| {
+                this.indicator(Indicator::dot().color(Color::Info))
+            })
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in(tooltip_label, &ToggleIncludeIgnored, &focus_handle, cx)
+            })
+            .on_click(|_, window, cx| {
+                window.dispatch_action(ToggleIncludeIgnored.boxed_clone(), cx)
+            });
+        Some(
+            h_flex()
+                .gap_1()
+                .child(filter_button)
+                .children(picker::parts::project_scan_indicator(
+                    self.latest_search_query.is_some(),
+                    &self.project,
+                    cx,
+                ))
+                .into_any_element(),
+        )
     }
 
     fn match_count(&self) -> usize {
@@ -1777,12 +1765,20 @@ impl PickerDelegate for FileFinderDelegate {
                 self.selected_index = 0;
             }
             cx.notify();
+            self.search_in_flight
+                .store(false, atomic::Ordering::Release);
             Task::ready(())
         } else {
             let query = parse_file_search_query(raw_query);
             let path = query.path_position.path.clone();
 
+            let search_in_flight = self.search_in_flight.clone();
+            let was_in_flight = search_in_flight.swap(true, atomic::Ordering::Relaxed);
+
             cx.spawn_in(window, async move |this, cx| {
+                if was_in_flight {
+                    cx.background_executor().timer(SEARCH_DEBOUNCE).await;
+                }
                 let _ = maybe!(async move {
                     let is_absolute_path = path.is_absolute();
                     let did_resolve_abs_path = is_absolute_path
@@ -1804,6 +1800,7 @@ impl PickerDelegate for FileFinderDelegate {
                     anyhow::Ok(())
                 })
                 .await;
+                search_in_flight.store(false, atomic::Ordering::Relaxed);
             })
         }
     }
@@ -1821,6 +1818,27 @@ impl PickerDelegate for FileFinderDelegate {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
+    }
+
+    fn try_get_preview_data_for_match(&self, cx: &App) -> Option<picker::PreviewUpdate> {
+        let m = self.matches.get(self.selected_index)?;
+        match m {
+            Match::CreateNew(project_path) => {
+                let path_style = self.project.read(cx).path_style(cx);
+                let path_highlight = gpui::HighlightStyle {
+                    color: Some(cx.theme().colors().text_accent),
+                    ..Default::default()
+                };
+                let mut message = picker::HighlightedTextBuilder::default();
+                message.push_plain("Create file ");
+                message.push_styled(project_path.path.display(path_style), path_highlight);
+                message.push_plain("?");
+                Some(picker::PreviewUpdate::message(message.build()))
+            }
+            _ => Some(picker::PreviewUpdate::from_path(
+                m.abs_path(&self.project, cx)?,
+            )),
+        }
     }
 
     fn render_match(
@@ -1891,189 +1909,20 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
-    fn render_editor(
+    fn actions_menu(
         &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        let has_search_query = self.latest_search_query.is_some();
-        let is_project_scan_running = {
-            let worktree_store = self.project.read(cx).worktree_store();
-            !worktree_store.read(cx).initial_scan_completed()
-        };
-
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
-            .when(is_project_scan_running && has_search_query, |this| {
-                this.child(
-                    h_flex()
-                        .id("project-scan-indicator")
-                        .tooltip(Tooltip::text("Project Scan in Progress…"))
-                        .child(
-                            Icon::new(IconName::LoadCircle)
-                                .color(Color::Accent)
-                                .size(IconSize::Small)
-                                .with_rotate_animation(2),
-                        ),
-                )
-            })
-    }
-
-    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        let focus_handle = self.focus_handle.clone();
-
-        Some(
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .justify_between()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    PopoverMenu::new("filter-menu-popover")
-                        .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Anchor::BottomRight)
-                        .anchor(gpui::Anchor::BottomLeft)
-                        .offset(gpui::Point {
-                            x: px(1.0),
-                            y: px(1.0),
-                        })
-                        .trigger_with_tooltip(
-                            IconButton::new("filter-trigger", IconName::Sliders)
-                                .icon_size(IconSize::Small)
-                                .icon_size(IconSize::Small)
-                                .toggle_state(self.include_ignored.unwrap_or(false))
-                                .when(self.include_ignored.is_some(), |this| {
-                                    this.indicator(Indicator::dot().color(Color::Info))
-                                }),
-                            {
-                                let focus_handle = focus_handle.clone();
-                                move |_window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Filter Options",
-                                        &ToggleFilterMenu,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            },
-                        )
-                        .menu({
-                            let focus_handle = focus_handle.clone();
-                            let include_ignored = self.include_ignored;
-
-                            move |window, cx| {
-                                Some(ContextMenu::build(window, cx, {
-                                    let focus_handle = focus_handle.clone();
-                                    move |menu, _, _| {
-                                        menu.context(focus_handle.clone())
-                                            .header("Filter Options")
-                                            .toggleable_entry(
-                                                "Include Ignored Files",
-                                                include_ignored.unwrap_or(false),
-                                                ui::IconPosition::End,
-                                                Some(ToggleIncludeIgnored.boxed_clone()),
-                                                move |window, cx| {
-                                                    window.focus(&focus_handle, cx);
-                                                    window.dispatch_action(
-                                                        ToggleIncludeIgnored.boxed_clone(),
-                                                        cx,
-                                                    );
-                                                },
-                                            )
-                                    }
-                                }))
-                            }
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(
-                            PopoverMenu::new("split-menu-popover")
-                                .with_handle(self.split_popover_menu_handle.clone())
-                                .attach(gpui::Anchor::BottomRight)
-                                .anchor(gpui::Anchor::BottomLeft)
-                                .offset(gpui::Point {
-                                    x: px(1.0),
-                                    y: px(1.0),
-                                })
-                                .trigger(
-                                    ButtonLike::new("split-trigger")
-                                        .child(Label::new("Split…"))
-                                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                        .child(
-                                            KeyBinding::for_action_in(
-                                                &ToggleSplitMenu,
-                                                &focus_handle,
-                                                cx,
-                                            )
-                                            .size(rems_from_px(12.)),
-                                        ),
-                                )
-                                .menu({
-                                    let focus_handle = focus_handle.clone();
-
-                                    move |window, cx| {
-                                        Some(ContextMenu::build(window, cx, {
-                                            let focus_handle = focus_handle.clone();
-                                            move |menu, _, _| {
-                                                menu.context(focus_handle)
-                                                    .action(
-                                                        "Split Left",
-                                                        pane::SplitLeft::default().boxed_clone(),
-                                                    )
-                                                    .action(
-                                                        "Split Right",
-                                                        pane::SplitRight::default().boxed_clone(),
-                                                    )
-                                                    .action(
-                                                        "Split Up",
-                                                        pane::SplitUp::default().boxed_clone(),
-                                                    )
-                                                    .action(
-                                                        "Split Down",
-                                                        pane::SplitDown::default().boxed_clone(),
-                                                    )
-                                            }
-                                        }))
-                                    }
-                                }),
-                        )
-                        .child(
-                            Button::new("open-without-dismiss", "Keep Open")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &OpenWithoutDismiss,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(OpenWithoutDismiss.boxed_clone(), cx)
-                                }),
-                        )
-                        .child(
-                            Button::new("open-selection", "Open")
-                                .key_binding(
-                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                                }),
-                        ),
-                )
-                .into_any(),
-        )
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Vec<picker::PickerAction> {
+        vec![
+            picker::PickerAction::header("Split…"),
+            picker::PickerAction::button("Left", pane::SplitLeft::default().boxed_clone()),
+            picker::PickerAction::button("Right", pane::SplitRight::default().boxed_clone()),
+            picker::PickerAction::button("Up", pane::SplitUp::default().boxed_clone()),
+            picker::PickerAction::button("Down", pane::SplitDown::default().boxed_clone()),
+            picker::PickerAction::separator(),
+            picker::PickerAction::button("Open File", menu::Confirm.boxed_clone()),
+        ]
     }
 }
 
