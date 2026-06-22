@@ -111,7 +111,13 @@ impl ScopeSelector {
         let delegate =
             ScopeSelectorDelegate::new(workspace, cx.entity().downgrade(), language_registry);
 
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
 
         Self { picker }
     }
@@ -129,7 +135,7 @@ impl Focusable for ScopeSelector {
 
 impl Render for ScopeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 

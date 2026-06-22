@@ -6,7 +6,7 @@ use encoding_rs::Encoding;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, ParentElement, Render, Styled, Task, WeakEntity, Window, actions,
+    InteractiveElement, ParentElement, Render, Task, WeakEntity, Window, actions,
 };
 use language::Buffer;
 use picker::{Picker, PickerDelegate};
@@ -95,7 +95,13 @@ impl EncodingSelector {
 
     fn new(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(gpui::rems(34.))
+                .minimum_results_width(gpui::rems(34.))
+                .height(gpui::rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
@@ -104,7 +110,6 @@ impl Render for EncodingSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
         v_flex()
             .key_context("EncodingSelector")
-            .w(gpui::rems(34.))
             .child(self.picker.clone())
     }
 }

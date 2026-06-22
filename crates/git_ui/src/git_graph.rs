@@ -108,7 +108,13 @@ impl CommitTagPicker {
             tag_names,
             selected_index: 0,
         };
-        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .initial_width(COMMIT_TAG_LIST_WIDTH_IN_REMS)
+                .minimum_results_width(COMMIT_TAG_LIST_WIDTH_IN_REMS)
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
@@ -124,9 +130,7 @@ impl Focusable for CommitTagPicker {
 
 impl Render for CommitTagPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .w(COMMIT_TAG_LIST_WIDTH_IN_REMS)
-            .child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 

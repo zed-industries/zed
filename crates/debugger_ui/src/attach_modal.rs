@@ -104,6 +104,10 @@ impl AttachModal {
                 cx,
             )
             .modal(modal)
+            .initial_width(rems(34.))
+            .minimum_results_width(rems(34.))
+            .height(rems(24.))
+            .no_vertical_padding()
         });
         Self {
             _subscription: cx.subscribe(&picker, |_, _, _, cx| {
@@ -119,7 +123,6 @@ impl Render for AttachModal {
         v_flex()
             .key_context("AttachModal")
             .track_focus(&self.focus_handle(cx))
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }
