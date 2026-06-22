@@ -1,4 +1,4 @@
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 #[cfg(target_os = "linux")]
 use anyhow::Context as _;
 use anyhow::Result;

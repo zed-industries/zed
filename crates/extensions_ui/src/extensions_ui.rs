@@ -275,7 +275,8 @@ pub fn init(cx: &mut App) {
                     _ => {
                         workspace.toggle_modal(window, cx, |window, cx| {
                             let delegate = DevExtensionRebuildPickerDelegate::new(dev_extensions);
-                            Picker::uniform_list(delegate, window, cx).width(rems(34.))
+                            Picker::uniform_list(delegate, window, cx)
+                                .minimum_results_width(rems(34.))
                         });
                     }
                 }
@@ -1779,6 +1780,10 @@ impl DevExtensionRebuildPickerDelegate {
 
 impl PickerDelegate for DevExtensionRebuildPickerDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "dev-extension-rebuild"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
