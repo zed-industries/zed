@@ -312,9 +312,6 @@ enum ReportEditorEvent {
     Closed,
 }
 
-
-
-
 impl ReportEditorEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
