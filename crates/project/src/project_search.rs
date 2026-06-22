@@ -66,19 +66,19 @@ pub struct SearchResultsHandle {
 }
 
 pub struct SearchResults<T> {
-    pub _task_handle: Task<()>,
+    pub task_handle: Task<()>,
     pub rx: Receiver<T>,
 }
 impl SearchResultsHandle {
     pub fn results(self, cx: &mut App) -> SearchResults<SearchResult> {
         SearchResults {
-            _task_handle: (self.trigger_search)(cx),
+            task_handle: (self.trigger_search)(cx),
             rx: self.results,
         }
     }
     pub fn matching_buffers(self, cx: &mut App) -> SearchResults<Entity<Buffer>> {
         SearchResults {
-            _task_handle: (self.trigger_search)(cx),
+            task_handle: (self.trigger_search)(cx),
             rx: self.matching_buffers,
         }
     }

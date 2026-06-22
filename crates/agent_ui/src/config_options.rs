@@ -1,7 +1,7 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
 
 use collections::HashSet;
@@ -15,11 +15,17 @@ use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{
-    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
+use zed_actions::agent::ToggleModelSelector;
 
 use crate::ui::documentation_aside_side;
+use crate::{
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
+    ToggleThinkingEffortMenu,
+};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -293,8 +299,9 @@ impl ConfigOptionSelector {
                     Picker::nonsearchable_list(delegate, window, picker_cx)
                 }
                 .show_scrollbar(true)
-                .width(rems(20.))
-                .max_height(Some(rems(20.).into()))
+                .minimum_results_width(rems(20.))
+                .height(rems(20.))
+                .no_vertical_padding()
             })
         };
 
@@ -336,6 +343,14 @@ impl ConfigOptionSelector {
         }
     }
 
+    fn handles_category_keybindings(&self, category: &acp::SessionConfigOptionCategory) -> bool {
+        self.config_options
+            .config_options()
+            .into_iter()
+            .find(|option| option.category.as_ref() == Some(category))
+            .is_some_and(|option| option.id == self.config_id)
+    }
+
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
             return Button::new("config-option-trigger", "Unknown")
@@ -350,9 +365,16 @@ impl ConfigOptionSelector {
             IconName::ChevronDown
         };
 
+        let value_name = self.current_value_name();
+        let display_name = if value_name.len() > 33 {
+            format!("{}…", &value_name[..32])
+        } else {
+            value_name
+        };
+
         Button::new(
             ElementId::Name(format!("config-option-{}", option.id.0).into()),
-            self.current_value_name(),
+            display_name,
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
@@ -369,10 +391,15 @@ impl Render for ConfigOptionSelector {
 
         let trigger_button = self.render_trigger_button(window, cx);
 
+        let show_category_keybindings = option
+            .category
+            .as_ref()
+            .is_some_and(|category| self.handles_category_keybindings(category));
+        let option_category = option.category.clone();
         let option_name = option.name.clone();
         let option_description: Option<SharedString> = option.description.map(Into::into);
 
-        let tooltip = Tooltip::element(move |_window, _cx| {
+        let tooltip = Tooltip::element(move |_window, cx| {
             let mut content = v_flex().gap_1().child(Label::new(option_name.clone()));
             if let Some(desc) = option_description.as_ref() {
                 content = content.child(
@@ -380,6 +407,56 @@ impl Render for ConfigOptionSelector {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 );
+            }
+
+            let action_tooltip_container = |label: &str, keybinding: KeyBinding| {
+                h_flex()
+                    .pt_1()
+                    .gap_2()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Label::new(label))
+                    .child(keybinding)
+            };
+
+            if show_category_keybindings && let Some(category) = &option_category {
+                match category {
+                    acp::SessionConfigOptionCategory::Mode => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Mode",
+                                KeyBinding::for_action(&ToggleProfileSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Through Modes",
+                                KeyBinding::for_action(&CycleModeSelector, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::Model => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Model",
+                                KeyBinding::for_action(&ToggleModelSelector, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Favorite Models",
+                                KeyBinding::for_action(&CycleFavoriteModels, cx),
+                            ));
+                    }
+                    acp::SessionConfigOptionCategory::ThoughtLevel => {
+                        content = content
+                            .child(action_tooltip_container(
+                                "Change Thinking Effort",
+                                KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
+                            ))
+                            .child(action_tooltip_container(
+                                "Cycle Thinking Effort",
+                                KeyBinding::for_action(&CycleThinkingEffort, cx),
+                            ));
+                    }
+                    _ => {}
+                }
             }
             content.into_any()
         });
@@ -482,6 +559,10 @@ impl ConfigOptionPickerDelegate {
 
 impl PickerDelegate for ConfigOptionPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "config options"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()

@@ -1,21 +1,21 @@
 use anyhow::{Result, anyhow};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
@@ -30,11 +30,13 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 
 const API_KEY_ENV_VAR_NAME: &str = "MISTRAL_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["x-affinity"];
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct MistralLanguageModelProvider {
@@ -234,6 +236,30 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://console.mistral.ai/api-keys",
+                    "Paste your Mistral API key",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
+    }
 }
 
 pub struct MistralLanguageModel {
@@ -256,9 +282,12 @@ impl MistralLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = MistralLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -273,6 +302,7 @@ impl MistralLanguageModel {
                 &api_key,
                 request,
                 affinity,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)
@@ -386,6 +416,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
@@ -445,6 +476,7 @@ pub fn into_mistral(
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(tool_use) => {
                             let tool_call = mistral::ToolCall {
                                 id: tool_use.id.to_string(),
@@ -498,6 +530,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::Image(_)
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {
@@ -982,6 +1015,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: Default::default(),
+            compact_at_tokens: None,
         };
 
         let (mistral_request, affinity) =
@@ -1018,6 +1052,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);

@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -151,6 +151,10 @@ impl SharedThread {
 
 impl DbThread {
     pub const VERSION: &'static str = "0.3.0";
+
+    pub fn to_markdown(&self) -> String {
+        crate::messages_to_markdown(&self.messages)
+    }
 
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
