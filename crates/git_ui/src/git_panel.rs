@@ -234,28 +234,28 @@ fn git_panel_view_options_menu(
                         }
                     }),
             )
-            .separator()
-            .header("Sort By")
-            .item(
-                ContextMenuEntry::new("Path")
-                    .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Path)
-                    .disabled(state.tree_view)
-                    .handler(move |window, cx| {
-                        if !state.tree_view {
-                            window.dispatch_action(Box::new(SetSortByPath), cx);
-                        }
-                    }),
-            )
-            .item(
-                ContextMenuEntry::new("Name")
-                    .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Name)
-                    .disabled(state.tree_view)
-                    .handler(move |window, cx| {
-                        if !state.tree_view {
-                            window.dispatch_action(Box::new(SetSortByName), cx);
-                        }
-                    }),
-            )
+            .when(!state.tree_view, |this| {
+                this.separator()
+                    .header("Sort By")
+                    .item(
+                        ContextMenuEntry::new("Path")
+                            .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Path)
+                            .handler(move |window, cx| {
+                                if !state.tree_view {
+                                    window.dispatch_action(Box::new(SetSortByPath), cx);
+                                }
+                            }),
+                    )
+                    .item(
+                        ContextMenuEntry::new("Name")
+                            .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Name)
+                            .handler(move |window, cx| {
+                                if !state.tree_view {
+                                    window.dispatch_action(Box::new(SetSortByName), cx);
+                                }
+                            }),
+                    )
+            })
             .separator()
             .header("Group By")
             .item(
