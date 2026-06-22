@@ -321,8 +321,10 @@ impl LspAdapter for TyLspAdapter {
         let label_len = label.len();
         let grammar = language.grammar()?;
         let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::METHOD => {
+                grammar.highlight_id_for_name("function.method.call")
+            }
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function.call"),
             lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
             lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
             lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
