@@ -1858,6 +1858,77 @@ async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
 }
 
 #[gpui::test]
+async fn test_path_prefix_expansion_reports_incremental_progress(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "expand\n",
+            "expand": {
+                "fast": { "file.txt": "contents" },
+                "slow": { "file.txt": "contents" },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Block only "expand/slow", so "expand" and "expand/fast" can be fully
+    // listed and loaded while "expand/slow" is still stuck mid-scan.
+    let mut done = fs
+        .with_read_dir_blocked("/root/expand/slow", async {
+            let done = tree.update(cx, |tree, _| {
+                tree.as_local()
+                    .unwrap()
+                    .add_path_prefix_to_scan(rel_path("expand").into())
+            });
+            cx.executor().run_until_parked();
+
+            // The expansion as a whole has not completed (it's still parked on
+            // "expand/slow"), but the periodic progress updates from
+            // `drain_scan_jobs` should already have pushed "expand/fast"'s
+            // contents to the foreground.
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("expand/fast/file.txt"))
+                        .is_some(),
+                    "expand/fast should already be visible to the foreground before the whole \
+                     expansion finishes, via drain_scan_jobs's periodic progress updates"
+                );
+            });
+
+            done
+        })
+        .await;
+
+    done.recv().await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("expand/slow/file.txt"))
+                .is_some(),
+            "expand/slow should be loaded once the expansion fully completes"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

@@ -4958,8 +4958,15 @@ impl BackgroundScanner {
 
     /// Drains a queue of scan jobs across the available workers, loading their
     /// directories in parallel.
-    ///
     async fn drain_scan_jobs(&self, scan_jobs_rx: async_channel::Receiver<ScanJob>) {
+        if self
+            .status_updates_tx
+            .unbounded_send(ScanState::Started)
+            .is_err()
+        {
+            return;
+        }
+
         self.executor
             .scoped_priority(Priority::Low, |scope| {
                 for _ in 0..self.executor.num_cpus() {
@@ -4970,6 +4977,7 @@ impl BackgroundScanner {
                             {
                                 log::error!("error scanning directory {:?}: {}", job.abs_path, err);
                             }
+                            self.send_status_update(true, SmallVec::new(), &[]).await;
                         }
                     });
                 }
