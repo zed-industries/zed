@@ -541,6 +541,21 @@ impl Telemetry {
         Ok(())
     }
 
+    /// Returns a snapshot of the currently queued (not-yet-flushed) telemetry
+    /// events, for use in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn queued_events(self: &Arc<Self>) -> Vec<telemetry_events::FlexibleEvent> {
+        self.state
+            .lock()
+            .events_queue
+            .iter()
+            .map(|wrapper| {
+                let Event::Flexible(event) = &wrapper.event;
+                event.clone()
+            })
+            .collect()
+    }
+
     fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();
         // RUST_LOG=telemetry=trace to debug telemetry events
@@ -884,7 +899,7 @@ mod tests {
                 .report_remote_event(
                     &event_json,
                     "ssh",
-                    "Linux Wayland".to_string(),
+                    "Linux".to_string(),
                     Some("ubuntu 24.04".to_string()),
                     "aarch64".to_string(),
                 )
@@ -912,7 +927,7 @@ mod tests {
         );
         assert_eq!(
             event.event_properties.get("remote_os_name"),
-            Some(&serde_json::Value::String("Linux Wayland".to_string()))
+            Some(&serde_json::Value::String("Linux".to_string()))
         );
         assert_eq!(
             event.event_properties.get("remote_os_version"),

@@ -72,8 +72,8 @@ impl RemoteOs {
         matches!(self, RemoteOs::Windows)
     }
 
-    /// A human-readable OS name, matching the conventions used by
-    /// `client::telemetry::os_name` so remote and local telemetry align.
+    /// A human-readable OS name for telemetry. Matches `client::telemetry::os_name`
+    /// ignoring the compositor (as we run headless on remotes).
     pub fn display_name(&self) -> &'static str {
         match self {
             RemoteOs::Linux => "Linux",
@@ -509,12 +509,16 @@ impl RemoteClient {
                     });
                 });
 
+                // Use the same `remote_*` property schema as the forwarded
+                // remote events (see `client::telemetry::report_remote_event`)
+                // so all remote-origin telemetry can be queried uniformly.
                 telemetry::event!(
                     "Remote Connection Established",
-                    connection_type = connection_type,
-                    os_name = platform.os.display_name(),
-                    os_version = os_version,
-                    architecture = platform.arch.as_str(),
+                    remote = true,
+                    remote_connection_type = connection_type,
+                    remote_os_name = platform.os.display_name(),
+                    remote_os_version = os_version,
+                    remote_architecture = platform.arch.as_str(),
                 );
 
                 Ok(Some(this))
@@ -1387,6 +1391,38 @@ mod tests {
         });
 
         assert_eq!(options.display_name(), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_connection_type() {
+        assert_eq!(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions::default()).connection_type(),
+            "ssh"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })
+            .connection_type(),
+            "wsl"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                ..Default::default()
+            })
+            .connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman"
+        );
     }
 
     #[gpui::test]
