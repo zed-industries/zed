@@ -4457,10 +4457,10 @@ impl GitPanel {
         let focus_handle = self.focus_handle.clone();
 
         PopoverMenu::new(id.into())
-            .trigger(
+            .trigger_with_tooltip(
                 IconButton::new("view-options-menu-trigger", IconName::Sliders)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("View Options")),
+                    .icon_size(IconSize::Small),
+                Tooltip::text("View Options"),
             )
             .menu(move |window, cx| {
                 Some(git_panel_view_options_menu(
