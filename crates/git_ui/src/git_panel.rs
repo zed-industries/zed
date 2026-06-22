@@ -1111,7 +1111,6 @@ impl GitPanel {
                         _ => {}
                     }
                 }
-                //TODO: medzernik - make sure it resets properly after commit to default
                 if this.signoff_enabled != was_signedoff_by_default {
                     this.signoff_enabled = signed_by_default;
                 }
