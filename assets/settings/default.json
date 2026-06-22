@@ -1014,6 +1014,11 @@
     //
     // Default: 0
     "commit_title_max_length": 0,
+    // Default action when clicking a changed file in the Git panel.
+    //
+    // Choices: project_diff, file_diff, view_file
+    // Default: project_diff
+    "entry_primary_click_action": "project_diff",
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

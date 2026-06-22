@@ -600,6 +600,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
+        .add_basic_renderer::<settings::GitPanelClickBehavior>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelSortBy>(render_dropdown)
         .add_basic_renderer::<settings::GitPanelGroupBy>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
