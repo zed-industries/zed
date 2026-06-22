@@ -129,7 +129,10 @@ impl WorktreePicker {
                 .list_measure_all()
                 .show_scrollbar(true)
                 .modal(false)
-                .max_height(Some(rems(20.).into()))
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(20.))
+                .no_vertical_padding()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
@@ -241,7 +244,6 @@ impl Render for WorktreePicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("WorktreePicker")
-            .w(rems(34.))
             .elevation_3(cx)
             .child(self.picker.clone())
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
@@ -731,6 +733,10 @@ impl WorktreePickerDelegate {
 
 impl PickerDelegate for WorktreePickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "worktree picker"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select or type to create a worktree…".into()

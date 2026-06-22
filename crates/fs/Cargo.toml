@@ -53,6 +53,9 @@ dunce.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+unicode-normalization = "0.1"
+
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
