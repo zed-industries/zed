@@ -362,7 +362,7 @@ impl Render for TerminalOutput {
 
         let text_style = text_style(window, cx);
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
-        let (rects, batched_text_runs, sextant_glyphs) =
+        let (rects, batched_text_runs, block_element_rects) =
             terminal.read(cx).with_renderable_cells(|cells| {
                 TerminalElement::layout_grid(cells, 0, &text_style, None, minimum_contrast, cx)
             });
@@ -372,7 +372,7 @@ impl Render for TerminalOutput {
         let num_lines = batched_text_runs
             .iter()
             .map(|b| b.start_point.line())
-            .chain(sextant_glyphs.iter().map(|glyph| glyph.line()))
+            .chain(block_element_rects.iter().map(|rect| rect.line()))
             .max()
             .unwrap_or(0)
             + 1;
@@ -417,8 +417,8 @@ impl Render for TerminalOutput {
                     );
                 }
 
-                for sextant_glyph in sextant_glyphs {
-                    sextant_glyph.paint(
+                for block_element_rect in block_element_rects {
+                    block_element_rect.paint(
                         bounds.origin,
                         &terminal::TerminalBounds {
                             cell_width,
