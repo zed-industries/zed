@@ -1929,6 +1929,131 @@ async fn test_path_prefix_expansion_reports_incremental_progress(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_path_prefix_expansion_registers_nested_git_repository(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "vendor\n",
+            "vendor": {
+                "pkg": {
+                    ".git": {},
+                    "lib.rs": "",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // The gitignored "vendor" directory hasn't been expanded yet, so the
+    // repository nested inside it is not yet known.
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.as_local().unwrap().repositories().is_empty(),
+            "nested repo should not be known before the gitignored dir is expanded"
+        );
+    });
+
+    // Force-expand the gitignored subtree that contains the nested repository.
+    // This path no longer routes through `process_events`, so this guards
+    // against a regression in `scan_dir`'s inline `.git` detection.
+    let mut done = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .add_path_prefix_to_scan(rel_path("vendor/pkg").into())
+    });
+    done.recv().await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("vendor/pkg/lib.rs")).is_some(),
+            "the force-expanded gitignored subtree should be loaded"
+        );
+        pretty_assertions::assert_eq!(
+            tree.as_local().unwrap().repositories(),
+            vec![Path::new("/root/vendor/pkg").into()],
+            "a git repository nested inside a force-expanded gitignored directory \
+             should be registered"
+        );
+    });
+}
+
+#[gpui::test(iterations = 100)]
+async fn test_path_prefix_request_during_initial_scan_is_not_lost(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored\n",
+            // "a" is a normal (non-ignored) directory; "a/ignored" is gitignored.
+            "a": {
+                "ignored": {
+                    "sub": {
+                        "file.txt": "contents",
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    // Queue a path-prefix expansion before the initial scan has had a chance to
+    // run. The request must not be silently dropped just because that ancestor
+    // isn't loaded yet.
+    let mut done = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .add_path_prefix_to_scan(rel_path("a/ignored/sub").into())
+    });
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    done.recv().await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("a/ignored/sub/file.txt"))
+                .is_some(),
+            "a path-prefix request issued during the initial scan was dropped because \
+             its ancestor directory had not been loaded yet"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

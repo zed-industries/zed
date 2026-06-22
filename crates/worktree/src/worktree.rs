@@ -4911,7 +4911,12 @@ impl BackgroundScanner {
                                 // directories, language-server file watchers, project search)
                                 // here, so they aren't starved while the main loop is busy in a
                                 // long-running rescan.
-                                path_prefix_request = self.path_prefixes_to_scan_rx.recv().fuse() => {
+                                path_prefix_request = async {
+                                    if self.phase == BackgroundScannerPhase::InitialScan {
+                                        std::future::pending::<()>().await;
+                                    }
+                                    self.path_prefixes_to_scan_rx.recv().await
+                                }.fuse() => {
                                     let Ok(request) = path_prefix_request else { break };
                                     if !self.process_path_prefix_request(request, true).await {
                                         return;
