@@ -149,6 +149,10 @@ impl TasksModal {
                 cx,
             )
             .modal(is_modal)
+            .initial_width(rems(34.))
+            .minimum_results_width(rems(34.))
+            .height(rems(24.))
+            .no_vertical_padding()
         });
         let mut _subscriptions = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
@@ -211,7 +215,6 @@ impl Render for TasksModal {
     ) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }

@@ -55,6 +55,9 @@ impl SidebarRecentProjects {
                 Picker::list(delegate, window, cx)
                     .list_measure_all()
                     .show_scrollbar(true)
+                    .initial_width(rems(18.))
+                    .minimum_results_width(rems(18.))
+                    .modal(false)
             });
 
             let picker_focus_handle = picker.focus_handle(cx);

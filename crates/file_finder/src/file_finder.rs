@@ -171,6 +171,7 @@ impl FileFinder {
         let project = delegate.project.clone();
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list_with_preview(delegate, project, window, cx)
+                .minimum_results_width(gpui::rems(34.))
                 .height(gpui::rems(24.))
                 .no_vertical_padding();
             // The dedicated file finder width setting has been removed in favor of

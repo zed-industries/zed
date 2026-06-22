@@ -61,14 +61,20 @@ impl BaseKeymapSelector {
         window: &mut Window,
         cx: &mut Context<BaseKeymapSelector>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
 
 impl Render for BaseKeymapSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 

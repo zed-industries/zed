@@ -12,7 +12,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;

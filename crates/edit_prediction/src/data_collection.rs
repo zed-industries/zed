@@ -7,7 +7,7 @@ use gpui::{Context, Entity, Task};
 use language::BufferSnapshot;
 use project::{Project, ProjectPath, WorktreeId};
 use std::{fmt::Write as _, ops::Range, path::Path, sync::Arc};
-use text::{OffsetRangeExt, Point};
+use text::Point;
 use util::rel_path::RelPath;
 
 pub type UncommittedDiffSnapshot = Vec<(Arc<Path>, BufferSnapshot, BufferDiffSnapshot)>;
@@ -232,17 +232,6 @@ pub(crate) fn compute_uncommitted_diff(snapshot: UncommittedDiffSnapshot) -> Str
         }
     }
     uncommitted_diff
-}
-
-pub(crate) fn estimate_uncommitted_diff_byte_size(snapshot: &UncommittedDiffSnapshot) -> usize {
-    let mut size = 0;
-    for (_, buffer_snapshot, diff_snapshot) in snapshot {
-        for hunk in diff_snapshot.hunks(buffer_snapshot) {
-            size += hunk.diff_base_byte_range.len();
-            size += hunk.range.to_offset(buffer_snapshot).len();
-        }
-    }
-    size
 }
 
 fn row_start_or_max(snapshot: &language::BufferSnapshot, row: u32) -> Point {
