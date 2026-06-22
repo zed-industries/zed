@@ -1079,7 +1079,11 @@ impl ThreadView {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
-            MessageEditorEvent::Cancel => self.cancel_generation(cx),
+            MessageEditorEvent::Cancel => {
+                if !self.close_thread_search(window, cx) {
+                    self.cancel_generation(cx);
+                }
+            }
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
@@ -6321,6 +6325,27 @@ impl ThreadView {
         }
     }
 
+    /// Hides the thread search bar, clears its highlights, and returns focus to
+    /// the message editor. Returns `true` if the search bar was visible.
+    pub(crate) fn close_thread_search(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.thread_search_visible {
+            return false;
+        }
+
+        if let Some(bar) = self.thread_search_bar.clone() {
+            bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+        }
+
+        self.thread_search_visible = false;
+        self.message_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+        true
+    }
+
     pub(crate) fn toggle_search(
         &mut self,
         _: &crate::ToggleSearch,
@@ -10993,27 +11018,15 @@ impl Render for ThreadView {
             }))
             .on_action(cx.listener(
                 |this, _: &super::thread_search_bar::DismissThreadSearch, window, cx| {
-                    if let Some(bar) = this.thread_search_bar.clone() {
-                        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
-                    }
-                    this.thread_search_visible = false;
-                    this.message_editor.focus_handle(cx).focus(window, cx);
-                    cx.notify();
+                    this.close_thread_search(window, cx);
                 },
             ))
             // Esc can arrive as `editor::Cancel` from the query editor.
             .on_action(
                 cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
-                    if !this.thread_search_visible {
+                    if !this.close_thread_search(window, cx) {
                         cx.propagate();
-                        return;
                     }
-                    if let Some(bar) = this.thread_search_bar.clone() {
-                        bar.update(cx, |bar, cx| bar.clear_highlights(cx));
-                    }
-                    this.thread_search_visible = false;
-                    this.message_editor.focus_handle(cx).focus(window, cx);
-                    cx.notify();
                 }),
             )
             .on_action(cx.listener(
