@@ -22,13 +22,6 @@ pub struct SerializedBookmark {
     pub label: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct ProjectBookmark {
-    pub abs_path: Arc<Path>,
-    pub row: u32,
-    pub label: String,
-}
-
 #[derive(Debug)]
 pub struct BufferBookmarks {
     buffer: Entity<Buffer>,
