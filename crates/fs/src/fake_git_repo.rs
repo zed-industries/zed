@@ -15,6 +15,7 @@ use git::{
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
         GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
         PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -26,7 +27,7 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool, time::SystemTime};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -586,6 +587,37 @@ impl GitRepository for FakeGitRepository {
             }
 
             Ok(all)
+        }
+        .boxed()
+    }
+
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>> {
+        let fs = self.fs.clone();
+        async move {
+            if fs.metadata(&worktree_path).await?.is_none() {
+                return Ok(None);
+            }
+            let dot_git_path = worktree_path.join(".git");
+            let git_file = fs
+                .load(&dot_git_path)
+                .await
+                .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+            let git_dir = git_file
+                .strip_prefix("gitdir:")
+                .context("worktree .git file missing gitdir pointer")?
+                .trim();
+            let git_dir = worktree_path.join(git_dir);
+            let metadata = fs
+                .metadata(&git_dir)
+                .await?
+                .with_context(|| format!("missing worktree git dir {}", git_dir.display()))?;
+            // FakeFs assigns directories a monotonically increasing mtime at
+            // creation and never updates it afterwards, so a directory's
+            // mtime doubles as its creation time.
+            Ok(Some(metadata.mtime.0))
         }
         .boxed()
     }
@@ -1460,7 +1492,9 @@ impl GitRepository for FakeGitRepository {
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         async move {
-            let query = if search_args.case_sensitive {
+            let hash_query = commit_hash_search_query(search_args.query.as_str())
+                .map(|query| query.to_ascii_lowercase());
+            let message_query = if search_args.case_sensitive {
                 search_args.query.to_string()
             } else {
                 search_args.query.to_lowercase()
@@ -1474,12 +1508,19 @@ impl GitRepository for FakeGitRepository {
                         let FakeCommitDataEntry::Success(commit_data) = entry else {
                             return None;
                         };
+                        if let Some(hash_query) = hash_query.as_ref() {
+                            return sha
+                                .to_string()
+                                .to_ascii_lowercase()
+                                .starts_with(hash_query)
+                                .then_some(*sha);
+                        }
                         let message = if search_args.case_sensitive {
                             commit_data.message.to_string()
                         } else {
                             commit_data.message.to_lowercase()
                         };
-                        message.contains(&query).then_some(*sha)
+                        message.contains(&message_query).then_some(*sha)
                     })
                     .collect::<Vec<_>>()
             })?;

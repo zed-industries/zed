@@ -178,6 +178,9 @@ pub struct SettingsContent {
     /// The settings for the image viewer.
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
+    /// The settings for the markdown preview.
+    pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
+
     pub repl: Option<ReplSettingsContent>,
 
     /// Whether or not to enable Helix mode.
@@ -675,11 +678,15 @@ pub struct GitPanelSettingsContent {
     /// Default: main
     pub fallback_branch_name: Option<String>,
 
-    /// Whether to sort entries in the panel by path
-    /// or by status (the default).
+    /// How to sort entries in the git panel.
     ///
-    /// Default: false
-    pub sort_by_path: Option<bool>,
+    /// Default: path
+    pub sort_by: Option<GitPanelSortBy>,
+
+    /// How to group entries in the git panel.
+    ///
+    /// Default: status
+    pub group_by: Option<GitPanelGroupBy>,
 
     /// Whether to collapse untracked files in the diff panel.
     ///
@@ -711,6 +718,78 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 0
     pub commit_title_max_length: Option<usize>,
+
+    /// Default action when clicking a changed file in the Git panel.
+    ///
+    /// Default: project_diff
+    pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelClickBehavior {
+    /// Open the project diff, showing all changed files.
+    #[default]
+    ProjectDiff,
+    /// Open a single-file diff view.
+    FileDiff,
+    /// Open the file in the editor without a diff view.
+    ViewFile,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelSortBy {
+    #[default]
+    Path,
+    Name,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelGroupBy {
+    None,
+    #[default]
+    Status,
 }
 
 #[derive(
@@ -1092,6 +1171,23 @@ pub enum LineIndicatorFormat {
     Short,
     #[default]
     Long,
+}
+
+/// The settings for the markdown preview.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct MarkdownPreviewSettingsContent {
+    /// Whether to limit the width of the rendered markdown content. When
+    /// enabled, content is constrained to `max_width` and centered
+    /// horizontally within the preview pane, for optimal readability.
+    ///
+    /// Default: true
+    pub limit_content_width: Option<bool>,
+    /// The maximum width, in pixels, of the rendered markdown content when
+    /// `limit_content_width` is enabled.
+    ///
+    /// Default: 800
+    pub max_width: Option<f32>,
 }
 
 /// The settings for the image viewer.

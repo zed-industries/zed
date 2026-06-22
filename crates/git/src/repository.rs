@@ -24,6 +24,7 @@ use std::sync::atomic::AtomicBool;
 
 use std::process::{ExitStatus, Output};
 use std::str::FromStr;
+use std::time::SystemTime;
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf},
@@ -73,6 +74,17 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     } else {
         None
     }
+}
+
+fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
+    let dot_git_path = worktree_path.join(".git");
+    let git_file = std::fs::read_to_string(&dot_git_path)
+        .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
+    let git_dir = git_file
+        .strip_prefix("gitdir:")
+        .context("worktree .git file missing gitdir pointer")?
+        .trim();
+    Ok(worktree_path.join(git_dir))
 }
 
 fn normalize_git_metadata_path(path: PathBuf) -> Result<PathBuf> {
@@ -768,6 +780,14 @@ pub struct SearchCommitArgs {
     pub case_sensitive: bool,
 }
 
+pub fn commit_hash_search_query(query: &str) -> Option<&str> {
+    let query = query.trim();
+    (7..=40)
+        .contains(&query.len())
+        .then_some(query)
+        .filter(|query| query.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 pub fn delete_branch_flag(is_remote_tracking_ref: bool, force: bool) -> &'static str {
     match (is_remote_tracking_ref, force) {
         (true, true) => "-Dr",
@@ -829,6 +849,10 @@ pub trait GitRepository: Send + Sync {
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
 
+    fn check_access(&self) -> BoxFuture<'_, Result<()>> {
+        async move { Ok(()) }.boxed()
+    }
+
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
@@ -844,6 +868,24 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
+
+    /// Returns the creation time of a linked worktree's git metadata
+    /// directory (`.git/worktrees/<name>/`), resolved via the worktree's
+    /// `.git` file.
+    ///
+    /// The metadata directory is created by `git worktree add` and removed
+    /// by `git worktree remove`, so its creation time identifies a
+    /// particular incarnation of the worktree: if the worktree is removed
+    /// and recreated at the same path, the creation time changes.
+    ///
+    /// Returns `Ok(None)` when the worktree directory does not exist at
+    /// all, and an error when the directory exists but the time cannot be
+    /// determined (e.g. on filesystems without birthtime support); callers
+    /// should fail safe in the error case.
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>>;
 
     fn create_worktree(
         &self,
@@ -1783,6 +1825,16 @@ impl GitRepository for RealGitRepository {
         })
     }
 
+    fn check_access(&self) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                git?.run(&["rev-parse"]).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
         let git = self.git_binary_in_worktree();
 
@@ -1917,6 +1969,34 @@ impl GitRepository for RealGitRepository {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
                 }
+            })
+            .boxed()
+    }
+
+    fn worktree_created_at(
+        &self,
+        worktree_path: PathBuf,
+    ) -> BoxFuture<'_, Result<Option<SystemTime>>> {
+        self.executor
+            .spawn(async move {
+                match std::fs::metadata(&worktree_path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(None);
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("failed to stat {}", worktree_path.display())
+                        });
+                    }
+                    Ok(_) => {}
+                }
+                let git_dir = linked_worktree_git_dir(&worktree_path)?;
+                let metadata = std::fs::metadata(&git_dir)
+                    .with_context(|| format!("failed to stat {}", git_dir.display()))?;
+                let created_at = metadata.created().with_context(|| {
+                    format!("creation time unavailable for {}", git_dir.display())
+                })?;
+                Ok(Some(created_at))
             })
             .boxed()
     }
@@ -3067,15 +3147,19 @@ impl GitRepository for RealGitRepository {
 
         async move {
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
+            let hash_query = commit_hash_search_query(search_args.query.as_str())
+                .map(|query| query.to_ascii_lowercase());
 
-            args.push("--fixed-strings");
+            if hash_query.is_none() {
+                args.push("--fixed-strings");
 
-            if !search_args.case_sensitive {
-                args.push("--regexp-ignore-case");
+                if !search_args.case_sensitive {
+                    args.push("--regexp-ignore-case");
+                }
+
+                args.push("--grep");
+                args.push(search_args.query.as_str());
             }
-
-            args.push("--grep");
-            args.push(search_args.query.as_str());
 
             args.extend(log_source.get_args()?);
             let mut command = git.build_command(&args);
@@ -3097,6 +3181,11 @@ impl GitRepository for RealGitRepository {
                 }
 
                 let sha = line_buffer.trim_end_matches('\n');
+                if let Some(hash_query) = hash_query.as_ref()
+                    && !sha.to_ascii_lowercase().starts_with(hash_query)
+                {
+                    continue;
+                }
 
                 if let Ok(oid) = Oid::from_str(sha)
                     && request_tx.send(oid).await.is_err()
@@ -3887,6 +3976,25 @@ mod tests {
             original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
             repo_dir.path(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_check_access(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        assert!(repository.check_access().await.is_err());
+        git_init_repo(repo_dir.path());
+        assert!(repository.check_access().await.is_ok());
     }
 
     #[gpui::test]
@@ -4907,6 +5015,24 @@ mod tests {
             new_worktree.path.canonicalize().unwrap(),
             worktree_path.canonicalize().unwrap(),
         );
+
+        // The new worktree's git metadata directory should report a creation
+        // time, resolved via the worktree's `.git` file.
+        let created_at = repo
+            .worktree_created_at(worktree_path.clone())
+            .await
+            .unwrap();
+        assert!(
+            created_at.is_some(),
+            "creation time should be available for a freshly created worktree"
+        );
+
+        // A path with no worktree at all reports `None`.
+        let missing = repo
+            .worktree_created_at(worktrees_dir.join("does-not-exist"))
+            .await
+            .unwrap();
+        assert_eq!(missing, None);
     }
 
     #[gpui::test]

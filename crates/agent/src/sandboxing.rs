@@ -5,26 +5,44 @@
 //! caller see the same answer (and so the `target_os` gate lives in one
 //! place instead of scattered across the agent crate).
 //!
-//! The current policy is: enabled iff we're on macOS *and* the user has the
-//! `sandboxing` feature flag turned on. There's deliberately no settings or
-//! env-var override yet — the flag is the only switch.
+//! The current policy is: enabled iff the user has the `sandboxing` feature
+//! flag turned on, the project is local, the platform has an integration, and
+//! the user has not turned sandboxing off entirely (the `disabled` sandbox
+//! setting; the `allow_unsandboxed` grant only auto-approves commands that
+//! explicitly request to run unsandboxed and doesn't turn the sandbox off).
 //!
-//! On non-macOS hosts we don't have a sandbox integration today, so this
-//! returns `false` regardless of the flag.
+//! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Bubblewrap via WSL)
+//! have real sandbox integrations; on platforms without one the per-command
+//! wrap is a no-op, so commands run with the agent's ambient permissions even
+//! when the flag is on.
 //!
 //! Naming note: this module is about agent terminal sandboxing specifically.
 //! Other agent operations (e.g. file edits) are gated separately.
 
-use agent_settings::SandboxPermissions;
+use agent_settings::{AgentSettings, SandboxPermissions};
 use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
+use project::Project;
+use settings::Settings;
 use std::path::PathBuf;
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
 pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
-    cfg!(target_os = "macos") && cx.has_flag::<SandboxingFeatureFlag>()
+    cx.has_flag::<SandboxingFeatureFlag>()
+}
+
+/// Whether the sandboxed terminal can be exposed for this project.
+pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
+    sandboxing_enabled(cx)
+        && project.is_local()
+        && !AgentSettings::get_global(cx).sandbox_permissions.disabled
+        && cfg!(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows"
+        ))
 }
 
 /// Network escalation requested for (or granted to) a sandboxed command.
@@ -108,6 +126,12 @@ pub(crate) struct ThreadSandboxGrants {
     network_hosts: Vec<HostPattern>,
     allow_fs_write_all: bool,
     unsandboxed: bool,
+    /// Whether the user approved running commands *without* a sandbox for the
+    /// rest of the thread when the OS sandbox could not be created (the
+    /// fallback prompt's "Allow for this thread"). Distinct from
+    /// `unsandboxed`, which records a model-requested escape; this is a
+    /// user-acknowledged degradation because the sandbox is unavailable.
+    sandbox_fallback: bool,
     /// Canonicalized paths granted write access for the thread. Each covers its
     /// whole subtree; redundant children are pruned on insert.
     write_paths: Vec<PathBuf>,
@@ -172,6 +196,22 @@ impl ThreadSandboxGrants {
                 })
             }
         }
+    }
+
+    /// Whether the user allowed running commands unsandboxed for the rest of
+    /// the thread (the fallback prompt's "Allow for this thread"). Distinct
+    /// from the persistent `allow_unsandboxed` setting.
+    pub fn fallback_granted_for_thread(&self) -> bool {
+        self.sandbox_fallback
+    }
+
+    /// Record that the user approved running commands unsandboxed for the rest
+    /// of the thread when the sandbox can't be created. Only the Bubblewrap
+    /// sandboxes (Linux directly, Windows via WSL) can fail to create a
+    /// sandbox, so this is gated to those platforms.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub fn record_fallback(&mut self) {
+        self.sandbox_fallback = true;
     }
 
     /// Record everything in `request` as granted for the rest of the thread,
@@ -311,6 +351,19 @@ mod tests {
 
     fn effective(grants: &ThreadSandboxGrants, request: &SandboxRequest) -> SandboxRequest {
         grants.effective_with_persistent(request, &SandboxPermissions::default())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn fallback_granted_for_thread_tracks_record_fallback() {
+        let mut grants = ThreadSandboxGrants::default();
+        assert!(!grants.fallback_granted_for_thread());
+
+        // The thread-scoped fallback grant is independent of the
+        // model-requested `unsandboxed` grant.
+        grants.record_fallback();
+        assert!(grants.fallback_granted_for_thread());
+        assert!(!covers(&grants, &unsandboxed_request()));
     }
 
     #[test]
@@ -465,11 +518,8 @@ mod tests {
         let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(hosts(&["github.com"]), false, &[]));
         let persistent = SandboxPermissions {
-            allow_all_hosts: false,
-            network_hosts: Vec::new(),
-            allow_fs_write_all: false,
-            allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/build")],
+            ..Default::default()
         };
 
         assert!(grants.covers_with_persistent(
@@ -486,11 +536,8 @@ mod tests {
     fn persistent_network_hosts_are_honored() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
-            allow_all_hosts: false,
             network_hosts: vec!["*.npmjs.org".to_string()],
-            allow_fs_write_all: false,
-            allow_unsandboxed: false,
-            write_paths: Vec::new(),
+            ..Default::default()
         };
 
         assert!(grants.covers_with_persistent(
@@ -507,11 +554,8 @@ mod tests {
     fn persistent_all_access_covers_concrete_writes() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
-            allow_all_hosts: false,
-            network_hosts: Vec::new(),
             allow_fs_write_all: true,
-            allow_unsandboxed: false,
-            write_paths: Vec::new(),
+            ..Default::default()
         };
 
         assert!(grants.covers_with_persistent(
@@ -531,11 +575,8 @@ mod tests {
     fn persistent_unsandboxed_covers_unsandboxed_requests_only() {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
-            allow_all_hosts: false,
-            network_hosts: Vec::new(),
-            allow_fs_write_all: false,
             allow_unsandboxed: true,
-            write_paths: Vec::new(),
+            ..Default::default()
         };
 
         assert!(grants.covers_with_persistent(&unsandboxed_request(), &persistent));
@@ -591,10 +632,8 @@ mod tests {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
             allow_all_hosts: true,
-            network_hosts: Vec::new(),
-            allow_fs_write_all: false,
-            allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/always")],
+            ..Default::default()
         };
 
         let effective = grants
