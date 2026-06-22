@@ -554,6 +554,8 @@ chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
+clap_complete = { version = "4.4" }
+clap_complete_nushell = { version = "4.4" }
 cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
 const_format = "0.2"
