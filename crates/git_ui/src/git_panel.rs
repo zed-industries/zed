@@ -234,28 +234,28 @@ fn git_panel_view_options_menu(
                         }
                     }),
             )
-            .separator()
-            .header("Sort By")
-            .item(
-                ContextMenuEntry::new("Path")
-                    .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Path)
-                    .disabled(state.tree_view)
-                    .handler(move |window, cx| {
-                        if !state.tree_view {
-                            window.dispatch_action(Box::new(SetSortByPath), cx);
-                        }
-                    }),
-            )
-            .item(
-                ContextMenuEntry::new("Name")
-                    .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Name)
-                    .disabled(state.tree_view)
-                    .handler(move |window, cx| {
-                        if !state.tree_view {
-                            window.dispatch_action(Box::new(SetSortByName), cx);
-                        }
-                    }),
-            )
+            .when(!state.tree_view, |this| {
+                this.separator()
+                    .header("Sort By")
+                    .item(
+                        ContextMenuEntry::new("Path")
+                            .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Path)
+                            .handler(move |window, cx| {
+                                if !state.tree_view {
+                                    window.dispatch_action(Box::new(SetSortByPath), cx);
+                                }
+                            }),
+                    )
+                    .item(
+                        ContextMenuEntry::new("Name")
+                            .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Name)
+                            .handler(move |window, cx| {
+                                if !state.tree_view {
+                                    window.dispatch_action(Box::new(SetSortByName), cx);
+                                }
+                            }),
+                    )
+            })
             .separator()
             .header("Group By")
             .item(
@@ -4457,10 +4457,10 @@ impl GitPanel {
         let focus_handle = self.focus_handle.clone();
 
         PopoverMenu::new(id.into())
-            .trigger(
+            .trigger_with_tooltip(
                 IconButton::new("view-options-menu-trigger", IconName::Sliders)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("View Options")),
+                    .icon_size(IconSize::Small),
+                Tooltip::text("View Options"),
             )
             .menu(move |window, cx| {
                 Some(git_panel_view_options_menu(
@@ -4814,48 +4814,51 @@ impl GitPanel {
 
         Some(
             h_flex()
-                .h(Tab::container_height(cx))
+                .min_h(Tab::container_height(cx))
                 .w_full()
-                .px_1()
+                .pl_1()
+                .pr_2()
                 .flex_none()
+                .flex_wrap()
+                .gap_1()
                 .justify_between()
                 .child(
-                    h_flex()
-                        .gap_1p5()
+                    ButtonLike::new("diff-button")
                         .child(
-                            Button::new("changes", "View Diff")
-                                .label_size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .start_icon(
+                            h_flex()
+                                .gap_1()
+                                .child(
                                     Icon::new(IconName::Diff)
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "View Diff",
-                                    &Diff,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(|_, _, cx| {
-                                    cx.defer(|cx| {
-                                        cx.dispatch_action(&Diff);
-                                    })
-                                }),
-                        )
-                        .when(
-                            GitPanelSettings::get_global(cx).diff_stats
-                                && diff_stat_total != DiffStat::default(),
-                            |this| {
-                                this.child(
-                                    ui::DiffStat::new(
-                                        "changes-diff-stat-total",
-                                        diff_stat_total.added as usize,
-                                        diff_stat_total.deleted as usize,
-                                    )
-                                    .tooltip("Total tracked changes"),
+                                .child(
+                                    Label::new("View Diff")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
                                 )
-                            },
-                        ),
+                                .when(
+                                    GitPanelSettings::get_global(cx).diff_stats
+                                        && diff_stat_total != DiffStat::default(),
+                                    |this| {
+                                        this.child(ui::DiffStat::new(
+                                            "changes-diff-stat-total",
+                                            diff_stat_total.added as usize,
+                                            diff_stat_total.deleted as usize,
+                                        ))
+                                    },
+                                ),
+                        )
+                        .tooltip(Tooltip::for_action_title_in(
+                            "View Diff",
+                            &Diff,
+                            &self.focus_handle,
+                        ))
+                        .on_click(|_, _, cx| {
+                            cx.defer(|cx| {
+                                cx.dispatch_action(&Diff);
+                            })
+                        }),
                 )
                 .child(
                     h_flex()
