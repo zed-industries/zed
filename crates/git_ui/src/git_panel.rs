@@ -287,23 +287,22 @@ pub enum Event {
     Focus,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct SerializedGitPanel {
     #[serde(default)]
     amend_pending: bool,
     #[serde(default)]
     signoff_enabled: bool,
     #[serde(default)]
-    commit_message_work_directory_abs_path: Option<String>,
-    #[serde(default)]
-    commit_message: Option<String>,
-    #[serde(default)]
-    original_commit_message: Option<String>,
+    commit_messages: BTreeMap<String, SerializedCommitMessage>,
 }
 
-struct PendingCommitMessageRestore {
-    work_directory_abs_path: String,
-    message: String,
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct SerializedCommitMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_message: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -684,7 +683,7 @@ pub struct GitPanel {
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
     original_commit_message: Option<String>,
-    pending_commit_message_restore: Option<PendingCommitMessageRestore>,
+    pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
     signoff_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
@@ -695,6 +694,7 @@ pub struct GitPanel {
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
+    reopen_commit_buffer_task: Task<()>,
     pub(crate) workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
@@ -785,25 +785,16 @@ impl GitPanel {
         let signoff_enabled = serialized_panel
             .as_ref()
             .is_some_and(|panel| panel.signoff_enabled);
-        let pending_commit_message_restore = serialized_panel.as_ref().and_then(|panel| {
-            Some(PendingCommitMessageRestore {
-                work_directory_abs_path: panel.commit_message_work_directory_abs_path.clone()?,
-                message: panel.commit_message.clone()?,
-            })
+        let active_work_directory_abs_path = active_repository.as_ref().map(|repository| {
+            repository
+                .read(cx)
+                .work_directory_abs_path
+                .to_string_lossy()
+                .into_owned()
         });
-        let original_commit_message = serialized_panel.as_ref().and_then(|panel| {
-            let work_directory_abs_path = panel.commit_message_work_directory_abs_path.as_ref()?;
-            let original_commit_message = panel.original_commit_message.as_ref()?;
-            active_repository
-                .as_ref()
-                .is_some_and(|repository| {
-                    repository
-                        .read(cx)
-                        .work_directory_abs_path
-                        .to_string_lossy()
-                        == work_directory_abs_path.as_str()
-                })
-                .then(|| original_commit_message.clone())
+        let active_draft = serialized_panel.as_ref().and_then(|panel| {
+            let path = active_work_directory_abs_path.as_ref()?;
+            panel.commit_messages.get(path)
         });
         // Seed the placeholder editor with the restored draft when the active
         // repository already matches the serialized one, so the message is
@@ -814,18 +805,12 @@ impl GitPanel {
         // draft across repositories. `reopen_commit_buffer` still performs the
         // one-shot restore into the loaded buffer; applying the same draft
         // there is idempotent.
-        let initial_commit_message = pending_commit_message_restore
-            .as_ref()
-            .filter(|restore| {
-                active_repository.as_ref().is_some_and(|repository| {
-                    repository
-                        .read(cx)
-                        .work_directory_abs_path
-                        .to_string_lossy()
-                        == restore.work_directory_abs_path.as_str()
-                })
-            })
-            .map(|restore| restore.message.clone())
+        let original_commit_message = active_draft.and_then(|draft| draft.original_message.clone());
+        let initial_commit_message = active_draft
+            .and_then(|draft| draft.message.clone())
+            .unwrap_or_default();
+        let pending_commit_message_restores = serialized_panel
+            .map(|panel| panel.commit_messages)
             .unwrap_or_default();
 
         cx.new(|cx| {
@@ -937,7 +922,7 @@ impl GitPanel {
                 pending_commit: None,
                 amend_pending,
                 original_commit_message,
-                pending_commit_message_restore,
+                pending_commit_message_restores,
                 signoff_enabled,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
@@ -950,6 +935,7 @@ impl GitPanel {
                 tracked_count: 0,
                 tracked_staged_count: 0,
                 update_visible_entries_task: Task::ready(()),
+                reopen_commit_buffer_task: Task::ready(()),
                 show_placeholders: false,
                 local_committer: None,
                 local_committer_task: None,
@@ -1053,20 +1039,7 @@ impl GitPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
-        let commit_message = self.commit_message_for_serialization(cx);
-        let original_commit_message = self.original_commit_message.clone();
-        let commit_message_work_directory_abs_path =
-            if commit_message.is_some() || original_commit_message.is_some() {
-                self.active_repository.as_ref().map(|repository| {
-                    repository
-                        .read(cx)
-                        .work_directory_abs_path
-                        .to_string_lossy()
-                        .into_owned()
-                })
-            } else {
-                None
-            };
+        let commit_messages = self.serialized_commit_messages(cx);
         let kvp = KeyValueStore::global(cx);
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
@@ -1093,9 +1066,7 @@ impl GitPanel {
                         serde_json::to_string(&SerializedGitPanel {
                             amend_pending,
                             signoff_enabled,
-                            commit_message_work_directory_abs_path,
-                            commit_message,
-                            original_commit_message,
+                            commit_messages,
                         })?,
                     )
                     .await?;
@@ -1107,13 +1078,57 @@ impl GitPanel {
         });
     }
 
-    fn commit_message_for_serialization(&self, cx: &App) -> Option<String> {
-        let message = self.commit_message_buffer(cx).read(cx).text();
-        if message.trim().is_empty() {
-            None
-        } else {
-            Some(message)
+    fn serialized_commit_messages(&self, cx: &App) -> BTreeMap<String, SerializedCommitMessage> {
+        let active_work_directory_abs_path = self.active_repository.as_ref().map(|repository| {
+            repository
+                .read(cx)
+                .work_directory_abs_path
+                .to_string_lossy()
+                .into_owned()
+        });
+        let git_store = self.project.read(cx).git_store().clone();
+        let mut commit_messages = self.pending_commit_message_restores.clone();
+        for repository in git_store.read(cx).repositories().values() {
+            let repository = repository.read(cx);
+            let work_directory_abs_path = repository
+                .work_directory_abs_path
+                .to_string_lossy()
+                .into_owned();
+            if active_work_directory_abs_path.as_deref() == Some(work_directory_abs_path.as_str()) {
+                continue;
+            }
+            if let Some(buffer) = repository.commit_message_buffer() {
+                let text = buffer.read(cx).text();
+                if text.trim().is_empty() {
+                    commit_messages.remove(&work_directory_abs_path);
+                } else {
+                    commit_messages.insert(
+                        work_directory_abs_path,
+                        SerializedCommitMessage {
+                            message: Some(text),
+                            original_message: None,
+                        },
+                    );
+                }
+            }
         }
+        if let Some(work_directory_abs_path) = active_work_directory_abs_path {
+            let text = self.commit_message_buffer(cx).read(cx).text();
+            let message = (!text.trim().is_empty()).then_some(text);
+            let original_message = self.original_commit_message.clone();
+            if message.is_some() || original_message.is_some() {
+                commit_messages.insert(
+                    work_directory_abs_path,
+                    SerializedCommitMessage {
+                        message,
+                        original_message,
+                    },
+                );
+            } else {
+                commit_messages.remove(&work_directory_abs_path);
+            }
+        }
+        commit_messages
     }
 
     pub(crate) fn set_modal_open(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -3662,6 +3677,7 @@ impl GitPanel {
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let handle = cx.entity().downgrade();
+        self.active_repository = self.project.read(cx).active_repository(cx);
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
@@ -3681,6 +3697,7 @@ impl GitPanel {
 
     fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repo) = self.active_repository.as_ref() else {
+            self.reopen_commit_buffer_task = Task::ready(());
             return;
         };
         let active_repository_abs_path = active_repo
@@ -3698,72 +3715,77 @@ impl GitPanel {
         });
         let load_template = self.load_commit_template(cx);
 
-        cx.spawn_in(window, async move |git_panel, cx| {
-            let buffer = load_buffer.await?;
-            let template = load_template.await?;
+        self.reopen_commit_buffer_task = cx.spawn_in(window, async move |git_panel, cx| {
+            let result = async {
+                let buffer = load_buffer.await?;
+                let template = load_template.await?;
 
-            git_panel.update_in(cx, move |git_panel, window, cx| {
-                git_panel.commit_template = template;
-                let commit_message_to_restore = git_panel
-                    .pending_commit_message_restore
-                    .take()
-                    .filter(|restore| restore.work_directory_abs_path == active_repository_abs_path)
-                    .map(|restore| restore.message);
-                if let Some(message) = commit_message_to_restore
-                    && buffer.read(cx).text().trim().is_empty()
-                {
-                    buffer.update(cx, |buffer, cx| {
-                        let start = buffer.anchor_before(0);
-                        let end = buffer.anchor_after(buffer.len());
-                        buffer.edit([(start..end, message)], None, cx);
-                    });
-                }
+                git_panel.update_in(cx, move |git_panel, window, cx| {
+                    git_panel.commit_template = template;
+                    let restored_commit_message = git_panel
+                        .pending_commit_message_restores
+                        .remove(&active_repository_abs_path);
+                    if let Some(restored_commit_message) = restored_commit_message {
+                        git_panel.original_commit_message =
+                            restored_commit_message.original_message;
+                        if let Some(message) = restored_commit_message.message
+                            && buffer.read(cx).text().trim().is_empty()
+                        {
+                            buffer.update(cx, |buffer, cx| {
+                                let start = buffer.anchor_before(0);
+                                let end = buffer.anchor_after(buffer.len());
+                                buffer.edit([(start..end, message)], None, cx);
+                            });
+                        }
+                    }
+                    if buffer.read(cx).text().trim().is_empty() {
+                        let template_text = git_panel
+                            .commit_template
+                            .as_ref()
+                            .map(|t| t.template.clone())
+                            .unwrap_or_default();
+                        if !template_text.is_empty() {
+                            buffer.update(cx, |buffer, cx| {
+                                let start = buffer.anchor_before(0);
+                                let end = buffer.anchor_after(buffer.len());
+                                buffer.edit([(start..end, template_text)], None, cx);
+                            });
+                        }
+                    }
 
-                if buffer.read(cx).text().trim().is_empty() {
-                    let template_text = git_panel
-                        .commit_template
+                    if git_panel
+                        .commit_editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
                         .as_ref()
-                        .map(|t| t.template.clone())
-                        .unwrap_or_default();
-                    if !template_text.is_empty() {
-                        buffer.update(cx, |buffer, cx| {
-                            let start = buffer.anchor_before(0);
-                            let end = buffer.anchor_after(buffer.len());
-                            buffer.edit([(start..end, template_text)], None, cx);
+                        != Some(&buffer)
+                    {
+                        git_panel.commit_editor = cx.new(|cx| {
+                            commit_message_editor(
+                                buffer.clone(),
+                                git_panel.suggest_commit_message(cx).map(SharedString::from),
+                                git_panel.project.clone(),
+                                true,
+                                window,
+                                cx,
+                            )
                         });
                     }
-                }
 
-                if git_panel
-                    .commit_editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .as_ref()
-                    != Some(&buffer)
-                {
-                    git_panel.commit_editor = cx.new(|cx| {
-                        commit_message_editor(
-                            buffer.clone(),
-                            git_panel.suggest_commit_message(cx).map(SharedString::from),
-                            git_panel.project.clone(),
-                            true,
-                            window,
-                            cx,
-                        )
-                    });
-                }
-
-                git_panel._commit_message_buffer_subscription =
-                    Some(cx.subscribe(&buffer, |this, _, event, cx| {
-                        if matches!(event, BufferEvent::Edited { .. }) {
-                            this.serialize(cx);
-                        }
-                    }));
-            })
-        })
-        .detach_and_log_err(cx);
+                    git_panel._commit_message_buffer_subscription =
+                        Some(cx.subscribe(&buffer, |this, _, event, cx| {
+                            if matches!(event, BufferEvent::Edited { .. }) {
+                                this.serialize(cx);
+                            }
+                        }));
+                })?;
+                anyhow::Ok(())
+            }
+            .await;
+            result.log_err();
+        });
     }
 
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -8322,7 +8344,13 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-                "project": {
+                "project-a": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                },
+                "project-b": {
                     ".git": {},
                     "src": {
                         "main.rs": "fn main() {}"
@@ -8333,11 +8361,42 @@ mod tests {
         .await;
 
         fs.set_status_for_repo(
-            Path::new(path!("/root/project/.git")),
+            Path::new(path!("/root/project-a/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project-b/.git")),
             &[("src/main.rs", StatusCode::Modified.worktree())],
         );
 
-        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new(path!("/root/project-a")),
+                Path::new(path!("/root/project-b")),
+            ],
+            cx,
+        )
+        .await;
+        let (repository_a, repository_b) = project.read_with(cx, |project, cx| {
+            let git_store = project.git_store().clone();
+            let mut repository_a = None;
+            let mut repository_b = None;
+            for repository in git_store.read(cx).repositories().values() {
+                let work_directory_abs_path = &repository.read(cx).work_directory_abs_path;
+                if work_directory_abs_path.as_ref() == Path::new(path!("/root/project-a")) {
+                    repository_a = Some(repository.clone());
+                } else if work_directory_abs_path.as_ref() == Path::new(path!("/root/project-b")) {
+                    repository_b = Some(repository.clone());
+                }
+            }
+            (
+                repository_a.expect("should have repository for project-a"),
+                repository_b.expect("should have repository for project-b"),
+            )
+        });
+        repository_a.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
@@ -8348,41 +8407,46 @@ mod tests {
         let panel = workspace.update_in(cx, GitPanel::new);
         cx.run_until_parked();
 
-        let commit_message = "Restore this commit message";
+        let message_a = "Restore repository A message";
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, message_a)], None, cx);
+            });
+        });
+
+        repository_b.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.run_until_parked();
+
+        let message_b = "Restore repository B message";
         let serialized_panel = panel.update(cx, |panel, cx| {
             panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
                 let end = buffer.anchor_after(buffer.len());
-                buffer.edit([(start..end, commit_message)], None, cx);
-            });
-
-            let commit_message = panel.commit_message_for_serialization(cx);
-            let commit_message_work_directory_abs_path = commit_message.as_ref().and_then(|_| {
-                panel.active_repository.as_ref().map(|repository| {
-                    repository
-                        .read(cx)
-                        .work_directory_abs_path
-                        .to_string_lossy()
-                        .into_owned()
-                })
+                buffer.edit([(start..end, message_b)], None, cx);
             });
 
             SerializedGitPanel {
                 amend_pending: false,
                 signoff_enabled: false,
-                commit_message_work_directory_abs_path,
-                commit_message,
-                original_commit_message: None,
+                commit_messages: panel.serialized_commit_messages(cx),
             }
         });
 
-        panel.update(cx, |panel, cx| {
-            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+        for repository in [&repository_a, &repository_b] {
+            let buffer = repository.read_with(cx, |repository, _| {
+                repository
+                    .commit_message_buffer()
+                    .expect("repository commit message buffer should be open")
+                    .clone()
+            });
+            buffer.update(cx, |buffer, cx| {
                 let start = buffer.anchor_before(0);
                 let end = buffer.anchor_after(buffer.len());
                 buffer.edit([(start..end, "")], None, cx);
             });
-        });
+        }
 
         let restored_panel = workspace.update_in(cx, |workspace, window, cx| {
             GitPanel::new_with_serialized_panel(workspace, Some(serialized_panel), window, cx)
@@ -8390,12 +8454,14 @@ mod tests {
         cx.run_until_parked();
 
         restored_panel.read_with(cx, |panel, cx| {
-            // The draft is restored because the serialized work directory
-            // matches the active repository.
-            assert_eq!(
-                panel.commit_message_buffer(cx).read(cx).text(),
-                commit_message
-            );
+            assert_eq!(panel.commit_message_buffer(cx).read(cx).text(), message_b);
+        });
+
+        repository_a.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.run_until_parked();
+
+        restored_panel.read_with(cx, |panel, cx| {
+            assert_eq!(panel.commit_message_buffer(cx).read(cx).text(), message_a);
         });
 
         restored_panel.update(cx, |panel, cx| {
@@ -8409,9 +8475,13 @@ mod tests {
         let mismatched_serialized_panel = SerializedGitPanel {
             amend_pending: false,
             signoff_enabled: false,
-            commit_message_work_directory_abs_path: Some(path!("/root/other-project").to_string()),
-            commit_message: Some(commit_message.to_string()),
-            original_commit_message: None,
+            commit_messages: BTreeMap::from_iter([(
+                path!("/root/other-project").to_string(),
+                SerializedCommitMessage {
+                    message: Some(message_a.to_string()),
+                    original_message: None,
+                },
+            )]),
         };
         let mismatched_panel = workspace.update_in(cx, |workspace, window, cx| {
             GitPanel::new_with_serialized_panel(
