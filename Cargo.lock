@@ -319,9 +319,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5efba6592048ef8a9ac97de8d79b2d9933d8ac4d94f7a2de102348fed0c61103"
+checksum = "794aea8f191be00ab10233745d49b49f53be6a3f4d7fe540f681aebc535c5415"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -329,7 +329,6 @@ dependencies = [
  "blocking",
  "futures 0.3.32",
  "futures-concurrency",
- "jsonrpcmsg",
  "rustc-hash 2.1.1",
  "schemars 1.0.4",
  "serde",
@@ -341,9 +340,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d176a10d4cb06e0262a738c3c5bf21ff0968db13a666e31cbca94a3d3d72e7c"
+checksum = "83ffd930c0d668152ce6d591189f324835d46031eabecb51ada3619ad7e2a278"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -351,9 +350,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.13.6"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c290bfa00c6b52339db66f8e9cf711d5f08530800529f7d619ff24d6cba253d0"
+checksum = "b4e7eb6f1e554741f621ae4abb046d4fbb3cb88541bc599693ae7f9aa30b72eb"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -2198,7 +2197,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2218,7 +2217,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -8742,7 +8741,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.56.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -8996,7 +8995,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "serde",
  "serde_core",
 ]
@@ -9411,16 +9410,6 @@ dependencies = [
  "task",
  "theme",
  "util",
-]
-
-[[package]]
-name = "jsonrpcmsg"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d833a15225c779251e13929203518c2ff26e2fe0f322d584b213f4f4dad37bd"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -14229,7 +14218,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.11.1",
  "heck 0.5.0",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "multimap",
  "once_cell",
@@ -14262,7 +14251,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
