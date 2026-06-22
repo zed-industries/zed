@@ -68,6 +68,7 @@ submitted. **If you'd like your PR to have the best chance of being merged**:
 Although there are few hard and fast rules, **typically we don't merge**:
 
 - Anything that can be provided by an extension. For example a new language, or theme. For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
+- Changes to the Zed Extension API submitted without prior discussion involving Zed staff.
 - New file icons. Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner, please don't submit PRs with off-the-shelf SVGs.
 - Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
 - Giant refactorings.

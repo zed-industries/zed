@@ -355,6 +355,8 @@ impl ViMotion {
             Self::WordRight => AlacViMotion::WordRight,
             Self::WordRightEnd => AlacViMotion::WordRightEnd,
             Self::Bracket => AlacViMotion::Bracket,
+            Self::ParagraphUp => AlacViMotion::ParagraphUp,
+            Self::ParagraphDown => AlacViMotion::ParagraphDown,
         }
     }
 }
