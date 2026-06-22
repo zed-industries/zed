@@ -6,7 +6,7 @@ use ui::Window;
 use crate::preview;
 use crate::shape::{self, Centered, RelativeHeight, RelativeWidth, Shape, ViewportFraction};
 
-const PICKERS_NAMESPACE: &str = "pickers";
+const PICKERS_NAMESPACE: &str = "pickers_v2";
 
 pub(crate) fn store_shape_for_this_layout(
     picker_delegate: &'static str,
