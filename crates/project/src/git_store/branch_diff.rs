@@ -451,18 +451,16 @@ impl BranchDiff {
                     (buffer, diff)
                 }
                 DiffBase::Staged => {
-                    let unstaged_diff = project
-                        .update(cx, |project, cx| {
-                            project.open_unstaged_diff(buffer.clone(), cx)
-                        })?
-                        .await?;
                     let diff = project
                         .update(cx, |project, cx| {
                             project.open_staged_diff(buffer.clone(), cx)
                         })?
                         .await?;
-                    let index_buffer =
-                        unstaged_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+                    let index_buffer = project
+                        .update(cx, |project, cx| {
+                            project.index_text_buffer(buffer.clone(), cx)
+                        })?
+                        .await?;
                     (index_buffer, diff)
                 }
                 DiffBase::Merge { .. } => {

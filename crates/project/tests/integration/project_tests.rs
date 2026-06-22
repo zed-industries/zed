@@ -9538,8 +9538,22 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
+    let index_text_buffer = project
+        .update(cx, |project, cx| {
+            project.index_text_buffer(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
 
     cx.run_until_parked();
+    index_text_buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        assert_eq!(file.file_name(cx), "main.rs");
+        assert_eq!(
+            file.disk_state(),
+            DiskState::Historic { was_deleted: false }
+        );
+    });
     unstaged_diff.read_with(cx, |diff, cx| {
         assert_eq!(
             diff.base_text(cx).language().cloned(),

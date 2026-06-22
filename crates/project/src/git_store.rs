@@ -170,6 +170,73 @@ enum DiffKind {
     SinceOid(Option<git::Oid>),
 }
 
+struct IndexTextFile {
+    path: Arc<RelPath>,
+    full_path: PathBuf,
+    path_style: PathStyle,
+    file_name: String,
+    worktree_id: WorktreeId,
+    is_private: bool,
+}
+
+impl IndexTextFile {
+    fn new(file: &dyn language::File, cx: &App) -> Self {
+        Self {
+            path: file.path().clone(),
+            full_path: file.full_path(cx),
+            path_style: file.path_style(cx),
+            file_name: file.file_name(cx).to_string(),
+            worktree_id: file.worktree_id(cx),
+            is_private: file.is_private(),
+        }
+    }
+}
+
+impl language::File for IndexTextFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> language::DiskState {
+        language::DiskState::Historic { was_deleted: false }
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.full_path.clone()
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        self.path_style
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+        &self.file_name
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _: &App) -> rpc::proto::File {
+        rpc::proto::File {
+            worktree_id: self.worktree_id.to_proto(),
+            entry_id: None,
+            path: self.path.as_ref().to_proto(),
+            mtime: None,
+            is_deleted: false,
+            is_historic: true,
+        }
+    }
+
+    fn is_private(&self) -> bool {
+        self.is_private
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub enum GitAccess {
     /// Either:
@@ -944,6 +1011,53 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    pub fn index_text_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(index_text_buffer) = diff_state.read(cx).index_text_buffer()
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+            {
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(index_text_buffer)
+                });
+            }
+            return Task::ready(Ok(index_text_buffer));
+        }
+
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
+        };
+
+        let is_symlink = Self::buffer_is_symlink(&buffer, cx);
+        let staged_text = if is_symlink {
+            Task::ready(Ok(None))
+        } else {
+            repo.update(cx, |repo, cx| {
+                repo.load_staged_text(buffer_id, repo_path, cx)
+            })
+        };
+
+        cx.spawn(async move |this, cx| {
+            Self::open_index_text_buffer_internal(
+                this,
+                staged_text.await.map(DiffBasesChange::SetIndex),
+                buffer,
+                cx,
+            )
+            .await
+        })
+    }
+
     pub fn open_staged_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -1150,6 +1264,55 @@ impl GitStore {
     }
 
     #[ztracing::instrument(skip_all)]
+    async fn open_index_text_buffer_internal(
+        this: WeakEntity<Self>,
+        diff_bases_change: Result<DiffBasesChange>,
+        buffer_entity: Entity<Buffer>,
+        cx: &mut AsyncApp,
+    ) -> Result<Entity<Buffer>> {
+        let diff_bases_change = diff_bases_change?;
+        this.update(cx, |this, cx| {
+            let buffer = buffer_entity.read(cx);
+            let buffer_id = buffer.remote_id();
+            let language = buffer.language().cloned();
+            let language_registry = buffer.language_registry();
+            let text_snapshot = buffer.text_snapshot();
+            let index_text_file = buffer.file().map(|file| {
+                Arc::new(IndexTextFile::new(file.as_ref(), cx)) as Arc<dyn language::File>
+            });
+
+            let git_store = cx.weak_entity();
+            let diff_state = this
+                .diffs
+                .entry(buffer_id)
+                .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
+            let index_text_buffer = diff_state.update(cx, |diff_state, cx| {
+                diff_state.index_text_buffer_language_enabled = true;
+                diff_state.language = language.clone();
+                diff_state.language_registry = language_registry.clone();
+                let index_text_buffer =
+                    diff_state.get_or_create_index_text_buffer(index_text_file, cx);
+                index_text_buffer.update(cx, |index_text_buffer, cx| {
+                    if let Some(language_registry) = language_registry.clone() {
+                        index_text_buffer.set_language_registry(language_registry);
+                    }
+                    index_text_buffer.set_language_async(language, cx);
+                });
+                diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), cx);
+                let rx = diff_state.wait_for_recalculation();
+                async move {
+                    if let Some(rx) = rx {
+                        rx.await;
+                    }
+                    Ok(index_text_buffer)
+                }
+            });
+            anyhow::Ok(index_text_buffer)
+        })??
+        .await
+    }
+
+    #[ztracing::instrument(skip_all)]
     async fn open_diff_internal(
         this: WeakEntity<Self>,
         kind: DiffKind,
@@ -1174,6 +1337,9 @@ impl GitStore {
             let buffer_id = buffer.remote_id();
             let language = buffer.language().cloned();
             let language_registry = buffer.language_registry();
+            let index_text_file = buffer.file().map(|file| {
+                Arc::new(IndexTextFile::new(file.as_ref(), cx)) as Arc<dyn language::File>
+            });
             let text_snapshot = buffer.text_snapshot();
             this.loading_diffs.remove(&(buffer_id, kind));
 
@@ -1194,7 +1360,7 @@ impl GitStore {
                 let diff = match kind {
                     DiffKind::Unstaged => {
                         let base_text_buffer = diff_state.update(cx, |diff_state, cx| {
-                            diff_state.get_or_create_index_text_buffer(cx)
+                            diff_state.get_or_create_index_text_buffer(index_text_file.clone(), cx)
                         });
                         cx.new(|cx| {
                             BufferDiff::new_with_base_text_buffer(
@@ -1208,7 +1374,10 @@ impl GitStore {
                         let (index_text_buffer, base_text_buffer) =
                             diff_state.update(cx, |diff_state, cx| {
                                 (
-                                    diff_state.get_or_create_index_text_buffer(cx),
+                                    diff_state.get_or_create_index_text_buffer(
+                                        index_text_file.clone(),
+                                        cx,
+                                    ),
                                     diff_state.get_or_create_head_text_buffer(cx),
                                 )
                             });
@@ -1266,7 +1435,8 @@ impl GitStore {
                         let unstaged_diff = if let Some(diff) = existing_unstaged_diff {
                             diff
                         } else {
-                            let base_text_buffer = diff_state.get_or_create_index_text_buffer(cx);
+                            let base_text_buffer =
+                                diff_state.get_or_create_index_text_buffer(index_text_file, cx);
                             let unstaged_diff = cx.new(|cx| {
                                 BufferDiff::new_with_base_text_buffer(
                                     &text_snapshot,
@@ -3989,13 +4159,27 @@ impl BufferGitState {
         buffer
     }
 
-    fn get_or_create_index_text_buffer(&mut self, cx: &mut Context<Self>) -> Entity<Buffer> {
+    fn index_text_buffer(&self) -> Option<Entity<Buffer>> {
+        self.index_text_buffer.upgrade()
+    }
+
+    fn get_or_create_index_text_buffer(
+        &mut self,
+        file: Option<Arc<dyn language::File>>,
+        cx: &mut Context<Self>,
+    ) -> Entity<Buffer> {
         if let Some(buffer) = self.index_text_buffer.upgrade() {
+            if let Some(file) = file {
+                buffer.update(cx, |buffer, cx| buffer.file_updated(file, cx));
+            }
             return buffer;
         }
         let index_text = self.index_text.clone();
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(index_text.as_deref().unwrap_or(""), cx);
+            if let Some(file) = file {
+                buffer.file_updated(file, cx);
+            }
             buffer.set_capability(Capability::ReadOnly, cx);
             buffer
         });

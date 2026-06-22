@@ -3220,6 +3220,19 @@ impl Project {
     }
 
     #[ztracing::instrument(skip_all)]
+    pub fn index_text_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store
+            .update(cx, |git_store, cx| git_store.index_text_buffer(buffer, cx))
+    }
+
+    #[ztracing::instrument(skip_all)]
     pub fn open_staged_diff(
         &mut self,
         buffer: Entity<Buffer>,
