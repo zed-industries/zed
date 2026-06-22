@@ -1500,9 +1500,9 @@ impl GitPanel {
             GitPanelSettings::get_global(cx).entry_primary_click_action;
         let action = match (entry_primary_click_action, secondary) {
             (GitPanelClickBehavior::ProjectDiff, false) => GitPanelClickBehavior::ProjectDiff,
-            (GitPanelClickBehavior::ProjectDiff, true) => GitPanelClickBehavior::SoloDiff,
-            (GitPanelClickBehavior::SoloDiff, false) => GitPanelClickBehavior::SoloDiff,
-            (GitPanelClickBehavior::SoloDiff, true) => GitPanelClickBehavior::ProjectDiff,
+            (GitPanelClickBehavior::ProjectDiff, true) => GitPanelClickBehavior::FileDiff,
+            (GitPanelClickBehavior::FileDiff, false) => GitPanelClickBehavior::FileDiff,
+            (GitPanelClickBehavior::FileDiff, true) => GitPanelClickBehavior::ProjectDiff,
             (GitPanelClickBehavior::ViewFile, false) => GitPanelClickBehavior::ViewFile,
             (GitPanelClickBehavior::ViewFile, true) => GitPanelClickBehavior::ProjectDiff,
         };
@@ -1511,7 +1511,7 @@ impl GitPanel {
                 self.open_diff(&Default::default(), window, cx);
                 self.focus_handle.focus(window, cx);
             }
-            GitPanelClickBehavior::SoloDiff => {
+            GitPanelClickBehavior::FileDiff => {
                 self.open_solo_diff(&Default::default(), window, cx);
             }
             GitPanelClickBehavior::ViewFile => {

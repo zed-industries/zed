@@ -745,7 +745,7 @@ pub enum GitPanelClickBehavior {
     #[default]
     ProjectDiff,
     /// Open a single-file diff view.
-    SoloDiff,
+    FileDiff,
     /// Open the file in the editor without a diff view.
     ViewFile,
 }
