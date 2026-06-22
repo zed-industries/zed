@@ -1924,8 +1924,8 @@ impl Terminal {
             "H" => Some(ViMotion::High),
             "M" => Some(ViMotion::Middle),
             "L" => Some(ViMotion::Low),
-            "{" if keystroke.modifiers.shift => Some(ViMotion::ParagraphUp),
-            "}" if keystroke.modifiers.shift => Some(ViMotion::ParagraphDown),
+            "{" => Some(ViMotion::ParagraphUp),
+            "}" => Some(ViMotion::ParagraphDown),
             _ => None,
         };
 
