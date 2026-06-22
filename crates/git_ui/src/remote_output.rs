@@ -38,15 +38,23 @@ fn find_remote_link(stderr: &str) -> Option<String> {
 
 pub enum SuccessStyle {
     Toast,
-    ToastWithLog { output: RemoteCommandOutput },
+    ToastWithLog {
+        output: RemoteCommandOutput,
+    },
     /// The push created a branch for which a new pull/merge request can be
     /// opened. The button triggers the same `CreatePullRequest` action as the
     /// command palette, deriving the URL from the git hosting provider, and
     /// falls back to `fallback_url` (the link git printed) if that fails.
-    CreatePullRequest { label: String, fallback_url: String },
+    CreatePullRequest {
+        label: String,
+        fallback_url: String,
+    },
     /// The push references an existing merge request; follow the link git
     /// printed since there is nothing to create.
-    OpenLink { label: String, link: String },
+    OpenLink {
+        label: String,
+        link: String,
+    },
 }
 
 pub struct SuccessMessage {
@@ -167,11 +175,9 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     .iter()
                     .find(|(indicator, _)| output.stderr.contains(indicator))
                 {
-                    find_remote_link(&output.stderr).map(|link| {
-                        SuccessStyle::CreatePullRequest {
-                            label: label.to_string(),
-                            fallback_url: link,
-                        }
+                    find_remote_link(&output.stderr).map(|link| SuccessStyle::CreatePullRequest {
+                        label: label.to_string(),
+                        fallback_url: link,
                     })
                 } else if let Some((_, label)) = VIEW_HINTS
                     .iter()
