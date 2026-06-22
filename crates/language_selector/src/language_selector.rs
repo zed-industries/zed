@@ -6,7 +6,7 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, TaskExt, WeakEntity, Window, actions,
+    Render, TaskExt, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;
@@ -83,7 +83,13 @@ impl LanguageSelector {
             current_language_name,
         );
 
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
@@ -92,7 +98,6 @@ impl Render for LanguageSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("LanguageSelector")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }

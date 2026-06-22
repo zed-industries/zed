@@ -183,4 +183,5 @@ pub fn font_picker(
         .minimum_results_width(rems_from_px(210.))
         .height(rems(18.))
         .no_vertical_padding()
+        .modal(false)
 }
