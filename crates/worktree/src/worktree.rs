@@ -80,6 +80,34 @@ use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
+struct ProgressThrottle {
+    update_count: AtomicUsize,
+}
+
+impl ProgressThrottle {
+    fn new() -> Self {
+        Self {
+            update_count: AtomicUsize::new(0),
+        }
+    }
+
+    fn try_claim(&self, last_seen: &mut usize) -> bool {
+        match self
+            .update_count
+            .compare_exchange(*last_seen, *last_seen + 1, SeqCst, SeqCst)
+        {
+            Ok(_) => {
+                *last_seen += 1;
+                true
+            }
+            Err(count) => {
+                *last_seen = count;
+                false
+            }
+        }
+    }
+}
+
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
 /// Stores git repositories data and the diagnostics for the file(s).
@@ -4914,7 +4942,7 @@ impl BackgroundScanner {
             return;
         }
 
-        let progress_update_count = AtomicUsize::new(0);
+        let progress = ProgressThrottle::new();
         self.executor
             .scoped_priority(Priority::Low, |scope| {
                 for _ in 0..self.executor.num_cpus() {
@@ -4954,20 +4982,9 @@ impl BackgroundScanner {
                                 // to ensure that only one of the workers sends a progress update after
                                 // the update interval elapses.
                                 _ = progress_update_timer => {
-                                    match progress_update_count.compare_exchange(
-                                        last_progress_update_count,
-                                        last_progress_update_count + 1,
-                                        SeqCst,
-                                        SeqCst
-                                    ) {
-                                        Ok(_) => {
-                                            last_progress_update_count += 1;
-                                            self.send_status_update(true, SmallVec::new(), &[])
-                                                .await;
-                                        }
-                                        Err(count) => {
-                                            last_progress_update_count = count;
-                                        }
+                                    if progress.try_claim(&mut last_progress_update_count) {
+                                        self.send_status_update(true, SmallVec::new(), &[])
+                                            .await;
                                     }
                                     progress_update_timer.set(self.progress_timer(enable_progress_updates).fuse());
                                 }
@@ -4999,17 +5016,33 @@ impl BackgroundScanner {
             return;
         }
 
+        let progress = ProgressThrottle::new();
         self.executor
             .scoped_priority(Priority::Low, |scope| {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
-                        while let Ok(job) = scan_jobs_rx.recv().await {
-                            if let Err(err) = self.scan_dir(&job).await
-                                && job.path.is_empty()
-                            {
-                                log::error!("error scanning directory {:?}: {}", job.abs_path, err);
+                        let mut last_progress_update_count = 0;
+                        let progress_update_timer = self.executor.timer(FS_WATCH_LATENCY).fuse();
+                        futures::pin_mut!(progress_update_timer);
+
+                        loop {
+                            select_biased! {
+                                _ = progress_update_timer => {
+                                    if progress.try_claim(&mut last_progress_update_count) {
+                                        self.send_status_update(true, SmallVec::new(), &[]).await;
+                                    }
+                                    progress_update_timer.set(self.executor.timer(FS_WATCH_LATENCY).fuse());
+                                }
+
+                                job = scan_jobs_rx.recv().fuse() => {
+                                    let Ok(job) = job else { break };
+                                    if let Err(err) = self.scan_dir(&job).await
+                                        && job.path.is_empty()
+                                    {
+                                        log::error!("error scanning directory {:?}: {}", job.abs_path, err);
+                                    }
+                                }
                             }
-                            self.send_status_update(true, SmallVec::new(), &[]).await;
                         }
                     });
                 }

@@ -10,7 +10,9 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use rpc::{AnyProtoClient, NoopProtoClient, proto};
-use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
+use worktree::{
+    Entry, EntryKind, Event, FS_WATCH_LATENCY, PathChange, Worktree, WorktreeModelHandle,
+};
 
 use serde_json::json;
 use settings::{SettingsStore, WorktreeId};
@@ -2003,10 +2005,14 @@ async fn test_path_prefix_expansion_reports_incremental_progress(cx: &mut TestAp
             });
             cx.executor().run_until_parked();
 
-            // The expansion as a whole has not completed (it's still parked on
-            // "expand/slow"), but the periodic progress updates from
-            // `drain_scan_jobs` should already have pushed "expand/fast"'s
-            // contents to the foreground.
+            // The expansion is now parked on the blocked "expand/slow" read, with
+            // "expand" and "expand/fast" already crawled. Advancing past the
+            // progress interval lets a free worker emit a periodic progress
+            // update, which should push "expand/fast"'s contents to the
+            // foreground before the expansion as a whole completes.
+            cx.executor().advance_clock(FS_WATCH_LATENCY * 2);
+            cx.executor().run_until_parked();
+
             tree.read_with(cx, |tree, _| {
                 assert!(
                     tree.entry_for_path(rel_path("expand/fast/file.txt"))
