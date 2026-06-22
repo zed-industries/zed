@@ -4820,42 +4820,42 @@ impl GitPanel {
                 .flex_none()
                 .justify_between()
                 .child(
-                    h_flex()
-                        .gap_1p5()
+                    ButtonLike::new("diff-button")
                         .child(
-                            Button::new("changes", "View Diff")
-                                .label_size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .start_icon(
+                            h_flex()
+                                .gap_1()
+                                .child(
                                     Icon::new(IconName::Diff)
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "View Diff",
-                                    &Diff,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(|_, _, cx| {
-                                    cx.defer(|cx| {
-                                        cx.dispatch_action(&Diff);
-                                    })
-                                }),
-                        )
-                        .when(
-                            GitPanelSettings::get_global(cx).diff_stats
-                                && diff_stat_total != DiffStat::default(),
-                            |this| {
-                                this.child(
-                                    ui::DiffStat::new(
-                                        "changes-diff-stat-total",
-                                        diff_stat_total.added as usize,
-                                        diff_stat_total.deleted as usize,
-                                    )
-                                    .tooltip("Total tracked changes"),
+                                .child(
+                                    Label::new("View Diff")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
                                 )
-                            },
-                        ),
+                                .when(
+                                    GitPanelSettings::get_global(cx).diff_stats
+                                        && diff_stat_total != DiffStat::default(),
+                                    |this| {
+                                        this.child(ui::DiffStat::new(
+                                            "changes-diff-stat-total",
+                                            diff_stat_total.added as usize,
+                                            diff_stat_total.deleted as usize,
+                                        ))
+                                    },
+                                ),
+                        )
+                        .tooltip(Tooltip::for_action_title_in(
+                            "View Diff",
+                            &Diff,
+                            &self.focus_handle,
+                        ))
+                        .on_click(|_, _, cx| {
+                            cx.defer(|cx| {
+                                cx.dispatch_action(&Diff);
+                            })
+                        }),
                 )
                 .child(
                     h_flex()
