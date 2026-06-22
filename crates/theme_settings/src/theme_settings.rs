@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use ::settings::{IntoGpui, Settings, SettingsStore};
 use anyhow::{Context as _, Result};
-use gpui::{App, Font, HighlightStyle, Pixels, Refineable, px};
+use gpui::{App, Font, HighlightStyle, Pixels, Refineable, SharedString, WindowId, px};
 use gpui_util::ResultExt;
 use theme::{
     AccentColors, Appearance, AppearanceContent, DEFAULT_DARK_THEME, DEFAULT_ICON_THEME_NAME,
     GlobalTheme, LoadThemes, PlayerColor, PlayerColors, StatusColors, SyntaxTheme,
     SystemAppearance, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeRegistry,
-    ThemeSettingsProvider, ThemeStyles, default_color_scales, try_parse_color,
+    ThemeSettingsProvider, ThemeStyles, WindowThemeOverrides, default_color_scales, try_parse_color,
 };
 
 pub use crate::schema::{
@@ -195,7 +195,50 @@ fn configured_icon_theme(cx: &mut App) -> Arc<theme::IconTheme> {
 pub fn reload_theme(cx: &mut App) {
     let theme = configured_theme(cx);
     GlobalTheme::update_theme(cx, theme);
+    reresolve_window_theme_overrides(cx);
     cx.refresh_windows();
+}
+
+/// Resolves a theme by name against the registry and applies the user's theme
+/// overrides, matching how the app-wide configured theme is built. Returns
+/// `None` if the theme is not found.
+pub fn resolve_theme(cx: &App, theme_name: &str) -> Option<Arc<Theme>> {
+    let theme = ThemeRegistry::global(cx).get(theme_name).ok()?;
+    Some(ThemeSettings::get_global(cx).apply_theme_overrides(theme))
+}
+
+/// Sets a per-window theme override by name (applying the user's theme overrides)
+/// and redraws so the window immediately reflects it. Returns whether the theme
+/// name resolved to a known theme. The override is stored user-side, never in a
+/// project's settings.
+pub fn set_window_theme(cx: &mut App, window_id: WindowId, theme_name: SharedString) -> bool {
+    let Some(theme) = resolve_theme(cx, &theme_name) else {
+        return false;
+    };
+    WindowThemeOverrides::set_resolved(cx, window_id, theme_name, theme);
+    cx.refresh_windows();
+    true
+}
+
+/// Clears a window's theme override, falling back to the configured theme, and
+/// redraws. Returns whether an override was present.
+pub fn clear_window_theme(cx: &mut App, window_id: WindowId) -> bool {
+    let cleared = WindowThemeOverrides::clear(cx, window_id);
+    if cleared {
+        cx.refresh_windows();
+    }
+    cleared
+}
+
+/// Re-resolves all stored per-window overrides against the current registry and
+/// user overrides, so overridden windows reflect updated theme definitions after
+/// a settings or appearance change.
+fn reresolve_window_theme_overrides(cx: &mut App) {
+    for (window_id, theme_name) in WindowThemeOverrides::entries(cx) {
+        if let Some(theme) = resolve_theme(cx, &theme_name) {
+            WindowThemeOverrides::set_resolved(cx, window_id, theme_name, theme);
+        }
+    }
 }
 
 /// Reloads the current icon theme from settings.

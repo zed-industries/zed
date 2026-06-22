@@ -2656,6 +2656,15 @@ impl Window {
                 self.rendered_frame.input_handlers.push(Some(input_handler));
             }
         }
+        // Let observers prepare per-window state (e.g. the active theme) before
+        // the element tree is rendered. Runs every frame, so observers must be
+        // cheap and must not notify in a way that re-invalidates this window.
+        let draw_observers = cx.window_draw_observers.clone();
+        draw_observers.retain(&(), |observer| {
+            observer(self, cx);
+            true
+        });
+
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
         }

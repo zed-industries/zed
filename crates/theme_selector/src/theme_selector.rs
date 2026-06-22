@@ -3,15 +3,16 @@ mod icon_theme_selector;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
-    Window, actions,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, SharedString, UpdateGlobal,
+    WeakEntity, Window, WindowId, actions,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{Appearance, SystemAppearance, Theme, ThemeMeta, ThemeRegistry};
+use theme::{Appearance, SystemAppearance, Theme, ThemeMeta, ThemeRegistry, WindowThemeOverrides};
 use theme_settings::{
     ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, appearance_to_mode,
+    clear_window_theme, set_window_theme,
 };
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
@@ -32,7 +33,20 @@ pub fn init(cx: &mut App) {
     cx.on_action(|action: &zed_actions::theme_selector::Toggle, cx| {
         let action = action.clone();
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            toggle_theme_selector(workspace, &action, window, cx);
+            toggle_theme_selector(workspace, action.themes_filter.as_ref(), false, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::theme::Project, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            toggle_theme_selector(workspace, None, true, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::theme::ClearProject, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let window_id = window.window_handle().window_id();
+            if clear_window_theme(cx, window_id) {
+                workspace.persist_window_theme_override(window, cx);
+            }
         });
     });
     cx.on_action(|action: &zed_actions::icon_theme_selector::Toggle, cx| {
@@ -45,18 +59,16 @@ pub fn init(cx: &mut App) {
 
 fn toggle_theme_selector(
     workspace: &mut Workspace,
-    toggle: &zed_actions::theme_selector::Toggle,
+    themes_filter: Option<&Vec<String>>,
+    window_only: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
+    let window_id = window_only.then(|| window.window_handle().window_id());
     workspace.toggle_modal(window, cx, |window, cx| {
-        let delegate = ThemeSelectorDelegate::new(
-            cx.entity().downgrade(),
-            fs,
-            toggle.themes_filter.as_ref(),
-            cx,
-        );
+        let delegate =
+            ThemeSelectorDelegate::new(cx.entity().downgrade(), fs, themes_filter, window_id, cx);
         ThemeSelector::new(delegate, window, cx)
     });
 }
@@ -152,6 +164,13 @@ struct ThemeSelectorDelegate {
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
     selector: WeakEntity<ThemeSelector>,
+    /// When `Some`, the selector applies the theme to this window only (stored
+    /// user-side, keyed by workspace) rather than changing the app-wide `theme`
+    /// setting.
+    window_id: Option<WindowId>,
+    /// The name of the per-window override that was active before the selector
+    /// was opened (if any), used to revert on dismissal in window-only mode.
+    original_window_override: Option<SharedString>,
 }
 
 impl ThemeSelectorDelegate {
@@ -159,9 +178,12 @@ impl ThemeSelectorDelegate {
         selector: WeakEntity<ThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
+        window_id: Option<WindowId>,
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
+        let original_window_override =
+            window_id.and_then(|window_id| WindowThemeOverrides::theme_name(cx, window_id));
         let original_theme_settings = ThemeSettings::get_global(cx).clone();
         let original_system_appearance = SystemAppearance::global(cx).0;
 
@@ -219,6 +241,8 @@ impl ThemeSelectorDelegate {
             selection_completed: false,
             selected_theme: None,
             selector,
+            window_id,
+            original_window_override,
         }
     }
 
@@ -252,24 +276,45 @@ impl ThemeSelectorDelegate {
     }
 
     fn revert_theme(&mut self, cx: &mut App) {
-        if !self.selection_completed {
+        if self.selection_completed {
+            return;
+        }
+        if let Some(window_id) = self.window_id {
+            // Window-only mode: restore the override that was active before the
+            // selector was opened (or clear it if there was none). Never touches
+            // the app-wide settings.
+            match &self.original_window_override {
+                Some(theme_name) => {
+                    set_window_theme(cx, window_id, theme_name.clone());
+                }
+                None => {
+                    clear_window_theme(cx, window_id);
+                }
+            }
+        } else {
             SettingsStore::update_global(cx, |store, _| {
                 store.override_global(self.original_theme_settings.clone());
             });
-            self.selection_completed = true;
         }
+        self.selection_completed = true;
     }
 
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
-        // Update the global (in-memory) theme settings.
-        SettingsStore::update_global(cx, |store, _| {
-            override_global_theme(
-                store,
-                &new_theme,
-                &self.original_theme_settings.theme,
-                self.original_system_appearance,
-            )
-        });
+        if let Some(window_id) = self.window_id {
+            // Window-only mode: preview the theme on this window alone, without
+            // touching the global (in-memory or on-disk) theme settings.
+            set_window_theme(cx, window_id, new_theme.name.clone());
+        } else {
+            // Update the global (in-memory) theme settings.
+            SettingsStore::update_global(cx, |store, _| {
+                override_global_theme(
+                    store,
+                    &new_theme,
+                    &self.original_theme_settings.theme,
+                    self.original_system_appearance,
+                )
+            });
+        }
 
         self.new_theme = new_theme;
     }
@@ -397,20 +442,38 @@ impl PickerDelegate for ThemeSelectorDelegate {
     fn confirm(
         &mut self,
         _secondary: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
         self.selection_completed = true;
 
-        let theme_name: Arc<str> = self.new_theme.name.as_str().into();
-        let theme_appearance = self.new_theme.appearance;
-        let system_appearance = SystemAppearance::global(cx).0;
+        if let Some(window_id) = self.window_id {
+            // Window-only mode: the override is already applied to this window
+            // (via the preview in `set_theme`). Persist it user-side, keyed by
+            // this window's workspace, so it survives a restart. The app-wide
+            // `theme` setting is intentionally left untouched.
+            telemetry::event!(
+                "Settings Changed",
+                setting = "window_theme",
+                value = self.new_theme.name.as_str()
+            );
+            set_window_theme(cx, window_id, self.new_theme.name.clone());
+            if let Some(workspace) = workspace::Workspace::for_window(window, cx) {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.persist_window_theme_override(window, cx);
+                });
+            }
+        } else {
+            let theme_name: Arc<str> = self.new_theme.name.as_str().into();
+            let theme_appearance = self.new_theme.appearance;
+            let system_appearance = SystemAppearance::global(cx).0;
 
-        telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
+            telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
-        update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme_settings::set_theme(settings, theme_name, theme_appearance, system_appearance);
-        });
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                theme_settings::set_theme(settings, theme_name, theme_appearance, system_appearance);
+            });
+        }
 
         self.selector
             .update(cx, |_, cx| {
