@@ -12,7 +12,7 @@ use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
 use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled_for_project};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
     SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
