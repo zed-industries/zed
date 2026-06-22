@@ -3,8 +3,7 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings,
-    StatusStyle,
+    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings, StatusStyle,
 };
 use ui::{
     px,
