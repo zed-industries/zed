@@ -1246,6 +1246,7 @@ impl AcpConnection {
         cx: &mut AsyncApp,
     ) {
         let id = self.id.clone();
+        let apply_boolean_defaults = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
         let defaults_to_apply: Vec<_> = {
             let config_opts_ref = config_options.borrow();
             config_opts_ref
@@ -1253,31 +1254,52 @@ impl AcpConnection {
                 .filter_map(|config_option| {
                     let default_value = self.defaults.config_option(config_option.id.0.as_ref())?;
 
-                    let is_valid = match &config_option.kind {
+                    let value_to_apply = match &config_option.kind {
                         acp::SessionConfigKind::Select(select) => match &select.options {
                             acp::SessionConfigSelectOptions::Ungrouped(options) => options
                                 .iter()
-                                .any(|opt| &*opt.value.0 == default_value.as_str()),
-                            acp::SessionConfigSelectOptions::Grouped(groups) => {
-                                groups.iter().any(|g| {
-                                    g.options
+                                .any(|opt| &*opt.value.0 == default_value.as_str())
+                                .then(|| {
+                                    acp::SessionConfigOptionValue::value_id(default_value.clone())
+                                }),
+                            acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                                .iter()
+                                .any(|group| {
+                                    group
+                                        .options
                                         .iter()
                                         .any(|opt| &*opt.value.0 == default_value.as_str())
                                 })
-                            }
-                            _ => false,
+                                .then(|| {
+                                    acp::SessionConfigOptionValue::value_id(default_value.clone())
+                                }),
+                            _ => None,
                         },
-                        _ => false,
+                        acp::SessionConfigKind::Boolean(_) if !apply_boolean_defaults => {
+                            return None;
+                        }
+                        acp::SessionConfigKind::Boolean(_) => match default_value.as_str() {
+                            "true" => Some(acp::SessionConfigOptionValue::boolean(true)),
+                            "false" => Some(acp::SessionConfigOptionValue::boolean(false)),
+                            _ => None,
+                        },
+                        _ => None,
                     };
 
-                    if is_valid {
+                    if let Some(value_to_apply) = value_to_apply {
                         let initial_value = match &config_option.kind {
                             acp::SessionConfigKind::Select(select) => {
-                                Some(select.current_value.clone())
+                                acp::SessionConfigOptionValue::value_id(
+                                    select.current_value.clone(),
+                                )
                             }
-                            _ => None,
+                            acp::SessionConfigKind::Boolean(boolean) => {
+                                acp::SessionConfigOptionValue::boolean(boolean.current_value)
+                            }
+                            _ => return None,
                         };
-                        Some((config_option.id.clone(), default_value, initial_value))
+
+                        Some((config_option.id.clone(), value_to_apply, initial_value))
                     } else {
                         log::warn!(
                             "`{}` is not a valid value for config option `{}` in {}",
@@ -1293,7 +1315,7 @@ impl AcpConnection {
 
         for (config_id, default_value, initial_value) in defaults_to_apply {
             cx.spawn({
-                let default_value_id = acp::SessionConfigValueId::new(default_value.clone());
+                let default_value_for_request = default_value.clone();
                 let session_id = session_id.clone();
                 let config_id_clone = config_id.clone();
                 let config_opts = config_options.clone();
@@ -1303,19 +1325,29 @@ impl AcpConnection {
                         .send_request(acp::SetSessionConfigOptionRequest::new(
                             session_id,
                             config_id_clone.clone(),
-                            default_value_id,
+                            default_value_for_request,
                         ))
                         .block_task()
                         .await
                         .log_err();
 
                     if result.is_none() {
-                        if let Some(initial) = initial_value {
-                            let mut opts = config_opts.borrow_mut();
-                            if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id_clone) {
-                                if let acp::SessionConfigKind::Select(select) = &mut opt.kind {
-                                    select.current_value = initial;
+                        let mut opts = config_opts.borrow_mut();
+                        if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id_clone) {
+                            match (&mut opt.kind, &initial_value) {
+                                (
+                                    acp::SessionConfigKind::Select(select),
+                                    acp::SessionConfigOptionValue::ValueId { value },
+                                ) => {
+                                    select.current_value = value.clone();
                                 }
+                                (
+                                    acp::SessionConfigKind::Boolean(boolean),
+                                    acp::SessionConfigOptionValue::Boolean { value },
+                                ) => {
+                                    boolean.current_value = *value;
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -1325,8 +1357,20 @@ impl AcpConnection {
 
             let mut opts = config_options.borrow_mut();
             if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id) {
-                if let acp::SessionConfigKind::Select(select) = &mut opt.kind {
-                    select.current_value = acp::SessionConfigValueId::new(default_value);
+                match (&mut opt.kind, &default_value) {
+                    (
+                        acp::SessionConfigKind::Select(select),
+                        acp::SessionConfigOptionValue::ValueId { value },
+                    ) => {
+                        select.current_value = value.clone();
+                    }
+                    (
+                        acp::SessionConfigKind::Boolean(boolean),
+                        acp::SessionConfigOptionValue::Boolean { value },
+                    ) => {
+                        boolean.current_value = *value;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2455,6 +2499,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use feature_flags::FeatureFlag as _;
     use settings::Settings as _;
 
     #[test]
@@ -2934,6 +2979,186 @@ mod tests {
 
         assert_eq!(harness.connection.defaults.mode(), None);
         assert_eq!(harness.connection.defaults.config_option("mode"), None);
+    }
+
+    #[gpui::test]
+    async fn default_config_options_skip_boolean_defaults_when_acp_beta_is_disabled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_settings_with_acp_beta_override(false, cx));
+
+        let (connection, set_config_requests) = connect_config_defaults_test_agent(cx).await;
+        connection.defaults.set(
+            None,
+            HashMap::from_iter([
+                ("web_search".to_string(), "true".to_string()),
+                ("mode".to_string(), "manual".to_string()),
+            ]),
+        );
+        let config_options = Rc::new(RefCell::new(vec![
+            acp::SessionConfigOption::boolean("web_search", "Web Search", false),
+            acp::SessionConfigOption::select(
+                "mode",
+                "Mode",
+                "auto",
+                vec![
+                    acp::SessionConfigSelectOption::new("auto", "Auto"),
+                    acp::SessionConfigSelectOption::new("manual", "Manual"),
+                ],
+            ),
+        ]));
+
+        let mut async_cx = cx.to_async();
+        connection.apply_default_config_options(
+            &acp::SessionId::new("session-config-defaults"),
+            &config_options,
+            &mut async_cx,
+        );
+        drop(async_cx);
+        cx.run_until_parked();
+
+        let requests = set_config_requests
+            .lock()
+            .expect("set config requests mutex poisoned");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].config_id, acp::SessionConfigId::new("mode"));
+        assert_eq!(
+            requests[0].value,
+            acp::SessionConfigOptionValue::value_id("manual")
+        );
+
+        let options = config_options.borrow();
+        assert!(
+            matches!(&options[0].kind, acp::SessionConfigKind::Boolean(boolean) if !boolean.current_value)
+        );
+        assert!(
+            matches!(&options[1].kind, acp::SessionConfigKind::Select(select) if select.current_value == acp::SessionConfigValueId::new("manual"))
+        );
+    }
+
+    #[gpui::test]
+    async fn default_config_options_apply_boolean_defaults_when_acp_beta_is_enabled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_settings_with_acp_beta_override(true, cx));
+
+        let (connection, set_config_requests) = connect_config_defaults_test_agent(cx).await;
+        connection.defaults.set(
+            None,
+            HashMap::from_iter([("web_search".to_string(), "true".to_string())]),
+        );
+        let config_options = Rc::new(RefCell::new(vec![acp::SessionConfigOption::boolean(
+            "web_search",
+            "Web Search",
+            false,
+        )]));
+
+        let mut async_cx = cx.to_async();
+        connection.apply_default_config_options(
+            &acp::SessionId::new("session-config-defaults"),
+            &config_options,
+            &mut async_cx,
+        );
+        drop(async_cx);
+        cx.run_until_parked();
+
+        let requests = set_config_requests
+            .lock()
+            .expect("set config requests mutex poisoned");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].config_id,
+            acp::SessionConfigId::new("web_search")
+        );
+        assert_eq!(
+            requests[0].value,
+            acp::SessionConfigOptionValue::boolean(true)
+        );
+
+        let options = config_options.borrow();
+        assert!(
+            matches!(&options[0].kind, acp::SessionConfigKind::Boolean(boolean) if boolean.current_value)
+        );
+    }
+
+    fn init_settings_with_acp_beta_override(enabled: bool, cx: &mut App) {
+        let mut store = settings::SettingsStore::test(cx);
+        store.register_setting::<feature_flags::FeatureFlagsSettings>();
+        store.update_user_settings(cx, |content| {
+            content.feature_flags.get_or_insert_default().insert(
+                AcpBetaFeatureFlag::NAME.to_string(),
+                if enabled { "on" } else { "off" }.to_string(),
+            );
+        });
+        cx.set_global(store);
+        cx.update_flags(false, Vec::new());
+    }
+
+    async fn connect_config_defaults_test_agent(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        AcpConnection,
+        Arc<Mutex<Vec<acp::SetSessionConfigOptionRequest>>>,
+    ) {
+        let set_config_requests = Arc::new(Mutex::new(Vec::new()));
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+
+        cx.background_spawn(
+            Agent
+                .builder()
+                .name("config-defaults-test-agent")
+                .on_receive_request(
+                    {
+                        let set_config_requests = set_config_requests.clone();
+                        async move |req: acp::SetSessionConfigOptionRequest, responder, _cx| {
+                            set_config_requests
+                                .lock()
+                                .expect("set config requests mutex poisoned")
+                                .push(req);
+
+                            responder.respond(acp::SetSessionConfigOptionResponse::new(Vec::new()))
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        )
+        .detach();
+
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        let client_io_task = cx.background_spawn(async move {
+            Client
+                .builder()
+                .name("config-defaults-test-client")
+                .connect_with(
+                    client_transport,
+                    move |connection: ConnectionTo<Agent>| async move {
+                        connection_tx.send(connection).ok();
+                        futures::future::pending::<Result<(), acp::Error>>().await
+                    },
+                )
+                .await
+                .ok();
+        });
+
+        let client_conn = connection_rx
+            .await
+            .expect("failed to receive ACP connection");
+        let sessions = Rc::new(RefCell::new(HashMap::default()));
+
+        let connection = cx.update(|cx| {
+            AcpConnection::new_for_test(
+                client_conn,
+                sessions,
+                acp::AgentCapabilities::default(),
+                WeakEntity::new_invalid(),
+                client_io_task,
+                Task::ready(()),
+                cx,
+            )
+        });
+
+        (connection, set_config_requests)
     }
 
     #[gpui::test]
@@ -3727,7 +3952,7 @@ impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
     fn set_config_option(
         &self,
         config_id: acp::SessionConfigId,
-        value: acp::SessionConfigValueId,
+        value: acp::SessionConfigOptionValue,
         cx: &mut App,
     ) -> Task<Result<Vec<acp::SessionConfigOption>>> {
         let connection = self.connection.clone();
