@@ -4814,10 +4814,12 @@ impl GitPanel {
 
         Some(
             h_flex()
-                .h(Tab::container_height(cx))
+                .min_h(Tab::container_height(cx))
                 .w_full()
                 .px_1()
                 .flex_none()
+                .flex_wrap()
+                .gap_1()
                 .justify_between()
                 .child(
                     ButtonLike::new("diff-button")
