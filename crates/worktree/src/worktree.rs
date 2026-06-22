@@ -270,6 +270,7 @@ struct BackgroundScannerState {
     scanned_dirs: HashSet<ProjectEntryId>,
     watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
+    prefix_scans_in_flight: HashMap<Arc<RelPath>, SmallVec<[barrier::Sender; 1]>>,
     paths_to_scan: HashMap<Arc<RelPath>, usize>,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
@@ -1215,6 +1216,7 @@ impl LocalWorktree {
                         watched_dir_abs_paths_by_entry_id: Default::default(),
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
+                        prefix_scans_in_flight: Default::default(),
                         paths_to_scan: Default::default(),
                         removed_entries: Default::default(),
                         changed_paths: Default::default(),
@@ -4334,52 +4336,77 @@ impl BackgroundScanner {
         request: PathPrefixScanRequest,
         scanning: bool,
     ) -> bool {
-        if self
-            .state
-            .lock()
-            .await
-            .path_prefixes_to_scan
-            .contains(&request.path)
-        {
-            return self.send_status_update(scanning, request.done, &[]).await;
+        let PathPrefixScanRequest { path, done } = request;
+
+        let owns_crawl = {
+            let mut state = self.state.lock().await;
+            if let Some(waiters) = state.prefix_scans_in_flight.get_mut(&path) {
+                // A crawl of this prefix is already running; wait on it rather than
+                // crawling the same subtree again. This barrier fires when the
+                // owning crawl finishes and the in-flight entry is removed.
+                waiters.extend(done);
+                return true;
+            }
+            let already_loaded = state.path_prefixes_to_scan.contains(&path);
+            if !already_loaded {
+                state
+                    .prefix_scans_in_flight
+                    .insert(path.clone(), SmallVec::new());
+            }
+            !already_loaded
+        };
+
+        if !owns_crawl {
+            return self.send_status_update(scanning, done, &[]).await;
         }
 
-        log::trace!("adding path prefix {:?}", request.path);
+        let alive = self.load_path_prefix(&path, done, scanning).await;
 
-        let did_scan = self
-            .forcibly_load_paths(std::slice::from_ref(&request.path))
-            .await;
+        self.state.lock().await.prefix_scans_in_flight.remove(&path);
+
+        alive
+    }
+
+    async fn load_path_prefix(
+        &self,
+        path: &Arc<RelPath>,
+        done: SmallVec<[barrier::Sender; 1]>,
+        scanning: bool,
+    ) -> bool {
+        log::trace!("adding path prefix {:?}", path);
+
+        let did_scan = self.forcibly_load_paths(std::slice::from_ref(path)).await;
         if !did_scan {
-            return self.send_status_update(scanning, request.done, &[]).await;
+            return self.send_status_update(scanning, done, &[]).await;
         }
 
         let (root_path, abs_path) = {
             let mut state = self.state.lock().await;
-            state.path_prefixes_to_scan.insert(request.path.clone());
+            state.path_prefixes_to_scan.insert(path.clone());
             (
                 state.snapshot.abs_path.clone(),
-                state.snapshot.absolutize(&request.path),
+                state.snapshot.absolutize(path),
             )
         };
 
         let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() else {
-            return self.send_status_update(scanning, request.done, &[]).await;
+            return self.send_status_update(scanning, done, &[]).await;
         };
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
-            Ok(path) => SanitizedPath::new(path),
+            Ok(canonical) => SanitizedPath::new(canonical),
             Err(err) => {
                 log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
-                return self.send_status_update(scanning, request.done, &[]).await;
+                return self.send_status_update(scanning, done, &[]).await;
             }
         };
 
         let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
-        self.with_scan(scanning, request.done, &[], async {
+        self.with_scan(scanning, done, &[], async {
             self.reload_entries_for_paths(
                 &root_path,
                 root_canonical_path,
-                std::slice::from_ref(&request.path),
+                std::slice::from_ref(path),
                 vec![abs_path],
                 Some(scan_job_tx.clone()),
             )

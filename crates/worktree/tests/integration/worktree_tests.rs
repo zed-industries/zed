@@ -1857,6 +1857,110 @@ async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
     });
 }
 
+#[gpui::test(iterations = 50)]
+async fn test_duplicate_concurrent_path_prefix_requests_scan_subtree_once(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "heavy\nsolo\ndup\n",
+            "heavy": {
+                "a": { "a1.js": "a1" },
+            },
+            "solo": {
+                "a": { "b": { "file.txt": "contents" } },
+            },
+            "dup": {
+                "a": { "b": { "file.txt": "contents" } },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Baseline: expand a single gitignored subtree (no rescan in flight) and
+    // record how many directory reads one full crawl of an identical subtree costs.
+    let prev_read_dir_count = fs.read_dir_call_count();
+    let mut solo_scan = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .add_path_prefix_to_scan(rel_path("solo").into())
+    });
+    solo_scan.recv().await;
+    cx.executor().run_until_parked();
+    let solo_reads = fs.read_dir_call_count() - prev_read_dir_count;
+
+    // Now fire eight identical requests for "dup" while a rescan of "heavy" is
+    // parked mid-flight, so the duplicates land on distinct idle scan workers
+    // concurrently. With dedup, exactly one of them crawls the subtree.
+    let mut scans = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            let prev_read_dir_count = fs.read_dir_call_count();
+            let completion_receivers = (0..8)
+                .map(|_| {
+                    tree.update(cx, |tree, _| {
+                        tree.as_local()
+                            .unwrap()
+                            .add_path_prefix_to_scan(rel_path("dup").into())
+                    })
+                })
+                .collect::<Vec<_>>();
+            cx.executor().run_until_parked();
+
+            let mut completion_receivers = completion_receivers;
+            for scan in &mut completion_receivers {
+                scan.recv().await;
+            }
+            cx.executor().run_until_parked();
+
+            let dup_reads = fs.read_dir_call_count() - prev_read_dir_count;
+
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("dup/a/b/file.txt")).is_some(),
+                    "dup subtree was never loaded"
+                );
+            });
+
+            (completion_receivers, dup_reads)
+        })
+        .await;
+
+    cx.executor().run_until_parked();
+
+    let (_completion_receivers, dup_reads) = &mut scans;
+    assert!(
+        *dup_reads <= solo_reads,
+        "eight concurrent duplicate requests crawled the subtree {dup_reads} times \
+         (one crawl costs {solo_reads}); without dedup they would each crawl it (~8x)"
+    );
+}
+
 #[gpui::test]
 async fn test_path_prefix_expansion_reports_incremental_progress(cx: &mut TestAppContext) {
     init_test(cx);
