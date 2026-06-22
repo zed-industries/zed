@@ -3459,8 +3459,9 @@ impl AcpThread {
     }
 
     fn cancel_pending_turn_entries(&mut self, cx: &mut Context<Self>) {
+        let turn_start_ix = self.last_user_message().map(|(ix, _)| ix + 1).unwrap_or(0);
         self.mark_pending_entries_as_canceled(cx);
-        self.cancel_pending_elicitations(true, cx);
+        self.cancel_pending_elicitations_in_range(turn_start_ix..self.entries.len(), true, cx);
     }
 
     fn mark_pending_entries_as_canceled(&mut self, cx: &mut Context<Self>) {
@@ -3494,8 +3495,21 @@ impl AcpThread {
         cancel_accepted_url_elicitations: bool,
         cx: &mut Context<Self>,
     ) {
-        for (ix, entry) in self.entries.iter_mut().enumerate() {
-            let AgentThreadEntry::Elicitation(elicitation) = entry else {
+        self.cancel_pending_elicitations_in_range(
+            0..self.entries.len(),
+            cancel_accepted_url_elicitations,
+            cx,
+        );
+    }
+
+    fn cancel_pending_elicitations_in_range(
+        &mut self,
+        entries: Range<usize>,
+        cancel_accepted_url_elicitations: bool,
+        cx: &mut Context<Self>,
+    ) {
+        for ix in entries {
+            let Some(AgentThreadEntry::Elicitation(elicitation)) = self.entries.get_mut(ix) else {
                 continue;
             };
 
@@ -6579,6 +6593,109 @@ mod tests {
                 panic!("missing elicitation entry");
             };
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_turn_cancel_preserves_accepted_url_elicitation_from_previous_turn(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let prompt_count = Rc::new(RefCell::new(0usize));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let prompt_count = prompt_count.clone();
+            move |_request, _thread, _cx| {
+                let stop_reason = {
+                    let mut prompt_count = prompt_count.borrow_mut();
+                    let stop_reason = if *prompt_count == 0 {
+                        acp::StopReason::EndTurn
+                    } else {
+                        acp::StopReason::Cancelled
+                    };
+                    *prompt_count += 1;
+                    stop_reason
+                };
+
+                async move { Ok(acp::PromptResponse::new(stop_reason)) }.boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .expect("new session should succeed");
+
+        let response = thread
+            .update(cx, |thread, cx| thread.send(vec!["first turn".into()], cx))
+            .await
+            .expect("first turn should succeed")
+            .expect("first turn should return a response");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let url_elicitation_id = acp::ElicitationId::new("url-1");
+        let response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            url_elicitation_id.clone(),
+                            "https://example.com/complete",
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+                .expect("url elicitation should be accepted")
+        });
+
+        let entry_id = thread.read_with(cx, |thread, _| {
+            let Some(AgentThreadEntry::Elicitation(elicitation)) = thread.entries().last() else {
+                panic!("expected latest entry to be a url elicitation");
+            };
+            elicitation.id.clone()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            response_task.await.action,
+            acp::ElicitationAction::Accept(_)
+        ));
+
+        let response = thread
+            .update(cx, |thread, cx| thread.send(vec!["second turn".into()], cx))
+            .await
+            .expect("second turn should succeed")
+            .expect("second turn should return a response");
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.complete_url_elicitation(&url_elicitation_id, cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Completed));
         });
     }
 
