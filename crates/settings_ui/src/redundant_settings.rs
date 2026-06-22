@@ -11,7 +11,7 @@ pub fn init(cx: &mut App) {
         let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
             return;
         };
-        if !is_user_settings_buffer(&buffer, cx) {
+        if !is_settings_buffer(&buffer, cx) {
             return;
         }
 
@@ -29,12 +29,13 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn is_user_settings_buffer(buffer: &Entity<Buffer>, cx: &App) -> bool {
-    buffer
-        .read(cx)
-        .file()
-        .and_then(|file| file.as_local())
-        .is_some_and(|local| local.abs_path(cx).as_path() == paths::settings_file().as_path())
+fn is_settings_buffer(buffer: &Entity<Buffer>, cx: &App) -> bool {
+    let Some(local) = buffer.read(cx).file().and_then(|file| file.as_local()) else {
+        return false;
+    };
+    let path = local.abs_path(cx);
+    path.as_path() == paths::settings_file().as_path()
+        || path.ends_with(paths::local_settings_file_relative_path().as_std_path())
 }
 
 fn default_settings() -> &'static serde_json::Value {
