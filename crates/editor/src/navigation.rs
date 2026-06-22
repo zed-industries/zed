@@ -1298,6 +1298,150 @@ impl Editor {
         }))
     }
 
+    /// Runs the LSP go-to query for `kind` (definition / declaration / type /
+    /// implementation) against the symbol under the cursor and returns the raw
+    /// target [`Location`]s. The go-to counterpart to
+    /// [`Self::find_all_references_locations`]; used by the LSP location pickers.
+    pub fn definition_locations_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Vec<Location>>>> {
+        let provider = self.semantics_provider.clone()?;
+        let selection = self.selections.newest_anchor();
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head = selection
+            .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+            .head();
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let definitions = provider.definitions(&buffer, head, kind, cx)?;
+        Some(cx.spawn(async move |editor, cx| {
+            let definitions = definitions.await?.unwrap_or_default();
+            // Drop a result that points back at the cursor, matching
+            // `go_to_definition_of_kind` (otherwise the picker lists the symbol
+            // you invoked it on).
+            editor.update(cx, |_, cx| {
+                definitions
+                    .into_iter()
+                    .filter(|link| hover_links::exclude_link_to_position(&buffer, &head, link, cx))
+                    .map(|link| link.target)
+                    .collect()
+            })
+        }))
+    }
+
+    /// Collects the project's diagnostics matching `severity` as [`Location`]s,
+    /// for the diagnostics picker. Mirrors the diagnostics panel: every path with
+    /// a diagnostic summary is opened (the entries' ranges live in the buffer) and
+    /// its diagnostics collected. Buffers are opened in parallel; a file that
+    /// fails to open is skipped. Buffers opened only for collection are released
+    /// when the picker drops its results — `BufferStore` retains them only weakly.
+    pub fn diagnostic_locations(
+        &mut self,
+        project: &Entity<Project>,
+        severity: DiagnosticSeverity,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<Location>>> {
+        // The threshold: include any diagnostic at least this severe. `Off` maps
+        // to `None`, i.e. include nothing.
+        let Some(max_severity) = severity.into_lsp() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        // A file's summary only counts primary errors and warnings, so it can
+        // rule a file out only when nothing in it could pass the threshold:
+        // skip a file with no errors when warnings are excluded, and skip a file
+        // with neither when info/hint are also excluded. When info/hint are
+        // included the summary can't prove absence, so the file is still opened.
+        let summary_may_match = move |summary: &project::DiagnosticSummary| {
+            summary.error_count > 0
+                || (summary.warning_count > 0 && max_severity >= lsp::DiagnosticSeverity::WARNING)
+                || max_severity >= lsp::DiagnosticSeverity::INFORMATION
+        };
+        let project = project.downgrade();
+        cx.spawn(async move |_, cx| {
+            // A path can appear once per language server; open each buffer once.
+            let mut paths = project.read_with(cx, |project, cx| {
+                project
+                    .diagnostic_summaries(false, cx)
+                    .filter(|(_, _, summary)| summary_may_match(summary))
+                    .map(|(path, _, _)| path)
+                    .collect::<Vec<_>>()
+            })?;
+            paths.sort();
+            paths.dedup();
+
+            let open_tasks = project.update(cx, |project, cx| {
+                paths
+                    .into_iter()
+                    .map(|path| project.open_buffer(path, cx))
+                    .collect::<Vec<_>>()
+            })?;
+            let buffers = future::join_all(open_tasks).await;
+
+            let locations = project.read_with(cx, |_, cx| {
+                let mut locations = Vec::new();
+                for buffer in buffers.into_iter().flatten() {
+                    let snapshot = buffer.read(cx).snapshot();
+                    locations.extend(
+                        snapshot
+                            .diagnostics_in_range::<_, text::Anchor>(
+                                Point::zero()..snapshot.max_point(),
+                                false,
+                            )
+                            .filter(|entry| entry.diagnostic.severity <= max_severity)
+                            .map(|entry| Location {
+                                buffer: buffer.clone(),
+                                range: entry.range,
+                            }),
+                    );
+                }
+                locations
+            })?;
+            Ok(locations)
+        })
+    }
+
+    /// Runs an LSP "find all references" query for the symbol under the cursor
+    /// and returns the raw [`Location`]s. Unlike [`Self::find_all_references`],
+    /// this does not group the results or open any UI
+    pub fn find_all_references_locations(
+        &mut self,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Vec<Location>>>> {
+        let selection = self.selections.newest_anchor();
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head = selection
+            .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+            .head();
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+        Some(cx.spawn(async move |editor, cx| {
+            let locations = references.await?.unwrap_or_default();
+            // Drop the reference covering the cursor, matching `find_all_references`
+            // (otherwise the picker lists the symbol you invoked it on).
+            editor.update(cx, |_, cx| {
+                let snapshot = buffer.read(cx).snapshot();
+                let head_offset = head.to_offset(&snapshot);
+                locations
+                    .into_iter()
+                    .filter(|location| {
+                        if location.buffer != buffer {
+                            return true;
+                        }
+                        let start = location.range.start.to_offset(&snapshot);
+                        let end = location.range.end.to_offset(&snapshot);
+                        !(start <= head_offset && head_offset <= end)
+                    })
+                    .collect()
+            })
+        }))
+    }
+
     pub fn find_all_references(
         &mut self,
         action: &FindAllReferences,
@@ -2099,6 +2243,25 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.go_to_symbol_by_offset(window, cx, -1).detach();
+    }
+
+    /// Opens `location` and jumps to it through the same path as
+    /// go-to-definition, so selection, autoscroll, and jumplist tagging all
+    /// match. `split` opens it in the adjacent pane. Called on the editor the
+    /// jump originates from.
+    pub fn open_location(
+        &mut self,
+        location: Location,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let origin = self.navigation_entry(self.selections.newest_anchor().head(), cx);
+        let link = HoverLink::Text(LocationLink {
+            origin: None,
+            target: location,
+        });
+        self.navigate_to_hover_links(None, vec![link], origin, split, window, cx)
     }
 
     /// Opens a multibuffer with the given project locations in it.

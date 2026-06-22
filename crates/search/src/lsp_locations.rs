@@ -1,0 +1,654 @@
+use std::ops::Range;
+
+use collections::HashMap;
+use editor::{Editor, GotoDefinitionKind};
+use file_icons::FileIcons;
+use gpui::{
+    Action, AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity, actions,
+    prelude::*,
+};
+use language::{Buffer, HighlightId, LanguageAwareStyling};
+use picker::{Picker, PickerDelegate};
+use project::project_settings::DiagnosticSeverity;
+use project::{Location, Project, ProjectPath};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use settings::{DiagnosticSeverityContent, Settings as _};
+use text::{Anchor, Point};
+use theme_settings::ThemeSettings;
+use ui::{Divider, FluentBuilder};
+use ui::{ListItem, ListItemSpacing, Rems, prelude::*};
+use util::ResultExt as _;
+use workspace::item::ItemSettings;
+use workspace::notifications::NotificationId;
+use workspace::{ModalView, Toast, Workspace};
+
+actions!(
+    editor,
+    [
+        /// Lists references to the symbol under the cursor in a filterable picker.
+        ListReferences,
+        /// Lists definitions of the symbol under the cursor in a filterable picker.
+        ListDefinitions,
+        /// Lists implementations of the symbol under the cursor in a filterable picker.
+        ListImplementations,
+    ]
+);
+
+/// Lists the project's diagnostics in a filterable picker. `severity` is the
+/// least-severe level to include (default `warning` = errors and warnings;
+/// `error` = errors only, `all`/`hint` = everything, `off` = none).
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ListDiagnostics {
+    #[serde(default = "default_severity")]
+    pub severity: DiagnosticSeverityContent,
+}
+
+impl Default for ListDiagnostics {
+    fn default() -> Self {
+        Self {
+            severity: default_severity(),
+        }
+    }
+}
+
+fn default_severity() -> DiagnosticSeverityContent {
+    DiagnosticSeverityContent::Warning
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(register).detach();
+}
+
+fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _cx: &mut Context<Workspace>) {
+    workspace.register_action(|workspace, _: &ListReferences, window, cx| {
+        LspLocationsPicker::open(LspPickerKind::References, workspace, window, cx);
+    });
+    workspace.register_action(|workspace, _: &ListDefinitions, window, cx| {
+        LspLocationsPicker::open(LspPickerKind::Definition, workspace, window, cx);
+    });
+    workspace.register_action(|workspace, _: &ListImplementations, window, cx| {
+        LspLocationsPicker::open(LspPickerKind::Implementation, workspace, window, cx);
+    });
+    workspace.register_action(|workspace, action: &ListDiagnostics, window, cx| {
+        let kind = LspPickerKind::Diagnostics {
+            severity: action.severity.into(),
+        };
+        LspLocationsPicker::open(kind, workspace, window, cx);
+    });
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum LspPickerKind {
+    References,
+    Definition,
+    Implementation,
+    Diagnostics { severity: DiagnosticSeverity },
+}
+
+impl LspPickerKind {
+    fn placeholder(self) -> &'static str {
+        match self {
+            LspPickerKind::References => "Filter references…",
+            LspPickerKind::Definition => "Filter definitions…",
+            LspPickerKind::Implementation => "Filter implementations…",
+            LspPickerKind::Diagnostics { .. } => "Filter diagnostics…",
+        }
+    }
+
+    /// Message shown when the query produces no results, so the command does not
+    /// appear to silently do nothing.
+    fn empty_message(self) -> &'static str {
+        match self {
+            LspPickerKind::References => "No references found",
+            LspPickerKind::Definition => "No definitions found",
+            LspPickerKind::Implementation => "No implementations found",
+            LspPickerKind::Diagnostics { .. } => "No diagnostics found",
+        }
+    }
+
+    /// Runs the query for this kind against the active editor, returning the raw
+    /// locations to populate the picker.
+    fn run_query(
+        self,
+        editor: &mut Editor,
+        project: &Entity<Project>,
+        cx: &mut Context<Editor>,
+    ) -> Option<Task<anyhow::Result<Vec<Location>>>> {
+        match self {
+            LspPickerKind::References => editor.find_all_references_locations(project, cx),
+            LspPickerKind::Definition => {
+                editor.definition_locations_of_kind(GotoDefinitionKind::Symbol, cx)
+            }
+            LspPickerKind::Implementation => {
+                editor.definition_locations_of_kind(GotoDefinitionKind::Implementation, cx)
+            }
+            LspPickerKind::Diagnostics { severity } => {
+                Some(editor.diagnostic_locations(project, severity, cx))
+            }
+        }
+    }
+}
+
+pub struct LspLocationsPicker {
+    picker: Entity<Picker<LspLocationsDelegate>>,
+    _subscription: Subscription,
+}
+
+impl LspLocationsPicker {
+    /// Opens the picker for `kind`: runs a fresh LSP query and shows the
+    /// results. If the picker is already open, dismisses it instead.
+    fn open(
+        kind: LspPickerKind,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if workspace.active_modal::<Self>(cx).is_some() {
+            workspace.hide_modal(window, cx);
+            return;
+        }
+
+        let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        else {
+            return;
+        };
+        let project = workspace.project().clone();
+        let Some(query) = editor.update(cx, |editor, cx| kind.run_query(editor, &project, cx))
+        else {
+            return;
+        };
+        let editor = editor.downgrade();
+        cx.spawn_in(window, async move |workspace, cx| {
+            let locations = match query.await {
+                Ok(locations) => locations,
+                Err(error) => {
+                    log::error!("LSP {kind:?} query failed: {error:#}");
+                    workspace
+                        .update(cx, |workspace, cx| workspace.show_error(error, cx))
+                        .log_err();
+                    return;
+                }
+            };
+            if locations.is_empty() {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        struct NoLspResults;
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<NoLspResults>(),
+                                kind.empty_message(),
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    })
+                    .log_err();
+                return;
+            }
+
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        Self::new(kind, locations, project, editor, window, cx)
+                    });
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn new(
+        kind: LspPickerKind,
+        locations: Vec<Location>,
+        project: Entity<Project>,
+        editor: WeakEntity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = LspLocationsDelegate::new(kind, locations, project.clone(), editor, cx);
+        let picker = cx.new(|cx| {
+            Picker::list_with_preview(delegate, project, window, cx)
+                .minimum_results_width(Rems(20.0))
+        });
+        let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+            cx.emit(DismissEvent);
+        });
+        Self {
+            picker,
+            _subscription: subscription,
+        }
+    }
+}
+
+impl ModalView for LspLocationsPicker {}
+
+impl EventEmitter<DismissEvent> for LspLocationsPicker {}
+
+impl Focusable for LspLocationsPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for LspLocationsPicker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().child(self.picker.clone())
+    }
+}
+
+struct LocationMatch {
+    path: ProjectPath,
+    buffer: Entity<Buffer>,
+    anchor_range: Range<Anchor>,
+    range: Range<usize>,
+    display_text: String,
+    display_text_lowercase: String,
+    path_lowercase: String,
+    syntax_highlights: Vec<(Range<usize>, HighlightId)>,
+    match_range: Range<usize>,
+    line_number: u32,
+}
+
+/// A row in the grouped display list: a non-selectable file header, a match, or
+/// a separator between file groups. `selected_index` indexes into this list.
+enum Entry {
+    Header(ProjectPath),
+    Match(usize),
+    Separator,
+}
+
+struct LspLocationsDelegate {
+    kind: LspPickerKind,
+    project: Entity<Project>,
+    editor: WeakEntity<Editor>,
+    all_matches: Vec<LocationMatch>,
+    matches: Vec<usize>,
+    entries: Vec<Entry>,
+    selected_index: usize,
+    max_line_number: u32,
+}
+
+impl LspLocationsDelegate {
+    fn new(
+        kind: LspPickerKind,
+        locations: Vec<Location>,
+        project: Entity<Project>,
+        editor: WeakEntity<Editor>,
+        cx: &App,
+    ) -> Self {
+        let all_matches = build_location_matches(&locations, cx);
+        let matches = (0..all_matches.len()).collect();
+        let mut this = Self {
+            kind,
+            project,
+            editor,
+            all_matches,
+            matches,
+            entries: Vec::new(),
+            selected_index: 0,
+            max_line_number: 0,
+        };
+        this.rebuild_entries();
+        this
+    }
+
+    /// Rebuilds the grouped [`Self::entries`] from the filtered [`Self::matches`]:
+    /// one header per file, its matches, and a separator before every group
+    /// after the first. Selection snaps to the first selectable row.
+    fn rebuild_entries(&mut self) {
+        let mut entries = Vec::with_capacity(self.matches.len());
+        let mut last_path: Option<&ProjectPath> = None;
+        let mut max_line_number = 0;
+        for &match_index in &self.matches {
+            let location_match = &self.all_matches[match_index];
+            if last_path != Some(&location_match.path) {
+                if last_path.is_some() {
+                    entries.push(Entry::Separator);
+                }
+                entries.push(Entry::Header(location_match.path.clone()));
+                last_path = Some(&location_match.path);
+            }
+            max_line_number = max_line_number.max(location_match.line_number);
+            entries.push(Entry::Match(match_index));
+        }
+        self.entries = entries;
+        self.max_line_number = max_line_number;
+        self.selected_index = self.first_selectable_index().unwrap_or(0);
+    }
+
+    fn first_selectable_index(&self) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|entry| matches!(entry, Entry::Match(_)))
+    }
+
+    fn selected_location_match(&self) -> Option<&LocationMatch> {
+        match self.entries.get(self.selected_index)? {
+            Entry::Match(match_index) => self.all_matches.get(*match_index),
+            Entry::Header(_) | Entry::Separator => None,
+        }
+    }
+
+    fn open_selected(&mut self, split: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(location_match) = self.selected_location_match() else {
+            return;
+        };
+        let location = Location {
+            buffer: location_match.buffer.clone(),
+            range: location_match.anchor_range.clone(),
+        };
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+        editor
+            .update(cx, |editor, cx| {
+                editor.open_location(location, split, window, cx)
+            })
+            .detach_and_log_err(cx);
+        cx.emit(DismissEvent);
+    }
+}
+
+fn build_location_matches(locations: &[Location], cx: &App) -> Vec<LocationMatch> {
+    use gpui::EntityId;
+    let mut snapshots: HashMap<EntityId, language::BufferSnapshot> = HashMap::default();
+    let mut matches = Vec::with_capacity(locations.len());
+
+    for location in locations {
+        let snapshot = snapshots
+            .entry(location.buffer.entity_id())
+            .or_insert_with(|| location.buffer.read(cx).snapshot());
+
+        let Some(file) = snapshot.file() else {
+            continue;
+        };
+        let path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+
+        let start_offset: usize = snapshot.summary_for_anchor(&location.range.start);
+        let end_offset: usize = snapshot.summary_for_anchor(&location.range.end);
+        let row = snapshot.offset_to_point(start_offset).row;
+        let line_start = snapshot.point_to_offset(Point::new(row, 0));
+        let line_end = snapshot.point_to_offset(Point::new(row, snapshot.line_len(row)));
+        let full_line: String = snapshot.text_for_range(line_start..line_end).collect();
+
+        // The row shows the line with leading indentation trimmed. Offsets below
+        // are relative to that displayed text.
+        let display_text = full_line.trim_start().to_string();
+        let visible_start = line_end.saturating_sub(display_text.len());
+        let visible_end = line_end;
+
+        // Precompute syntax highlights for the displayed text so rendering a row
+        // never re-snapshots the buffer or re-runs highlighting.
+        let mut syntax_highlights = Vec::new();
+        let mut offset = 0;
+        for chunk in snapshot.chunks(
+            visible_start..visible_end,
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: false,
+            },
+        ) {
+            let chunk_len = chunk.text.len();
+            if let Some(id) = chunk.syntax_highlight_id {
+                syntax_highlights.push((offset..offset + chunk_len, id));
+            }
+            offset += chunk_len;
+        }
+
+        // The match span, clamped into the displayed text. `clamp` bounds each
+        // endpoint to the line; `min`/`max` then keep the range well-ordered even
+        // for a malformed/inverted LSP range (clamping alone preserves bounds but
+        // not `start <= end`).
+        let clamped_start = start_offset.clamp(visible_start, visible_end) - visible_start;
+        let clamped_end = end_offset.clamp(visible_start, visible_end) - visible_start;
+        let match_range = clamped_start.min(clamped_end)..clamped_start.max(clamped_end);
+
+        let display_text_lowercase = display_text.to_lowercase();
+        let path_lowercase = path.path.as_unix_str().to_lowercase();
+
+        matches.push(LocationMatch {
+            path,
+            buffer: location.buffer.clone(),
+            anchor_range: location.range.clone(),
+            range: start_offset..end_offset,
+            display_text,
+            display_text_lowercase,
+            path_lowercase,
+            syntax_highlights,
+            match_range,
+            line_number: row + 1,
+        });
+    }
+
+    // Group by file and order by position so the grouped display list is stable,
+    // then drop exact-duplicate ranges a server may report more than once.
+    matches.sort_by(|a, b| a.path.cmp(&b.path).then(a.range.start.cmp(&b.range.start)));
+    matches.dedup_by(|a, b| a.path == b.path && a.range == b.range);
+    matches
+}
+
+impl PickerDelegate for LspLocationsDelegate {
+    type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "lsp locations picker"
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
+        self.kind.placeholder().into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        matches!(self.entries.get(ix), Some(Entry::Match(_)))
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn select_on_hover(&self) -> bool {
+        false
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let query = query.trim().to_lowercase();
+        self.matches = self
+            .all_matches
+            .iter()
+            .enumerate()
+            .filter(|(_, location_match)| {
+                if query.is_empty() {
+                    return true;
+                }
+                location_match.display_text_lowercase.contains(&query)
+                    || location_match.path_lowercase.contains(&query)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        self.rebuild_entries();
+        cx.notify();
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.open_selected(secondary, window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<picker::PreviewUpdate> {
+        let location_match = self.selected_location_match()?;
+        Some(picker::PreviewUpdate::from_buffer(
+            location_match.buffer.clone(),
+            picker::MatchLocation {
+                anchor_range: location_match.anchor_range.clone(),
+                range: location_match.range.clone(),
+            },
+        ))
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        match self.entries.get(ix)? {
+            Entry::Separator => Some(
+                div()
+                    .py(DynamicSpacing::Base04.rems(cx))
+                    .child(Divider::horizontal())
+                    .into_any_element(),
+            ),
+            Entry::Header(path) => {
+                let path_style = self.project.read(cx).path_style(cx);
+                let file_name = path
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_default();
+                let directory = path
+                    .path
+                    .parent()
+                    .map(|parent| parent.display(path_style))
+                    .map(SharedString::new)
+                    .unwrap_or_default();
+                let file_icon = ItemSettings::get_global(cx)
+                    .file_icons
+                    .then(|| FileIcons::get_icon(path.path.as_std_path(), cx))
+                    .flatten()
+                    .map(|icon| {
+                        Icon::from_path(icon)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                    });
+                Some(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .px(DynamicSpacing::Base06.rems(cx))
+                        .py_1()
+                        .gap_1p5()
+                        .children(file_icon)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(Label::new(file_name).size(LabelSize::Small))
+                                .when(!directory.is_empty(), |this| {
+                                    this.child(
+                                        Label::new(directory)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate_start(),
+                                    )
+                                }),
+                        )
+                        .into_any_element(),
+                )
+            }
+            Entry::Match(match_index) => {
+                let location_match = self.all_matches.get(*match_index)?;
+                Some(
+                    ListItem::new(ix)
+                        .spacing(ListItemSpacing::Sparse)
+                        .inset(true)
+                        .toggle_state(selected)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_2p5()
+                                .text_sm()
+                                .child(
+                                    h_flex()
+                                        .w(rems(
+                                            (self.max_line_number.max(1).ilog10() + 1) as f32 * 0.5,
+                                        ))
+                                        .justify_end()
+                                        .child(
+                                            Label::new(location_match.line_number.to_string())
+                                                .color(Color::Custom(
+                                                    cx.theme().colors().text_muted.opacity(0.5),
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(render_matched_line(location_match, cx)),
+                                ),
+                        )
+                        .into_any_element(),
+                )
+            }
+        }
+    }
+}
+
+/// Renders the precomputed displayed line, resolving the stored syntax highlight
+/// ids against the current theme and overlaying the match with a highlighted
+/// background and bold weight.
+fn render_matched_line(location_match: &LocationMatch, cx: &App) -> StyledText {
+    let settings = ThemeSettings::get_global(cx);
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: settings.buffer_font_size(cx).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(1.),
+        ..Default::default()
+    };
+
+    let syntax_theme = cx.theme().syntax();
+    let syntax_highlights = location_match
+        .syntax_highlights
+        .iter()
+        .filter_map(|(range, id)| Some((range.clone(), syntax_theme.get(*id).copied()?)))
+        .collect::<Vec<_>>();
+
+    let match_style = HighlightStyle {
+        background_color: Some(cx.theme().colors().search_match_background),
+        font_weight: Some(gpui::FontWeight::BOLD),
+        ..Default::default()
+    };
+    let match_highlight = (location_match.match_range.clone(), match_style);
+
+    let highlights = gpui::combine_highlights(syntax_highlights, [match_highlight]);
+    StyledText::new(location_match.display_text.clone())
+        .with_default_highlights(&text_style, highlights)
+}

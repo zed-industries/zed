@@ -16,6 +16,7 @@ pub use search_status_button::SEARCH_ICON;
 use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
+pub mod lsp_locations;
 pub mod project_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
@@ -26,6 +27,7 @@ pub fn init(cx: &mut App) {
     buffer_search::init(cx);
     project_search::init(cx);
     text_finder::init(cx);
+    lsp_locations::init(cx);
 }
 
 actions!(
