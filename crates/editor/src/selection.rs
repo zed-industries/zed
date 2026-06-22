@@ -1552,7 +1552,13 @@ impl Editor {
 
         let selection_anchors = self.selections.disjoint_anchors_arc();
 
-        if self.focus_handle.is_focused(window) && self.leader_id.is_none() {
+        let should_broadcast_selections = self
+            .collaboration_hub()
+            .is_some_and(|hub| hub.should_broadcast_selections(cx));
+        if should_broadcast_selections
+            && self.focus_handle.is_focused(window)
+            && self.leader_id.is_none()
+        {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &selection_anchors,
