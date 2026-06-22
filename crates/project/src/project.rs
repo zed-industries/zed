@@ -5310,15 +5310,12 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         this.update(&mut cx, |this, cx| {
-            // The remote OS and architecture are already known from connection
-            // setup, so they don't need to be sent with each event. `os_version`
-            // (distro/build detail) is not captured by connection-time platform
-            // detection, so it is omitted.
-            let Some(platform) = this
-                .remote_client
-                .as_ref()
-                .map(|client| client.read(cx).remote_platform())
-            else {
+            // The remote OS, version, and architecture are already known from
+            // connection setup, so they don't need to be sent with each event.
+            let Some((platform, os_version)) = this.remote_client.as_ref().map(|client| {
+                let client = client.read(cx);
+                (client.remote_platform(), client.remote_os_version())
+            }) else {
                 return;
             };
             this.client()
@@ -5326,7 +5323,7 @@ impl Project {
                 .report_remote_event(
                     &payload.event_json,
                     platform.os.display_name().to_string(),
-                    None,
+                    os_version,
                     platform.arch.as_str().to_string(),
                 )
                 .log_err();

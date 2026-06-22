@@ -156,18 +156,7 @@ pub fn os_version() -> String {
                );
                "".to_string()
            };
-           let mut name = "unknown";
-           let mut version = "unknown";
-
-           for line in content.lines() {
-               match line.split_once('=') {
-                   Some(("ID", val)) => name = val.trim_matches('"'),
-                   Some(("VERSION_ID", val)) => version = val.trim_matches('"'),
-                   _ => {}
-               }
-           }
-
-           format!("{} {}", name, version)
+           util::parse_os_release(&content).unwrap_or_else(|| "unknown".to_string())
        }
        target_os = "windows" => {
            let mut info = unsafe { std::mem::zeroed() };

@@ -331,6 +331,7 @@ pub struct RemoteClient {
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
     platform: RemotePlatform,
+    os_version: Option<String>,
     state: Option<State>,
 }
 
@@ -430,12 +431,14 @@ impl RemoteClient {
 
                 let path_style = remote_connection.path_style();
                 let platform = remote_connection.remote_platform();
+                let os_version = remote_connection.remote_os_version();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
                     connection_options: remote_connection.connection_options(),
                     path_style,
                     platform,
+                    os_version,
                     state: Some(State::Connecting),
                 });
 
@@ -1013,6 +1016,12 @@ impl RemoteClient {
         self.platform
     }
 
+    /// The OS version of the remote host (e.g. `"ubuntu 24.04"`), detected
+    /// during connection setup. `None` if it could not be determined.
+    pub fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
+    }
+
     /// Forcibly disconnects from the remote server by killing the underlying connection.
     /// This will trigger the reconnection logic if reconnection attempts remain.
     /// Useful for testing reconnection behavior in real environments.
@@ -1546,6 +1555,9 @@ pub trait RemoteConnection: Send + Sync {
     fn path_style(&self) -> PathStyle;
     /// The remote platform (OS and architecture), detected during connection setup.
     fn remote_platform(&self) -> RemotePlatform;
+    /// The remote host's OS version (e.g. `"ubuntu 24.04"` or `"15.6.1"`),
+    /// detected during connection setup. `None` if it could not be determined.
+    fn remote_os_version(&self) -> Option<String>;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;

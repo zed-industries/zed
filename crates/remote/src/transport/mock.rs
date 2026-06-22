@@ -299,6 +299,10 @@ impl RemoteConnection for MockRemoteConnection {
         }
     }
 
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+
     fn shell(&self) -> String {
         "sh".to_owned()
     }
