@@ -15060,6 +15060,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "tempfile",
  "thiserror 2.0.17",
  "urlencoding",

@@ -432,13 +432,15 @@ impl RemoteClient {
                 let path_style = remote_connection.path_style();
                 let platform = remote_connection.remote_platform();
                 let os_version = remote_connection.remote_os_version();
+                let connection_options = remote_connection.connection_options();
+                let connection_type = connection_options.connection_type();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options: remote_connection.connection_options(),
+                    connection_options,
                     path_style,
                     platform,
-                    os_version,
+                    os_version: os_version.clone(),
                     state: Some(State::Connecting),
                 });
 
@@ -506,6 +508,14 @@ impl RemoteClient {
                         heartbeat_task,
                     });
                 });
+
+                telemetry::event!(
+                    "Remote Connection Established",
+                    connection_type = connection_type,
+                    os_name = platform.os.display_name(),
+                    os_version = os_version,
+                    architecture = platform.arch.as_str(),
+                );
 
                 Ok(Some(this))
             });
