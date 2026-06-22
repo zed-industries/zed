@@ -2,18 +2,19 @@ use anyhow::{Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-pub use google_ai::completion::{GoogleEventMapper, count_google_tokens, into_google};
-use google_ai::{GenerateContentResponse, GoogleModelMode};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
-use http_client::HttpClient;
+use google_ai::GenerateContentResponse;
+pub use google_ai::completion::{GoogleEventMapper, into_google};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    ProviderConfigurationView,
 };
 use language_model::{
-    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter,
+    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ const PROVIDER_NAME: LanguageModelProviderName = GOOGLE_PROVIDER_NAME;
 pub struct GoogleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -234,6 +236,30 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://aistudio.google.com/app/apikey",
+                    "AIza...",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
+    }
 }
 
 pub struct GoogleLanguageModel {
@@ -255,9 +281,12 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = GoogleLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = GoogleLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         async move {
@@ -267,6 +296,7 @@ impl GoogleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             request.await.context("failed to stream completion")
         }
@@ -300,7 +330,20 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(self.model.mode(), GoogleModelMode::Thinking { .. })
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        let default_level = self.model.default_thinking_level();
+        self.model
+            .supported_thinking_levels()
+            .iter()
+            .map(|level| LanguageModelEffortLevel {
+                name: level.name().into(),
+                value: level.value().into(),
+                is_default: Some(*level) == default_level,
+            })
+            .collect()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -325,38 +368,6 @@ impl LanguageModel for GoogleLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let model_id = self.model.request_id().to_string();
-        let request = into_google(request, model_id, self.model.mode());
-        let http_client = self.http_client.clone();
-        let api_url = GoogleLanguageModelProvider::api_url(cx);
-        let api_key = self.state.read(cx).api_key_state.key(&api_url);
-
-        async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                }
-                .into());
-            };
-            let response = google_ai::count_tokens(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                google_ai::CountTokensRequest {
-                    generate_content_request: request,
-                },
-            )
-            .await?;
-            Ok(response.total_tokens)
-        }
-        .boxed()
     }
 
     fn stream_completion(

@@ -185,10 +185,11 @@ pub fn render_ollama_model_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::OllamaModelName(model_name.to_string())),
+                                    app,
                                 );
                             },
                         )
@@ -203,7 +204,7 @@ pub fn render_ollama_model_picker(
                     .max_height(Some(rems(18.).into()))
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

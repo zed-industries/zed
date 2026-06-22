@@ -37,6 +37,24 @@ fn find_nearest_surrounding_pair(
     best_pair
 }
 
+fn surrounding_markers_containing_cursor(
+    display_map: &DisplaySnapshot,
+    cursor: DisplayPoint,
+    open_marker: char,
+    close_marker: char,
+) -> Option<std::ops::Range<DisplayPoint>> {
+    let range = surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)?;
+    let cursor_offset = cursor.to_offset(display_map, Bias::Left);
+    let start_offset = range.start.to_offset(display_map, Bias::Left);
+    let end_offset = range.end.to_offset(display_map, Bias::Right);
+
+    if cursor_offset >= start_offset && cursor_offset <= end_offset {
+        Some(range)
+    } else {
+        None
+    }
+}
+
 fn selection_cursor(map: &DisplaySnapshot, selection: &Selection<DisplayPoint>) -> DisplayPoint {
     if selection.reversed || selection.is_empty() {
         selection.head()
@@ -64,7 +82,7 @@ fn apply_helix_surround_edits<F>(
             let selections = editor.selections.all_display(&display_map);
             let (mut edits, anchors) = build(&display_map, selections);
 
-            edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+            edits.sort_by_key(|edit| edit.0.start);
             editor.edit(edits, cx);
 
             editor.change_selections(Default::default(), window, cx, |s| {
@@ -134,9 +152,12 @@ impl Vim {
                     continue;
                 };
 
-                if let Some(range) =
-                    surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)
-                {
+                if let Some(range) = surrounding_markers_containing_cursor(
+                    display_map,
+                    cursor,
+                    open_marker,
+                    close_marker,
+                ) {
                     let open_start = range.start.to_offset(display_map, Bias::Left);
                     let open_end = open_start + open_marker.len_utf8();
                     let close_end = range.end.to_offset(display_map, Bias::Left);
@@ -188,9 +209,12 @@ impl Vim {
                     continue;
                 };
 
-                if let Some(range) =
-                    surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)
-                {
+                if let Some(range) = surrounding_markers_containing_cursor(
+                    display_map,
+                    cursor,
+                    open_marker,
+                    close_marker,
+                ) {
                     let open_start = range.start.to_offset(display_map, Bias::Left);
                     let open_end = open_start + open_marker.len_utf8();
                     let close_end = range.end.to_offset(display_map, Bias::Left);
@@ -259,6 +283,22 @@ mod test {
         cx.simulate_keystrokes("m d (");
         cx.assert_state("hello woˇrld test", Mode::HelixNormal);
 
+        cx.set_state(
+            indoc! {"
+            \"heˇllo\"
+            fn world() {
+            }"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m d (");
+        cx.assert_state(
+            indoc! {"
+            \"heˇllo\"
+            fn world() {
+            }"},
+            Mode::HelixNormal,
+        );
+
         cx.set_state("((woˇrld))", Mode::HelixNormal);
         cx.simulate_keystrokes("m d (");
         cx.assert_state("(woˇrld)", Mode::HelixNormal);
@@ -280,6 +320,22 @@ mod test {
         cx.set_state("hello \"woˇrld\" test", Mode::HelixNormal);
         cx.simulate_keystrokes("m r \" {");
         cx.assert_state("hello {woˇrld} test", Mode::HelixNormal);
+
+        cx.set_state(
+            indoc! {"
+            \"heˇllo\"
+            fn world() {
+            }"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m r ( [");
+        cx.assert_state(
+            indoc! {"
+            \"heˇllo\"
+            fn world() {
+            }"},
+            Mode::HelixNormal,
+        );
 
         cx.set_state("((woˇrld))", Mode::HelixNormal);
         cx.simulate_keystrokes("m r ( [");

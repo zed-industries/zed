@@ -103,6 +103,9 @@ impl Editor {
                 Some(OutlineItem {
                     depth: item.depth,
                     range: range_start..range_end,
+                    selection_range: multi_buffer_snapshot
+                        .anchor_in_buffer(item.selection_range.start)?
+                        ..multi_buffer_snapshot.anchor_in_buffer(item.selection_range.end)?,
                     source_range_for_text: source_range_for_text_start..source_range_for_text_end,
                     text: item.text.clone(),
                     highlight_ranges: item.highlight_ranges.clone(),
@@ -145,7 +148,7 @@ impl Editor {
         if !self.lsp_data_enabled() {
             return;
         }
-        let Some(project) = self.project.clone() else {
+        let Some(project) = self.project.as_ref().map(|p| p.downgrade()) else {
             return;
         };
 
@@ -191,9 +194,9 @@ impl Editor {
                     .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                     .await;
 
-                let Some(tasks) = editor
-                    .update(cx, |_, cx| {
-                        project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                let Some(tasks) = project
+                    .update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
                             buffers_to_query
                                 .into_iter()
                                 .map(|buffer| {
@@ -284,7 +287,7 @@ fn highlights_from_buffer(
         .collect::<String>();
 
     let mut outline_text_highlights = Vec::new();
-    match search_text.find(outline_text) {
+    match search_text.find(outline_text.as_str()) {
         Some(start_index) => {
             let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
             let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());
@@ -331,7 +334,9 @@ mod tests {
 
     use futures::StreamExt as _;
     use gpui::TestAppContext;
-    use settings::DocumentSymbols;
+    use multi_buffer::ToPoint;
+    use settings::{DocumentSymbols, SettingsStore};
+    use text::Point;
     use util::path;
     use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -755,7 +760,7 @@ mod tests {
         assert!(symbol_request.next().await.is_some());
         cx.run_until_parked();
 
-        cx.update_editor(|editor, _window, _cx| {
+        cx.update_editor(|editor, _window, cx| {
             let (_, symbols) = editor
                 .outline_symbols_at_cursor
                 .as_ref()
@@ -763,7 +768,19 @@ mod tests {
             assert_eq!(symbols.len(), 1);
 
             let symbol = &symbols[0];
+            let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
             assert_eq!(symbol.text, "fn test");
+            assert_eq!(
+                symbol
+                    .selection_range
+                    .start
+                    .to_point(&multi_buffer_snapshot),
+                Point::new(1, 3)
+            );
+            assert_eq!(
+                symbol.selection_range.end.to_point(&multi_buffer_snapshot),
+                Point::new(1, 7)
+            );
 
             // Verify all highlight ranges are valid byte boundaries in the text
             for (range, _style) in &symbol.highlight_ranges {
@@ -874,5 +891,135 @@ mod tests {
             0,
             "Should not have made any LSP document symbol requests when setting is off"
         );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_highlights_update_on_theme_change(cx: &mut TestAppContext) {
+        use collections::IndexMap;
+        use gpui::{Hsla, Rgba, UpdateGlobal as _};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        // Set the initial theme with a red keyword color and sync it to the
+        // language registry so tree-sitter highlight maps are up to date.
+        let red_color: Hsla = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#ff0000".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.set_state("fn maˇin() {}");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(red_color),
+                "The 'fn' keyword should have red color"
+            );
+        });
+
+        // Change the theme to use a blue keyword color. This simulates a user
+        // switching themes. The language registry set_theme call mirrors what
+        // the application does in main.rs on theme change.
+        let blue_color: Hsla = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#0000ff".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs after theme change");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb after theme change");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword after theme change");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(blue_color),
+                "The 'fn' keyword should have blue color after theme change"
+            );
+        });
     }
 }

@@ -319,7 +319,7 @@ impl LicenseDetectionWatcher {
                 }
                 worktree::Event::DeletedEntry(_)
                 | worktree::Event::UpdatedGitRepositories(_)
-                | worktree::Event::UpdatedRootRepoCommonDir
+                | worktree::Event::UpdatedRootRepoCommonDir { .. }
                 | worktree::Event::Deleted => {}
             });
 

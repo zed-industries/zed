@@ -287,8 +287,7 @@ impl NeovimBackedTestContext {
         self.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.project.all_languages.defaults.soft_wrap =
-                        Some(SoftWrap::PreferredLineLength);
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
                     settings
                         .project
                         .all_languages

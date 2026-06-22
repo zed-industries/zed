@@ -7,12 +7,12 @@
 # Or use the helper script:
 #   crates/eval_cli/script/build-linux
 
-FROM rust:1.94.1 AS builder
+FROM rust:1.95.0 AS builder
 
 WORKDIR /app
 
     # Pre-install the toolchain specified in rust-toolchain.toml so it is cached.
-RUN rustup toolchain install 1.94.1 --profile minimal \
+RUN rustup toolchain install 1.95.0 --profile minimal \
     --component rustfmt --component clippy --component rust-analyzer --component rust-src \
     --target wasm32-wasip2 --target wasm32-unknown-unknown --target x86_64-unknown-linux-musl --target x86_64-unknown-linux-gnu
 

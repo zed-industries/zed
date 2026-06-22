@@ -2,19 +2,71 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, Role, StopReason,
+    TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::{
-    AnthropicError, AnthropicModelMode, CacheControl, CacheControlType, ContentDelta,
-    CountTokensRequest, Event, ImageSource, Message, RequestContent, ResponseContent,
-    StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
+    AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
+    CacheTtl, CompactionTrigger, ContentDelta, ContextManagement, ContextManagementEdit, Event,
+    ImageSource, Message, RequestContent, ResponseContent, StringOrContents, Thinking, Tool,
+    ToolChoice, ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
+    completion_error_from_anthropic_api,
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnthropicPromptCacheMode {
+    Disabled,
+    Legacy,
+    #[default]
+    Automatic,
+}
+
+fn set_cache_control(content: &mut RequestContent, cache_control: Option<CacheControl>) -> bool {
+    match content {
+        RequestContent::RedactedThinking { .. } => false,
+        RequestContent::Text {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::Thinking {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::Image {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::ToolUse {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::ToolResult {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::Compaction {
+            cache_control: target,
+            ..
+        } => {
+            *target = cache_control;
+            true
+        }
+    }
+}
+
+fn mark_last_cacheable_content(content: &mut [RequestContent], cache_control: CacheControl) {
+    for content in content.iter_mut().rev() {
+        if set_cache_control(content, Some(cache_control)) {
+            break;
+        }
+    }
+}
 
 fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
     match content {
@@ -70,172 +122,50 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             input: tool_use.input,
             cache_control: None,
         }),
-        MessageContent::ToolResult(tool_result) => Some(RequestContent::ToolResult {
-            tool_use_id: tool_result.tool_use_id.to_string(),
-            is_error: tool_result.is_error,
-            content: match tool_result.content {
-                LanguageModelToolResultContent::Text(text) => {
+        MessageContent::ToolResult(tool_result) => {
+            let content = match tool_result.content.as_slice() {
+                [LanguageModelToolResultContent::Text(text)] => {
                     ToolResultContent::Plain(text.to_string())
                 }
-                LanguageModelToolResultContent::Image(image) => {
-                    ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                        source: ImageSource {
-                            source_type: "base64".to_string(),
-                            media_type: "image/png".to_string(),
-                            data: image.source.to_string(),
-                        },
-                    }])
+                _ => {
+                    let parts = tool_result
+                        .content
+                        .into_iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => ToolResultPart::Text {
+                                text: text.to_string(),
+                            },
+                            LanguageModelToolResultContent::Image(image) => ToolResultPart::Image {
+                                source: ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: image.source.to_string(),
+                                },
+                            },
+                        })
+                        .collect();
+                    ToolResultContent::Multipart(parts)
                 }
-            },
-            cache_control: None,
-        }),
-    }
-}
-
-/// Convert a LanguageModelRequest to an Anthropic CountTokensRequest.
-pub fn into_anthropic_count_tokens_request(
-    request: LanguageModelRequest,
-    model: String,
-    mode: AnthropicModelMode,
-) -> CountTokensRequest {
-    let mut new_messages: Vec<Message> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages {
-        if message.contents_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                let anthropic_message_content: Vec<RequestContent> = message
-                    .content
-                    .into_iter()
-                    .filter_map(to_anthropic_content)
-                    .collect();
-                let anthropic_role = match message.role {
-                    Role::User => crate::Role::User,
-                    Role::Assistant => crate::Role::Assistant,
-                    Role::System => unreachable!("System role should never occur here"),
-                };
-                if anthropic_message_content.is_empty() {
-                    continue;
-                }
-
-                if let Some(last_message) = new_messages.last_mut()
-                    && last_message.role == anthropic_role
-                {
-                    last_message.content.extend(anthropic_message_content);
-                    continue;
-                }
-
-                new_messages.push(Message {
-                    role: anthropic_role,
-                    content: anthropic_message_content,
-                });
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.string_contents());
-            }
-        }
-    }
-
-    CountTokensRequest {
-        model,
-        messages: new_messages,
-        system: if system_message.is_empty() {
-            None
-        } else {
-            Some(StringOrContents::String(system_message))
-        },
-        thinking: if request.thinking_allowed {
-            match mode {
-                AnthropicModelMode::Thinking { budget_tokens } => {
-                    Some(Thinking::Enabled { budget_tokens })
-                }
-                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive),
-                AnthropicModelMode::Default => None,
-            }
-        } else {
-            None
-        },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-                eager_input_streaming: tool.use_input_streaming,
+            };
+            Some(RequestContent::ToolResult {
+                tool_use_id: tool_result.tool_use_id.to_string(),
+                is_error: tool_result.is_error,
+                content,
+                cache_control: None,
             })
-            .collect(),
-        tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => ToolChoice::Auto,
-            LanguageModelToolChoice::Any => ToolChoice::Any,
-            LanguageModelToolChoice::None => ToolChoice::None,
-        }),
-    }
-}
-
-/// Estimate tokens using tiktoken. Used as a fallback when the API is unavailable,
-/// or by providers (like Zed Cloud) that don't have direct Anthropic API access.
-pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Result<u64> {
-    let messages = request.messages;
-    let mut tokens_from_images = 0;
-    let mut string_messages = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        let mut string_contents = String::new();
-
-        for content in message.content {
-            match content {
-                MessageContent::Text(text) => {
-                    string_contents.push_str(&text);
-                }
-                MessageContent::Thinking { .. } => {
-                    // Thinking blocks are not included in the input token count.
-                }
-                MessageContent::RedactedThinking(_) => {
-                    // Thinking blocks are not included in the input token count.
-                }
-                MessageContent::Image(image) => {
-                    tokens_from_images += image.estimate_tokens();
-                }
-                MessageContent::ToolUse(_tool_use) => {
-                    // TODO: Estimate token usage from tool uses.
-                }
-                MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                    LanguageModelToolResultContent::Text(text) => {
-                        string_contents.push_str(text);
-                    }
-                    LanguageModelToolResultContent::Image(image) => {
-                        tokens_from_images += image.estimate_tokens();
-                    }
-                },
-            }
         }
-
-        if !string_contents.is_empty() {
-            string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(string_contents),
-                name: None,
-                function_call: None,
-            });
+        MessageContent::Compaction(CompactionContent::Summary { content }) => {
+            Some(RequestContent::Compaction {
+                content,
+                cache_control: None,
+            })
         }
+        // Encrypted compaction blocks come from other providers, and a
+        // Pending block is a streaming-only UI signal; neither is replayed.
+        MessageContent::Compaction(
+            CompactionContent::Encrypted { .. } | CompactionContent::Pending,
+        ) => None,
     }
-
-    // Tiktoken doesn't yet support these models, so we manually use the
-    // same tokenizer as GPT-4.
-    tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-        .map(|tokens| (tokens + tokens_from_images) as u64)
 }
 
 pub fn into_anthropic(
@@ -244,14 +174,18 @@ pub fn into_anthropic(
     default_temperature: f32,
     max_output_tokens: u64,
     mode: AnthropicModelMode,
+    cache_mode: AnthropicPromptCacheMode,
 ) -> crate::Request {
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
+    let mut any_message_wants_cache = false;
 
     for message in request.messages {
         if message.contents_empty() {
             continue;
         }
+
+        any_message_wants_cache |= message.cache;
 
         match message.role {
             Role::User | Role::Assistant => {
@@ -269,33 +203,21 @@ pub fn into_anthropic(
                     continue;
                 }
 
+                if cache_mode == AnthropicPromptCacheMode::Legacy && message.cache {
+                    mark_last_cacheable_content(
+                        &mut anthropic_message_content,
+                        CacheControl {
+                            cache_type: CacheControlType::Ephemeral,
+                            ttl: None,
+                        },
+                    );
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == anthropic_role
                 {
                     last_message.content.extend(anthropic_message_content);
                     continue;
-                }
-
-                // Mark the last segment of the message as cached
-                if message.cache {
-                    let cache_control_value = Some(CacheControl {
-                        cache_type: CacheControlType::Ephemeral,
-                    });
-                    for message_content in anthropic_message_content.iter_mut().rev() {
-                        match message_content {
-                            RequestContent::RedactedThinking { .. } => {
-                                // Caching is not possible, fallback to next message
-                            }
-                            RequestContent::Text { cache_control, .. }
-                            | RequestContent::Thinking { cache_control, .. }
-                            | RequestContent::Image { cache_control, .. }
-                            | RequestContent::ToolUse { cache_control, .. }
-                            | RequestContent::ToolResult { cache_control, .. } => {
-                                *cache_control = cache_control_value;
-                                break;
-                            }
-                        }
-                    }
                 }
 
                 new_messages.push(Message {
@@ -312,36 +234,76 @@ pub fn into_anthropic(
         }
     }
 
+    // When caching is enabled, mark the static prefix (tools + system) with an
+    // explicit long-TTL breakpoint, and let Anthropic's automatic top-level
+    // cache_control handle the short-TTL conversation breakpoint. Anthropic
+    // requires that longer TTLs appear earlier in the prefix, and the prefix
+    // order is tools → system → messages, so long-TTL tools/system before a
+    // short-TTL conversation breakpoint is a valid mix.
+    let long_lived_cache = (cache_mode == AnthropicPromptCacheMode::Automatic
+        && any_message_wants_cache)
+        .then_some(CacheControl {
+            cache_type: CacheControlType::Ephemeral,
+            ttl: Some(CacheTtl::OneHour),
+        });
+
+    let system = if system_message.is_empty() {
+        None
+    } else if let Some(cache_control) = long_lived_cache {
+        Some(StringOrContents::Content(vec![RequestContent::Text {
+            text: system_message,
+            cache_control: Some(cache_control),
+        }]))
+    } else {
+        Some(StringOrContents::String(system_message))
+    };
+
+    let mut tools: Vec<Tool> = request
+        .tools
+        .into_iter()
+        .map(|tool| Tool {
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+            eager_input_streaming: tool.use_input_streaming,
+            cache_control: None,
+        })
+        .collect();
+    if let Some(cache_control) = long_lived_cache
+        && let Some(last_tool) = tools.last_mut()
+    {
+        last_tool.cache_control = Some(cache_control);
+    }
+
     crate::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: if system_message.is_empty() {
-            None
-        } else {
-            Some(StringOrContents::String(system_message))
-        },
+        system,
+        // Opt into Anthropic's automatic prompt caching for the conversation
+        // tail. Omitting `ttl` uses the default (short) TTL, which refreshes
+        // for free on every cache hit — ideal for the rapidly-changing
+        // conversation suffix.
+        cache_control: (cache_mode == AnthropicPromptCacheMode::Automatic
+            && any_message_wants_cache)
+            .then_some(CacheControl {
+                cache_type: CacheControlType::Ephemeral,
+                ttl: None,
+            }),
         thinking: if request.thinking_allowed {
             match mode {
                 AnthropicModelMode::Thinking { budget_tokens } => {
                     Some(Thinking::Enabled { budget_tokens })
                 }
-                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive),
+                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
+                    display: Some(AdaptiveThinkingDisplay::Summarized),
+                }),
                 AnthropicModelMode::Default => None,
             }
         } else {
             None
         },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-                eager_input_streaming: tool.use_input_streaming,
-            })
-            .collect(),
+        tools,
         tool_choice: request.tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
             LanguageModelToolChoice::Any => ToolChoice::Any,
@@ -356,6 +318,7 @@ pub fn into_anthropic(
                     "low" => Some(crate::Effort::Low),
                     "medium" => Some(crate::Effort::Medium),
                     "high" => Some(crate::Effort::High),
+                    "xhigh" => Some(crate::Effort::XHigh),
                     "max" => Some(crate::Effort::Max),
                     _ => None,
                 };
@@ -371,6 +334,11 @@ pub fn into_anthropic(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        context_management: request.compact_at_tokens.map(|value| ContextManagement {
+            edits: vec![ContextManagementEdit::Compact {
+                trigger: Some(CompactionTrigger::InputTokens { value }),
+            }],
+        }),
     }
 }
 
@@ -378,14 +346,16 @@ pub struct AnthropicEventMapper {
     tool_uses_by_index: HashMap<usize, RawToolUse>,
     usage: Usage,
     stop_reason: StopReason,
+    provider_name: LanguageModelProviderName,
 }
 
 impl AnthropicEventMapper {
-    pub fn new() -> Self {
+    pub fn new(provider_name: LanguageModelProviderName) -> Self {
         Self {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
+            provider_name,
         }
     }
 
@@ -397,7 +367,10 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
+                Err(error) => vec![Err(completion_error_from_anthropic(
+                    error,
+                    self.provider_name.clone(),
+                ))],
             })
         })
     }
@@ -434,6 +407,11 @@ impl AnthropicEventMapper {
                     );
                     Vec::new()
                 }
+                ResponseContent::Compaction { content } => {
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionContent::Summary { content },
+                    ))]
+                }
             },
             Event::ContentBlockDelta { index, delta } => match delta {
                 ContentDelta::TextDelta { text } => {
@@ -450,6 +428,11 @@ impl AnthropicEventMapper {
                         text: "".to_string(),
                         signature: Some(signature),
                     })]
+                }
+                ContentDelta::CompactionDelta { content } => {
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionContent::Summary { content },
+                    ))]
                 }
                 ContentDelta::InputJsonDelta { partial_json } => {
                     if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
@@ -539,7 +522,10 @@ impl AnthropicEventMapper {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
-                vec![Err(error.into())]
+                vec![Err(completion_error_from_anthropic_api(
+                    error,
+                    self.provider_name.clone(),
+                ))]
             }
             _ => Vec::new(),
         }
@@ -580,22 +566,199 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AnthropicModelMode;
-    use language_model_core::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+    use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
+    use language_model_core::{
+        ANTHROPIC_PROVIDER_NAME, LanguageModelImage, LanguageModelRequestMessage, MessageContent,
+    };
 
     #[test]
-    fn test_cache_control_only_on_last_segment() {
+    fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::Text("Some prompt".to_string()),
+                        MessageContent::Image(LanguageModelImage::empty()),
+                        MessageContent::Image(LanguageModelImage::empty()),
+                    ],
+                    cache: true,
+                    reasoning_details: None,
+                },
+            ],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![language_model_core::LanguageModelRequestTool {
+                name: "do_thing".into(),
+                description: "Does a thing.".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                use_input_streaming: false,
+            }],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-3-5-sonnet".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
+        );
+
+        // No message content block should carry cache_control anymore; the
+        // conversation breakpoint is set via top-level automatic caching.
+        assert_eq!(anthropic_request.messages.len(), 1);
+        for block in &anthropic_request.messages[0].content {
+            let cache_control = match block {
+                RequestContent::Text { cache_control, .. }
+                | RequestContent::Thinking { cache_control, .. }
+                | RequestContent::Image { cache_control, .. }
+                | RequestContent::ToolUse { cache_control, .. }
+                | RequestContent::ToolResult { cache_control, .. }
+                | RequestContent::Compaction { cache_control, .. } => *cache_control,
+                RequestContent::RedactedThinking { .. } => None,
+            };
+            assert!(
+                cache_control.is_none(),
+                "message content blocks should no longer be individually marked",
+            );
+        }
+
+        // Top-level cache_control opts into automatic caching with the default
+        // 5-minute TTL for the conversation tail.
+        assert!(matches!(
+            anthropic_request.cache_control,
+            Some(CacheControl {
+                cache_type: CacheControlType::Ephemeral,
+                ttl: None,
+            })
+        ));
+
+        // System prompt is emitted in array form with a long-TTL breakpoint on
+        // the final text block.
+        match anthropic_request.system {
+            Some(StringOrContents::Content(ref blocks)) => {
+                assert_eq!(blocks.len(), 1);
+                assert!(matches!(
+                    blocks[0],
+                    RequestContent::Text {
+                        cache_control: Some(CacheControl {
+                            cache_type: CacheControlType::Ephemeral,
+                            ttl: Some(CacheTtl::OneHour),
+                        }),
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected system content array, got {other:?}"),
+        }
+
+        // The last (and only) tool carries a long-TTL breakpoint.
+        assert_eq!(anthropic_request.tools.len(), 1);
+        assert!(matches!(
+            anthropic_request.tools[0].cache_control,
+            Some(CacheControl {
+                cache_type: CacheControlType::Ephemeral,
+                ttl: Some(CacheTtl::OneHour),
+            })
+        ));
+    }
+
+    #[test]
+    fn test_legacy_caching_marks_last_message_content_block() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::Text("Some prompt".to_string()),
+                        MessageContent::Image(LanguageModelImage::empty()),
+                    ],
+                    cache: true,
+                    reasoning_details: None,
+                },
+            ],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![language_model_core::LanguageModelRequestTool {
+                name: "do_thing".into(),
+                description: "Does a thing.".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                use_input_streaming: false,
+            }],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-3-5-sonnet".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Legacy,
+        );
+
+        assert!(anthropic_request.cache_control.is_none());
+        assert!(matches!(
+            anthropic_request.system,
+            Some(StringOrContents::String(_))
+        ));
+        assert_eq!(anthropic_request.tools.len(), 1);
+        assert!(anthropic_request.tools[0].cache_control.is_none());
+        assert_eq!(anthropic_request.messages.len(), 1);
+        assert!(matches!(
+            anthropic_request.messages[0].content[0],
+            RequestContent::Text {
+                cache_control: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            anthropic_request.messages[0].content[1],
+            RequestContent::Image {
+                cache_control: Some(CacheControl {
+                    cache_type: CacheControlType::Ephemeral,
+                    ttl: None,
+                }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_xhigh_effort_is_serialized_for_adaptive_thinking() {
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![
-                    MessageContent::Text("Some prompt".to_string()),
-                    MessageContent::Image(LanguageModelImage::empty()),
-                    MessageContent::Image(LanguageModelImage::empty()),
-                    MessageContent::Image(LanguageModelImage::empty()),
-                    MessageContent::Image(LanguageModelImage::empty()),
-                ],
-                cache: true,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
                 reasoning_details: None,
             }],
             thread_id: None,
@@ -606,8 +769,61 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            thinking_effort: Some("xhigh".into()),
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-opus-4-8".to_string(),
+            1.0,
+            128_000,
+            AnthropicModelMode::AdaptiveThinking,
+            AnthropicPromptCacheMode::Automatic,
+        );
+
+        assert_eq!(
+            anthropic_request
+                .output_config
+                .and_then(|config| config.effort),
+            Some(crate::Effort::XHigh)
+        );
+    }
+
+    #[test]
+    fn test_no_cache_control_when_caching_disabled() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hi".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![language_model_core::LanguageModelRequestTool {
+                name: "do_thing".into(),
+                description: "Does a thing.".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                use_input_streaming: false,
+            }],
+            tool_choice: None,
+            thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -616,39 +832,15 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
         );
 
-        assert_eq!(anthropic_request.messages.len(), 1);
-
-        let message = &anthropic_request.messages[0];
-        assert_eq!(message.content.len(), 5);
-
+        assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
-            message.content[0],
-            RequestContent::Text {
-                cache_control: None,
-                ..
-            }
+            anthropic_request.system,
+            Some(StringOrContents::String(_))
         ));
-        for i in 1..3 {
-            assert!(matches!(
-                message.content[i],
-                RequestContent::Image {
-                    cache_control: None,
-                    ..
-                }
-            ));
-        }
-
-        assert!(matches!(
-            message.content[4],
-            RequestContent::Image {
-                cache_control: Some(CacheControl {
-                    cache_type: CacheControlType::Ephemeral,
-                }),
-                ..
-            }
-        ));
+        assert!(anthropic_request.tools[0].cache_control.is_none());
     }
 
     fn request_with_assistant_content(assistant_content: Vec<MessageContent>) -> crate::Request {
@@ -669,6 +861,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             speed: None,
+            compact_at_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,
@@ -684,6 +877,7 @@ mod tests {
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(10000),
             },
+            AnthropicPromptCacheMode::Automatic,
         )
     }
 
@@ -761,5 +955,146 @@ mod tests {
             "An assistant message whose only content was an unsigned thinking block \
              should be omitted entirely"
         );
+    }
+
+    #[test]
+    fn test_compact_at_tokens_maps_to_context_management() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Disabled,
+        );
+
+        assert_eq!(
+            serde_json::to_value(&anthropic_request.context_management).unwrap(),
+            serde_json::json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": { "type": "input_tokens", "value": 100_000 }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_no_context_management_without_compact_at_tokens() {
+        let result =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
+
+        assert!(result.context_management.is_none());
+    }
+
+    #[test]
+    fn test_compaction_content_replayed_as_compaction_block() {
+        let result = request_with_assistant_content(vec![
+            MessageContent::Compaction(CompactionContent::Summary {
+                content: Some("Summary of the conversation so far.".into()),
+            }),
+            MessageContent::Text("Response".to_string()),
+        ]);
+
+        let assistant_message = result
+            .messages
+            .iter()
+            .find(|m| m.role == crate::Role::Assistant)
+            .expect("assistant message should exist");
+
+        assert_eq!(
+            serde_json::to_value(&assistant_message.content[0]).unwrap(),
+            serde_json::json!({
+                "type": "compaction",
+                "content": "Summary of the conversation so far."
+            })
+        );
+    }
+
+    #[test]
+    fn test_event_mapper_maps_compaction_block_and_deltas() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "compaction", "content": null }
+        }))
+        .unwrap();
+        let delta_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": { "type": "compaction_delta", "content": "Summary chunk" }
+        }))
+        .unwrap();
+
+        let mut events = Vec::new();
+        events.extend(mapper.map_event(start_event));
+        events.extend(mapper.map_event(delta_event));
+        let events = events
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all events should map successfully");
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Summary {
+                    content: None
+                }),
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Summary {
+                    content: Some("Summary chunk".into())
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_usage_iterations_parsed_from_message_delta() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 39,
+                "iterations": [
+                    { "type": "compaction", "input_tokens": 180000, "output_tokens": 1200 },
+                    { "type": "message", "input_tokens": 100, "output_tokens": 39 }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let Event::MessageDelta { usage, .. } = event else {
+            panic!("expected message_delta event");
+        };
+        let iterations = usage.iterations.as_deref().expect("iterations expected");
+        assert!(matches!(
+            iterations[0],
+            UsageIteration {
+                iteration_type: UsageIterationType::Compaction,
+                input_tokens: Some(180000),
+                ..
+            }
+        ));
+        assert!(matches!(
+            iterations[1],
+            UsageIteration {
+                iteration_type: UsageIterationType::Message,
+                input_tokens: Some(100),
+                ..
+            }
+        ));
     }
 }

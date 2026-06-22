@@ -9,13 +9,13 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
-octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:futures", "dep:tokio"]
+octo-client = ["dep:octocrab", "dep:jsonwebtoken", "dep:tokio"]
 
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
-futures = { workspace = true, optional = true }
+futures.workspace = true
 itertools.workspace = true
 jsonwebtoken = { version = "10.2", features = ["use_pem"], optional = true }
 octocrab = { version = "0.49", default-features = false, features = [

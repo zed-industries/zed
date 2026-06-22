@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, CheckoutStep, named},
+    steps::{self, CheckoutStep, CommonJobConditions, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -28,7 +28,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
             .with_ref(branch.to_string())
     }
 
-    fn bump_patch_version(token: &StepOutput) -> Step<Run> {
+    fn read_channel() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
@@ -40,39 +40,57 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
                 tag_suffix="-pre"
                 ;;
               *)
-                echo "this must be run on either of stable|preview release branches" >&2
+                echo "::error::must be run on a stable or preview release branch"
                 exit 1
                 ;;
             esac
-            which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
-            output="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-            git commit -am "Bump to $output for @$GITHUB_ACTOR"
-            git tag "v${output}${tag_suffix}"
-            git push origin HEAD "v${output}${tag_suffix}"
+
+            version=$(script/get-crate-version zed)
+
+            {
+                echo "channel=$channel"
+                echo "version=$version"
+                echo "tag_suffix=$tag_suffix"
+            } >> "$GITHUB_OUTPUT"
         "#})
-        .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_COMMITTER_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
-        .add_env(("GIT_AUTHOR_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_AUTHOR_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
-        .add_env(("GITHUB_TOKEN", token))
+        .id("channel")
+    }
+
+    fn bump_version() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+        "#})
+        .id("bump-version")
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let channel_step = read_channel();
+    let tag_suffix = StepOutput::new(&channel_step, "tag_suffix");
+    let bump_version_step = bump_version();
+    let version = StepOutput::new(&bump_version_step, "version");
+    let commit_step: Step<Use> = steps::BotCommitStep::new(
+        format!("Bump to {version} for @${{{{ github.actor }}}}"),
+        branch,
+        &token,
+    )
+    .into();
+    let commit_sha = StepOutput::new_unchecked(&commit_step, "commit");
 
     named::job(
         Job::default()
-            .cond(Expression::new(
-                "github.repository_owner == 'zed-industries'",
-            ))
-            .runs_on(runners::LINUX_XL)
+            .with_repository_owner_guard()
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(checkout_branch(branch, &token))
-            .add_step(bump_patch_version(&token)),
+            .add_step(channel_step)
+            .add_step(steps::install_cargo_edit())
+            .add_step(bump_version_step)
+            .add_step(commit_step)
+            .add_step(steps::create_ref(
+                steps::GitRef::tag(format!("v{version}{tag_suffix}")),
+                &commit_sha,
+                &token,
+            )),
     )
 }

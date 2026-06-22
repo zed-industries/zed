@@ -121,8 +121,8 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
                 field.json_path,
                 window,
                 cx,
-                move |settings, _cx| {
-                    (field.write)(settings, value);
+                move |settings, app| {
+                    (field.write)(settings, value, app);
                 },
             )
             .log_err();

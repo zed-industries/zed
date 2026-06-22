@@ -423,9 +423,6 @@ message Envelope {
     OpenImageResponse open_image_response = 392;
     CreateImageForPeer create_image_for_peer = 393;
 
-    GitFileHistory git_file_history = 397;
-    GitFileHistoryResponse git_file_history_response = 398;
-
     RunGitHook run_git_hook = 399;
 
     GitDeleteBranch git_delete_branch = 400;
@@ -477,10 +474,27 @@ message Envelope {
     GitDiffCheckpointsResponse git_diff_checkpoints_response = 439;
     GitGetHeadSha git_get_head_sha = 440;
     GitGetHeadShaResponse git_get_head_sha_response = 441;
-    TrashProjectEntry trash_project_entry = 442;
-    TrashProjectEntryResponse trash_project_entry_response = 443;
-    RestoreProjectEntry restore_project_entry = 444;
-    RestoreProjectEntryResponse restore_project_entry_response = 445; // current max
+    GitRepairWorktrees git_repair_worktrees = 442;
+    GitEditRef git_edit_ref = 443;
+    GitCreateArchiveCheckpoint git_create_archive_checkpoint = 444;
+    GitCreateArchiveCheckpointResponse git_create_archive_checkpoint_response = 445;
+    GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
+    GetCommitData get_commit_data = 447;
+    GetCommitDataResponse get_commit_data_response = 448;
+    SearchCommits search_commits = 449;
+    SearchCommitsResponse search_commits_response = 450;
+    GetInitialGraphData get_initial_graph_data = 451;
+    GetInitialGraphDataResponse get_initial_graph_data_response = 452;
+    GetDocumentLinks get_document_links = 453;
+    GetDocumentLinksResponse get_document_links_response = 454;
+    ResolveDocumentLink resolve_document_link = 455;
+    ResolveDocumentLinkResponse resolve_document_link_response = 456;
+    GitWorktreeCreatedAt git_worktree_created_at = 457;
+    GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
+    TrashProjectEntry trash_project_entry = 459;
+    TrashProjectEntryResponse trash_project_entry_response = 460;
+    RestoreProjectEntry restore_project_entry = 461;
+    RestoreProjectEntryResponse restore_project_entry_response = 462; // current max
   }
 
   reserved 87 to 88;
@@ -507,6 +521,7 @@ message Envelope {
   reserved 394 to 396;
   reserved 429 to 430;
   reserved 211 to 216, 232 to 233;
+  reserved 397 to 398;
 }
 
 message Hello {

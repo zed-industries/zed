@@ -223,7 +223,7 @@ impl ParseStepLanguage {
     fn name(&self) -> SharedString {
         match self {
             ParseStepLanguage::Loaded { language } => language.name().0,
-            ParseStepLanguage::Pending { name } => name.into(),
+            ParseStepLanguage::Pending { name } => name.clone().into(),
         }
     }
 

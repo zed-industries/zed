@@ -16,8 +16,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, Subscription, Task, WeakEntity,
+    Action, Anchor, AnyView, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable,
+    ScrollHandle, Subscription, Task, TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use language::LanguageRegistry;
@@ -26,12 +26,12 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{Settings, SettingsContent, SettingsStore, update_settings_file};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ButtonStyle, Chip, ContextMenu,
     ContextMenuEntry, Disclosure, Divider, DividerColor, ElevationIndex, LabelSize, PopoverMenu,
@@ -396,14 +396,7 @@ impl AgentConfiguration {
                 update_settings_file(fs.clone(), cx, {
                     let provider_id = provider_id.clone();
                     move |settings, _| {
-                        if let Some(ref mut openai_compatible) = settings
-                            .language_models
-                            .as_mut()
-                            .and_then(|lm| lm.openai_compatible.as_mut())
-                        {
-                            let key_to_remove: Arc<str> = Arc::from(provider_id.0.as_ref());
-                            openai_compatible.remove(&key_to_remove);
-                        }
+                        remove_compatible_provider(settings, provider_id.0.as_ref());
                     }
                 });
             })
@@ -444,26 +437,28 @@ impl AgentConfiguration {
             .menu({
                 let workspace = self.workspace.clone();
                 move |window, cx| {
+                    let open_modal = |provider: LlmCompatibleProvider| {
+                        let workspace = workspace.clone();
+                        move |window: &mut Window, cx: &mut App| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    AddLlmProviderModal::toggle(provider, workspace, window, cx);
+                                })
+                                .log_err();
+                        }
+                    };
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                        menu.header("Compatible APIs").entry("OpenAI", None, {
-                            let workspace = workspace.clone();
-                            move |window, cx| {
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        AddLlmProviderModal::toggle(
-                                            LlmCompatibleProvider::OpenAi,
-                                            workspace,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .log_err();
-                            }
-                        })
+                        menu.header("Compatible APIs")
+                            .entry("OpenAI", None, open_modal(LlmCompatibleProvider::OpenAi))
+                            .entry(
+                                "Anthropic",
+                                None,
+                                open_modal(LlmCompatibleProvider::Anthropic),
+                            )
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -511,6 +506,7 @@ impl AgentConfiguration {
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
                 Plan::ZedBusiness => ("Business", Color::Accent, pro_chip_bg),
+                Plan::ZedVip => ("VIP", Color::Accent, pro_chip_bg),
                 Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 
@@ -562,7 +558,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -664,8 +660,14 @@ impl AgentConfiguration {
             None
         };
         let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
+        let client_secret_required = matches!(
+            server_status,
+            ContextServerStatus::ClientSecretRequired { .. }
+        );
         let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
         let context_server_store = self.context_server_store.clone();
+        let workspace = self.workspace.clone();
+        let language_registry = self.language_registry.clone();
 
         let tool_count = self
             .context_server_registry
@@ -685,6 +687,9 @@ impl AgentConfiguration {
             ContextServerStatus::Error(_) => AiSettingItemStatus::Error,
             ContextServerStatus::Stopped => AiSettingItemStatus::Stopped,
             ContextServerStatus::AuthRequired => AiSettingItemStatus::AuthRequired,
+            ContextServerStatus::ClientSecretRequired { .. } => {
+                AiSettingItemStatus::ClientSecretRequired
+            }
             ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
         };
 
@@ -705,7 +710,7 @@ impl AgentConfiguration {
                     .icon_size(IconSize::Small),
                 Tooltip::text("Configure MCP Server"),
             )
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
             .menu({
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
@@ -886,7 +891,7 @@ impl AgentConfiguration {
                             ),
                     )
                     .child(
-                        Button::new("error-logout-server", "Authenticate")
+                        Button::new("authenticate-server", "Authenticate")
                             .style(ButtonStyle::Outlined)
                             .label_size(LabelSize::Small)
                             .on_click({
@@ -895,6 +900,46 @@ impl AgentConfiguration {
                                     context_server_store.update(cx, |store, cx| {
                                         store.authenticate_server(&context_server_id, cx).log_err();
                                     });
+                                }
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        } else if client_secret_required {
+            Some(
+                feedback_base_container()
+                    .child(
+                        h_flex()
+                            .pr_4()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Enter a client secret to connect this server")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .child(
+                        Button::new("enter-client-secret", "Enter Client Secret")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let context_server_id = context_server_id.clone();
+                                move |_event, window, cx| {
+                                    ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
                                 }
                             }),
                     )
@@ -1059,7 +1104,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -1125,7 +1170,6 @@ impl AgentConfiguration {
         };
 
         let source_kind = match source {
-            ExternalAgentSource::Extension => AiSettingItemSource::Extension,
             ExternalAgentSource::Registry => AiSettingItemSource::Registry,
             ExternalAgentSource::Custom => AiSettingItemSource::Custom,
         };
@@ -1135,10 +1179,13 @@ impl AgentConfiguration {
             id: agent_server_name.clone(),
         };
 
-        let connection_status = self
-            .agent_connection_store
-            .read(cx)
-            .connection_status(&agent, cx);
+        let (connection_status, running_version) = {
+            let connection_store = self.agent_connection_store.read(cx);
+            (
+                connection_store.connection_status(&agent, cx),
+                connection_store.agent_version(&agent, cx),
+            )
+        };
 
         let restart_button = matches!(
             connection_status,
@@ -1166,26 +1213,6 @@ impl AgentConfiguration {
         });
 
         let uninstall_button = match source {
-            ExternalAgentSource::Extension => Some(
-                IconButton::new(
-                    SharedString::from(format!("uninstall-{}", id)),
-                    IconName::Trash,
-                )
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
-                .tooltip(Tooltip::text("Uninstall Agent Extension"))
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    let agent_name = agent_server_name.clone();
-
-                    if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
-                        store.get_extension_id_for_agent(&agent_name)
-                    }) {
-                        ExtensionStore::global(cx)
-                            .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
-                            .detach_and_log_err(cx);
-                    }
-                })),
-            ),
             ExternalAgentSource::Registry => {
                 let fs = self.fs.clone();
                 Some(
@@ -1252,6 +1279,7 @@ impl AgentConfiguration {
 
         AiSettingItem::new(id, display_name, status, source_kind)
             .icon(icon)
+            .when_some(running_version, |this, version| this.detail_label(version))
             .when_some(restart_button, |this, button| this.action(button))
             .when_some(uninstall_button, |this, button| this.action(button))
     }
@@ -1330,40 +1358,44 @@ fn show_unable_to_uninstall_extension_with_context_server(
         move |this, _cx| {
             let workspace_handle = workspace_handle.clone();
 
-            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
-                .dismiss_button(true)
-                .action("Uninstall", move |_, _cx| {
-                    if let Some((extension_id, _)) =
-                        resolve_extension_for_context_server(&context_server_id, _cx)
-                    {
-                        ExtensionStore::global(_cx).update(_cx, |store, cx| {
-                            store
-                                .uninstall_extension(extension_id, cx)
-                                .detach_and_log_err(cx);
-                        });
+            this.icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .dismiss_button(true)
+            .action("Uninstall", move |_, _cx| {
+                if let Some((extension_id, _)) =
+                    resolve_extension_for_context_server(&context_server_id, _cx)
+                {
+                    ExtensionStore::global(_cx).update(_cx, |store, cx| {
+                        store
+                            .uninstall_extension(extension_id, cx)
+                            .detach_and_log_err(cx);
+                    });
 
-                        workspace_handle
-                            .update(_cx, |workspace, cx| {
-                                let fs = workspace.app_state().fs.clone();
-                                cx.spawn({
-                                    let context_server_id = context_server_id.clone();
-                                    async move |_workspace_handle, cx| {
-                                        cx.update(|cx| {
-                                            update_settings_file(fs, cx, move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .remove(&context_server_id.0);
-                                            });
+                    workspace_handle
+                        .update(_cx, |workspace, cx| {
+                            let fs = workspace.app_state().fs.clone();
+                            cx.spawn({
+                                let context_server_id = context_server_id.clone();
+                                async move |_workspace_handle, cx| {
+                                    cx.update(|cx| {
+                                        update_settings_file(fs, cx, move |settings, _| {
+                                            settings
+                                                .project
+                                                .context_servers
+                                                .remove(&context_server_id.0);
                                         });
-                                        anyhow::Ok(())
-                                    }
-                                })
-                                .detach_and_log_err(cx);
+                                    });
+                                    anyhow::Ok(())
+                                }
                             })
-                            .log_err();
-                    }
-                })
+                            .detach_and_log_err(cx);
+                        })
+                        .log_err();
+                }
+            })
         },
     );
 
@@ -1419,8 +1451,6 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 args: vec![],
                                 env: HashMap::default(),
                                 default_mode: None,
-                                default_model: None,
-                                favorite_models: vec![],
                                 default_config_options: Default::default(),
                                 favorite_config_option_values: Default::default(),
                             },
@@ -1501,13 +1531,144 @@ fn find_text_in_buffer(
     }
 }
 
-// OpenAI-compatible providers are user-configured and can be removed,
+// API-compatible providers are user-configured and can be removed,
 // whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
 //
 // If in the future we have more "API-compatible-type" of providers,
 // they should be included here as removable providers.
 fn is_removable_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
-    AllLanguageModelSettings::get_global(cx)
+    let settings = AllLanguageModelSettings::get_global(cx);
+    settings
         .openai_compatible
         .contains_key(provider_id.0.as_ref())
+        || settings
+            .anthropic_compatible
+            .contains_key(provider_id.0.as_ref())
+}
+
+fn remove_compatible_provider(settings: &mut SettingsContent, provider_id: &str) {
+    // Mirrors the OpenAI-wins precedence used at registration time: only the
+    // entry that is actually registered gets removed. A shadowed
+    // `anthropic_compatible` entry with the same name takes over instead of
+    // being silently deleted.
+    let Some(language_models) = settings.language_models.as_mut() else {
+        return;
+    };
+    let removed_from_openai = language_models
+        .openai_compatible
+        .as_mut()
+        .and_then(|providers| providers.remove(provider_id))
+        .is_some();
+    if !removed_from_openai && let Some(providers) = language_models.anthropic_compatible.as_mut() {
+        providers.remove(provider_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use settings::{AnthropicCompatibleSettingsContent, OpenAiCompatibleSettingsContent};
+
+    fn settings_with_compatible_providers(openai: &[&str], anthropic: &[&str]) -> SettingsContent {
+        let mut settings = SettingsContent::default();
+        let language_models = settings.language_models.get_or_insert_default();
+        language_models.openai_compatible = Some(
+            openai
+                .iter()
+                .map(|id| {
+                    (
+                        Arc::from(*id),
+                        OpenAiCompatibleSettingsContent {
+                            api_url: "https://example.com".to_string(),
+                            available_models: Vec::new(),
+                            custom_headers: None,
+                        },
+                    )
+                })
+                .collect(),
+        );
+        language_models.anthropic_compatible = Some(
+            anthropic
+                .iter()
+                .map(|id| {
+                    (
+                        Arc::from(*id),
+                        AnthropicCompatibleSettingsContent {
+                            api_url: "https://example.com".to_string(),
+                            available_models: Vec::new(),
+                            custom_headers: None,
+                        },
+                    )
+                })
+                .collect(),
+        );
+        settings
+    }
+
+    fn compatible_provider_keys(settings: &SettingsContent) -> (Vec<&str>, Vec<&str>) {
+        fn keys<T>(providers: Option<&HashMap<Arc<str>, T>>) -> Vec<&str> {
+            providers
+                .map(|providers| providers.keys().map(|key| key.as_ref()).collect())
+                .unwrap_or_default()
+        }
+
+        let language_models = settings
+            .language_models
+            .as_ref()
+            .expect("language_models settings should exist");
+        (
+            keys(language_models.openai_compatible.as_ref()),
+            keys(language_models.anthropic_compatible.as_ref()),
+        )
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_openai_only() {
+        let mut settings = settings_with_compatible_providers(&["acme"], &[]);
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(openai, Vec::<&str>::new());
+        assert_eq!(anthropic, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_anthropic_only() {
+        let mut settings = settings_with_compatible_providers(&[], &["acme"]);
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(openai, Vec::<&str>::new());
+        assert_eq!(anthropic, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_collision_removes_only_openai_entry() {
+        let mut settings = settings_with_compatible_providers(&["acme"], &["acme"]);
+
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(
+            openai,
+            Vec::<&str>::new(),
+            "the registered (OpenAI-compatible) entry should be removed"
+        );
+        assert_eq!(
+            anthropic,
+            vec!["acme"],
+            "the shadowed anthropic_compatible entry should survive"
+        );
+
+        // A second removal deletes the entry that took over.
+        remove_compatible_provider(&mut settings, "acme");
+        let (_, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(anthropic, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_remove_compatible_provider_leaves_other_providers_untouched() {
+        let mut settings = settings_with_compatible_providers(&["acme", "globex"], &["initech"]);
+        remove_compatible_provider(&mut settings, "acme");
+        let (openai, anthropic) = compatible_provider_keys(&settings);
+        assert_eq!(openai, vec!["globex"]);
+        assert_eq!(anthropic, vec!["initech"]);
+    }
 }

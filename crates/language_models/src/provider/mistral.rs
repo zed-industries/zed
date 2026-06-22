@@ -1,21 +1,21 @@
 use anyhow::{Result, anyhow};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
-use http_client::HttpClient;
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
@@ -30,11 +30,13 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 
 const API_KEY_ENV_VAR_NAME: &str = "MISTRAL_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["x-affinity"];
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct MistralLanguageModelProvider {
@@ -234,6 +236,30 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        ProviderConfigurationView::Inline(
+            cx.new(|cx| {
+                crate::ApiKeyEditor::new(
+                    state,
+                    "https://console.mistral.ai/api-keys",
+                    "Paste your Mistral API key",
+                    |state, _cx| crate::api_key_status(&state.api_key_state),
+                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
+                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
+    }
 }
 
 pub struct MistralLanguageModel {
@@ -256,9 +282,12 @@ impl MistralLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = MistralLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -273,6 +302,7 @@ impl MistralLanguageModel {
                 &api_key,
                 request,
                 affinity,
+                &extra_headers,
             );
             let response = request.await?;
             Ok(response)
@@ -325,32 +355,6 @@ impl LanguageModel for MistralLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        cx.background_spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
     }
 
     fn stream_completion(
@@ -412,18 +416,24 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(_) => {
                             // Tool use is not supported in User messages for Mistral
                         }
                         MessageContent::ToolResult(tool_result) => {
-                            let tool_content = match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => text.to_string(),
-                                LanguageModelToolResultContent::Image(_) => {
-                                    "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                            let mut text_parts: Vec<String> = Vec::new();
+                            for part in &tool_result.content {
+                                match part {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        text_parts.push(text.to_string());
+                                    }
+                                    LanguageModelToolResultContent::Image(_) => {
+                                        text_parts.push("[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string());
+                                    }
                                 }
-                            };
+                            }
                             messages.push(mistral::RequestMessage::Tool {
-                                content: tool_content,
+                                content: text_parts.join("\n"),
                                 tool_call_id: tool_result.tool_use_id.to_string(),
                             });
                         }
@@ -466,6 +476,7 @@ pub fn into_mistral(
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(_) => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::ToolUse(tool_use) => {
                             let tool_call = mistral::ToolCall {
                                 id: tool_use.id.to_string(),
@@ -519,6 +530,7 @@ pub fn into_mistral(
                             }
                         }
                         MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Compaction(_) => {}
                         MessageContent::Image(_)
                         | MessageContent::ToolUse(_)
                         | MessageContent::ToolResult(_) => {
@@ -652,6 +664,7 @@ impl MistralEventMapper {
 
                 if let Some(tool_id) = tool_call.id.clone()
                     && !tool_id.is_empty()
+                    && tool_id != "null"
                 {
                     entry.id = tool_id;
                 }
@@ -905,6 +918,69 @@ mod tests {
     use super::*;
     use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 
+    fn tool_call_chunk(
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<&str>,
+        finish_reason: Option<&str>,
+    ) -> mistral::StreamResponse {
+        mistral::StreamResponse {
+            id: "resp".into(),
+            object: "chat.completion.chunk".into(),
+            created: 0,
+            model: "test".into(),
+            choices: vec![mistral::StreamChoice {
+                index: 0,
+                delta: mistral::StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: if finish_reason.is_some() {
+                        None
+                    } else {
+                        Some(vec![mistral::ToolCallChunk {
+                            index: 0,
+                            id: id.map(Into::into),
+                            function: Some(mistral::FunctionChunk {
+                                name: name.map(Into::into),
+                                arguments: arguments.map(Into::into),
+                            }),
+                        }])
+                    },
+                },
+                finish_reason: finish_reason.map(Into::into),
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn test_streaming_tool_call_ignores_null_id() {
+        // Mistral's streaming API sometimes sends `"id": "null"` in continuation chunks.
+        let mut mapper = MistralEventMapper::new();
+
+        mapper.map_event(tool_call_chunk(
+            Some("real_id_123"),
+            Some("read_file"),
+            Some("{\"path\":"),
+            None,
+        ));
+        mapper.map_event(tool_call_chunk(
+            Some("null"),
+            None,
+            Some("\"a.txt\"}"),
+            None,
+        ));
+        let events = mapper.map_event(tool_call_chunk(None, None, None, Some("tool_calls")));
+
+        let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] else {
+            panic!("Expected first event to be ToolUse, got: {:?}", events[0]);
+        };
+
+        assert_eq!(tool_use.id.to_string(), "real_id_123");
+        assert_eq!(tool_use.name.as_ref(), "read_file");
+        assert_eq!(tool_use.input, serde_json::json!({"path": "a.txt"}));
+    }
+
     #[test]
     fn test_into_mistral_basic_conversion() {
         let request = LanguageModelRequest {
@@ -939,6 +1015,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: Default::default(),
+            compact_at_tokens: None,
         };
 
         let (mistral_request, affinity) =
@@ -960,7 +1037,6 @@ mod tests {
                     MessageContent::Text("What's in this image?".into()),
                     MessageContent::Image(LanguageModelImage {
                         source: "base64data".into(),
-                        size: None,
                     }),
                 ],
                 cache: false,
@@ -976,9 +1052,10 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
-        let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
+        let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(

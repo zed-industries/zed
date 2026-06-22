@@ -316,6 +316,7 @@ async fn build_remote_server_from_source(
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
             new_command("cargo")
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "zigbuild",
                     "--package",
@@ -331,7 +332,8 @@ async fn build_remote_server_from_source(
         )
         .await?;
     };
-    let bin_path = Path::new("target")
+    let bin_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .join("target")
         .join("remote_server")
         .join(&triple)
         .join("debug")

@@ -94,7 +94,7 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
 use language::{
@@ -113,6 +113,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
+use theme::StatusColors;
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -132,16 +133,25 @@ use std::{
 use crate::{
     EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
-use block_map::{BlockRow, BlockSnapshot};
-use fold_map::FoldSnapshot;
-use inlay_map::InlaySnapshot;
-use tab_map::TabSnapshot;
-use wrap_map::{WrapMap, WrapPatch};
+use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
+use fold_map::{FoldPointCursor, FoldSnapshot};
+use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
+use tab_map::{TabPointCursor, TabSnapshot};
+use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
     Folded,
     Foldable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NavigationOverlayKey(TypeId);
+
+impl NavigationOverlayKey {
+    pub const fn unique<T: 'static>() -> Self {
+        Self(TypeId::of::<T>())
+    }
 }
 
 /// Keys for tagging text highlights.
@@ -168,6 +178,7 @@ pub enum HighlightKey {
     InlineAssist,
     InputComposition,
     MatchingBracket,
+    NavigationOverlay(NavigationOverlayKey),
     PendingInput,
     ProjectSearchView,
     Rename,
@@ -193,12 +204,6 @@ pub struct CompanionExcerptPatch {
     pub source_excerpt_range: Range<MultiBufferPoint>,
     pub target_excerpt_range: Range<MultiBufferPoint>,
 }
-
-pub type ConvertMultiBufferRows = fn(
-    &MultiBufferSnapshot,
-    &MultiBufferSnapshot,
-    Range<MultiBufferPoint>,
-) -> Vec<CompanionExcerptPatch>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -237,26 +242,14 @@ pub struct DisplayMap {
 
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
-    rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
-    lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
-    rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
-    lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
     rhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
     lhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
 }
 
 impl Companion {
-    pub(crate) fn new(
-        rhs_display_map_id: EntityId,
-        rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
-        lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
-    ) -> Self {
+    pub(crate) fn new(rhs_display_map_id: EntityId) -> Self {
         Self {
             rhs_display_map_id,
-            rhs_buffer_to_lhs_buffer: Default::default(),
-            lhs_buffer_to_rhs_buffer: Default::default(),
-            rhs_rows_to_lhs_rows,
-            lhs_rows_to_rhs_rows,
             rhs_custom_block_to_balancing_block: Default::default(),
             lhs_custom_block_to_balancing_block: Default::default(),
         }
@@ -284,12 +277,11 @@ impl Companion {
         our_snapshot: &MultiBufferSnapshot,
         bounds: Range<MultiBufferPoint>,
     ) -> Vec<CompanionExcerptPatch> {
-        let convert_fn = if self.is_rhs(display_map_id) {
-            self.rhs_rows_to_lhs_rows
+        if self.is_rhs(display_map_id) {
+            crate::split::patches_for_rhs_range(companion_snapshot, our_snapshot, bounds)
         } else {
-            self.lhs_rows_to_rhs_rows
-        };
-        convert_fn(companion_snapshot, our_snapshot, bounds)
+            crate::split::patches_for_lhs_range(companion_snapshot, our_snapshot, bounds)
+        }
     }
 
     pub(crate) fn convert_point_from_companion(
@@ -299,17 +291,19 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let convert_fn = if self.is_rhs(display_map_id) {
-            self.lhs_rows_to_rhs_rows
+        let patches = if self.is_rhs(display_map_id) {
+            crate::split::patches_for_lhs_range(our_snapshot, companion_snapshot, point..point)
         } else {
-            self.rhs_rows_to_lhs_rows
+            crate::split::patches_for_rhs_range(our_snapshot, companion_snapshot, point..point)
         };
 
-        let excerpt = convert_fn(our_snapshot, companion_snapshot, point..point)
-            .into_iter()
-            .next();
-
-        let Some(excerpt) = excerpt else {
+        let Some(excerpt) = patches.into_iter().next() else {
+            if cfg!(any(test, debug_assertions)) {
+                assert!(
+                    our_snapshot.max_point() == Point::zero(),
+                    "`patches_for_*_in_range` is only allowed to return an empty vec if the multibuffer is empty"
+                );
+            }
             return Point::zero()..our_snapshot.max_point();
         };
         excerpt.patch.edit_for_old_position(point).new
@@ -322,37 +316,16 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let convert_fn = if self.is_rhs(display_map_id) {
-            self.rhs_rows_to_lhs_rows
+        let patches = if self.is_rhs(display_map_id) {
+            crate::split::patches_for_rhs_range(companion_snapshot, our_snapshot, point..point)
         } else {
-            self.lhs_rows_to_rhs_rows
+            crate::split::patches_for_lhs_range(companion_snapshot, our_snapshot, point..point)
         };
 
-        let excerpt = convert_fn(companion_snapshot, our_snapshot, point..point)
-            .into_iter()
-            .next();
-
-        let Some(excerpt) = excerpt else {
+        let Some(excerpt) = patches.into_iter().next() else {
             return Point::zero()..companion_snapshot.max_point();
         };
         excerpt.patch.edit_for_old_position(point).new
-    }
-
-    fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
-        if self.is_rhs(display_map_id) {
-            &self.rhs_buffer_to_lhs_buffer
-        } else {
-            &self.lhs_buffer_to_rhs_buffer
-        }
-    }
-
-    pub(crate) fn lhs_to_rhs_buffer(&self, lhs_buffer_id: BufferId) -> Option<BufferId> {
-        self.lhs_buffer_to_rhs_buffer.get(&lhs_buffer_id).copied()
-    }
-
-    pub(crate) fn add_buffer_mapping(&mut self, lhs_buffer: BufferId, rhs_buffer: BufferId) {
-        self.lhs_buffer_to_rhs_buffer.insert(lhs_buffer, rhs_buffer);
-        self.rhs_buffer_to_lhs_buffer.insert(rhs_buffer, lhs_buffer);
     }
 }
 
@@ -514,9 +487,12 @@ impl DisplayMap {
             // entries: the block map doesn't remove buffers from
             // `folded_buffers` when they leave the multibuffer, so we
             // unfold any RHS buffers whose companion mapping is missing.
+            let rhs_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut buffers_to_unfold = Vec::new();
             for my_buffer in self.folded_buffers() {
-                let their_buffer = companion.read(cx).rhs_buffer_to_lhs_buffer.get(my_buffer);
+                let their_buffer = rhs_snapshot
+                    .diff_for_buffer_id(*my_buffer)
+                    .map(|diff| diff.base_text().remote_id());
 
                 let Some(their_buffer) = their_buffer else {
                     buffers_to_unfold.push(*my_buffer);
@@ -526,7 +502,7 @@ impl DisplayMap {
                 companion_display_map
                     .block_map
                     .folded_buffers
-                    .insert(*their_buffer);
+                    .insert(their_buffer);
             }
             for buffer_id in buffers_to_unfold {
                 self.block_map.folded_buffers.remove(&buffer_id);
@@ -711,6 +687,10 @@ impl DisplayMap {
             use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
         }
+    }
+
+    pub fn crease_snapshot(&self) -> CreaseSnapshot {
+        self.crease_map.snapshot()
     }
 
     #[instrument(skip_all)]
@@ -1170,15 +1150,22 @@ impl DisplayMap {
                 Some((previous_style, previous_ranges)) => {
                     *previous_style = style;
                     *previous_ranges = ranges;
+                    previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                 }
                 None if merge => {
                     ranges.extend(slot.get().1.iter().cloned());
                     ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                     slot.insert(Arc::new((style, ranges)));
                 }
-                None => _ = slot.insert(Arc::new((style, ranges))),
+                None => {
+                    ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                    slot.insert(Arc::new((style, ranges)));
+                }
             },
-            Entry::Vacant(slot) => _ = slot.insert(Arc::new((style, ranges))),
+            Entry::Vacant(slot) => {
+                ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
+                slot.insert(Arc::new((style, ranges)));
+            }
         }
     }
 
@@ -1560,6 +1547,11 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
 
+    #[inline(always)]
+    pub fn has_collapsed_content(&self) -> bool {
+        self.fold_snapshot().has_folds() || self.block_snapshot.has_replacement_blocks()
+    }
+
     pub fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot
@@ -1684,29 +1676,23 @@ impl DisplaySnapshot {
         &self,
         range: Range<MultiBufferOffset>,
     ) -> SmallVec<[Range<DisplayPoint>; 1]> {
-        let inlay_snapshot = self.inlay_snapshot();
-        inlay_snapshot
-            .buffer_offset_to_inlay_ranges(range)
-            .map(|inlay_range| {
-                let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
-                    let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
-                    let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
-                    let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
-                    let block_point = self.block_snapshot.to_block_point(wrap_point);
-                    DisplayPoint(block_point)
-                };
+        self.display_point_converter().map(range)
+    }
 
-                let start = inlay_point_to_display_point(
-                    inlay_snapshot.to_point(inlay_range.start),
-                    Bias::Left,
-                );
-                let end = inlay_point_to_display_point(
-                    inlay_snapshot.to_point(inlay_range.end),
-                    Bias::Left,
-                );
-                start..end
-            })
-            .collect()
+    /// Returns a converter that maps buffer offset ranges to `DisplayPoint`
+    /// ranges (as in [`Self::isomorphic_display_point_ranges_for_buffer_range`])
+    /// while reusing cursor state across calls. Use this when converting many
+    /// ranges in a single pass; the inputs must be supplied with non-decreasing
+    /// offsets so the underlying cursors only advance forward.
+    pub fn display_point_converter(&self) -> DisplayPointConverter<'_> {
+        DisplayPointConverter {
+            inlay_cursor: self.inlay_snapshot().buffer_offset_to_inlay_point_cursor(),
+            fold_point_cursor: self.fold_snapshot().fold_point_cursor(),
+            tab_point_cursor: self.tab_snapshot().tab_point_cursor(),
+            wrap_point_cursor: self.wrap_snapshot().wrap_point_cursor(),
+            block_point_cursor: self.block_snapshot.block_point_cursor(),
+            prev_end: None,
+        }
     }
 
     pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
@@ -1835,72 +1821,89 @@ impl DisplaySnapshot {
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
-        .flat_map(|chunk| {
-            let syntax_highlight_style = chunk
-                .syntax_highlight_id
-                .and_then(|id| editor_style.syntax.get(id).cloned());
+        .flat_map({
+            // track the current underline style so that we can apply it to
+            // inlay hints within the diagnostic's span
+            let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
 
-            let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
-                HighlightStyle {
-                    // For color inlays, blend the color with the editor background
-                    // if the color has transparency (alpha < 1.0)
-                    color: chunk_highlight.color.map(|color| {
-                        if chunk.is_inlay && !color.is_opaque() {
-                            editor_style.background.blend(color)
-                        } else {
-                            color
-                        }
-                    }),
-                    underline: chunk_highlight
-                        .underline
-                        .filter(|_| editor_style.show_underlines),
-                    ..chunk_highlight
-                }
-            });
+            move |chunk| {
+                let syntax_highlight_style = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| editor_style.syntax.get(id).cloned());
 
-            let diagnostic_highlight = chunk
-                .diagnostic_severity
-                .filter(|severity| {
-                    self.diagnostics_max_severity
-                        .into_lsp()
-                        .is_some_and(|max_severity| severity <= &max_severity)
-                })
-                .map(|severity| HighlightStyle {
-                    fade_out: chunk
-                        .is_unnecessary
-                        .then_some(editor_style.unnecessary_code_fade),
-                    underline: (chunk.underline
-                        && editor_style.show_underlines
-                        && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
-                        .then(|| {
-                            let diagnostic_color =
-                                super::diagnostic_style(severity, &editor_style.status);
-                            UnderlineStyle {
-                                color: Some(diagnostic_color),
-                                thickness: 1.0.into(),
-                                wavy: true,
+                let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
+                    HighlightStyle {
+                        // For color inlays, blend the color with the editor background
+                        // if the color has transparency (alpha < 1.0)
+                        color: chunk_highlight.color.map(|color| {
+                            if chunk.is_inlay && !color.is_opaque() {
+                                editor_style.background.blend(color)
+                            } else {
+                                color
                             }
                         }),
-                    ..Default::default()
+                        underline: chunk_highlight
+                            .underline
+                            .filter(|_| editor_style.show_underlines),
+                        ..chunk_highlight
+                    }
                 });
 
-            let style = [
-                syntax_highlight_style,
-                chunk_highlight,
-                diagnostic_highlight,
-            ]
-            .into_iter()
-            .flatten()
-            .reduce(|acc, highlight| acc.highlight(highlight));
+                let diagnostic_highlight = if chunk.is_inlay {
+                    current_diagnostic_underline.map(|underline| HighlightStyle {
+                        underline: Some(underline),
+                        ..Default::default()
+                    })
+                } else {
+                    let highlight = chunk
+                        .diagnostic_severity
+                        .filter(|severity| {
+                            self.diagnostics_max_severity
+                                .into_lsp()
+                                .is_some_and(|max_severity| severity <= &max_severity)
+                        })
+                        .map(|severity| HighlightStyle {
+                            fade_out: chunk
+                                .is_unnecessary
+                                .then_some(editor_style.unnecessary_code_fade),
+                            underline: (chunk.underline
+                                && editor_style.show_underlines
+                                && !(chunk.is_unnecessary
+                                    && severity > lsp::DiagnosticSeverity::WARNING))
+                                .then(|| {
+                                    let diagnostic_color =
+                                        diagnostic_style(severity, &editor_style.status);
+                                    UnderlineStyle {
+                                        color: Some(diagnostic_color),
+                                        thickness: 1.0.into(),
+                                        wavy: true,
+                                    }
+                                }),
+                            ..Default::default()
+                        });
 
-            HighlightedChunk {
-                text: chunk.text,
-                style,
-                is_tab: chunk.is_tab,
-                is_inlay: chunk.is_inlay,
-                replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                    current_diagnostic_underline = highlight.as_ref().and_then(|h| h.underline);
+                    highlight
+                };
+
+                let style = [
+                    syntax_highlight_style,
+                    chunk_highlight,
+                    diagnostic_highlight,
+                ]
+                .into_iter()
+                .flatten()
+                .reduce(|acc, highlight| acc.highlight(highlight));
+
+                HighlightedChunk {
+                    text: chunk.text,
+                    style,
+                    is_tab: chunk.is_tab,
+                    is_inlay: chunk.is_inlay,
+                    replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                }
+                .highlight_invisibles(editor_style)
             }
-            .highlight_invisibles(editor_style)
         })
     }
 
@@ -2091,6 +2094,21 @@ impl DisplaySnapshot {
         DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
     }
 
+    pub fn inlay_bias_at(&self, point: DisplayPoint) -> Option<Bias> {
+        let wrap_point = self.block_snapshot.to_wrap_point(point.0, Bias::Left);
+        let tab_point = self.block_snapshot.to_tab_point(wrap_point);
+        let (fold_point, _, _) = self
+            .block_snapshot
+            .tab_snapshot
+            .tab_point_to_fold_point(tab_point, Bias::Left);
+        let inlay_point =
+            fold_point.to_inlay_point(&self.block_snapshot.tab_snapshot.fold_snapshot);
+        self.block_snapshot
+            .tab_snapshot
+            .fold_snapshot
+            .inlay_bias_at_point(inlay_point)
+    }
+
     pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
         let mut point = self.display_point_to_point(display_point, Bias::Left);
 
@@ -2278,23 +2296,38 @@ impl DisplaySnapshot {
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
-            let max_point = self.buffer_snapshot().max_point();
+            let snapshot = self.buffer_snapshot();
+            let max_point = snapshot.max_point();
             let mut closing_row = None;
+
+            // End byte of the smallest syntactic node enclosing `buffer_row`.
+            // Used to tell standalone top-level comments (which terminate the
+            // fold) apart from unindented content inside a multi-line string
+            // or block comment belonging to the folded node (which does not).
+            let foldable_node_end = {
+                let row_start = Point::new(buffer_row.0, 0);
+                let row_end = Point::new(buffer_row.0, snapshot.line_len(buffer_row));
+                snapshot
+                    .syntax_ancestor(row_start..row_end)
+                    .map(|(_, range)| range.end)
+            };
 
             for row in (buffer_row.0 + 1)..=max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    if self
-                        .buffer_snapshot()
+                    let in_string_or_comment_scope = snapshot
                         .language_scope_at(Point::new(row, 0))
                         .is_some_and(|scope| {
                             matches!(
                                 scope.override_name(),
                                 Some("string") | Some("comment") | Some("comment.inclusive")
                             )
-                        })
+                        });
+                    if in_string_or_comment_scope
+                        && let Some(end) = foldable_node_end
+                        && Point::new(row, 0).to_offset(snapshot) < end
                     {
                         continue;
                     }
@@ -2406,6 +2439,16 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+}
+
+fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+    match severity {
+        lsp::DiagnosticSeverity::ERROR => colors.error,
+        lsp::DiagnosticSeverity::WARNING => colors.warning,
+        lsp::DiagnosticSeverity::INFORMATION => colors.info,
+        lsp::DiagnosticSeverity::HINT => colors.hint,
+        _ => colors.ignored,
     }
 }
 
@@ -2559,6 +2602,57 @@ impl ToDisplayPoint for Anchor {
     }
 }
 
+/// Maps buffer offset ranges to `DisplayPoint` ranges covering only buffer text
+/// (excluding inlay text), reusing cursor state across calls.
+///
+/// Created via [`DisplaySnapshot::display_point_converter`]. Each layer
+/// (inlay -> fold -> tab -> wrap -> block) is backed by a forward-only cursor,
+/// so it is most efficient when ranges are supplied with non-decreasing
+/// offsets. If a range starts before the previous one ended, the cursors are
+/// transparently reset so the result stays correct (at the cost of an extra
+/// seek), which keeps the converter robust to overlapping inputs such as the
+/// base and buffer word diffs of an inline modified hunk.
+pub struct DisplayPointConverter<'a> {
+    inlay_cursor: BufferOffsetToInlayPointCursor<'a>,
+    fold_point_cursor: FoldPointCursor<'a>,
+    tab_point_cursor: TabPointCursor<'a>,
+    wrap_point_cursor: WrapPointCursor<'a>,
+    block_point_cursor: BlockPointCursor<'a>,
+    prev_end: Option<MultiBufferOffset>,
+}
+
+impl DisplayPointConverter<'_> {
+    pub fn map(&mut self, range: Range<MultiBufferOffset>) -> SmallVec<[Range<DisplayPoint>; 1]> {
+        if self.prev_end.is_some_and(|prev_end| range.start < prev_end) {
+            // The input went backward relative to where the cursors are
+            // positioned; reset them so they can seek freely.
+            self.inlay_cursor.reset();
+            self.fold_point_cursor.reset();
+            self.tab_point_cursor.reset();
+            self.wrap_point_cursor.reset();
+            self.block_point_cursor.reset();
+        }
+        self.prev_end = Some(range.end);
+
+        let inlay_ranges = self.inlay_cursor.map(range);
+        inlay_ranges
+            .into_iter()
+            .map(|inlay_range| {
+                let start = self.inlay_point_to_display_point(inlay_range.start);
+                let end = self.inlay_point_to_display_point(inlay_range.end);
+                start..end
+            })
+            .collect()
+    }
+
+    fn inlay_point_to_display_point(&mut self, inlay_point: InlayPoint) -> DisplayPoint {
+        let fold_point = self.fold_point_cursor.map(inlay_point, Bias::Left);
+        let tab_point = self.tab_point_cursor.map(fold_point);
+        let wrap_point = self.wrap_point_cursor.map(tab_point);
+        DisplayPoint(self.block_point_cursor.map(wrap_point))
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -2577,9 +2671,9 @@ pub mod tests {
     };
     use lsp::LanguageServerId;
 
+    use futures::stream::StreamExt;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
-    use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};
