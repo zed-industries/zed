@@ -3,7 +3,7 @@ use crate::{
     EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
     GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
     SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
-    actions::{Format, FormatSelections},
+    actions::{Format, FormatSelections, OpenGitPanelAndStageFile},
     selections_collection::SelectionsCollection,
 };
 use gpui::prelude::FluentBuilder;
@@ -217,6 +217,8 @@ pub fn deploy_context_menu(
                         .is_some()
                 });
 
+        let commit_file_abs_path = editor.target_file_abs_path(cx);
+
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
         let format_selections = window.is_action_available(&FormatSelections, cx);
@@ -286,6 +288,14 @@ pub fn deploy_context_menu(
                 .action("Copy and Trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
+                .when(has_git_repo && commit_file_abs_path.is_some(), |menu| {
+                    menu.submenu("Git", |menu, _window, _cx| {
+                        menu.entry("Commit File...", None, |window, cx| {
+                            window.dispatch_action(Box::new(OpenGitPanelAndStageFile), cx);
+                        })
+                    })
+                    .separator()
+                })
                 .action_disabled_when(
                     !has_reveal_target,
                     ui::utils::reveal_in_file_manager_label(false),

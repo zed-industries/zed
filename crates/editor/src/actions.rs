@@ -23,6 +23,12 @@ pub struct SelectPrevious {
     pub replace_newest: bool,
 }
 
+/// Opens the Git panel, selects the active file, and stages only that file.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct OpenGitPanelAndStageFile;
+
 /// Moves the cursor to the beginning of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]

@@ -16,7 +16,7 @@ use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, SizingBehavior};
-use editor::{EditorStyle, RewrapOptions};
+use editor::{EditorStyle, RewrapOptions, actions::OpenGitPanelAndStageFile};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
 use futures::channel::oneshot::Canceled;
@@ -66,7 +66,7 @@ use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
@@ -262,6 +262,28 @@ pub fn register(workspace: &mut Workspace) {
         if let Some(panel) = workspace.panel::<GitPanel>(cx) {
             panel.update(cx, |panel, cx| {
                 panel.show_git_job_queue(window, cx);
+            });
+        }
+    });
+    workspace.register_action(|workspace, _: &OpenGitPanelAndStageFile, window, cx| {
+        let Some(project_path) = workspace
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+        else {
+            return;
+        };
+        let Some(abs_path) = workspace
+            .project()
+            .read(cx)
+            .absolute_path(&project_path, cx)
+        else {
+            return;
+        };
+
+        workspace.reveal_panel::<GitPanel>(window, cx);
+        if let Some(panel) = workspace.panel::<GitPanel>(cx) {
+            panel.update(cx, |panel, cx| {
+                panel.reveal_and_stage_file(abs_path, window, cx);
             });
         }
     });
@@ -957,6 +979,48 @@ impl GitPanel {
 
         self.selected_entry = Some(ix);
         self.scroll_to_selected_entry(cx);
+    }
+
+    pub fn reveal_and_stage_file(
+        &mut self,
+        abs_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self
+            .project
+            .read(cx)
+            .project_path_for_absolute_path(&abs_path, cx)
+        else {
+            return;
+        };
+
+        self.select_entry_by_path(project_path, window, cx);
+
+        let Some(clicked_entry) = self
+            .get_selected_entry()
+            .and_then(|e| e.status_entry().cloned())
+        else {
+            return;
+        };
+        let clicked_repo_path = clicked_entry.repo_path.clone();
+
+        let other_staged: Vec<GitStatusEntry> = self
+            .entries
+            .iter()
+            .filter_map(|e| e.status_entry())
+            .filter(|e| e.staging == StageStatus::Staged && e.repo_path != clicked_repo_path)
+            .cloned()
+            .collect();
+        if !other_staged.is_empty() {
+            self.change_file_stage(false, other_staged, cx);
+        }
+
+        if clicked_entry.staging != StageStatus::Staged {
+            self.change_file_stage(true, vec![clicked_entry], cx);
+        }
+
+        self.focus_editor(&FocusEditor, window, cx);
     }
 
     fn serialization_key(workspace: &Workspace) -> Option<String> {
@@ -7561,6 +7625,8 @@ mod tests {
 
     use workspace::MultiWorkspace;
 
+    use std::path::PathBuf;
+
     use super::*;
 
     fn init_test(cx: &mut gpui::TestAppContext) {
@@ -9518,6 +9584,97 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reveal_and_stage_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "tracked": "modified\n",
+            }),
+            &[("tracked", git::status::StatusCode::Modified)],
+        )
+        .await;
+
+        let abs_path = PathBuf::from(path!("/project/tracked"));
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.reveal_and_stage_file(abs_path, window, cx);
+        });
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        cx.read(|cx| {
+            let staged = panel.read(cx).entries.iter().any(|entry| {
+                entry
+                    .status_entry()
+                    .is_some_and(|e| e.staging == StageStatus::Staged)
+            });
+            assert!(staged, "file should be staged");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reveal_and_stage_file_outside_repo(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "tracked": "modified\n",
+            }),
+            &[("tracked", git::status::StatusCode::Modified)],
+        )
+        .await;
+
+        let abs_path = PathBuf::from(path!("/other/file.txt"));
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.reveal_and_stage_file(abs_path, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let staged = panel.read(cx).entries.iter().any(|entry| {
+                entry
+                    .status_entry()
+                    .is_some_and(|e| e.staging == StageStatus::Staged)
+            });
+            assert!(!staged, "path outside repo should not be staged");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reveal_and_stage_file_nonexistent(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "tracked": "modified\n",
+            }),
+            &[("tracked", git::status::StatusCode::Modified)],
+        )
+        .await;
+
+        let abs_path = PathBuf::from(path!("/project/missing.txt"));
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.reveal_and_stage_file(abs_path, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            let staged = panel.read(cx).entries.iter().any(|entry| {
+                entry
+                    .status_entry()
+                    .is_some_and(|e| e.staging == StageStatus::Staged)
+            });
+            assert!(!staged, "nonexistent file should not be staged");
         });
     }
 }
