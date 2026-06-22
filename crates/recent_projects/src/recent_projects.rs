@@ -632,9 +632,7 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .minimum_results_width(rems(rem_width))
-                .height(rems(24.))
-                .no_vertical_padding()
+                .initial_width(rems(rem_width))
                 .show_scrollbar(true)
         });
 
@@ -2573,8 +2571,7 @@ mod tests {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .height(Rems::from_pixels(px(240.0), window))
-                .no_vertical_padding()
+                .max_height(Rems::from_pixels(px(240.0), window))
         });
         draw(cx);
         (picker, cx)

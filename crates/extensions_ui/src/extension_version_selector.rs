@@ -40,13 +40,7 @@ impl ExtensionVersionSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding()
-        });
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }
