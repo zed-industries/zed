@@ -30,6 +30,7 @@ pub struct TasksModalDelegate {
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
     matches: Vec<StringMatch>,
+    search_candidates: Vec<SearchCandidate>,
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
@@ -42,6 +43,28 @@ pub struct TasksModalDelegate {
 pub struct TaskOverrides {
     /// See [`RevealTarget`].
     pub reveal_target: Option<RevealTarget>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SearchCandidate {
+    Task(usize),
+    Tag {
+        tag: String,
+        task_indices: Vec<usize>,
+    },
+}
+
+impl SearchCandidate {
+    fn is_recent_task(&self, last_used_candidate_index: Option<usize>) -> bool {
+        let Some(last_used_candidate_index) = last_used_candidate_index else {
+            return false;
+        };
+        matches!(self, SearchCandidate::Task(task_index) if *task_index <= last_used_candidate_index)
+    }
+
+    fn is_tag(&self) -> bool {
+        matches!(self, SearchCandidate::Tag { .. })
+    }
 }
 
 impl TasksModalDelegate {
@@ -64,6 +87,7 @@ impl TasksModalDelegate {
             workspace,
             candidates: None,
             matches: Vec::new(),
+            search_candidates: Vec::new(),
             last_used_candidate_index: None,
             divider_index: None,
             selected_index: 0,
@@ -101,6 +125,11 @@ impl TasksModalDelegate {
             source_kind,
             new_oneshot.resolve_task(&id_base, active_context)?,
         ))
+    }
+
+    fn selected_match_candidate(&self) -> Option<&SearchCandidate> {
+        let match_index = self.matches.get(self.selected_index())?.candidate_id;
+        self.search_candidates.get(match_index)
     }
 
     fn delete_previously_used(&mut self, ix: usize, cx: &mut App) {
@@ -268,8 +297,9 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
+        let include_tags = query.trim_start().starts_with('#');
         let candidates = match &self.candidates {
-            Some(candidates) => Task::ready(string_match_candidates(candidates)),
+            Some(candidates) => Task::ready(search_match_candidates(candidates, include_tags)),
             None => {
                 if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
                     let task_list = task_inventory.update(cx, |this, cx| {
@@ -302,7 +332,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 .unwrap_or(false);
                             (lsp_tasks, prefer_lsp)
                         }) else {
-                            return Vec::new();
+                            return (Vec::new(), Vec::new());
                         };
 
                         let lsp_tasks = lsp_tasks.await;
@@ -336,7 +366,8 @@ impl PickerDelegate for TasksModalDelegate {
                                             || !matches!(task_kind, TaskSourceKind::Language { .. })
                                     },
                                 ));
-                                let match_candidates = string_match_candidates(&new_candidates);
+                                let match_candidates =
+                                    search_match_candidates(&new_candidates, include_tags);
                                 let _ = picker.delegate.candidates.insert(new_candidates);
                                 match_candidates
                             })
@@ -344,15 +375,15 @@ impl PickerDelegate for TasksModalDelegate {
                             .unwrap_or_default()
                     })
                 } else {
-                    Task::ready(Vec::new())
+                    Task::ready((Vec::new(), Vec::new()))
                 }
             }
         };
 
         cx.spawn_in(window, async move |picker, cx| {
-            let candidates = candidates.await;
-            let matches = fuzzy::match_strings(
-                &candidates,
+            let (search_candidates, match_candidates) = candidates.await;
+            let mut matches = fuzzy::match_strings(
+                &match_candidates,
                 &query,
                 true,
                 true,
@@ -364,17 +395,35 @@ impl PickerDelegate for TasksModalDelegate {
             picker
                 .update(cx, |picker, _| {
                     let delegate = &mut picker.delegate;
-                    delegate.matches = matches;
-                    if let Some(index) = delegate.last_used_candidate_index {
-                        delegate.matches.sort_by_key(|m| m.candidate_id > index);
+                    if include_tags {
+                        matches.sort_by_key(|matching_candidate| {
+                            !search_candidates
+                                .get(matching_candidate.candidate_id)
+                                .is_some_and(SearchCandidate::is_tag)
+                        });
+                    } else if delegate.last_used_candidate_index.is_some() {
+                        matches.sort_by_key(|matching_candidate| {
+                            !search_candidates
+                                .get(matching_candidate.candidate_id)
+                                .is_some_and(|candidate| {
+                                    candidate.is_recent_task(delegate.last_used_candidate_index)
+                                })
+                        });
                     }
 
+                    delegate.search_candidates = search_candidates;
+                    delegate.matches = matches;
                     delegate.prompt = query;
-                    delegate.divider_index = delegate.last_used_candidate_index.and_then(|index| {
-                        let index = delegate
-                            .matches
-                            .partition_point(|matching_task| matching_task.candidate_id <= index);
-                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                    delegate.divider_index = delegate.last_used_candidate_index.and_then(|_| {
+                        let index = delegate.matches.partition_point(|matching_task| {
+                            delegate
+                                .search_candidates
+                                .get(matching_task.candidate_id)
+                                .is_some_and(|candidate| {
+                                    candidate.is_recent_task(delegate.last_used_candidate_index)
+                                })
+                        });
+                        (index != 0).then(|| index - 1)
                     });
 
                     if delegate.matches.is_empty() {
@@ -394,37 +443,75 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
-        let current_match_index = self.selected_index();
-        let task = self
-            .matches
-            .get(current_match_index)
-            .and_then(|current_match| {
-                let ix = current_match.candidate_id;
-                self.candidates
-                    .as_ref()
-                    .map(|candidates| candidates[ix].clone())
-            });
-        let Some((task_source_kind, mut task)) = task else {
+        let Some(search_candidate) = self.selected_match_candidate().cloned() else {
             return;
         };
-        if let Some(TaskOverrides {
-            reveal_target: Some(reveal_target),
-        }) = &self.task_overrides
-        {
-            task.resolved.reveal_target = *reveal_target;
-        }
 
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.schedule_resolved_task(
-                    task_source_kind,
-                    task,
-                    omit_history_entry,
-                    window,
-                    cx,
-                );
-            })
-            .ok();
+        match search_candidate {
+            SearchCandidate::Task(task_index) => {
+                let Some((task_source_kind, mut task)) = self
+                    .candidates
+                    .as_ref()
+                    .and_then(|candidates| candidates.get(task_index).cloned())
+                else {
+                    return;
+                };
+                if let Some(TaskOverrides {
+                    reveal_target: Some(reveal_target),
+                }) = &self.task_overrides
+                {
+                    task.resolved.reveal_target = *reveal_target;
+                }
+
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.schedule_resolved_task(
+                            task_source_kind,
+                            task,
+                            omit_history_entry,
+                            window,
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+            SearchCandidate::Tag { task_indices, .. } => {
+                let Some(candidates) = self.candidates.as_ref() else {
+                    return;
+                };
+                let tasks = task_indices
+                    .into_iter()
+                    .filter_map(|task_index| candidates.get(task_index).cloned())
+                    .map(|(task_source_kind, mut task)| {
+                        if let Some(TaskOverrides {
+                            reveal_target: Some(reveal_target),
+                        }) = &self.task_overrides
+                        {
+                            task.resolved.reveal_target = *reveal_target;
+                        }
+                        (task_source_kind, task)
+                    })
+                    .collect::<Vec<_>>();
+
+                if tasks.is_empty() {
+                    return;
+                }
+
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        for (task_source_kind, task) in tasks {
+                            workspace.schedule_resolved_task(
+                                task_source_kind,
+                                task,
+                                omit_history_entry,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .ok();
+            }
+        }
 
         cx.emit(DismissEvent);
     }
@@ -442,7 +529,46 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches.get(ix)?;
-        let (source_kind, resolved_task) = &candidates.get(hit.candidate_id)?;
+        let search_candidate = self.search_candidates.get(hit.candidate_id)?;
+
+        if let SearchCandidate::Tag { tag, task_indices } = search_candidate {
+            let tooltip_label = Tooltip::simple(
+                format!(
+                    "Run {} task{} tagged #{tag}",
+                    task_indices.len(),
+                    if task_indices.len() == 1 { "" } else { "s" }
+                ),
+                cx,
+            );
+            let highlighted_tag = HighlightedMatch {
+                text: hit.string.clone(),
+                highlight_positions: hit.positions.clone(),
+                color: Color::Default,
+            };
+
+            return Some(
+                ListItem::new(format!("tasks-modal-tag-{tag}"))
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .tooltip(move |_, _| tooltip_label.clone())
+                    .toggle_state(selected)
+                    .end_slot::<AnyElement>(
+                        Label::new(format!(
+                            "{} task{}",
+                            task_indices.len(),
+                            if task_indices.len() == 1 { "" } else { "s" }
+                        ))
+                        .color(Color::Muted)
+                        .into_any_element(),
+                    )
+                    .child(highlighted_tag.render(window, cx)),
+            );
+        }
+
+        let SearchCandidate::Task(task_index) = search_candidate else {
+            return None;
+        };
+        let (source_kind, resolved_task) = &candidates.get(*task_index)?;
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
 
@@ -551,7 +677,7 @@ impl PickerDelegate for TasksModalDelegate {
                     if matches!(source_kind, TaskSourceKind::UserInput)
                         || Some(ix) <= self.divider_index
                     {
-                        let task_index = hit.candidate_id;
+                        let task_index = *task_index;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
                                 .shape(IconButtonShape::Square)
@@ -588,10 +714,14 @@ impl PickerDelegate for TasksModalDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
-        let task_index = self.matches.get(self.selected_index())?.candidate_id;
-        let tasks = self.candidates.as_ref()?;
-        let (_, task) = tasks.get(task_index)?;
-        Some(task.resolved.command_label.clone())
+        match self.selected_match_candidate()? {
+            SearchCandidate::Task(task_index) => {
+                let tasks = self.candidates.as_ref()?;
+                let (_, task) = tasks.get(*task_index)?;
+                Some(task.resolved.command_label.clone())
+            }
+            SearchCandidate::Tag { tag, .. } => Some(format!("#{tag}")),
+        }
     }
 
     fn confirm_input(
@@ -723,14 +853,61 @@ impl PickerDelegate for TasksModalDelegate {
     }
 }
 
-fn string_match_candidates<'a>(
-    candidates: impl IntoIterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
-) -> Vec<StringMatchCandidate> {
-    candidates
-        .into_iter()
-        .enumerate()
-        .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
-        .collect()
+fn search_match_candidates<'a>(
+    candidates: impl IntoIterator<Item = &'a (TaskSourceKind, ResolvedTask)> + Clone + 'a,
+    include_tags: bool,
+) -> (Vec<SearchCandidate>, Vec<StringMatchCandidate>) {
+    let mut search_candidates = Vec::new();
+    let mut match_candidates = Vec::new();
+
+    for (task_index, (_, candidate)) in candidates.clone().into_iter().enumerate() {
+        let search_candidate_index = search_candidates.len();
+        search_candidates.push(SearchCandidate::Task(task_index));
+        match_candidates.push(StringMatchCandidate::new(
+            search_candidate_index,
+            candidate.display_label(),
+        ));
+    }
+
+    if include_tags {
+        for tag in candidates
+            .clone()
+            .into_iter()
+            .flat_map(|(_, candidate)| candidate.original_task().tags.iter().cloned())
+            .unique()
+            .sorted()
+        {
+            let task_indices = candidates
+                .clone()
+                .into_iter()
+                .enumerate()
+                .filter_map(|(task_index, (_, candidate))| {
+                    candidate
+                        .original_task()
+                        .tags
+                        .contains(&tag)
+                        .then_some(task_index)
+                })
+                .collect::<Vec<_>>();
+
+            if task_indices.is_empty() {
+                continue;
+            }
+
+            let search_candidate_index = search_candidates.len();
+            search_candidates.push(SearchCandidate::Tag {
+                tag: tag.clone(),
+                task_indices,
+            });
+            let tag_label = format!("#{tag}");
+            match_candidates.push(StringMatchCandidate::new(
+                search_candidate_index,
+                tag_label.as_str(),
+            ));
+        }
+    }
+
+    (search_candidates, match_candidates)
 }
 
 #[cfg(test)]
@@ -923,6 +1100,59 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec!["echo 4", "another one", "example task"],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_spawn_tasks_modal_runs_matching_tag(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "build app",
+                            "command": "echo",
+                            "args": ["build"],
+                            "tags": ["montag"]
+                        },
+                        {
+                            "label": "test app",
+                            "command": "echo",
+                            "args": ["test"],
+                            "tags": ["montag"]
+                        },
+                        {
+                            "label": "lint app",
+                            "command": "echo",
+                            "args": ["lint"],
+                            "tags": ["lint"]
+                        }
+                    ]"#,
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        cx.simulate_input("#mon");
+        assert_eq!(task_names(&tasks_picker, cx), vec!["#montag"]);
+
+        cx.dispatch_action(menu::Confirm);
+        cx.executor().run_until_parked();
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            &task_names(&tasks_picker, cx)[..2],
+            &["test app".to_string(), "build app".to_string()],
+            "Confirming a tag entry should schedule every task with that tag"
         );
     }
 
