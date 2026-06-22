@@ -138,7 +138,7 @@ impl RatePredictionsModal {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
-            self.ep_store.read(cx).shown_predictions().count(),
+            self.ep_store.read(cx).rateable_predictions().count(),
         );
         cx.notify();
     }
@@ -157,7 +157,7 @@ impl RatePredictionsModal {
         let next_index = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .skip(self.selected_index)
             .enumerate()
             .skip(1) // Skip straight to the next item
@@ -172,12 +172,12 @@ impl RatePredictionsModal {
 
     fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut Context<Self>) {
         let ep_store = self.ep_store.read(cx);
-        let completions_len = ep_store.shown_completions_len();
+        let completions_len = ep_store.rateable_predictions_count();
 
         let prev_index = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .rev()
             .skip((completions_len - 1) - self.selected_index)
             .enumerate()
@@ -198,7 +198,7 @@ impl RatePredictionsModal {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_index = self.ep_store.read(cx).shown_completions_len() - 1;
+        self.selected_index = self.ep_store.read(cx).rateable_predictions_count() - 1;
         cx.notify();
     }
 
@@ -283,7 +283,7 @@ impl RatePredictionsModal {
         let completion = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .skip(self.selected_index)
             .take(1)
             .next()
@@ -296,7 +296,7 @@ impl RatePredictionsModal {
         let completion = self
             .ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .skip(self.selected_index)
             .take(1)
             .next()
@@ -421,7 +421,7 @@ impl RatePredictionsModal {
             self.selected_index = self
                 .ep_store
                 .read(cx)
-                .shown_predictions()
+                .rateable_predictions()
                 .enumerate()
                 .find(|(_, completion_b)| prediction.id == completion_b.id)
                 .map(|(ix, _)| ix)
@@ -1127,7 +1127,7 @@ impl RatePredictionsModal {
     fn render_shown_completions(&self, cx: &Context<Self>) -> impl Iterator<Item = ListItem> {
         self.ep_store
             .read(cx)
-            .shown_predictions()
+            .rateable_predictions()
             .cloned()
             .enumerate()
             .map(|(index, completion)| {

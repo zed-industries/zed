@@ -206,6 +206,10 @@ impl KernelPickerDelegate {
 impl PickerDelegate for KernelPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "kernel picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }
@@ -477,8 +481,9 @@ where
         let picker_view = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .width(rems(34.))
-                .max_height(Some(rems(24.).into()))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
         });
 
         PopoverMenu::new("kernel-switcher")
