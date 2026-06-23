@@ -59,7 +59,11 @@ message RejoinRoomResponse {
   Room room = 1;
   repeated ResharedProject reshared_projects = 2;
   repeated RejoinedProject rejoined_projects = 3;
-  optional LiveKitConnectionInfo live_kit_connection_info = 4;
+  // Field 4 (live_kit_connection_info) was used by the reverted channel-rejoin
+  // LiveKit token-refresh fix (#59388/#59195). Reserved so the number is not
+  // reused with an incompatible type if/when that fix is reattempted.
+  reserved 4;
+  reserved "live_kit_connection_info";
 }
 
 message ResharedProject {
