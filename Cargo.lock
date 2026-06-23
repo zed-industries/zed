@@ -15935,6 +15935,8 @@ dependencies = [
  "http_proxy",
  "libc",
  "log",
+ "serde",
+ "serde_json",
  "smol",
  "tempfile",
 ]

@@ -4598,6 +4598,10 @@ impl ThreadView {
                     merged.push(path);
                 }
             }
+            // In restricted mode the sandbox always overlays an ephemeral,
+            // host-isolated tmpfs at /tmp, so surface it as a writable location.
+            // (Display-only label, not a real host path.)
+            merged.push(PathBuf::from("/tmp (isolated)"));
             *writable_paths = merged;
         }
 
@@ -5549,6 +5553,8 @@ fn render_sandbox_status_tooltip(
     v_flex()
         .min_w(rems(15.))
         .gap_2()
+        .child(Label::new("Sandboxing settings"))
+        .child(Divider::horizontal())
         .children(settings_section)
         .when_some(thread_section, |this, section| {
             this.child(Divider::horizontal()).child(section)

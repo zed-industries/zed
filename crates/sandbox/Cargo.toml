@@ -14,8 +14,9 @@ path = "src/sandbox.rs"
 [features]
 # Builds `bwrap_test_helper`, the behavior helper driven by the NixOS sandbox
 # VM tests in `nix/tests/sandboxing`. Off by default so normal builds don't
-# produce the test binary.
-nixos-test = []
+# produce the test binary. Pulls in serde only when enabled (the helper parses
+# its check list as JSON).
+nixos-test = ["dep:serde", "dep:serde_json"]
 
 # Builds `wsl_sandbox_test_helper`, the Windows analog of `bwrap_test_helper`.
 # It drives the real WSL/Bubblewrap sandbox end-to-end (see
@@ -42,6 +43,10 @@ anyhow.workspace = true
 futures.workspace = true
 http_proxy.workspace = true
 log.workspace = true
+# Used only by the `nixos-test` helper binary to parse its check list; gated
+# behind the `nixos-test` feature so normal builds don't pull it in.
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
