@@ -1,4 +1,4 @@
-use gpui::canvas;
+use gpui::{KeyContext, canvas};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -89,8 +89,15 @@ impl<D: PickerDelegate> Picker<D> {
 
         let editor_position = self.delegate.editor_position();
         let picker_bounds = self.picker_bounds.clone();
+
+        let mut key_context = KeyContext::default();
+        key_context.add("Picker");
+        if self.preview.is_some() {
+            key_context.add("with_preview");
+        }
+
         let menu = v_flex()
-            .key_context("Picker")
+            .key_context(key_context)
             .relative()
             .map(|this| {
                 self.shape.apply_results_size(

@@ -10,6 +10,11 @@
     "context": "Picker > Editor",
     "bindings": {
       "ctrl-shift-a": "picker::ToggleActionsMenu",
+    },
+  },
+  {
+    "context": "(Picker && with_preview) > Editor",
+    "bindings": {
       "ctrl-alt-p": "picker::TogglePreview",
       "ctrl-alt-right": "picker::SetPreviewRight",
       "ctrl-alt-down": "picker::SetPreviewBelow",
