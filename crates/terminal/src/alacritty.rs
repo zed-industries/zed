@@ -800,6 +800,10 @@ pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
     }
 }
 
+pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
+    term.grid_mut().truncate();
+}
+
 pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
     let content = term.renderable_content();
 
@@ -1086,6 +1090,37 @@ mod tests {
                 end: Point { line: 4, column: 8 },
                 is_block: true,
             }
+        );
+    }
+
+    #[test]
+    fn shrink_to_used_preserves_user_visible_scrollback() {
+        use alacritty_terminal::term::test::TermSize;
+        use futures::channel::mpsc::unbounded;
+
+        let (events_tx, _events_rx) = unbounded();
+        let size = TermSize::new(80, 24);
+        let mut term = Term::new(Config::default(), &size, ZedListener(events_tx));
+
+        // Fill past `max_scroll_limit` (10_000) to populate the cache.
+        for _ in 0..15_000 {
+            term.newline();
+        }
+
+        let before_total = term.grid().total_lines();
+        let before_history = term.grid().history_size();
+
+        shrink_to_used(&mut term);
+
+        assert_eq!(
+            term.grid().total_lines(),
+            before_total,
+            "shrink_to_used must not drop user-visible rows",
+        );
+        assert_eq!(
+            term.grid().history_size(),
+            before_history,
+            "shrink_to_used must not change history_size",
         );
     }
 }
