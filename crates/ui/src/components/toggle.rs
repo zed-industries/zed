@@ -470,7 +470,7 @@ impl RenderOnce for Switch {
         let aria_keyshortcuts = self
             .key_binding
             .as_ref()
-            .and_then(|key_binding| key_binding.aria_keyshortcuts(window, cx));
+            .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx));
 
         let switch = div()
             .id((self.id.clone(), "switch"))

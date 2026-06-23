@@ -436,7 +436,7 @@ impl RenderOnce for Button {
             && let Some(keyshortcuts) = self
                 .key_binding
                 .as_ref()
-                .and_then(|key_binding| key_binding.aria_keyshortcuts(window, cx))
+                .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx))
         {
             self.base.aria_keyshortcuts = Some(keyshortcuts);
         }

@@ -136,11 +136,10 @@ impl KeyBinding {
         self
     }
 
-    /// Resolves this keybinding to an ARIA `aria-keyshortcuts` string (e.g.
-    /// `"Control+S"`, or `"Meta+K Meta+S"` for a chord) so assistive technology
-    /// can announce the shortcut. Resolves an action source the same way
-    /// rendering does. Returns `None` when there is no binding.
-    pub fn aria_keyshortcuts(&self, window: &Window, cx: &App) -> Option<SharedString> {
+    /// Resolves this keybinding's keystrokes the same way rendering does
+    /// (matching the visible accelerator). Returns `None` when there is no
+    /// binding.
+    fn resolve_keystrokes(&self, window: &Window, cx: &App) -> Option<Vec<KeybindingKeystroke>> {
         let keystrokes = match &self.source {
             Source::Action {
                 action,
@@ -157,69 +156,28 @@ impl KeyBinding {
             }
             Source::Keystrokes { keystrokes } => keystrokes.to_vec(),
         };
-        if keystrokes.is_empty() {
-            return None;
-        }
-        Some(aria_keyshortcuts_for_keystrokes(&keystrokes).into())
+        (!keystrokes.is_empty()).then_some(keystrokes)
     }
-}
 
-/// Formats keystrokes as an ARIA `aria-keyshortcuts` value: modifiers
-/// (`Control`, `Alt`, `Shift`, `Meta`) and the key joined by `+`, with chords
-/// separated by spaces.
-fn aria_keyshortcuts_for_keystrokes(keystrokes: &[KeybindingKeystroke]) -> String {
-    keystrokes
-        .iter()
-        .map(|keystroke| {
-            let modifiers = keystroke.modifiers();
-            let mut parts: Vec<String> = Vec::new();
-            if modifiers.control {
-                parts.push("Control".to_string());
-            }
-            if modifiers.alt {
-                parts.push("Alt".to_string());
-            }
-            if modifiers.shift {
-                parts.push("Shift".to_string());
-            }
-            if modifiers.platform {
-                parts.push("Meta".to_string());
-            }
-            if modifiers.function {
-                parts.push("Fn".to_string());
-            }
-            parts.push(aria_key_name(keystroke.key()));
-            parts.join("+")
-        })
-        .join(" ")
-}
-
-/// Maps a GPUI key name to the closest ARIA `key` value for `aria-keyshortcuts`
-/// (e.g. `"up"` -> `"ArrowUp"`, `"s"` -> `"S"`).
-fn aria_key_name(key: &str) -> String {
-    match key {
-        "up" => "ArrowUp".to_string(),
-        "down" => "ArrowDown".to_string(),
-        "left" => "ArrowLeft".to_string(),
-        "right" => "ArrowRight".to_string(),
-        "pageup" => "PageUp".to_string(),
-        "pagedown" => "PageDown".to_string(),
-        "escape" => "Escape".to_string(),
-        "enter" => "Enter".to_string(),
-        "tab" => "Tab".to_string(),
-        "space" => "Space".to_string(),
-        "backspace" => "Backspace".to_string(),
-        "delete" => "Delete".to_string(),
-        "home" => "Home".to_string(),
-        "end" => "End".to_string(),
-        _ => {
-            let mut chars = key.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) if chars.as_str().is_empty() => first.to_uppercase().to_string(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        }
+    /// Resolves this keybinding to a human-readable shortcut string in the same
+    /// platform format shown to sighted users (e.g. `"Ctrl-S"`, `"Command-S"`,
+    /// or `"Ctrl-K Ctrl-S"` for a chord), matching the visible accelerator. This
+    /// is the format AccessKit's `keyboard_shortcut` property expects. Returns
+    /// `None` when there is no binding.
+    pub fn keyboard_shortcut_text(&self, window: &Window, cx: &App) -> Option<SharedString> {
+        let keystrokes = self.resolve_keystrokes(window, cx)?;
+        let text = keystrokes
+            .iter()
+            .map(|keystroke| {
+                keystroke_text(
+                    keystroke.modifiers(),
+                    keystroke.key(),
+                    self.platform_style,
+                    self.vim_mode,
+                )
+            })
+            .join(" ");
+        Some(text.into())
     }
 }
 

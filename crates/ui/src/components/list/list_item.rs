@@ -113,10 +113,10 @@ impl ListItem {
         self
     }
 
-    /// Sets the keyboard shortcut announced by assistive technology
-    /// (`aria-keyshortcuts`) for this item, e.g. a menu item's accelerator.
-    /// Requires [`Self::aria_role`] to be set. Use standard ARIA syntax, e.g.
-    /// `"Control+S"`.
+    /// Sets the keyboard shortcut announced by assistive technology for this
+    /// item, e.g. a menu item's accelerator. Requires [`Self::aria_role`] to be
+    /// set. Use a human-friendly display string (the accelerator shown to
+    /// sighted users), e.g. `"Ctrl-S"`.
     pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
         self.aria_keyshortcuts = Some(keyshortcuts.into());
         self
