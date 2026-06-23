@@ -168,6 +168,7 @@ struct PushLiteral {
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushRewrap {
+    #[serde(default)]
     keep_cursor: bool,
 }
 
