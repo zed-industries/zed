@@ -54,22 +54,23 @@ impl<D: PickerDelegate> Render for Picker<D> {
         // off.
         let has_preview = self.preview.is_some();
         let content = div()
-            .when(self.is_modal, |this| this.elevation_3(cx))
+            .when(self.draws_own_container(), |this| this.elevation_3(cx))
             .when(has_preview, |this| this.overflow_hidden())
             .child(content);
 
         let layout = self.preview_layout().unwrap_or(Layout::Hidden);
 
-        // Embedded pickers are not resizable
-        div().relative().child(content).when(self.is_modal, |this| {
-            // While resizing offset the (parent-centered) container
-            this.left(self.shape.horizontal_offset(window))
-                .child(self.render_resize(Left, window, cx))
-                .child(self.render_resize(Right(layout), window, cx))
-                .child(self.render_resize(Bottom(layout), window, cx))
-                .child(self.render_resize(LeftCorner(layout), window, cx))
-                .child(self.render_resize(RightCorner(layout), window, cx))
-        })
+        div()
+            .relative()
+            .child(content)
+            .when(self.is_resizable(), |this| {
+                this.left(self.shape.horizontal_offset(window))
+                    .child(self.render_resize(Left, window, cx))
+                    .child(self.render_resize(Right(layout), window, cx))
+                    .child(self.render_resize(Bottom(layout), window, cx))
+                    .child(self.render_resize(LeftCorner(layout), window, cx))
+                    .child(self.render_resize(RightCorner(layout), window, cx))
+            })
     }
 }
 
@@ -95,7 +96,7 @@ impl<D: PickerDelegate> Picker<D> {
                 self.shape.apply_results_size(
                     self.preview_layout(),
                     &self.size_bounds,
-                    self.vertical_padding(),
+                    self.fill_height(),
                     this,
                     window,
                 )
@@ -154,7 +155,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .when_some(
                             self.shape.results_max_height(
                                 &self.size_bounds,
-                                self.vertical_padding(),
+                                self.fill_height(),
                                 window,
                             ),
                             |this, max_height| this.max_h(max_height),
@@ -300,7 +301,9 @@ impl<D: PickerDelegate> Picker<D> {
                             .child(preview.render(cx)),
                     ),
             )
-            .child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
+            .when(self.is_resizable(), |this| {
+                this.child(self.render_resize(window_controls::Middle(preview.layout), window, cx))
+            })
     }
 
     pub(crate) fn render_with_preview_right(
@@ -342,7 +345,9 @@ impl<D: PickerDelegate> Picker<D> {
                             .child(preview.render(cx)),
                     ),
             )
-            .child(self.render_resize(Middle(Layout::Right), window, cx))
+            .when(self.is_resizable(), |this| {
+                this.child(self.render_resize(Middle(Layout::Right), window, cx))
+            })
     }
 
     fn finish_any_completed_resize(

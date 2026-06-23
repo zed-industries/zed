@@ -856,6 +856,8 @@ actions!(
         Backtab,
         /// Toggles a bookmark at the current line.
         ToggleBookmark,
+        /// Edits the bookmark's label at the current line.
+        EditBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.

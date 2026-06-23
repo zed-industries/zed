@@ -56,8 +56,7 @@ impl SidebarRecentProjects {
                     .list_measure_all()
                     .show_scrollbar(true)
                     .initial_width(rems(18.))
-                    .minimum_results_width(rems(18.))
-                    .modal(false)
+                    .popover()
             });
 
             let picker_focus_handle = picker.focus_handle(cx);

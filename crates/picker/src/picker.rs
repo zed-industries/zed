@@ -38,6 +38,9 @@ pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
 pub use ui_input::ErasedEditor;
 
+pub const DEFAULT_MODAL_WIDTH: Rems = Rems(34.0);
+pub const DEFAULT_MODAL_MAX_HEIGHT: Rems = Rems(24.0);
+
 enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),
@@ -88,6 +91,30 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
+#[derive(Clone, Copy)]
+enum Presentation {
+    /// A self-contained modal: draws its own elevated background and dismisses
+    /// when it loses focus. May optionally be resized (persisting its size);
+    /// resizing only makes sense for modals.
+    Modal { resizable: bool },
+    /// A popover attached to a menu/trigger: draws its own elevated background
+    /// and dismisses when it loses focus, but is never resizable.
+    Popover,
+    /// Embedded inside a larger container (e.g. another modal) that provides its
+    /// own chrome and handles dismissal.
+    Embedded,
+}
+
+/// The default size for a given preview layout. With the preview hidden the
+/// picker uses its standard size; showing a preview expands it to the larger
+/// "telescope" size so the results pane isn't cramped beside the preview.
+fn default_shape_for_layout(hidden: shape::Centered, layout: preview::Layout) -> shape::Centered {
+    match layout {
+        preview::Layout::Hidden => hidden,
+        preview::Layout::Right | preview::Layout::Below => shape::Centered::default(),
+    }
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
@@ -96,16 +123,14 @@ pub struct Picker<D: PickerDelegate> {
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
     shape: shape::Shape,
-    /// set through [Picker::width] and [Picker::height]
+    /// The size the picker opens at (and resets to). Defaults depend on whether
+    /// the picker has a preview; see [`Picker::initial_width`] / [`Picker::max_height`].
     default_shape: shape::Centered,
-    vertical_padding: shape::VerticalPadding,
     size_bounds: shape::SizeBounds,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
-    /// Whether the `Picker` is rendered as a self-contained modal.
-    ///
-    /// Set this to `false` when rendering the `Picker` as part of a larger modal.
-    is_modal: bool,
+    /// How the picker is presented, which controls its chrome and behavior.
+    presentation: Presentation,
     /// Bounds tracking for the picker container (for aside positioning)
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
@@ -474,9 +499,27 @@ impl<D: PickerDelegate> Picker<D> {
                 .flatten()
                 .unwrap_or_default();
         };
-        let shape = persistence::try_load_shape(D::name(), preview.as_ref().map(|p| p.layout), cx)
-            .log_err()
-            .flatten();
+        let has_preview = preview.is_some();
+        let persisted_shape =
+            persistence::try_load_shape(D::name(), preview.as_ref().map(|p| p.layout), cx)
+                .log_err()
+                .flatten();
+        // Every picker opens at the standard "simple" size: a fixed width and a
+        // standard max height it shrinks below when there's little content.
+        // Showing a preview expands it to the larger "telescope" size (see
+        // `default_shape_for_layout`).
+        let default_shape = shape::Centered::simple();
+        let initial_layout = preview
+            .as_ref()
+            .map(|p| p.layout)
+            .unwrap_or(preview::Layout::Hidden);
+        let mut size_bounds = shape::SizeBounds::default();
+        // For a plain picker the whole-picker minimum is just its opening width,
+        // so it can't be resized/clamped narrower than it opens. Preview pickers
+        // keep the standard per-pane minimums.
+        if !has_preview && let Some(width) = default_shape.width.as_rems() {
+            size_bounds.min_results.width = width;
+        }
         let mut this = Self {
             delegate,
             head,
@@ -484,15 +527,21 @@ impl<D: PickerDelegate> Picker<D> {
             pending_update_matches: None,
             confirm_on_update: None,
             preview,
-            shape_loaded_from_persistence: shape.is_some(),
-            shape: shape.unwrap_or_default(),
-            default_shape: shape::Centered::default(),
-            vertical_padding: shape::VerticalPadding::default(),
+            shape_loaded_from_persistence: persisted_shape.is_some(),
+            shape: persisted_shape.unwrap_or_else(|| {
+                shape::Shape::HorizontallyCentered(default_shape_for_layout(
+                    default_shape,
+                    initial_layout,
+                ))
+            }),
+            default_shape,
             show_scrollbar: false,
-            is_modal: true,
+            presentation: Presentation::Modal {
+                resizable: has_preview,
+            },
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
-            size_bounds: shape::SizeBounds::default(),
+            size_bounds,
             actions_menu_handle: PopoverMenuHandle::default(),
         };
         this.update_matches("".to_string(), window, cx);
@@ -513,34 +562,33 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    /// Sets the width the picker appears with if the user has never resized it
-    /// or when the user sets it back to it's default size.
+    /// Overrides the width the picker opens at (and resets to). Plain pickers
+    /// default to [`DEFAULT_MODAL_WIDTH`]; only call this for pickers that need a
+    /// different width (e.g. narrow popover selectors).
+    ///
+    /// For a plain (no-preview) picker the opening width is also its minimum, so
+    /// it can't be resized or clamped narrower than it opens.
     pub fn initial_width(mut self, width: impl Into<RelativeWidth>) -> Self {
         let width = width.into();
         self.default_shape.width = width;
         if !self.shape_loaded_from_persistence {
             self.shape.set_initial_width(width);
         }
+        // A plain picker's whole-picker minimum tracks its opening width. Preview
+        // pickers keep the standard per-pane minimums.
+        if self.preview.is_none()
+            && let Some(rems) = width.as_rems()
+        {
+            self.size_bounds.min_results.width = rems;
+        }
         self
     }
 
-    /// Sets the minimum width, the picker can not be resized smaller then this.
-    /// Leave unset to use sane defaults.
-    ///
-    /// This applies to the results. If there is no preview that is the whole picker.
-    pub fn minimum_results_width(mut self, width: impl Into<Rems>) -> Self {
-        self.size_bounds.min_results.width = width.into();
-        self
-    }
-
-    /// Sets the width the picker appears with if the user has never resized it
-    /// or when the user sets it back to it's default size.
-    ///
-    /// # Padding
-    /// By default the picker will fill this space. If you want it to only grow
-    /// as large as it needs and treat the height as a bound use
-    /// [`no_vertical_padding`]
-    pub fn height(mut self, height: impl Into<RelativeHeight>) -> Self {
+    /// Overrides the picker's max height. Plain pickers default to
+    /// [`DEFAULT_MODAL_MAX_HEIGHT`] and shrink below it to fit their content;
+    /// only call this for pickers that want a different cap (e.g. the outline
+    /// view, which is taller).
+    pub fn max_height(mut self, height: impl Into<RelativeHeight>) -> Self {
         let height = height.into();
         self.default_shape.height = height;
         if !self.shape_loaded_from_persistence {
@@ -549,23 +597,12 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    /// Makes the picker shrink to fit its content rather than padding out to its
-    /// full height when there are fewer results than fit.
-    pub fn no_vertical_padding(mut self) -> Self {
-        self.vertical_padding = shape::VerticalPadding::None;
-        self
-    }
-
-    fn vertical_padding(&self) -> shape::VerticalPadding {
-        let preview_visible = self
-            .preview
+    /// Whether the picker fills its full height (preview visible) or shrinks to
+    /// fit its content, treating the height as a maximum (no preview visible).
+    fn fill_height(&self) -> bool {
+        self.preview
             .as_ref()
-            .is_some_and(|preview| preview.layout != preview::Layout::Hidden);
-        if preview_visible {
-            shape::VerticalPadding::Pad
-        } else {
-            self.vertical_padding
-        }
+            .is_some_and(|preview| preview.layout != preview::Layout::Hidden)
     }
 
     pub fn show_scrollbar(mut self, show_scrollbar: bool) -> Self {
@@ -573,9 +610,48 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn modal(mut self, modal: bool) -> Self {
-        self.is_modal = modal;
+    /// Presents the picker as embedded inside a larger container that provides
+    /// its own chrome and dismissal, rather than the default self-contained
+    /// modal. Use [`popover`](Self::popover) instead for menu-attached pickers.
+    pub fn embedded(mut self) -> Self {
+        self.presentation = Presentation::Embedded;
         self
+    }
+
+    /// Presents the picker as a popover surface: it draws its own elevated
+    /// background (like a modal) but is not resizable. Use this for pickers
+    /// shown inside a menu/popover.
+    pub fn popover(mut self) -> Self {
+        self.set_popover();
+        self
+    }
+
+    pub(crate) fn set_popover(&mut self) {
+        self.presentation = Presentation::Popover;
+    }
+
+    /// Controls whether the user can drag to resize the picker (and whether its
+    /// size is persisted). Only applies to modal pickers; no-op otherwise.
+    /// Defaults to `true` for pickers with a preview and `false` otherwise.
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        if let Presentation::Modal { resizable: r } = &mut self.presentation {
+            *r = resizable;
+        }
+        self
+    }
+
+    /// Whether the picker draws its own elevated background and dismisses on
+    /// blur (modals and popovers, but not embedded pickers).
+    fn draws_own_container(&self) -> bool {
+        matches!(
+            self.presentation,
+            Presentation::Modal { .. } | Presentation::Popover
+        )
+    }
+
+    /// Whether the picker can be resized (only ever true for modals).
+    fn is_resizable(&self) -> bool {
+        matches!(self.presentation, Presentation::Modal { resizable: true })
     }
 
     pub fn list_measure_all(mut self) -> Self {
@@ -888,7 +964,7 @@ impl<D: PickerDelegate> Picker<D> {
                 let menu_focused = self.actions_menu_handle.is_focused(window, cx)
                     || self.actions_menu_handle.is_deployed()
                     || self.delegate.has_another_open_menu(window, cx);
-                if self.is_modal && window.is_window_active() && !menu_focused {
+                if self.draws_own_container() && window.is_window_active() && !menu_focused {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
@@ -1107,12 +1183,13 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // When the picker shrinks to fit content (`None`), the list infers its
-        // size from its items. When the picker pads to its full height (`Pad`),
-        // the list fills the available space.
-        let sizing_behavior = match self.vertical_padding() {
-            shape::VerticalPadding::None => ListSizingBehavior::Infer,
-            shape::VerticalPadding::Pad => ListSizingBehavior::Auto,
+        // When the picker shrinks to fit its content, the list infers its size
+        // from its items. When it fills its full height (preview visible), the
+        // list fills the available space.
+        let sizing_behavior = if self.fill_height() {
+            ListSizingBehavior::Auto
+        } else {
+            ListSizingBehavior::Infer
         };
 
         match &self.element_container {
@@ -1179,12 +1256,17 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         preview.layout = layout;
-        if let Some(previously_resized) = persistence::try_load_shape(D::name(), layout, cx)
+        // Restore the size the user last left this layout at, or fall back to the
+        // layout's default (simple when hidden, larger when a preview is shown).
+        self.shape = persistence::try_load_shape(D::name(), layout, cx)
             .log_err()
             .flatten()
-        {
-            self.shape = previously_resized;
-        }
+            .unwrap_or_else(|| {
+                shape::Shape::HorizontallyCentered(default_shape_for_layout(
+                    self.default_shape,
+                    layout,
+                ))
+            });
         self.delegate
             .preview_layout_changed(matches!(layout, preview::Layout::Right));
         cx.notify();
@@ -1366,3 +1448,4 @@ mod tests {
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 impl<D: PickerDelegate> ModalView for Picker<D> {}
+impl<D: PickerDelegate> ui::FluentBuilder for Picker<D> {}
