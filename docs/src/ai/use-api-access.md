@@ -519,7 +519,13 @@ If the model requires the Responses API for reasoning state, set `capabilities.c
             "max_tokens": 272000,
             "reasoning_effort": "high",
             "capabilities": {
-              "chat_completions": false
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": false,
+              "interleaved_reasoning": false,
+              "max_tokens_parameter": false
             }
           }
         ]
@@ -546,6 +552,10 @@ For example, a chat-completions endpoint with the maximum OpenAI-style reasoning
             "max_output_tokens": 128000,
             "reasoning_effort": "xhigh",
             "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
               "chat_completions": true,
               "interleaved_reasoning": true,
               "max_tokens_parameter": true
