@@ -465,6 +465,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 mod tests {
     use super::*;
 
+    use serde_json::json;
+
     fn available_model(reasoning_effort: Option<open_ai::ReasoningEffort>) -> AvailableModel {
         AvailableModel {
             name: "custom-model".to_string(),
@@ -612,6 +614,84 @@ mod tests {
             chat_completion_max_tokens_parameter(&model),
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxTokens
         );
+    }
+
+    #[test]
+    fn response_request_includes_reasoning_when_effort_is_configured() {
+        let model = available_model(Some(open_ai::ReasoningEffort::High));
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            ..Default::default()
+        };
+
+        let request = into_open_ai_response(
+            request,
+            &model.name,
+            model.capabilities.parallel_tool_calls,
+            model.capabilities.prompt_cache_key,
+            model.max_output_tokens,
+            default_thinking_reasoning_effort(&model),
+            supports_none_reasoning_effort(&model),
+        );
+        let serialized = serde_json::to_value(request).unwrap();
+
+        assert_eq!(
+            serialized["reasoning"],
+            json!({ "effort": "high", "summary": "auto" })
+        );
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+    }
+
+    #[test]
+    fn response_request_omits_reasoning_when_effort_is_missing() {
+        let model = available_model(None);
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            ..Default::default()
+        };
+
+        let request = into_open_ai_response(
+            request,
+            &model.name,
+            model.capabilities.parallel_tool_calls,
+            model.capabilities.prompt_cache_key,
+            model.max_output_tokens,
+            default_thinking_reasoning_effort(&model),
+            supports_none_reasoning_effort(&model),
+        );
+        let serialized = serde_json::to_value(request).unwrap();
+
+        assert_eq!(serialized.get("reasoning"), None);
+        assert_eq!(serialized.get("include"), None);
+    }
+
+    #[test]
+    fn chat_completion_request_includes_selected_reasoning_effort() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        model.capabilities.chat_completions = true;
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+        let reasoning_effort = chat_completion_reasoning_effort(&request, &model);
+
+        let request = into_open_ai(
+            request,
+            &model.name,
+            model.capabilities.parallel_tool_calls,
+            model.capabilities.prompt_cache_key,
+            model.max_output_tokens,
+            chat_completion_max_tokens_parameter(&model),
+            reasoning_effort,
+            model.capabilities.interleaved_reasoning,
+        );
+        let serialized = serde_json::to_value(request).unwrap();
+
+        assert_eq!(serialized["reasoning_effort"], json!("high"));
     }
 
     #[test]
