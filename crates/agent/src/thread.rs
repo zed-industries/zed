@@ -5371,6 +5371,7 @@ impl ToolCallEventStream {
             command,
             network_hosts,
             network_all_hosts,
+            allow_git_access: request.allow_git_access,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
@@ -5563,6 +5564,9 @@ impl ToolCallEventStream {
                         host_strings.extend(patterns.iter().map(|pattern| pattern.to_string()));
                         agent.set_sandbox_network_hosts(host_strings);
                     }
+                }
+                if request.allow_git_access {
+                    agent.allow_sandbox_git_access();
                 }
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
@@ -7179,6 +7183,7 @@ mod tests {
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
             network: crate::sandboxing::NetworkRequest::None,
+            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -7204,6 +7209,7 @@ mod tests {
                 .expect("sandbox authorization should include request details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
+        assert_eq!(details.allow_git_access, request.allow_git_access);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);

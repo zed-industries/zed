@@ -70,3 +70,59 @@ pub fn run_sandbox_launcher_if_invoked() {
     #[cfg(target_os = "linux")]
     linux_bubblewrap::run_launcher_if_invoked();
 }
+
+/// Canonicalize `path`, resolving symlinks, even when its final component
+/// doesn't exist yet.
+///
+/// `std::fs::canonicalize` fails if any component is missing, which would leave
+/// a not-yet-created path (e.g. a `.git` directory before `git init`) in a
+/// non-canonical form. The sandbox layers canonicalize the writable parent
+/// (the worktree root) but, with a plain `canonicalize`, fall back to the raw
+/// path for a missing child; the two then disagree when a component is a
+/// symlink (`/tmp` -> `/private/tmp` on macOS), and the protection rule for the
+/// child misses the real path the command ends up writing. Canonicalizing the
+/// existing parent and re-appending the final component keeps the child
+/// consistent with its parent. If neither the path nor its parent can be
+/// canonicalized, the path is returned unchanged.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
+        && let Ok(canonical_parent) = parent.canonicalize()
+    {
+        return canonical_parent.join(file_name);
+    }
+    path.to_path_buf()
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::canonicalize_allowing_missing_leaf;
+
+    #[test]
+    fn canonicalize_allowing_missing_leaf_resolves_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        // A fully existing path is canonicalized outright.
+        assert_eq!(
+            canonicalize_allowing_missing_leaf(dir.path()),
+            canonical_dir
+        );
+
+        // A path whose leaf doesn't exist yet still resolves through its parent,
+        // so it stays consistent with how the parent directory canonicalizes
+        // (this is the `.git`-before-`git init` case).
+        let missing = dir.path().join("not-created-yet");
+        assert_eq!(
+            canonicalize_allowing_missing_leaf(&missing),
+            canonical_dir.join("not-created-yet"),
+        );
+
+        // A path whose parent also doesn't exist is returned unchanged.
+        let deeper = missing.join(".git");
+        assert_eq!(canonicalize_allowing_missing_leaf(&deeper), deeper);
+    }
+}
