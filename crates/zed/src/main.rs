@@ -15,7 +15,7 @@ const _: () = assert!(
 );
 
 use agent::{SharedThread, ThreadStore};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -201,6 +201,13 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
+
+    // If this process was re-executed as a sandbox launcher (Linux
+    // bwrap/seccomp), install the seccomp policy and exec the wrapped command
+    // without returning. Must run before argument parsing: the wrapped
+    // command's args are appended verbatim and would otherwise be
+    // misinterpreted as Zed's own arguments.
+    sandbox::run_sandbox_launcher_if_invoked();
 
     #[cfg(unix)]
     util::prevent_root_execution();

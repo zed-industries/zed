@@ -332,7 +332,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -344,6 +344,12 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        // `speed` can leak in from a parent thread's model; this provider never
+        // supports fast mode, and arbitrary compatible endpoints reject `service_tier`.
+        if !self.supports_fast_mode() {
+            request.speed = None;
+        }
+
         if self.model.capabilities.chat_completions {
             let request = into_open_ai(
                 request,

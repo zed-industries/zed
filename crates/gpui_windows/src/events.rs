@@ -1,7 +1,7 @@
 use std::{rc::Rc, sync::atomic::Ordering};
 
-use ::util::ResultExt;
 use anyhow::Context as _;
+use gpui_util::ResultExt;
 use windows::{
     Win32::{
         Foundation::*,

@@ -95,7 +95,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 use {
     acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol::schema as acp,
+    agent_client_protocol::schema::v1 as acp,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
@@ -2438,6 +2438,7 @@ fn run_tool_permissions_visual_tests(
                 "Terminal",
                 "Configure Tool Rules",
                 None,
+                true,
                 settings_ui::pages::render_terminal_tool_config,
                 window,
                 cx,

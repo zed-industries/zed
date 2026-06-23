@@ -3,8 +3,9 @@ use std::{num::NonZeroUsize, time::Duration};
 use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
+use settings::CommandAliasTarget;
 pub use settings::{
-    ActionName, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
+    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
@@ -26,7 +27,7 @@ pub struct WorkspaceSettings {
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
-    pub command_aliases: HashMap<String, ActionName>,
+    pub command_aliases: HashMap<String, CommandAliasTarget>,
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_last_window_closed: settings::OnLastWindowClosed,

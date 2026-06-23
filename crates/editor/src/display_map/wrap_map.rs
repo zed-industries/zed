@@ -66,6 +66,12 @@ struct TransformSummary {
     output: TextSummary,
 }
 
+impl TransformSummary {
+    fn has_wraps(&self) -> bool {
+        self.input.lines != self.output.lines
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct WrapPoint(pub Point);
 
@@ -386,6 +392,12 @@ impl WrapSnapshot {
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
+        } else if !self.transforms.summary().has_wraps()
+            && !new_tab_snapshot.text_summary().lines.is_zero()
+        {
+            // Fast path: without existing wraps, interpolation is a passthrough over the new tab snapshot.
+            new_transforms = SumTree::default();
+            new_transforms.push(Transform::isomorphic(new_tab_snapshot.text_summary()), ());
         } else {
             let mut old_cursor = self.transforms.cursor::<TabPoint>(());
 
@@ -1022,6 +1034,11 @@ pub struct WrapPointCursor<'transforms> {
 }
 
 impl WrapPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: TabPoint) -> WrapPoint {
         let cursor = &mut self.cursor;

@@ -3,7 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -59,6 +59,45 @@ impl std::fmt::Display for MaxOutputTokensError {
 }
 
 impl std::error::Error for MaxOutputTokensError {}
+
+/// Resolve the socket path(s) the sandbox may allow for the inherited
+/// `SSH_AUTH_SOCK`. The value is validated against the resolved directory
+/// environment the child command will actually run with, not Zed's own process
+/// environment, since the two can differ (direnv, a login shell, etc.).
+///
+/// Returns both the path as the child will pass it to `connect()` and its
+/// canonical form, because the two diverge when `SSH_AUTH_SOCK` points through
+/// a symlink (e.g. `/tmp` -> `/private/tmp` on macOS) and it isn't guaranteed
+/// which form Seatbelt matches the `remote unix-socket` literal against.
+#[cfg(unix)]
+fn trusted_ssh_auth_socket_paths(path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    let path = path.into();
+    if !path.is_absolute() {
+        return Vec::new();
+    }
+
+    let Ok(canonical) = path.canonicalize() else {
+        return Vec::new();
+    };
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return Vec::new();
+    };
+    use std::os::unix::fs::FileTypeExt as _;
+    if !metadata.file_type().is_socket() {
+        return Vec::new();
+    }
+
+    if canonical == path {
+        vec![canonical]
+    } else {
+        vec![path, canonical]
+    }
+}
+
+#[cfg(not(unix))]
+fn trusted_ssh_auth_socket_paths(_path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    Vec::new()
+}
 
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
@@ -163,13 +202,30 @@ impl SandboxPermission {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
     #[serde(default)]
-    pub network: bool,
+    pub command: Option<String>,
+    /// Specific hosts the command requested network access to, in canonical
+    /// form (`github.com`, `*.npmjs.org`). Empty when no specific hosts were
+    /// requested (see `network_all_hosts`).
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether the command requested access to any host ("arbitrary network
+    /// access"). The `network` alias deserializes the field this replaced —
+    /// a plain bool meaning "network access" — so details persisted by older
+    /// builds still render the network request.
+    #[serde(default, alias = "network")]
+    pub network_all_hosts: bool,
+    #[serde(default)]
+    pub allow_git_access: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
     #[serde(default)]
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<PathBuf>,
+    /// The agent-provided justification for requesting these permissions,
+    /// shown to the user (attributed to the agent) in the approval prompt.
+    #[serde(default)]
+    pub reason: String,
 }
 
 pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
@@ -184,6 +240,64 @@ pub fn sandbox_authorization_details_from_meta(
 ) -> Option<SandboxAuthorizationDetails> {
     meta.as_ref()
         .and_then(|m| m.get(SANDBOX_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+pub const SANDBOX_FALLBACK_AUTHORIZATION_META_KEY: &str = "sandbox_fallback_authorization";
+
+/// Stable `PermissionOption` id for the "Retry" choice in the sandbox
+/// *fallback* prompt (shown when the OS sandbox can't be created on this
+/// system). The remaining choices reuse the [`SandboxPermission`] ids.
+pub const SANDBOX_FALLBACK_RETRY_OPTION_ID: &str = "retry";
+
+/// Details shown when the OS sandbox could not be created for a command and
+/// the user is asked whether to run it without a sandbox. Distinct from
+/// [`SandboxAuthorizationDetails`] (a model-requested *escalation*): here the
+/// sandbox itself failed, so the prompt explains why and offers a retry.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SandboxFallbackAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Human-readable reason the OS sandbox could not be created (for example,
+    /// "bwrap not found on PATH"), shown to the user so they can decide
+    /// whether to run the command without a sandbox.
+    #[serde(default)]
+    pub reason: String,
+}
+
+pub fn meta_with_sandbox_fallback_authorization(
+    details: SandboxFallbackAuthorizationDetails,
+) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_FALLBACK_AUTHORIZATION_META_KEY.into(),
+        serde_json::to_value(details).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_fallback_authorization_details_from_meta(
+    meta: &Option<acp::Meta>,
+) -> Option<SandboxFallbackAuthorizationDetails> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_FALLBACK_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Meta key recording why the OS sandbox was not applied to a terminal tool
+/// call, even though sandboxing was active for the thread. The value is a
+/// serialized [`SandboxNotAppliedReason`]. Surfaced as a warning in the UI and
+/// used to explain the situation to both the user and the agent.
+pub const SANDBOX_NOT_APPLIED_META_KEY: &str = "sandbox_not_applied";
+
+pub fn meta_with_sandbox_not_applied(reason: &SandboxNotAppliedReason) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_NOT_APPLIED_META_KEY.into(),
+        serde_json::to_value(reason).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_not_applied_from_meta(meta: &Option<acp::Meta>) -> Option<SandboxNotAppliedReason> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_NOT_APPLIED_META_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
@@ -414,6 +528,11 @@ pub struct ToolCall {
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
     pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
+    pub sandbox_fallback_authorization_details: Option<SandboxFallbackAuthorizationDetails>,
+    /// Why this terminal command ran without the OS sandbox even though
+    /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
+    /// the command was sandboxed normally (or sandboxing was off).
+    pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
 }
 
 impl ToolCall {
@@ -457,6 +576,9 @@ impl ToolCall {
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
         let sandbox_authorization_details =
             sandbox_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_fallback_authorization_details =
+            sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
         let label = if tool_call.kind == acp::ToolKind::Execute {
             cx.new(|cx| Markdown::new_text(title.into(), cx))
@@ -478,6 +600,8 @@ impl ToolCall {
             tool_name,
             subagent_session_info,
             sandbox_authorization_details,
+            sandbox_fallback_authorization_details,
+            sandbox_not_applied,
         };
         Ok(result)
     }
@@ -516,6 +640,15 @@ impl ToolCall {
         if let Some(sandbox_authorization_details) = sandbox_authorization_details_from_meta(&meta)
         {
             self.sandbox_authorization_details = Some(sandbox_authorization_details);
+        }
+        if let Some(sandbox_fallback_authorization_details) =
+            sandbox_fallback_authorization_details_from_meta(&meta)
+        {
+            self.sandbox_fallback_authorization_details =
+                Some(sandbox_fallback_authorization_details);
+        }
+        if let Some(sandbox_not_applied) = sandbox_not_applied_from_meta(&meta) {
+            self.sandbox_not_applied = Some(sandbox_not_applied);
         }
 
         if let Some(title) = title {
@@ -1843,7 +1976,7 @@ impl AcpThread {
                 self.update_plan(plan, cx);
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
-                if let acp::MaybeUndefined::Value(title) = info_update.title {
+                if let MaybeUndefined::Value(title) = info_update.title {
                     let had_provisional = self.provisional_title.take().is_some();
                     let title: SharedString = title.into();
                     if self.title.as_ref() != Some(&title) {
@@ -2285,6 +2418,8 @@ impl AcpThread {
                     tool_name: None,
                     subagent_session_info: None,
                     sandbox_authorization_details: None,
+                    sandbox_fallback_authorization_details: None,
+                    sandbox_not_applied: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -2559,6 +2694,19 @@ impl AcpThread {
         }))
     }
 
+    pub fn cancel_tool_call_authorization(&mut self, id: &acp::ToolCallId, cx: &mut Context<Self>) {
+        let Some((ix, call)) = self.tool_call_mut(id) else {
+            return;
+        };
+        if !matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+            return;
+        }
+
+        call.status = ToolCallStatus::Canceled;
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
+    }
+
     pub fn authorize_tool_call(
         &mut self,
         id: acp::ToolCallId,
@@ -2831,6 +2979,9 @@ impl AcpThread {
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             }
+                            if is_same_turn {
+                                this.mark_pending_entries_as_canceled(cx);
+                            }
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
@@ -2893,7 +3044,9 @@ impl AcpThread {
                     }
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
-
+                        if is_same_turn {
+                            this.mark_pending_entries_as_canceled(cx);
+                        }
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
@@ -3376,7 +3529,22 @@ impl AcpThread {
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let env = env.await;
+                let mut env = env.await;
+                let mut sandbox_wrap = sandbox_wrap;
+                // Only expose the inherited SSH agent socket once Git access has
+                // been approved. The workflow that needs it (commit signing)
+                // already requires writing to `.git`, so gating it here keeps the
+                // agent socket out of reach of ordinary sandboxed commands.
+                // Validate the value the child will actually connect to, taken
+                // from its resolved environment rather than Zed's own.
+                if let Some(sandbox_wrap) = &mut sandbox_wrap
+                    && sandbox_wrap.allow_git_access
+                    && let Some(ssh_auth_socket) = env.get("SSH_AUTH_SOCK")
+                {
+                    sandbox_wrap
+                        .allowed_unix_socket_paths
+                        .extend(trusted_ssh_auth_socket_paths(ssh_auth_socket.clone()));
+                }
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3384,19 +3552,115 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) =
-                    ShellBuilder::new(&Shell::Program(shell), is_windows)
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                // Spawn the network proxy (if the wrap requests network) before
+                // generating the sandbox policy, since the policy must pin the
+                // child to the proxy's loopback port. This also injects the
+                // child's proxy env vars. On Windows the WSL sandbox can only
+                // toggle the network wholesale, so this never spawns a proxy
+                // there, but it still resolves the allow/deny `network_policy`.
+                let (proxy_handle, network_policy) =
+                    setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
+
+                #[cfg(target_os = "windows")]
+                let (task_command, task_args, sandbox_config, spawn_cwd) =
+                    if let Some(sandbox_wrap) = sandbox_wrap {
+                        // Run the wrap on a background task: it probes WSL
+                        // (possibly booting its VM) and stats UNC paths,
+                        // either of which can take seconds and must not block
+                        // the foreground thread this task runs on. Bound it
+                        // with a timeout so a wedged `wsl.exe` can't stall
+                        // this command forever; on timeout, dropping the task
+                        // cancels the wrap future, which kills any in-flight
+                        // `wsl.exe` child (see `windows_wsl::wrap_invocation`).
+                        let wrap = cx.background_spawn(apply_windows_wsl_sandbox_wrap(
+                            command.clone(),
+                            args.clone(),
+                            cwd.clone(),
+                            sandbox_wrap,
+                            network_policy,
+                            env.clone(),
+                        ));
+                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
+                        let (task_command, task_args, sandbox_config) = futures::select_biased! {
+                            result = wrap.fuse() => result?,
+                            // A wedged `wsl.exe` is an environment failure, so
+                            // surface it as `WslSandboxUnavailable` (like the
+                            // probe failures inside `wrap_invocation`) so the
+                            // agent offers the run-unsandboxed fallback rather
+                            // than returning a bad request to the model.
+                            _ = timeout.fuse() => return Err(anyhow::Error::new(
+                                sandbox::windows_wsl::WslSandboxUnavailable::new(format!(
+                                    "WSL did not respond within {} seconds while preparing the \
+                                     sandboxed command",
+                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
+                                )),
+                            )),
+                        };
+                        (task_command, task_args, sandbox_config, None)
+                    } else {
+                        // No sandbox wrap means we're running unsandboxed, and
+                        // on Windows that deliberately changes the shell: the
+                        // sandboxed path runs under WSL's Linux bash, but this
+                        // fallback uses the host's `shell` (resolved above via
+                        // `get_default_system_shell_preferring_bash`) against
+                        // the native cwd. That resolution prefers Git Bash (or
+                        // scoop's bash), only dropping to the native Windows
+                        // shell (PowerShell/cmd) when no bash is installed — so
+                        // the interpreter usually stays bash-compatible, but its
+                        // path conventions differ from WSL's (e.g. `/c/...` or
+                        // native `C:\...` rather than `/mnt/c/...`). This is
+                        // unlike Linux/macOS, where the unsandboxed path (the
+                        // `#[cfg(not(target_os = "windows"))]` block below)
+                        // reuses the exact same shell and merely omits the bwrap
+                        // wrapper, so shell semantics are preserved untouched.
+                        //
+                        // The shell switch is intentional on Windows. The only
+                        // ways to reach this branch are: the model asking for
+                        // `unsandboxed: true` (often to run a Windows program),
+                        // the user choosing "run unsandboxed" after a sandbox-
+                        // creation failure, the `allow_unsandboxed` setting, or a
+                        // per-thread fallback grant. For the fallback cases the
+                        // command isn't one the model chose to run unsandboxed,
+                        // so the terminal tool's `sandbox_not_applied` note
+                        // warns it that the command ran without a sandbox *and*,
+                        // on Windows, that the shell and its path conventions
+                        // changed too (see `sandbox_note` in the terminal tool),
+                        // so it can adapt a command written for WSL.
+                        let (task_command, task_args) =
+                            ShellBuilder::new(&Shell::Program(shell), is_windows)
+                                .redirect_stdin_to_dev_null()
+                                .build(Some(command.clone()), &args);
+                        (task_command, task_args, None, cwd.clone())
+                    };
+
+                // On Linux/macOS the same shell (`/bin/sh`) is used whether or
+                // not we sandbox: `ShellBuilder` builds the command, and
+                // `apply_sandbox_wrap` either wraps it in bwrap (`Some`) or
+                // returns it untouched (`None`). Either way the interpreter is
+                // identical, so the unsandboxed fallback keeps shell semantics
+                // intact — unlike Windows, which falls back to the host shell.
+                #[cfg(not(target_os = "windows"))]
+                let (task_command, task_args, sandbox_config, spawn_cwd) = {
+                    let (task_command, task_args) =
+                        ShellBuilder::new(&Shell::Program(shell), is_windows)
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
+                    let (task_command, task_args, sandbox_config) = apply_sandbox_wrap(
+                        task_command,
+                        task_args,
+                        cwd.as_deref(),
+                        sandbox_wrap,
+                        network_policy,
+                    )?;
+                    (task_command, task_args, sandbox_config, cwd.clone())
+                };
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: cwd.clone(),
+                                cwd: spawn_cwd,
                                 env,
                                 ..Default::default()
                             },
@@ -3414,6 +3678,7 @@ impl AcpThread {
                         terminal,
                         language_registry,
                         sandbox_config,
+                        proxy_handle,
                         cx,
                     )
                 }))
@@ -3495,6 +3760,7 @@ impl AcpThread {
                 language_registry,
                 // External terminal providers manage their own sandboxing
                 // (if any). We don't wrap their commands.
+                None,
                 None,
                 cx,
             )
@@ -3686,6 +3952,49 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_trusted_ssh_auth_socket_path_requires_socket() {
+        use std::os::unix::net::UnixListener;
+
+        // Bind under `/tmp`: the default temp dir on macOS (`/var/folders/...`)
+        // overflows the `sun_path` limit for Unix sockets. `TempDir` still
+        // cleans up on drop, even if the test panics.
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-sock-")
+            .tempdir_in("/tmp")
+            .expect("temporary socket directory should be created");
+        let socket_path = temp_dir.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
+
+        // A real socket resolves to (at least) its canonical path.
+        let canonical = socket_path
+            .canonicalize()
+            .expect("socket path should canonicalize");
+        assert!(trusted_ssh_auth_socket_paths(socket_path).contains(&canonical));
+
+        // A directory is not a socket, and a relative path is rejected outright.
+        assert!(trusted_ssh_auth_socket_paths(temp_dir.path().to_path_buf()).is_empty());
+        assert!(trusted_ssh_auth_socket_paths("relative.sock").is_empty());
+
+        drop(listener);
+    }
+
+    #[test]
+    fn sandbox_authorization_details_deserialize_legacy_network_bool() {
+        // Older builds persisted `network: bool`; the `alias` on
+        // `network_all_hosts` must keep those details rendering as a
+        // network request rather than silently dropping it.
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": true })).unwrap();
+        assert!(details.network_all_hosts);
+        assert!(details.network_hosts.is_empty());
+
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": false })).unwrap();
+        assert!(!details.network_all_hosts);
     }
 
     #[gpui::test]
@@ -4957,6 +5266,60 @@ mod tests {
             }
             RequestPermissionOutcome::Cancelled => {
                 panic!("permission request should resolve after authorization")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cancel_tool_call_authorization_resolves_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01cancelled_permission");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call_authorization(&tool_call_id, cx);
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Canceled));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("cancelled permission request should not select an outcome")
             }
         }
     }
