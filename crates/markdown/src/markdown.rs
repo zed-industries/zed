@@ -1981,12 +1981,14 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(
-            &self.style.container_style,
-            self.style.base_text_style.clone(),
-            self.style.syntax.clone(),
-        );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            mermaid_state,
+            language_registry,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -1994,8 +1996,15 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.language_registry.clone(),
             )
         };
+        let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
+            self.style.base_text_style.clone(),
+            self.style.syntax.clone(),
+            language_registry,
+        );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -3018,6 +3027,7 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 #[derive(Default)]
@@ -3036,6 +3046,7 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        language_registry: Option<Arc<LanguageRegistry>>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3057,6 +3068,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            language_registry,
         }
     }
 
@@ -3230,7 +3242,12 @@ impl MarkdownElementBuilder {
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+            let text = Rope::from(text);
+            for (range, highlight_id) in language.highlight_text_with_injections(
+                &text,
+                0..text.len(),
+                self.language_registry.as_ref(),
+            ) {
                 if range.start > offset {
                     self.pending_line
                         .runs
@@ -3332,9 +3349,14 @@ impl MarkdownElementBuilder {
         let mut text_style = self.base_text_style.clone();
         text_style.color = Hsla::transparent_black();
         let text = "\u{200B}";
-        let styled_text = StyledText::new(text).with_runs(vec![text_style.to_run(text.len())]);
+        let run = text_style.to_run(text.len());
+        #[cfg(test)]
+        let runs = vec![run.clone()];
+        let styled_text = StyledText::new(text).with_runs(vec![run]);
         self.rendered_lines.push(RenderedLine {
             layout: styled_text.layout().clone(),
+            #[cfg(test)]
+            runs,
             source_mappings: vec![SourceMapping {
                 rendered_index: 0,
                 source_index: source_range.start,
@@ -3359,9 +3381,13 @@ impl MarkdownElementBuilder {
             return;
         }
 
+        #[cfg(test)]
+        let runs = line.runs.clone();
         let text = StyledText::new(line.text).with_runs(line.runs);
         self.rendered_lines.push(RenderedLine {
             layout: text.layout().clone(),
+            #[cfg(test)]
+            runs,
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
@@ -3386,6 +3412,8 @@ impl MarkdownElementBuilder {
 
 struct RenderedLine {
     layout: TextLayout,
+    #[cfg(test)]
+    runs: Vec<TextRun>,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
     language: Option<Arc<Language>>,
@@ -3916,7 +3944,7 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, size};
+    use gpui::{TestAppContext, rgba, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::{
         Arc,
@@ -4104,6 +4132,49 @@ mod tests {
         render_markdown_with_options(markdown, language_registry, MarkdownOptions::default(), cx)
     }
 
+    fn render_markdown_with_language_registry_and_style(
+        markdown: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        style: MarkdownStyle,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                markdown.to_string().into(),
+                language_registry,
+                None,
+                MarkdownOptions::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, style).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            },
+        );
+        rendered.text
+    }
+
     fn render_markdown_with_options(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -4145,6 +4216,99 @@ mod tests {
             },
         );
         rendered.text
+    }
+
+    #[gpui::test]
+    fn test_code_block_highlights_nested_injections(cx: &mut TestAppContext) {
+        let syntax_theme = Arc::new(SyntaxTheme::new([
+            ("tag".to_string(), rgba(0x3366ccff).into()),
+            ("property".to_string(), rgba(0xcc3333ff).into()),
+            ("constant.builtin".to_string(), rgba(0x33aa66ff).into()),
+            ("punctuation".to_string(), rgba(0x666666ff).into()),
+        ]));
+        let property_color: Hsla = rgba(0xcc3333ff).into();
+
+        let html_language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "HTML".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["html".into()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(tree_sitter_html::LANGUAGE.into()),
+            )
+            .with_highlights_query(include_str!(
+                "../../../extensions/html/languages/html/highlights.scm"
+            ))
+            .unwrap()
+            .with_injection_query(include_str!(
+                "../../../extensions/html/languages/html/injections.scm"
+            ))
+            .unwrap(),
+        );
+        let css_language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "CSS".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["css".into()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(tree_sitter_css::LANGUAGE.into()),
+            )
+            .with_highlights_query(include_str!("../../grammars/src/css/highlights.scm"))
+            .unwrap(),
+        );
+        html_language.set_theme(&syntax_theme);
+        css_language.set_theme(&syntax_theme);
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(html_language);
+        language_registry.add(css_language);
+
+        let rendered = render_markdown_with_language_registry_and_style(
+            "```html\n<style>\n  body {\n    color: red;\n  }\n</style>\n```",
+            Some(language_registry),
+            MarkdownStyle {
+                syntax: syntax_theme,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        let line = rendered
+            .lines
+            .iter()
+            .find(|line| line.layout.text().contains("color: red"))
+            .expect("expected CSS declaration line to render");
+        let declaration = line.layout.text();
+        let color_offset = declaration
+            .find("color")
+            .expect("expected CSS property in rendered line");
+
+        assert_eq!(
+            run_color_at(line, color_offset),
+            property_color,
+            "expected CSS property inside HTML style block to use CSS highlighting"
+        );
+    }
+
+    fn run_color_at(line: &RenderedLine, offset: usize) -> Hsla {
+        let mut run_start = 0;
+        for run in &line.runs {
+            let run_end = run_start + run.len;
+            if offset < run_end {
+                return run.color;
+            }
+            run_start = run_end;
+        }
+
+        panic!("no text run found at offset {offset}");
     }
 
     #[gpui::test]
