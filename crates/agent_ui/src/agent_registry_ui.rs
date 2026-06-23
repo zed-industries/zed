@@ -34,7 +34,6 @@ enum RegistryInstallStatus {
     NotInstalled,
     InstalledRegistry,
     InstalledCustom,
-    InstalledExtension,
 }
 
 #[derive(IntoElement)]
@@ -155,9 +154,6 @@ impl AgentRegistryPage {
                     RegistryInstallStatus::InstalledRegistry
                 }
                 CustomAgentServerSettings::Custom { .. } => RegistryInstallStatus::InstalledCustom,
-                CustomAgentServerSettings::Extension { .. } => {
-                    RegistryInstallStatus::InstalledExtension
-                }
             };
             self.installed_statuses.insert(id.clone(), status);
         }
@@ -525,9 +521,7 @@ impl AgentRegistryPage {
                             agent_servers.entry(agent_id).or_insert_with(|| {
                                 settings::CustomAgentServerSettings::Registry {
                                     default_mode: None,
-                                    default_model: None,
                                     env: Default::default(),
-                                    favorite_models: Vec::new(),
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
                                 }
@@ -558,9 +552,6 @@ impl AgentRegistryPage {
                     })
             }
             RegistryInstallStatus::InstalledCustom => Button::new(button_id, "Installed")
-                .style(ButtonStyle::OutlinedGhost)
-                .disabled(true),
-            RegistryInstallStatus::InstalledExtension => Button::new(button_id, "Installed")
                 .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
         }
@@ -657,7 +648,7 @@ impl Render for AgentRegistryPage {
                     let scroll_handle = &self.list;
                     this.child(
                         uniform_list("registry-entries", count, cx.processor(Self::render_agents))
-                            .flex_grow()
+                            .flex_grow_1()
                             .pb_4()
                             .track_scroll(scroll_handle),
                     )

@@ -42,9 +42,7 @@ use workspace::{
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
-use crate::{
-    CaptureExample, RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag,
-};
+use crate::{RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag};
 
 actions!(
     edit_prediction,
@@ -632,6 +630,7 @@ impl EditPredictionButton {
                     window.dispatch_action(
                         OpenSettingsAt {
                             path: "edit_predictions.providers".to_string(),
+                            target: None,
                         }
                         .boxed_clone(),
                         cx,
@@ -714,14 +713,16 @@ impl EditPredictionButton {
 
             match language_state.clone() {
                 Some((language, false)) => {
-                    menu = menu.item(
-                        entry
-                            .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, move |_cx| {
-                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
-                                    .into_any_element()
-                            })
-                    );
+                    menu = menu.item(entry.disabled(true).documentation_aside(
+                        DocumentationSide::Left,
+                        move |_cx| {
+                            Label::new(format!(
+                                "Edit predictions are disabled for {}",
+                                language.name()
+                            ))
+                            .into_any_element()
+                        },
+                    ));
                 }
                 Some(_) | None => menu = menu.item(entry),
             }
@@ -982,10 +983,7 @@ impl EditPredictionButton {
                 .context(editor_focus_handle)
                 .when(
                     cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
-                    |this| {
-                        this.action("Capture Prediction Example", CaptureExample.boxed_clone())
-                            .action("Rate Predictions", RatePredictions.boxed_clone())
-                    },
+                    |this| this.action("Rate Predictions", RatePredictions.boxed_clone()),
                 );
         }
 
@@ -1120,7 +1118,7 @@ impl EditPredictionButton {
                     .link_with_handler(
                         "Learn More",
                         OpenBrowser {
-                            url: zed_urls::edit_prediction_docs(cx),
+                            url: zed_urls::edit_prediction_docs(cx).into(),
                         }
                         .boxed_clone(),
                         |_window, _cx| {
@@ -1633,12 +1631,10 @@ fn emit_edit_prediction_menu_opened(
     );
 }
 
-fn copilot_settings_url(enterprise_uri: Option<&str>) -> String {
+fn copilot_settings_url(enterprise_uri: Option<&str>) -> Arc<str> {
     match enterprise_uri {
-        Some(uri) => {
-            format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH)
-        }
-        None => COPILOT_SETTINGS_URL.to_string(),
+        Some(uri) => format!("{}{}", uri.trim_end_matches('/'), COPILOT_SETTINGS_PATH).into(),
+        None => COPILOT_SETTINGS_URL.into(),
     }
 }
 
@@ -1674,7 +1670,7 @@ mod tests {
             )
         });
 
-        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+        assert_eq!(url.as_ref(), "https://my-company.ghe.com/settings/copilot");
     }
 
     #[gpui::test]
@@ -1704,7 +1700,7 @@ mod tests {
             )
         });
 
-        assert_eq!(url, "https://my-company.ghe.com/settings/copilot");
+        assert_eq!(url.as_ref(), "https://my-company.ghe.com/settings/copilot");
     }
 
     #[gpui::test]
@@ -1725,6 +1721,6 @@ mod tests {
             )
         });
 
-        assert_eq!(url, "https://github.com/settings/copilot");
+        assert_eq!(url.as_ref(), "https://github.com/settings/copilot");
     }
 }

@@ -18,7 +18,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
-use settings::{ActionName, SettingsStore};
+use settings::{CommandAliasTarget, SettingsStore};
 use ui::Pixels;
 use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
@@ -2124,7 +2124,7 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.update_user_settings(cx, |s| {
             let mut aliases = HashMap::default();
-            aliases.insert("Q".to_string(), ActionName::new("upper"));
+            aliases.insert("Q".to_string(), CommandAliasTarget::new("upper"));
             s.workspace.command_aliases = aliases
         });
     });

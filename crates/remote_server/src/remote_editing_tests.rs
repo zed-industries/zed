@@ -2,11 +2,15 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream, ToolInput};
+use agent::{
+    AgentTool, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput, SkillTool,
+    SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream, ToolInput,
+    skill_body_resolver_for_project, skills_resolver_for_project,
+};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use language_model::LanguageModelToolResultContent;
+use language_model::{LanguageModelRegistry, LanguageModelToolResultContent};
 use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
@@ -38,11 +42,12 @@ use settings::{Settings, SettingsLocation, SettingsStore, initial_server_setting
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::Arc,
 };
 use unindent::Unindent as _;
-use util::{path, paths::PathMatcher, rel_path::rel_path};
+use util::{path, path_list::PathList, paths::PathMatcher, rel_path::rel_path};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -175,6 +180,107 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_telemetry_event_forwarding(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // This mirrors `init_test`, but retains the server-side session so the test
+    // can drive a forwarded telemetry event over the proto channel (as
+    // `init_telemetry_forwarding` does on a real remote server).
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            path!("/code"),
+            json!({ "project1": { "README.md": "# project 1" } }),
+        )
+        .await;
+
+    cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    init_logger();
+
+    let (opts, server_session, _) = RemoteClient::fake_server(cx, server_cx);
+    let http_client = Arc::new(BlockedHttpClient);
+    let node_runtime = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    server_cx.update(HeadlessProject::init);
+    let headless = server_cx.new(|cx| {
+        HeadlessProject::new(
+            crate::HeadlessAppState {
+                session: server_session.clone(),
+                fs: server_fs.clone(),
+                http_client,
+                node_runtime,
+                languages,
+                extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let ssh = RemoteClient::connect_mock(opts, cx).await;
+    let project = build_project(ssh, cx);
+    project
+        .update(cx, {
+            let headless = headless.clone();
+            |_, cx| cx.on_release(|_, _| drop(headless))
+        })
+        .detach();
+
+    // The remote server forwards a bare `FlexibleEvent` as JSON; mirror that
+    // here by sending the proto message the forwarding task would send.
+    let event_json = json!({
+        "event_type": "fs_watcher_poll",
+        "event_properties": { "path": "/code/project1" },
+    })
+    .to_string();
+    server_session
+        .send(proto::TelemetryEvent {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            event_json,
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let events = project.read_with(cx, |project, _| {
+        project.client().telemetry().queued_events()
+    });
+    assert_eq!(
+        events.len(),
+        1,
+        "the forwarded event should be reported once"
+    );
+    let event = &events[0];
+    assert_eq!(event.event_type, "fs_watcher_poll");
+    // The event's original properties survive the round-trip.
+    assert_eq!(
+        event.event_properties.get("path"),
+        Some(&serde_json::Value::String("/code/project1".to_string()))
+    );
+    // The client stamps the remote host metadata it learned at connection time.
+    // The mock connection reports a Linux/x86_64 host over a "mock" connection.
+    assert_eq!(
+        event.event_properties.get("remote"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        event.event_properties.get("remote_connection_type"),
+        Some(&serde_json::Value::String("mock".to_string()))
+    );
+    assert_eq!(
+        event.event_properties.get("remote_os_name"),
+        Some(&serde_json::Value::String("Linux".to_string()))
+    );
+    assert_eq!(
+        event.event_properties.get("remote_architecture"),
+        Some(&serde_json::Value::String("x86_64".to_string()))
+    );
 }
 
 async fn do_search_and_assert(
@@ -2121,7 +2227,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .update(cx, |repository, _| repository.branches())
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .branches;
 
     let new_branch = branches[2];
 
@@ -2386,7 +2493,10 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
             .run(ToolInput::resolved(input), event_stream.clone(), cx)
     });
     let output = exists_result.await.unwrap();
-    assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
+    assert_eq!(
+        output,
+        LanguageModelToolResultContent::Text("     1\tB".into())
+    );
 
     let input = ReadFileToolInput {
         path: "project/c.txt".into(),
@@ -2396,6 +2506,149 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     let does_not_exist_result =
         cx.update(|cx| read_tool.run(ToolInput::resolved(input), event_stream, cx));
     does_not_exist_result.await.unwrap_err();
+}
+
+#[gpui::test]
+async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    use acp_thread::AgentConnection as _;
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".agents": {
+                "skills": {
+                    "test-skill": {
+                        "SKILL.md": "---\nname: test-skill\ndescription: test description\n---\ntest body"
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    let (_worktree, _rel_path) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let _acp_thread = cx
+        .update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[Path::new("/project")]),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let skill_tool = Arc::new(SkillTool::with_body_resolver(
+        skills_resolver_for_project(agent.downgrade(), project.entity_id()),
+        skill_body_resolver_for_project(project.clone(), fs.clone()),
+    ));
+    let (event_stream, mut event_stream_rx) = ToolCallEventStream::test();
+
+    let input = SkillToolInput {
+        name: "test-skill".into(),
+    };
+    let task = cx.update(|cx| {
+        skill_tool
+            .clone()
+            .run(ToolInput::resolved(input), event_stream.clone(), cx)
+    });
+
+    // The project-local skill is not a built-in, so the tool requests
+    // authorization. Approve it so the tool can proceed.
+    let authorization = event_stream_rx.expect_authorization().await;
+    authorization
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
+            agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+
+    let output = task.await.unwrap();
+    cx.run_until_parked();
+    let expected = format!(
+        concat!(
+            "<skill_content name=\"test-skill\">\n",
+            "<source>project-local</source>\n",
+            "<worktree>project</worktree>\n",
+            "<directory>{}</directory>\n",
+            "Relative paths in this skill resolve against <directory>.\n",
+            "\n",
+            "test body\n",
+            "</skill_content>\n",
+        ),
+        path!("/project/.agents/skills/test-skill"),
+    );
+    assert_eq!(output, SkillToolOutput::Found { rendered: expected });
+
+    fs.create_dir(Path::new(path!("/project/.agents/skills/test-2")))
+        .await
+        .unwrap();
+    fs.insert_file(
+        path!("/project/.agents/skills/test-2/SKILL.md"),
+        "---\nname: test-2\ndescription: test description\n---\ntest body"
+            .as_bytes()
+            .into(),
+    )
+    .await;
+
+    cx.run_until_parked();
+    cx.update(|cx| connection.refresh_skills_for_project(project, cx));
+    cx.run_until_parked();
+
+    let input2 = SkillToolInput {
+        name: "test-2".into(),
+    };
+    let task = cx.update(|cx| {
+        skill_tool
+            .clone()
+            .run(ToolInput::resolved(input2), event_stream.clone(), cx)
+    });
+
+    let authorization = event_stream_rx.expect_authorization().await;
+    authorization
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
+            agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
+        ))
+        .unwrap();
+
+    let output = task.await.unwrap();
+    let expected2 = format!(
+        concat!(
+            "<skill_content name=\"test-2\">\n",
+            "<source>project-local</source>\n",
+            "<worktree>project</worktree>\n",
+            "<directory>{}</directory>\n",
+            "Relative paths in this skill resolve against <directory>.\n",
+            "\n",
+            "test body\n",
+            "</skill_content>\n",
+        ),
+        path!("/project/.agents/skills/test-2"),
+    );
+    assert_eq!(
+        output,
+        SkillToolOutput::Found {
+            rendered: expected2
+        }
+    );
 }
 
 #[gpui::test]

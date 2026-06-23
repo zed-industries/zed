@@ -6,6 +6,9 @@ mod keystroke;
 #[expect(missing_docs)]
 pub mod layer_shell;
 
+#[cfg(any(test, feature = "bench"))]
+mod bench_dispatcher;
+
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -34,7 +37,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
     PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -76,6 +79,9 @@ pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+
+#[cfg(any(test, feature = "bench"))]
+pub use bench_dispatcher::BenchDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -591,6 +597,16 @@ impl Tiling {
     }
 }
 
+/// Callbacks for the accessibility adapter.
+pub struct A11yCallbacks {
+    /// Called when the adapter is activated (a screen reader connects).
+    pub activation: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    /// Called when an action is requested by the screen reader.
+    pub action: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
+    /// Called when the adapter is deactivated (screen reader disconnects).
+    pub deactivation: Box<dyn Fn() + Send + 'static>,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[expect(missing_docs)]
 pub struct RequestFrameOptions {
@@ -660,6 +676,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_edited(&mut self, _edited: bool) {}
     fn set_document_path(&self, _path: Option<&std::path::Path>) {}
+    #[cfg(target_os = "macos")]
+    fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -700,6 +718,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn play_system_bell(&self) {}
 
+    /// Initialize the accessibility adapter with callbacks.
+    fn a11y_init(&self, _callbacks: A11yCallbacks) {}
+
+    /// Provide a TreeUpdate to the accessibility adapter.
+    fn a11y_tree_update(&self, _tree_update: accesskit::TreeUpdate) {}
+
+    /// Inform the adapter of updated window bounds.
+    fn a11y_update_window_bounds(&self) {}
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
@@ -724,6 +751,13 @@ pub trait PlatformHeadlessRenderer {
         size: Size<DevicePixels>,
     ) -> Result<RgbaImage>;
 
+    /// Render a scene to an offscreen target without reading the result back.
+    ///
+    /// This is the headless analogue of presenting a frame: it performs the
+    /// same CPU-side scene encoding and GPU submission as drawing to a real
+    /// window, but doesn't block on GPU completion or copy pixels back.
+    fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()>;
+
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
@@ -736,12 +770,16 @@ pub type RunnableVariant = Runnable<RunnableMeta>;
 #[doc(hidden)]
 pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
+#[doc(hidden)]
+pub enum TasksIncluded {
+    OnlyCompleted,
+    CompletedAndRunning,
+}
+
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
@@ -759,6 +797,13 @@ pub trait PlatformDispatcher: Send + Sync {
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {
+        None
+    }
+
+    // This cfg must match the `bench_dispatcher` module's, which implements
+    // this method whenever it compiles.
+    #[cfg(any(test, feature = "bench"))]
+    fn as_bench(&self) -> Option<&BenchDispatcher> {
         None
     }
 }
@@ -1225,17 +1270,55 @@ impl PlatformInputHandler {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 
-    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
-        let selection = self.handler.selected_text_range(true, window, cx)?;
-        self.handler.bounds_for_range(
-            if selection.reversed {
-                selection.range.start..selection.range.start
+    pub fn compute_ime_candidate_bounds(
+        marked_range: Option<Range<usize>>,
+        selection: &UTF16Selection,
+        mut bounds_for_range: impl FnMut(Range<usize>) -> Option<Bounds<Pixels>>,
+    ) -> Option<Bounds<Pixels>> {
+        if let Some(marked_range) = marked_range {
+            // Default to the start of the marked (composing) range.
+            let mut line_start = marked_range.start;
+
+            // Walk backward from the caret looking for a line break. A change in
+            // the Y coordinate means we crossed into the previous visual line, so
+            // the line start is one position after the break point.
+            let caret = selection.range.end;
+            if let Some(caret_bounds) = bounds_for_range(caret..caret) {
+                for i in (marked_range.start..caret).rev() {
+                    if let Some(b) = bounds_for_range(i..i) {
+                        if (b.origin.y - caret_bounds.origin.y).abs() > px(0.1) {
+                            line_start = i + 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            bounds_for_range(line_start..line_start)
+        } else {
+            // No active composition — use the selection endpoint.
+            let offset = if selection.reversed {
+                selection.range.start
             } else {
-                selection.range.end..selection.range.end
-            },
-            window,
-            cx,
-        )
+                selection.range.end
+            };
+            bounds_for_range(offset..offset)
+        }
+    }
+
+    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        let marked_range = self.handler.marked_text_range(window, cx);
+        let selection = self.handler.selected_text_range(true, window, cx)?;
+        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            self.handler.bounds_for_range(range, window, cx)
+        })
+    }
+
+    pub fn ime_candidate_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        let marked_range = self.marked_text_range();
+        let selection = self.selected_text_range(true)?;
+        Self::compute_ime_candidate_bounds(marked_range, &selection, |range| {
+            self.bounds_for_range(range)
+        })
     }
 
     #[allow(unused)]
@@ -1733,7 +1816,7 @@ impl PromptButton {
 impl From<&str> for PromptButton {
     fn from(value: &str) -> Self {
         match value.to_lowercase().as_str() {
-            "ok" => PromptButton::Ok("Ok".into()),
+            "ok" => PromptButton::Ok("OK".into()),
             "cancel" => PromptButton::Cancel("Cancel".into()),
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }

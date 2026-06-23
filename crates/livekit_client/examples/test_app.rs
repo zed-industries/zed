@@ -350,7 +350,7 @@ impl Render for LivekitWindow {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .flex_grow()
+                    .flex_grow_1()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
                             .h(px(1080.0))

@@ -19,3 +19,4 @@ test-support = []
 [dependencies]
 indexmap.workspace = true
 rustc-hash.workspace = true
+gpui_util.workspace = true
