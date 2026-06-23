@@ -60,7 +60,7 @@ pub fn request_prediction(
     };
 
     let api_key = if provider == settings::EditPredictionProvider::Deepseek {
-        crate::deepseek::api_key()
+        crate::deepseek::load_deepseek_api_key_if_needed(cx)
     } else {
         load_open_ai_compatible_api_key_if_needed(provider, cx)
     };

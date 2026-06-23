@@ -1,6 +1,7 @@
 use codestral::{CODESTRAL_API_URL, codestral_api_key_state, codestral_api_url};
 use edit_prediction::{
     ApiKeyState,
+    deepseek::{deepseek_api_token, deepseek_api_url},
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
 };
@@ -68,7 +69,30 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element(),
         ),
-        Some(render_deepseek_provider(settings_window, window, cx).into_any_element()),
+        Some(
+            render_api_key_provider(
+                IconName::AiDeepSeek,
+                "Deepseek",
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://platform.deepseek.com/api_keys".into(),
+                },
+                deepseek_api_token(cx),
+                |cx| deepseek_api_url(cx),
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            deepseek_settings().iter().enumerate(),
+                            true,
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ),
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(

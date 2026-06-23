@@ -1,17 +1,61 @@
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::RawCompletionResponse;
 use futures::AsyncReadExt as _;
-use gpui::http_client;
-use language::language_settings::OpenAiCompatibleEditPredictionSettings;
-use language_model::{EnvVar, env_var};
+use gpui::{App, AppContext as _, Entity, Global, SharedString, Task, http_client};
+use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_language_settings};
+use language_model::{ApiKeyState, AuthenticateError, EnvVar, env_var};
 use serde::Serialize;
 use std::sync::Arc;
 
-static DEEPSEEK_API_KEY_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("DEEPSEEK_API_KEY");
+pub static DEEPSEEK_API_KEY_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("DEEPSEEK_API_KEY");
 
-/// Reads the Deepseek API key from the `DEEPSEEK_API_KEY` environment variable.
-pub fn api_key() -> Option<Arc<str>> {
-    DEEPSEEK_API_KEY_ENV_VAR.value.as_deref().map(Arc::from)
+/// The configured Deepseek completions endpoint, used as the credential storage key.
+pub fn deepseek_api_url(cx: &App) -> SharedString {
+    all_language_settings(None, cx)
+        .edit_predictions
+        .deepseek
+        .as_ref()
+        .map(|settings| settings.api_url.clone())
+        .unwrap_or_default()
+        .into()
+}
+
+struct GlobalDeepseekApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalDeepseekApiKey {}
+
+/// Returns the shared [`ApiKeyState`] for Deepseek, creating it on first use. The
+/// state resolves the key from the `DEEPSEEK_API_KEY` environment variable or,
+/// failing that, the credential store (where keys entered in settings are saved).
+pub fn deepseek_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    if let Some(global) = cx.try_global::<GlobalDeepseekApiKey>() {
+        return global.0.clone();
+    }
+    let entity =
+        cx.new(|cx| ApiKeyState::new(deepseek_api_url(cx), DEEPSEEK_API_KEY_ENV_VAR.clone()));
+    cx.set_global(GlobalDeepseekApiKey(entity.clone()));
+    entity
+}
+
+pub fn load_deepseek_api_token(cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+    let credentials_provider = zed_credentials_provider::global(cx);
+    let api_url = deepseek_api_url(cx);
+    deepseek_api_token(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(api_url, |s| s, credentials_provider, cx)
+    })
+}
+
+/// Kicks off a credential load if needed and returns the currently known key.
+pub fn load_deepseek_api_key_if_needed(cx: &mut App) -> Option<Arc<str>> {
+    _ = load_deepseek_api_token(cx);
+    let url = deepseek_api_url(cx);
+    deepseek_api_token(cx).read(cx).key(&url)
+}
+
+/// Returns the Deepseek API key if one is already resolved, without triggering a load.
+pub fn deepseek_api_key(cx: &App) -> Option<Arc<str>> {
+    let url = deepseek_api_url(cx);
+    cx.try_global::<GlobalDeepseekApiKey>()?.0.read(cx).key(&url)
 }
 
 #[derive(Debug, Serialize)]

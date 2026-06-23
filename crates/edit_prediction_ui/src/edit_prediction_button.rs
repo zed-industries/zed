@@ -584,9 +584,14 @@ impl EditPredictionButton {
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
+        let deepseek_api_token_task = edit_prediction::deepseek::load_deepseek_api_token(cx);
 
         cx.spawn(async move |this, cx| {
-            _ = futures::join!(mercury_api_token_task, open_ai_compatible_api_token_task);
+            _ = futures::join!(
+                mercury_api_token_task,
+                open_ai_compatible_api_token_task,
+                deepseek_api_token_task
+            );
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -1508,11 +1513,7 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    if all_language_settings(None, cx)
-        .edit_predictions
-        .deepseek
-        .is_some()
-    {
+    if edit_prediction::deepseek::deepseek_api_key(cx).is_some() {
         providers.push(EditPredictionProvider::Deepseek);
     }
 
