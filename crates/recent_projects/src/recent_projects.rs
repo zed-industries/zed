@@ -1581,7 +1581,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
+                            IconButton::new("add_to_workspace", IconName::FolderInclude)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
                                     let focus_handle = self.focus_handle.clone();
