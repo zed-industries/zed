@@ -7,9 +7,15 @@
 //!
 //! The current policy is: enabled iff the user has the `sandboxing` feature
 //! flag turned on, the project is local, the platform has an integration, and
-//! the user has not turned sandboxing off entirely (the `disabled` sandbox
-//! setting; the `allow_unsandboxed` grant only auto-approves commands that
-//! explicitly request to run unsandboxed and doesn't turn the sandbox off).
+//! the user has not persistently allowed unsandboxed execution (the
+//! `allow_unsandboxed` sandbox setting). Setting `allow_unsandboxed`
+//! persistently turns sandboxing off for the model-facing surface entirely:
+//! the plain (non-sandboxed) `terminal` tool is exposed and the system prompt
+//! omits the sandbox section, since every command would run without a wrap
+//! anyway. The model-requested `unsandboxed: true` escape approved "once" or
+//! "for this thread" does NOT change the prompt/tool set — the sandboxed tool
+//! stays exposed and only the individual command runs without a wrap. See
+//! `sandboxing_enabled_for_project` and `ThreadSandboxGrants`.
 //!
 //! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Bubblewrap via WSL)
 //! have real sandbox integrations; on platforms without one the per-command
@@ -34,10 +40,21 @@ pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
 }
 
 /// Whether the sandboxed terminal can be exposed for this project.
+///
+/// The persistent `allow_unsandboxed` setting turns sandboxing off for the
+/// model-facing surface: when it's set we expose the plain `terminal` tool and
+/// omit the sandbox section from the system prompt, because every command would
+/// run without a wrap regardless. This is deliberately keyed off the
+/// *persistent* setting only. A model-requested `unsandboxed: true` escape that
+/// the user approves "once" or "for this thread" keeps the sandboxed tool and
+/// prompt in place, since the model is still operating in the sandbox model and
+/// only escaping individual commands (tracked in `ThreadSandboxGrants`).
 pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
     sandboxing_enabled(cx)
         && project.is_local()
-        && !AgentSettings::get_global(cx).sandbox_permissions.disabled
+        && !AgentSettings::get_global(cx)
+            .sandbox_permissions
+            .allow_unsandboxed
         && cfg!(any(
             target_os = "macos",
             target_os = "linux",
@@ -152,7 +169,14 @@ impl ThreadSandboxGrants {
         persistent: &SandboxPermissions,
     ) -> bool {
         if request.unsandboxed {
-            return self.unsandboxed || persistent.allow_unsandboxed;
+            // The persistent `allow_unsandboxed` setting is intentionally not
+            // consulted here: when it's set, sandboxing is removed from the
+            // model-facing surface (the plain `terminal` tool is exposed
+            // instead of the sandboxed one), so the model can't issue an
+            // `unsandboxed: true` request at all. Only a "for this thread"
+            // grant suppresses the re-prompt while the sandboxed tool is
+            // active — see `sandboxing_enabled_for_project`.
+            return self.unsandboxed;
         }
         if !self.network_covered(&request.network, persistent) {
             return false;
@@ -572,21 +596,34 @@ mod tests {
     }
 
     #[test]
-    fn persistent_unsandboxed_covers_unsandboxed_requests_only() {
+    fn thread_grant_covers_unsandboxed_requests() {
+        // A "for this thread" grant suppresses the re-prompt for later
+        // `unsandboxed: true` requests within the same thread.
+        let mut grants = ThreadSandboxGrants::default();
+        assert!(!covers(&grants, &unsandboxed_request()));
+        grants.record(&unsandboxed_request());
+        assert!(covers(&grants, &unsandboxed_request()));
+
+        // A thread-wide unsandboxed grant only covers unsandboxed requests; it
+        // does not widen network or filesystem scope.
+        assert!(!covers(
+            &grants,
+            &request(NetworkRequest::AnyHost, false, &[])
+        ));
+        assert!(!covers(&grants, &request(NetworkRequest::None, true, &[])));
+    }
+
+    #[test]
+    fn persistent_allow_unsandboxed_does_not_cover_here() {
+        // The persistent setting is handled by removing the sandboxed tool (see
+        // `sandboxing_enabled_for_project`), not by covering requests, so on
+        // its own it never makes an `unsandboxed: true` request "covered".
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
             allow_unsandboxed: true,
             ..Default::default()
         };
-
-        assert!(grants.covers_with_persistent(&unsandboxed_request(), &persistent));
-        assert!(
-            !grants
-                .covers_with_persistent(&request(NetworkRequest::AnyHost, false, &[]), &persistent)
-        );
-        assert!(
-            !grants.covers_with_persistent(&request(NetworkRequest::None, true, &[]), &persistent)
-        );
+        assert!(!grants.covers_with_persistent(&unsandboxed_request(), &persistent));
     }
 
     #[test]

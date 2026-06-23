@@ -3,7 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -1935,7 +1935,7 @@ impl AcpThread {
                 self.update_plan(plan, cx);
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
-                if let acp::MaybeUndefined::Value(title) = info_update.title {
+                if let MaybeUndefined::Value(title) = info_update.title {
                     let had_provisional = self.provisional_title.take().is_some();
                     let title: SharedString = title.into();
                     if self.title.as_ref() != Some(&title) {
@@ -2651,6 +2651,19 @@ impl AcpThread {
             .ok();
             outcome
         }))
+    }
+
+    pub fn cancel_tool_call_authorization(&mut self, id: &acp::ToolCallId, cx: &mut Context<Self>) {
+        let Some((ix, call)) = self.tool_call_mut(id) else {
+            return;
+        };
+        if !matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+            return;
+        }
+
+        call.status = ToolCallStatus::Canceled;
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
     }
 
     pub fn authorize_tool_call(
@@ -3529,6 +3542,34 @@ impl AcpThread {
                         };
                         (task_command, task_args, sandbox_config, None)
                     } else {
+                        // No sandbox wrap means we're running unsandboxed, and
+                        // on Windows that deliberately changes the shell: the
+                        // sandboxed path runs under WSL's Linux bash, but this
+                        // fallback uses the host's `shell` (resolved above via
+                        // `get_default_system_shell_preferring_bash`) against
+                        // the native cwd. That resolution prefers Git Bash (or
+                        // scoop's bash), only dropping to the native Windows
+                        // shell (PowerShell/cmd) when no bash is installed — so
+                        // the interpreter usually stays bash-compatible, but its
+                        // path conventions differ from WSL's (e.g. `/c/...` or
+                        // native `C:\...` rather than `/mnt/c/...`). This is
+                        // unlike Linux/macOS, where the unsandboxed path (the
+                        // `#[cfg(not(target_os = "windows"))]` block below)
+                        // reuses the exact same shell and merely omits the bwrap
+                        // wrapper, so shell semantics are preserved untouched.
+                        //
+                        // The shell switch is intentional on Windows. The only
+                        // ways to reach this branch are: the model asking for
+                        // `unsandboxed: true` (often to run a Windows program),
+                        // the user choosing "run unsandboxed" after a sandbox-
+                        // creation failure, the `allow_unsandboxed` setting, or a
+                        // per-thread fallback grant. For the fallback cases the
+                        // command isn't one the model chose to run unsandboxed,
+                        // so the terminal tool's `sandbox_not_applied` note
+                        // warns it that the command ran without a sandbox *and*,
+                        // on Windows, that the shell and its path conventions
+                        // changed too (see `sandbox_note` in the terminal tool),
+                        // so it can adapt a command written for WSL.
                         let (task_command, task_args) =
                             ShellBuilder::new(&Shell::Program(shell), is_windows)
                                 .redirect_stdin_to_dev_null()
@@ -3536,6 +3577,12 @@ impl AcpThread {
                         (task_command, task_args, None, cwd.clone())
                     };
 
+                // On Linux/macOS the same shell (`/bin/sh`) is used whether or
+                // not we sandbox: `ShellBuilder` builds the command, and
+                // `apply_sandbox_wrap` either wraps it in bwrap (`Some`) or
+                // returns it untouched (`None`). Either way the interpreter is
+                // identical, so the unsandboxed fallback keeps shell semantics
+                // intact — unlike Windows, which falls back to the host shell.
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, sandbox_config, spawn_cwd) = {
                     let (task_command, task_args) =
@@ -5135,6 +5182,60 @@ mod tests {
             }
             RequestPermissionOutcome::Cancelled => {
                 panic!("permission request should resolve after authorization")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cancel_tool_call_authorization_resolves_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01cancelled_permission");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call_authorization(&tool_call_id, cx);
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Canceled));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("cancelled permission request should not select an outcome")
             }
         }
     }

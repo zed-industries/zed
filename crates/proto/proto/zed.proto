@@ -491,10 +491,11 @@ message Envelope {
     ResolveDocumentLinkResponse resolve_document_link_response = 456;
     GitWorktreeCreatedAt git_worktree_created_at = 457;
     GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
-    TrashProjectEntry trash_project_entry = 459;
-    TrashProjectEntryResponse trash_project_entry_response = 460;
-    RestoreProjectEntry restore_project_entry = 461;
-    RestoreProjectEntryResponse restore_project_entry_response = 462; // current max
+    TelemetryEvent telemetry_event = 459;
+    TrashProjectEntry trash_project_entry = 460;
+    TrashProjectEntryResponse trash_project_entry_response = 461;
+    RestoreProjectEntry restore_project_entry = 462;
+    RestoreProjectEntryResponse restore_project_entry_response = 463; // current max
   }
 
   reserved 87 to 88;

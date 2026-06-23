@@ -322,15 +322,17 @@ impl ChatGptModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        // All Codex-supported models share the backend's 272K input cap, even
-        // when the raw model exposes a larger context window via the public
-        // API (e.g. gpt-5.4 has max_context_window 1M, but the Codex backend
-        // caps it at 272K). Source: openai/codex models-manager/models.json.
+        // All Codex-supported models use a 272K context window in the Codex
+        // backend, even when the raw model exposes a larger context window via the
+        // public API (e.g. gpt-5.4 has max_context_window 1M, but Codex uses
+        // context_window 272K). Source: openai/codex models-manager/models.json.
         272_000
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(128_000)
+        // Codex model metadata does not expose a max output token cap for these
+        // models. Source: openai/codex models-manager/models.json.
+        None
     }
 
     fn supports_images(&self) -> bool {
