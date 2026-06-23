@@ -1753,6 +1753,83 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
     );
 }
 
+// Reopening a project group from the sidebar "+" when the group has no open
+// window goes through `open_workspace_and_create_entry`: it opens the
+// workspace (whose agent panel restores the previously-active terminal) and
+// then creates the initial entry. If the last-active session was a terminal,
+// the create step used to spawn a *second* terminal on top of the restored
+// one, leaving two terminal panes.
+//
+// The real second spawn (`project.create_terminal_shell`) is a no-op in the
+// test harness, so this pins the *decision* that drives the fix — whether the
+// post-open create reuses the restored terminal or proceeds to spawn another.
+#[gpui::test]
+async fn test_reopening_terminal_group_reuses_restored_terminal(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+
+    // Before any terminal exists, opening-to-create must actually create:
+    // there is nothing restored to reuse.
+    assert!(
+        !sidebar.read_with(cx, |sidebar, cx| {
+            sidebar.should_reuse_restored_entry(&workspace, NewEntryTarget::Terminal, cx)
+        }),
+        "with no restored terminal, the post-open path must create a new one",
+    );
+
+    // Stand in for the terminal the agent panel restores when the workspace
+    // reopens. `insert_test_terminal` also sets the panel's last-created-entry
+    // kind to Terminal, so the sidebar's `LastCreatedKind` target resolves to
+    // a terminal — matching the empty-group "+" button.
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    assert_eq!(
+        panel.read_with(cx, |panel, cx| panel.terminals(cx).len()),
+        1,
+        "precondition: the reopened workspace restored exactly one terminal",
+    );
+
+    // Now that a terminal is the restored, active surface, both the explicit
+    // Terminal target and the LastCreatedKind target (which resolves to a
+    // terminal here) must reuse it instead of spawning a duplicate.
+    sidebar.read_with(cx, |sidebar, cx| {
+        assert!(
+            sidebar.should_reuse_restored_entry(&workspace, NewEntryTarget::Terminal, cx),
+            "a restored terminal must be reused, not duplicated",
+        );
+        assert!(
+            sidebar.should_reuse_restored_entry(&workspace, NewEntryTarget::LastCreatedKind, cx),
+            "LastCreatedKind resolving to a terminal must reuse the restored one",
+        );
+    });
+
+    // Driving the full post-open path must leave exactly one terminal.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.create_initial_entry_after_open(
+            &workspace,
+            NewEntryTarget::LastCreatedKind,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        panel.read_with(cx, |panel, cx| panel.terminals(cx).len()),
+        1,
+        "reopening a terminal-backed project group must reuse the restored \
+         terminal instead of creating a duplicate",
+    );
+}
+
 #[gpui::test]
 async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;

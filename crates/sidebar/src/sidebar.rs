@@ -568,6 +568,16 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
 }
 
+/// Whether the workspace's agent panel currently shows a terminal as its
+/// active surface — true after opening a workspace whose last-active session
+/// was a terminal thread.
+fn workspace_has_active_terminal(workspace: &Entity<Workspace>, cx: &App) -> bool {
+    workspace
+        .read(cx)
+        .panel::<AgentPanel>(cx)
+        .is_some_and(|panel| panel.read(cx).active_terminal_id().is_some())
+}
+
 fn linked_worktree_path_lists_for_workspaces(
     workspaces: &[Entity<Workspace>],
     cx: &App,
@@ -1349,9 +1359,8 @@ impl Sidebar {
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = task.await?;
-            this.update_in(cx, |this, window, cx| match target {
-                NewEntryTarget::LastCreatedKind => this.create_new_entry(&workspace, window, cx),
-                NewEntryTarget::Terminal => this.create_new_terminal(&workspace, window, cx),
+            this.update_in(cx, |this, window, cx| {
+                this.create_initial_entry_after_open(&workspace, target, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -7123,6 +7132,71 @@ impl Sidebar {
         }
 
         self.update_entries(cx);
+    }
+
+    /// Creates the initial entry for a workspace that was just opened from the
+    /// sidebar "+" because the project group had no open window.
+    ///
+    /// Opening a workspace restores its previously-active session (e.g. a
+    /// terminal). When that restored entry already matches the kind we would
+    /// create, spawn nothing and reuse it — otherwise reopening a project from
+    /// the sidebar leaves two terminals: the restored one plus a freshly
+    /// created duplicate.
+    fn create_initial_entry_after_open(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        target: NewEntryTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.should_reuse_restored_entry(workspace, target, cx) {
+            self.reuse_restored_workspace_entry(workspace, window, cx);
+            return;
+        }
+
+        match target {
+            NewEntryTarget::LastCreatedKind => self.create_new_entry(workspace, window, cx),
+            NewEntryTarget::Terminal => self.create_new_terminal(workspace, window, cx),
+        }
+    }
+
+    /// True when opening the workspace restored a session that already matches
+    /// the entry we'd create, so spawning another would leave a duplicate
+    /// (e.g. a restored terminal plus a freshly created one).
+    fn should_reuse_restored_entry(
+        &self,
+        workspace: &Entity<Workspace>,
+        target: NewEntryTarget,
+        cx: &App,
+    ) -> bool {
+        let wants_terminal = match target {
+            NewEntryTarget::Terminal => true,
+            NewEntryTarget::LastCreatedKind => {
+                self.should_create_terminal_for_workspace(workspace, cx)
+            }
+        };
+
+        wants_terminal && workspace_has_active_terminal(workspace, cx)
+    }
+
+    /// Activates a freshly-opened workspace whose panel already restored the
+    /// entry we would otherwise have created, syncing the sidebar's active
+    /// entry to the restored session instead of spawning a duplicate.
+    fn reuse_restored_workspace_entry(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.activate(workspace.clone(), None, window, cx);
+            });
+        }
+        workspace.update(cx, |workspace, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        self.sync_active_entry_from_active_workspace(cx);
     }
 
     fn create_new_entry(
