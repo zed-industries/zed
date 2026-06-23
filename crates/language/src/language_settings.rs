@@ -474,6 +474,8 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
+    /// Settings specific to Deepseek.
+    pub deepseek: Option<OpenAiCompatibleEditPredictionSettings>,
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
@@ -847,6 +849,20 @@ impl settings::Settings for AllLanguageSettings {
             api_url: codestral.api_url,
         };
 
+        let deepseek = edit_predictions.deepseek.unwrap_or_default();
+        let deepseek_settings = deepseek
+            .model
+            .filter(|model| !model.is_empty())
+            .zip(deepseek.api_url.filter(|api_url| !api_url.is_empty()))
+            .map(|(model, api_url)| OpenAiCompatibleEditPredictionSettings {
+                model,
+                max_output_tokens: deepseek.max_output_tokens.unwrap_or(128),
+                api_url: api_url.into(),
+                // Deepseek sends the prefix and suffix directly, so no FIM
+                // prompt format is used; `Infer` is a harmless placeholder.
+                prompt_format: EditPredictionPromptFormat::Infer,
+            });
+
         let ollama = edit_predictions.ollama.unwrap();
         let ollama_settings = ollama
             .model
@@ -908,6 +924,7 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
+                deepseek: deepseek_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),

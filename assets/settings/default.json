@@ -1753,6 +1753,11 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
+    "deepseek": {
+      "api_url": "https://api.deepseek.com",
+      "model": "deepseek-chat",
+      "max_output_tokens": 128,
+    },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
