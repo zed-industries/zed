@@ -116,8 +116,11 @@ message CopyProjectEntry {
 message DeleteProjectEntry {
   uint64 project_id = 1;
   uint64 entry_id = 2;
-  // TODO! (yara) depracate in many week
-  bool use_trash = 3;
+  // Deprecated in favor of `TrashProjectEntry`.
+  //
+  // TODO(yara|dino): once all supported peers use `TrashProjectEntry`, remove
+  // this field and replace it with `reserved 3;` so the tag is never reused.
+  bool use_trash = 3 [deprecated = true];
 }
 
 message TrashProjectEntry {
@@ -153,7 +156,7 @@ message ExpandAllForProjectEntryResponse {
 // `CreateProjectEntryResponse`, `CopyProjectEntryResponse`,
 // `DeleteProjectEntryResponse`, `RenameProjectEntryResponse`) for consistency
 // with the dedicated `TrashProjectEntryResponse` and
-// `RestoreProjectEntryResponse` responses below. 
+// `RestoreProjectEntryResponse` responses below.
 // This generic message is shared by `CreateProjectEntry`, `CopyProjectEntry`,
 // `DeleteProjectEntry`, and `RenameProjectEntry`, so `entry` doesn't fit all of
 // them. For example, `DeleteProjectEntry` notably never populates it.
