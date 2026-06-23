@@ -72,7 +72,7 @@ impl EditorPreview {
                     .id("picker-preview-editor")
                     .absolute()
                     .inset_0()
-                    .occlude()
+                    .block_mouse_except_scroll()
                     .on_click(|_, window, cx| {
                         window.dispatch_action(ToMultiBuffer.boxed_clone(), cx);
                     }),
