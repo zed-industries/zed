@@ -7928,12 +7928,14 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
+        let has_git_access = details.allow_git_access;
         let command = details
             .command
             .as_deref()
             .filter(|command| !command.is_empty());
         if details.write_paths.is_empty()
             && !has_network
+            && !has_git_access
             && command.is_none()
             && details.reason.is_empty()
         {
@@ -8044,6 +8046,34 @@ impl ThreadView {
                 })
         });
 
+        let git_access_section = has_git_access.then(|| {
+            v_flex()
+                .p_1()
+                .gap_0p5()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::GitBranch)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                        .child(
+                            Label::new("Git metadata access")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    Label::new(
+                        "Allows reading and writing .git directories, which may include repositories outside this project, and exposes the inherited SSH agent for commit signing.",
+                    )
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+                )
+                .into_any_element()
+        });
+
         if details.write_paths.is_empty() {
             return v_flex()
                 .border_t_1()
@@ -8054,6 +8084,7 @@ impl ThreadView {
                     ))
                 })
                 .children(network_section)
+                .children(git_access_section)
                 .into_any_element();
         }
 
@@ -8072,6 +8103,7 @@ impl ThreadView {
                 ))
             })
             .children(network_section)
+            .children(git_access_section)
             .child(
                 h_flex()
                     .id(("sandbox-authorization-details-header", entry_ix))

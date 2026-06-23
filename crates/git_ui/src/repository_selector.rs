@@ -64,9 +64,7 @@ impl RepositorySelector {
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
-                .minimum_results_width(width)
-                .height(rems(20.))
-                .no_vertical_padding()
+                .initial_width(width)
                 .show_scrollbar(true)
         });
 

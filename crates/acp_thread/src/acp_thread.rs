@@ -60,6 +60,45 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
+/// Resolve the socket path(s) the sandbox may allow for the inherited
+/// `SSH_AUTH_SOCK`. The value is validated against the resolved directory
+/// environment the child command will actually run with, not Zed's own process
+/// environment, since the two can differ (direnv, a login shell, etc.).
+///
+/// Returns both the path as the child will pass it to `connect()` and its
+/// canonical form, because the two diverge when `SSH_AUTH_SOCK` points through
+/// a symlink (e.g. `/tmp` -> `/private/tmp` on macOS) and it isn't guaranteed
+/// which form Seatbelt matches the `remote unix-socket` literal against.
+#[cfg(unix)]
+fn trusted_ssh_auth_socket_paths(path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    let path = path.into();
+    if !path.is_absolute() {
+        return Vec::new();
+    }
+
+    let Ok(canonical) = path.canonicalize() else {
+        return Vec::new();
+    };
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return Vec::new();
+    };
+    use std::os::unix::fs::FileTypeExt as _;
+    if !metadata.file_type().is_socket() {
+        return Vec::new();
+    }
+
+    if canonical == path {
+        vec![canonical]
+    } else {
+        vec![path, canonical]
+    }
+}
+
+#[cfg(not(unix))]
+fn trusted_ssh_auth_socket_paths(_path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
@@ -175,6 +214,8 @@ pub struct SandboxAuthorizationDetails {
     /// builds still render the network request.
     #[serde(default, alias = "network")]
     pub network_all_hosts: bool,
+    #[serde(default)]
+    pub allow_git_access: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
     #[serde(default)]
@@ -3489,6 +3530,21 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let mut env = env.await;
+                let mut sandbox_wrap = sandbox_wrap;
+                // Only expose the inherited SSH agent socket once Git access has
+                // been approved. The workflow that needs it (commit signing)
+                // already requires writing to `.git`, so gating it here keeps the
+                // agent socket out of reach of ordinary sandboxed commands.
+                // Validate the value the child will actually connect to, taken
+                // from its resolved environment rather than Zed's own.
+                if let Some(sandbox_wrap) = &mut sandbox_wrap
+                    && sandbox_wrap.allow_git_access
+                    && let Some(ssh_auth_socket) = env.get("SSH_AUTH_SOCK")
+                {
+                    sandbox_wrap
+                        .allowed_unix_socket_paths
+                        .extend(trusted_ssh_auth_socket_paths(ssh_auth_socket.clone()));
+                }
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3896,6 +3952,34 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_trusted_ssh_auth_socket_path_requires_socket() {
+        use std::os::unix::net::UnixListener;
+
+        // Bind under `/tmp`: the default temp dir on macOS (`/var/folders/...`)
+        // overflows the `sun_path` limit for Unix sockets. `TempDir` still
+        // cleans up on drop, even if the test panics.
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-sock-")
+            .tempdir_in("/tmp")
+            .expect("temporary socket directory should be created");
+        let socket_path = temp_dir.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
+
+        // A real socket resolves to (at least) its canonical path.
+        let canonical = socket_path
+            .canonicalize()
+            .expect("socket path should canonicalize");
+        assert!(trusted_ssh_auth_socket_paths(socket_path).contains(&canonical));
+
+        // A directory is not a socket, and a relative path is rejected outright.
+        assert!(trusted_ssh_auth_socket_paths(temp_dir.path().to_path_buf()).is_empty());
+        assert!(trusted_ssh_auth_socket_paths("relative.sock").is_empty());
+
+        drop(listener);
     }
 
     #[test]

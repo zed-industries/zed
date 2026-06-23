@@ -35,9 +35,10 @@ use util::get_default_system_shell_preferring_bash;
 #[derive(Clone, Debug, Default)]
 pub struct SandboxWrap {
     /// Directory subtrees the sandbox should allow writes to. Pass the
-    /// project's worktree paths (and any per-command scratch directory)
-    /// here — *not* the command's working directory, which is model-
-    /// controlled and would let the model widen its own writable scope.
+    /// project's worktree paths, Git metadata directories only when Git access
+    /// has been approved, and any per-command scratch directory here — *not*
+    /// the command's working directory, which is model-controlled and would
+    /// let the model widen its own writable scope.
     pub writable_paths: Vec<PathBuf>,
     /// Additional write subtrees the user explicitly approved for this
     /// command (per-path write grants). Kept separate from `writable_paths`
@@ -45,6 +46,17 @@ pub struct SandboxWrap {
     /// model-requested paths that passed a user-approval prompt. They are
     /// merged with `writable_paths` when generating the sandbox policy.
     pub extra_write_paths: Vec<PathBuf>,
+    /// Paths whose file data reads and writes should be blocked even when they
+    /// are inside a writable project directory. Metadata reads remain allowed.
+    pub protected_paths: Vec<PathBuf>,
+    /// Unix domain sockets the sandbox should allow local IPC to. These come
+    /// from trusted process environment, not from the model-controlled command.
+    /// This does not permit IP networking or sending packets to other machines.
+    pub allowed_unix_socket_paths: Vec<PathBuf>,
+    /// Whether the user approved Git metadata access for this command. When set,
+    /// `.git` directories are writable (they are absent from `protected_paths`)
+    /// and the inherited SSH agent socket may be exposed for commit signing.
+    pub allow_git_access: bool,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
@@ -143,21 +155,37 @@ impl SandboxWrap {
                 .chain(self.extra_write_paths.iter())
                 .map(|path| path.as_path())
                 .collect();
+            let protected: Vec<&std::path::Path> = self
+                .protected_paths
+                .iter()
+                .map(|path| path.as_path())
+                .collect();
+            let allowed_unix_sockets: Vec<&std::path::Path> = self
+                .allowed_unix_socket_paths
+                .iter()
+                .map(|path| path.as_path())
+                .collect();
             let allow_network = !matches!(self.network, SandboxNetworkAccess::None);
             let permissions = sandbox::SandboxPermissions {
                 allow_network,
                 allow_fs_write: self.allow_fs_write,
             };
-            sandbox::linux_bubblewrap::check_can_create_sandbox(&writable, permissions, cwd)
-                .map_err(|status| match status {
-                    LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
-                    LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
-                    LauncherStatus::SandboxProbeFailed => LinuxWslSandboxError::SandboxProbeFailed,
-                    // `Success` never appears in the `Err` arm; map defensively.
-                    LauncherStatus::Success => {
-                        LinuxWslSandboxError::Other(status.describe().to_string())
-                    }
-                })
+            sandbox::linux_bubblewrap::check_can_create_sandbox(
+                &writable,
+                &protected,
+                &allowed_unix_sockets,
+                permissions,
+                cwd,
+            )
+            .map_err(|status| match status {
+                LauncherStatus::BwrapNotFound => LinuxWslSandboxError::BwrapNotFound,
+                LauncherStatus::SetuidRejected => LinuxWslSandboxError::SetuidRejected,
+                LauncherStatus::SandboxProbeFailed => LinuxWslSandboxError::SandboxProbeFailed,
+                // `Success` never appears in the `Err` arm; map defensively.
+                LauncherStatus::Success => {
+                    LinuxWslSandboxError::Other(status.describe().to_string())
+                }
+            })
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -252,6 +280,16 @@ pub(crate) fn apply_sandbox_wrap(
             .chain(sandbox_wrap.extra_write_paths.iter())
             .map(|p| p.as_path())
             .collect();
+        let protected: Vec<&std::path::Path> = sandbox_wrap
+            .protected_paths
+            .iter()
+            .map(|path| path.as_path())
+            .collect();
+        let allowed_unix_sockets: Vec<&std::path::Path> = sandbox_wrap
+            .allowed_unix_socket_paths
+            .iter()
+            .map(|path| path.as_path())
+            .collect();
         let network = match network_policy {
             NetworkPolicy::Proxied(port) => NetworkAccess::LocalhostPort(port),
             NetworkPolicy::Unrestricted => NetworkAccess::All,
@@ -261,8 +299,14 @@ pub(crate) fn apply_sandbox_wrap(
             network,
             allow_fs_write: sandbox_wrap.allow_fs_write,
         };
-        let (new_program, new_args, config_file) =
-            sandbox::macos_seatbelt::wrap_invocation(&program, &args, &writable, permissions)?;
+        let (new_program, new_args, config_file) = sandbox::macos_seatbelt::wrap_invocation(
+            &program,
+            &args,
+            &writable,
+            &protected,
+            &allowed_unix_sockets,
+            permissions,
+        )?;
         Ok((
             new_program,
             new_args,
@@ -278,6 +322,16 @@ pub(crate) fn apply_sandbox_wrap(
             .writable_paths
             .iter()
             .chain(sandbox_wrap.extra_write_paths.iter())
+            .map(|p| p.as_path())
+            .collect();
+        let protected: Vec<&std::path::Path> = sandbox_wrap
+            .protected_paths
+            .iter()
+            .map(|p| p.as_path())
+            .collect();
+        let allowed_unix_sockets: Vec<&std::path::Path> = sandbox_wrap
+            .allowed_unix_socket_paths
+            .iter()
             .map(|p| p.as_path())
             .collect();
         let allow_network = match network_policy {
@@ -318,6 +372,8 @@ pub(crate) fn apply_sandbox_wrap(
             Some(channel.name()),
             permissions,
             &writable,
+            &protected,
+            &allowed_unix_sockets,
             cwd,
             &program,
             &args,

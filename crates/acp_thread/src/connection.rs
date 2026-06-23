@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
 use gpui::{Entity, SharedString, Task};
-use language_model::LanguageModelProviderId;
+use language_model::{DisabledReason, LanguageModelProviderId};
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc};
@@ -493,6 +493,7 @@ pub struct AgentModelInfo {
     pub icon: Option<AgentModelIcon>,
     pub is_latest: bool,
     pub cost: Option<SharedString>,
+    pub disabled: Option<DisabledReason>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1064,6 +1065,7 @@ mod test_support {
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
                     is_latest: false,
                     cost: None,
+                    disabled: None,
                 })),
             }
         }

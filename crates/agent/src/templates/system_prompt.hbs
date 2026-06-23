@@ -158,13 +158,13 @@ The current project contains the following root directories:
 
 The `terminal` tool runs commands inside a sandbox with these permissions:
 
-- Reads: any path on the filesystem is readable.
+- Reads: any path on the filesystem is readable, except that file contents under `.git` directories are blocked by default (their metadata stays visible). See `allow_git_access` below.
 {{#if is_linux}}
 - Writes: `/tmp` is writable but is cleared between `terminal` calls{{#if worktrees}}. These project directories are also writable and persist across calls:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
-  Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
+  `.git` directories are not writable by default. Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{else}}
 {{#if is_windows}}
 - Execution: commands run inside WSL under Bubblewrap. Native Windows project paths are routed through WSL's `/mnt/<drive>/...` filesystem view.
@@ -178,7 +178,7 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
-  Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
+  `.git` directories are not writable by default. Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{/if}}
 {{/if}}
 - Network: outbound network access is blocked.
@@ -208,6 +208,7 @@ You can request elevated permissions on individual `terminal` calls:
 {{/if}}
 {{/if}}
 - `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write.
+- `allow_git_access: true` — lift the default block on Git metadata, allowing reads and writes of file contents under `.git` directories (including worktree metadata that may live outside the project directories). Any command that touches `.git` needs this, including ones that invoke Git only incidentally (e.g. build scripts calling `git describe`/`git rev-parse`, or commit hooks). When approved, the inherited SSH agent socket also becomes reachable for SSH-based Git commit signing (local Unix-socket IPC only — it does not allow packet-sending network access); GPG commit signing via gpg-agent is not available in the sandbox.
 - `allow_fs_write_all: true` — allow unrestricted filesystem writes. Only use this when the specific paths can't be enumerated up front.
 - `unsandboxed: true` — run the command with no sandbox at all. Use only when none of the above suffice.
 

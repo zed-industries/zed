@@ -131,6 +131,27 @@ pub(crate) fn render_sandbox_settings_page(
         .child(
             v_flex()
                 .gap_3()
+                .child(SettingsSectionHeader::new("Git").no_padding(true))
+                .child(
+                    SwitchField::new(
+                        "sandbox-allow-git-access",
+                        Some("Allow Git Metadata Access"),
+                        Some(
+                            "Let sandboxed commands access protected Git metadata, including .git directories and linked worktree metadata, without prompting."
+                                .into(),
+                        ),
+                        permissions.allow_git_access,
+                        move |state, _window, cx| {
+                            set_allow_git_access(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_3()
                 .child(SettingsSectionHeader::new("Filesystem").no_padding(true))
                 .child(
                     SwitchField::new(
@@ -419,6 +440,12 @@ fn set_sandbox_enabled(value: bool, cx: &mut App) {
 fn set_allow_all_hosts(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_all_hosts = Some(value);
+    });
+}
+
+fn set_allow_git_access(value: bool, cx: &mut App) {
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.allow_git_access = Some(value);
     });
 }
 
