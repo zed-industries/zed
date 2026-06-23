@@ -8050,7 +8050,9 @@ impl ThreadView {
                 .border_color(self.tool_card_border_color(cx))
                 .when_some(command, |this, command| {
                     this.child(Self::render_sandbox_authorization_command(
-                        entry_ix, command, cx,
+                        tool_call_id,
+                        command,
+                        cx,
                     ))
                 })
                 .children(network_section)
@@ -8068,7 +8070,9 @@ impl ThreadView {
             .border_color(self.tool_card_border_color(cx))
             .when_some(command, |this, command| {
                 this.child(Self::render_sandbox_authorization_command(
-                    entry_ix, command, cx,
+                    tool_call_id,
+                    command,
+                    cx,
                 ))
             })
             .children(network_section)
@@ -8232,8 +8236,20 @@ impl ThreadView {
             .into_any_element()
     }
 
-    fn render_sandbox_authorization_command(entry_ix: usize, command: &str, cx: &App) -> Div {
-        let group = SharedString::from(format!("sandbox-authorization-command-{entry_ix}"));
+    fn render_sandbox_authorization_command(
+        tool_call_id: &acp::ToolCallId,
+        command: &str,
+        cx: &App,
+    ) -> Div {
+        // Key element ids on the globally-unique tool call id rather than the
+        // entry index. Subagent entries are rendered inline into the parent
+        // view's element tree (see `render_subagent_expanded_content`), so an
+        // index-based id can collide with a parent tool call at the same index.
+        let group = SharedString::from(format!("sandbox-authorization-command-{}", tool_call_id.0));
+        let scroll_id =
+            ElementId::NamedChild(Arc::new(ElementId::Name(group.clone())), "scroll".into());
+        let copy_id =
+            ElementId::NamedChild(Arc::new(ElementId::Name(group.clone())), "copy".into());
         let command = SharedString::from(command.to_string());
 
         v_flex()
@@ -8249,7 +8265,7 @@ impl ThreadView {
             )
             .child(
                 div()
-                    .id(("sandbox-authorization-command-scroll", entry_ix))
+                    .id(scroll_id)
                     .flex()
                     .flex_1()
                     .w_full()
@@ -8268,7 +8284,7 @@ impl ThreadView {
             )
             .child(
                 div().absolute().top_1().right_1().child(
-                    CopyButton::new((group.clone(), entry_ix), command)
+                    CopyButton::new(copy_id, command)
                         .tooltip_label("Copy Command")
                         .visible_on_hover(group),
                 ),
@@ -9887,7 +9903,13 @@ impl ThreadView {
                 div()
                     .pb_1()
                     .min_h_0()
-                    .id(format!("subagent-entries-{}", session_id))
+                    // Include the tool call id so the same subagent session
+                    // rendered in multiple parent cards gets distinct element
+                    // ids for its inlined entries (avoids duplicate a11y ids).
+                    .id(format!(
+                        "subagent-entries-{}-{}",
+                        session_id, tool_call.id.0
+                    ))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )

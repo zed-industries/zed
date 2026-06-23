@@ -20,13 +20,12 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod imp {
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::time::Duration;
 
     use anyhow::{Context as _, Result, bail};
-    use sandbox::linux_bubblewrap::{
-        LauncherStatus, NetworkAccess, SandboxPermissions, check_can_create_sandbox,
-        wrap_invocation,
+    use sandbox::{
+        CommandAndArgs, NetworkAccess, SandboxConfiguration, SandboxError, SandboxPermissions,
+        run_sandboxed,
     };
 
     /// Internal subcommand: attempt an outbound TCP connection to the given
@@ -89,6 +88,14 @@ mod imp {
         Ok(())
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum LauncherStatus {
+        Success,
+        BwrapNotFound,
+        SetuidRejected,
+        SandboxProbeFailed,
+    }
+
     /// The outcome of driving the sandbox wrapper once.
     struct LaunchResult {
         /// Whether sandbox preparation succeeded.
@@ -107,41 +114,44 @@ mod imp {
         cwd: Option<&Path>,
         permissions: SandboxPermissions,
     ) -> Result<LaunchResult> {
-        if let Err(status) = check_can_create_sandbox(writable_dirs, permissions, cwd) {
+        let sandbox = SandboxConfiguration {
+            writable_paths: writable_dirs
+                .iter()
+                .map(|path| path.to_path_buf())
+                .collect(),
+            permissions,
+        };
+        if let Err(error) = sandbox.can_create_sandbox(cwd) {
             return Ok(LaunchResult {
-                status,
+                status: launcher_status(error)?,
                 command_succeeded: false,
             });
         }
 
-        let bridge_program =
-            std::env::current_exe().context("failed to resolve current executable")?;
-        let bridge_program = bridge_program
-            .to_str()
-            .context("current executable path is not valid UTF-8")?;
-        let (sandbox_program, sandbox_args) = wrap_invocation(
-            bridge_program,
-            permissions,
-            writable_dirs,
-            cwd,
-            program,
-            args,
-            None,
+        let output = run_sandboxed(
+            &sandbox,
+            &CommandAndArgs {
+                program: program.to_string(),
+                args: args.to_vec(),
+                env: Default::default(),
+                cwd: cwd.map(Path::to_path_buf),
+            },
         )
-        .context("failed to build sandbox invocation")?;
-
-        let mut child = Command::new(&sandbox_program)
-            .args(&sandbox_args)
-            .spawn()
-            .context("failed to spawn sandboxed command")?;
-        let exit = child
-            .wait()
-            .context("failed to wait for sandboxed command")?;
+        .context("failed to run sandboxed command")?;
 
         Ok(LaunchResult {
             status: LauncherStatus::Success,
-            command_succeeded: exit.success(),
+            command_succeeded: output.status.success(),
         })
+    }
+
+    fn launcher_status(error: SandboxError) -> Result<LauncherStatus> {
+        match error {
+            SandboxError::BwrapNotFound => Ok(LauncherStatus::BwrapNotFound),
+            SandboxError::BwrapSetuidRejected => Ok(LauncherStatus::SetuidRejected),
+            SandboxError::SandboxProbeFailed => Ok(LauncherStatus::SandboxProbeFailed),
+            error => bail!("unexpected sandbox setup error: {error}"),
+        }
     }
 
     /// Run `sh -c <script>` inside the sandbox and report whether it succeeded.
@@ -274,7 +284,7 @@ mod imp {
         let write_writable = run_in_sandbox(
             &format!("echo zed > {}", shell_quote(&writable_file)),
             &[writable],
-            default,
+            default.clone(),
         )?;
         checks.check(
             "GRANT: write into a writable dir succeeds",
@@ -295,7 +305,7 @@ mod imp {
         let write_forbidden = run_in_sandbox(
             &format!("echo zed > {}", shell_quote(&forbidden_file)),
             &[],
-            default,
+            default.clone(),
         )?;
         checks.check(
             "RESTRICT: write outside writable dirs is denied",
@@ -313,7 +323,7 @@ mod imp {
         let read_host = run_in_sandbox(
             &format!("cat {}", shell_quote(&readable_file)),
             &[],
-            default,
+            default.clone(),
         )?;
         checks.check(
             "GRANT: host files outside writable dirs are still readable",
@@ -326,7 +336,7 @@ mod imp {
         let write_tmp = run_in_sandbox(
             &format!("echo zed > {}", shell_quote(&tmp_path)),
             &[],
-            default,
+            default.clone(),
         )?;
         checks.check(
             "GRANT: writing to /tmp succeeds",
@@ -346,7 +356,7 @@ mod imp {
                 &[SUBCOMMAND_NET_CHECK.to_string(), echo_address.to_string()],
                 &[],
                 None,
-                default,
+                default.clone(),
             )?;
             checks.check(
                 "RESTRICT: outbound TCP is blocked when network is denied",
@@ -375,7 +385,7 @@ mod imp {
             &[SUBCOMMAND_UNIX_CHECK.to_string()],
             &[],
             None,
-            default,
+            default.clone(),
         )?;
         checks.check(
             "GRANT: AF_UNIX sockets still work while network is denied",
@@ -388,7 +398,7 @@ mod imp {
         let write_escape = run_in_sandbox(
             &format!("echo zed > {}", shell_quote(&escape_file)),
             &[],
-            fs_write_all,
+            fs_write_all.clone(),
         )?;
         checks.check(
             "GRANT: allow_fs_write lets the command write outside writable dirs",
@@ -411,7 +421,7 @@ mod imp {
                 &[SUBCOMMAND_NET_CHECK.to_string(), echo_address.to_string()],
                 &[],
                 None,
-                fs_write_all,
+                fs_write_all.clone(),
             )?;
             checks.check(
                 "RESTRICT: allow_fs_write does not also grant network access",

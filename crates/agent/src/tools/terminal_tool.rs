@@ -116,11 +116,10 @@ pub struct SandboxedTerminalToolInput {
     )]
     #[cfg_attr(
         target_os = "windows",
-        doc = "\nNOTE: on Windows the sandbox cannot restrict network access to \
-        specific hosts. Any value here grants the command unrestricted outbound network \
-        access (exactly like `allow_all_hosts`), and the user is asked to approve access \
-        to all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
-        directly when per-host restriction isn't available."
+        doc = "\nNOTE: on Windows the sandbox cannot currently restrict network \
+        access to specific hosts. Do not set `allow_hosts` on Windows; request \
+        `allow_all_hosts: true` if the command needs network access, or omit \
+        network permissions entirely."
     )]
     #[serde(default)]
     pub allow_hosts: Vec<String>,
@@ -389,7 +388,7 @@ async fn run_terminal_tool(
     // the model's responsibility, so surface it back as a tool-call error
     // (the model retries) rather than letting the user approve a request that
     // then fails.
-    let mut network = if sandboxing && !want_unsandboxed {
+    let network = if sandboxing && !want_unsandboxed {
         build_network_request(&sandbox_input)?
     } else {
         NetworkRequest::None
@@ -397,14 +396,15 @@ async fn run_terminal_tool(
 
     // Host-specific network access is enforced by a loopback proxy that
     // confines the sandbox to its port. A non-local project's terminal can't
-    // reach the proxy, and unsupported platforms can only allow/deny the
-    // network wholesale. Whenever per-host restriction isn't enforceable, widen
-    // the request to "any host" before prompting, so the approval the user
-    // grants matches what's actually enforced.
+    // reach the proxy, and Windows does not support this path yet. Reject the
+    // narrower request rather than silently widening it to all-host access.
     let can_restrict_to_hosts =
         (cfg!(target_os = "macos") || cfg!(target_os = "linux")) && is_local_project;
     if !can_restrict_to_hosts && matches!(network, NetworkRequest::Hosts(_)) {
-        network = NetworkRequest::AnyHost;
+        return Err(
+            "This platform or project cannot restrict sandboxed network access to specific hosts. Use `allow_all_hosts: true` if the command needs network access."
+                .to_string(),
+        );
     }
 
     let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
@@ -509,6 +509,12 @@ async fn run_terminal_tool(
             None
         } else {
             let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
+            if !can_restrict_to_hosts && matches!(effective.network, NetworkRequest::Hosts(_)) {
+                return Err(
+                    "This platform or project has a saved host-specific network grant, but cannot enforce host-specific sandboxed network access. Request `allow_all_hosts: true` if the command needs network access."
+                        .to_string(),
+                );
+            }
             let writable_paths: Vec<PathBuf> = cx.update(|cx| {
                 project
                     .read(cx)
@@ -649,8 +655,11 @@ async fn run_terminal_tool(
             // already running unsandboxed — goes straight back to the model.
             let Some(message) = effective_wrap.as_ref().and_then(|_| {
                 error
-                    .downcast_ref::<sandbox::windows_wsl::WslSandboxUnavailable>()
-                    .map(|unavailable| unavailable.message().to_string())
+                    .downcast_ref::<sandbox::SandboxError>()
+                    .and_then(|error| match error {
+                        sandbox::SandboxError::WslUnavailable(message) => Some(message.clone()),
+                        _ => None,
+                    })
             }) else {
                 return Err(format!("{error:#}"));
             };
@@ -915,20 +924,10 @@ fn network_request_to_sandbox_network_access(
                     hosts.iter().cloned(),
                 ))
             }
-            // Windows/WSL can only toggle the network wholesale, so a
-            // host-specific grant becomes full network access there.
-            // `run_terminal_tool` widens once-requests to `AnyHost` up front so
-            // the approval prompt matches — this guards the persistent-grant
-            // path (host grants restored from settings).
-            #[cfg(target_os = "windows")]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             {
                 let _ = hosts;
-                acp_thread::SandboxNetworkAccess::All
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-            {
-                let _ = hosts;
-                acp_thread::SandboxNetworkAccess::All
+                acp_thread::SandboxNetworkAccess::None
             }
         }
     }
@@ -3407,8 +3406,7 @@ mod tests {
             other => panic!("expected unrestricted network access, got {other:?}"),
         }
 
-        // macOS and Linux confine host requests through the allowlist proxy;
-        // Windows/WSL still widens them to wholesale network access.
+        // macOS and Linux confine host requests through the allowlist proxy.
         match network_request_to_sandbox_network_access(&host_request(&["github.com"])) {
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             acp_thread::SandboxNetworkAccess::Restricted(allowlist) => {
@@ -3416,7 +3414,7 @@ mod tests {
                 assert!(!allowlist.allows("example.com"));
             }
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            acp_thread::SandboxNetworkAccess::All => {}
+            acp_thread::SandboxNetworkAccess::None => {}
             other => panic!("unexpected network access for host request, got {other:?}"),
         }
     }

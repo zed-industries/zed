@@ -3499,26 +3499,25 @@ impl AcpThread {
                 // Spawn the network proxy (if the wrap requests network) before
                 // generating the sandbox policy, since the policy must pin the
                 // child to the proxy's loopback port. This also injects the
-                // child's proxy env vars. On Windows the WSL sandbox can only
-                // toggle the network wholesale, so this never spawns a proxy
-                // there, but it still resolves the allow/deny `network_policy`.
+                // child's proxy env vars. On Windows, restricted host access is
+                // not supported yet, so proxy setup rejects restricted requests
+                // before command preparation.
                 let (proxy_handle, network_policy) =
                     setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
 
                 #[cfg(target_os = "windows")]
                 let (task_command, task_args, sandbox_config, spawn_cwd) =
-                    if let Some(sandbox_wrap) = sandbox_wrap {
-                        // Run the wrap on a background task: it probes WSL
-                        // (possibly booting its VM) and stats UNC paths,
-                        // either of which can take seconds and must not block
-                        // the foreground thread this task runs on. Bound it
-                        // with a timeout so a wedged `wsl.exe` can't stall
-                        // this command forever; on timeout, dropping the task
-                        // cancels the wrap future, which kills any in-flight
-                        // `wsl.exe` child (see `windows_wsl::wrap_invocation`).
-                        let wrap = cx.background_spawn(apply_windows_wsl_sandbox_wrap(
-                            command.clone(),
-                            args.clone(),
+                    if sandbox_wrap.is_some() {
+                        let (task_command, task_args) = task::ShellBuilder::new(
+                            &Shell::Program("/bin/sh".to_string()),
+                            false,
+                        )
+                        .non_interactive()
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
+                        let wrap = cx.background_spawn(prepare_sandbox_wrap(
+                            task_command,
+                            task_args,
                             cwd.clone(),
                             sandbox_wrap,
                             network_policy,
@@ -3527,15 +3526,9 @@ impl AcpThread {
                         let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
                         let (task_command, task_args, sandbox_config) = futures::select_biased! {
                             result = wrap.fuse() => result?,
-                            // A wedged `wsl.exe` is an environment failure, so
-                            // surface it as `WslSandboxUnavailable` (like the
-                            // probe failures inside `wrap_invocation`) so the
-                            // agent offers the run-unsandboxed fallback rather
-                            // than returning a bad request to the model.
                             _ = timeout.fuse() => return Err(anyhow::Error::new(
-                                sandbox::windows_wsl::WslSandboxUnavailable::new(format!(
-                                    "WSL did not respond within {} seconds while preparing the \
-                                     sandboxed command",
+                                sandbox::SandboxError::WslUnavailable(format!(
+                                    "WSL did not respond within {} seconds while preparing the sandboxed command",
                                     WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
                                 )),
                             )),
@@ -3545,31 +3538,7 @@ impl AcpThread {
                         // No sandbox wrap means we're running unsandboxed, and
                         // on Windows that deliberately changes the shell: the
                         // sandboxed path runs under WSL's Linux bash, but this
-                        // fallback uses the host's `shell` (resolved above via
-                        // `get_default_system_shell_preferring_bash`) against
-                        // the native cwd. That resolution prefers Git Bash (or
-                        // scoop's bash), only dropping to the native Windows
-                        // shell (PowerShell/cmd) when no bash is installed — so
-                        // the interpreter usually stays bash-compatible, but its
-                        // path conventions differ from WSL's (e.g. `/c/...` or
-                        // native `C:\...` rather than `/mnt/c/...`). This is
-                        // unlike Linux/macOS, where the unsandboxed path (the
-                        // `#[cfg(not(target_os = "windows"))]` block below)
-                        // reuses the exact same shell and merely omits the bwrap
-                        // wrapper, so shell semantics are preserved untouched.
-                        //
-                        // The shell switch is intentional on Windows. The only
-                        // ways to reach this branch are: the model asking for
-                        // `unsandboxed: true` (often to run a Windows program),
-                        // the user choosing "run unsandboxed" after a sandbox-
-                        // creation failure, the `allow_unsandboxed` setting, or a
-                        // per-thread fallback grant. For the fallback cases the
-                        // command isn't one the model chose to run unsandboxed,
-                        // so the terminal tool's `sandbox_not_applied` note
-                        // warns it that the command ran without a sandbox *and*,
-                        // on Windows, that the shell and its path conventions
-                        // changed too (see `sandbox_note` in the terminal tool),
-                        // so it can adapt a command written for WSL.
+                        // fallback uses the host's `shell` against the native cwd.
                         let (task_command, task_args) =
                             ShellBuilder::new(&Shell::Program(shell), is_windows)
                                 .redirect_stdin_to_dev_null()
@@ -3577,25 +3546,21 @@ impl AcpThread {
                         (task_command, task_args, None, cwd.clone())
                     };
 
-                // On Linux/macOS the same shell (`/bin/sh`) is used whether or
-                // not we sandbox: `ShellBuilder` builds the command, and
-                // `apply_sandbox_wrap` either wraps it in bwrap (`Some`) or
-                // returns it untouched (`None`). Either way the interpreter is
-                // identical, so the unsandboxed fallback keeps shell semantics
-                // intact — unlike Windows, which falls back to the host shell.
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, sandbox_config, spawn_cwd) = {
                     let (task_command, task_args) =
                         ShellBuilder::new(&Shell::Program(shell), is_windows)
                             .redirect_stdin_to_dev_null()
                             .build(Some(command.clone()), &args);
-                    let (task_command, task_args, sandbox_config) = apply_sandbox_wrap(
+                    let (task_command, task_args, sandbox_config) = prepare_sandbox_wrap(
                         task_command,
                         task_args,
-                        cwd.as_deref(),
+                        cwd.clone(),
                         sandbox_wrap,
                         network_policy,
-                    )?;
+                        env.clone(),
+                    )
+                    .await?;
                     (task_command, task_args, sandbox_config, cwd.clone())
                 };
                 let terminal = project

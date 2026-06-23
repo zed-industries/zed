@@ -32,7 +32,7 @@ use smol::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-use crate::{SandboxPermissions, WSL_SANDBOX_UNAVAILABLE_PREFIX};
+use crate::{NetworkAccess, SandboxPermissions, WSL_SANDBOX_UNAVAILABLE_PREFIX};
 
 /// Exit code the environment probe script uses to signal that `bwrap` is not
 /// installed, distinguishing that from WSL itself failing to start a shell.
@@ -740,8 +740,10 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
         "/proc".to_string(),
     ]);
 
-    if !permissions.allow_network {
-        args.push("--unshare-net".to_string());
+    match permissions.network {
+        NetworkAccess::None => args.push("--unshare-net".to_string()),
+        NetworkAccess::All => {}
+        NetworkAccess::LocalhostPort { .. } => args.push("--unshare-net".to_string()),
     }
 
     args.extend([
@@ -1134,7 +1136,7 @@ mod tests {
         let args = build_bwrap_args(
             &[],
             SandboxPermissions {
-                allow_network: true,
+                network: NetworkAccess::All,
                 allow_fs_write: false,
             },
             None,
@@ -1185,7 +1187,7 @@ mod tests {
         let args = build_bwrap_args(
             &[],
             SandboxPermissions {
-                allow_network: true,
+                network: NetworkAccess::All,
                 allow_fs_write: true,
             },
             None,

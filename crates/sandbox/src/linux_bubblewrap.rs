@@ -5,14 +5,22 @@
 //! paths to paths in the sandbox. If netowrking is restricted, we also set
 //! `--unshare-net` to disable *all* network access.
 //!
-//! When restricting network access,
+//! When restricting network access, we:
+//! - set `--unshare-net` - any requests to `example.com` will fail
+//!   - requests to `localhost` will succeed, but it will be an isolated localhost
+//!     from the host system.
+//! - create a unix socket, and mount it in the sandbox with `--bind`
+//! - run a bridge process inside the sandbox that:
+//!   - listens on `localhost:<port>` and forwards reads/writes to the socket
+//!   - then, runs the untrusted command
+//! - on the zed side, we listen to the socket and forward reads/writes to the
+//!   internal HTTP proxy
 //!
-//! Bubblewrap sets up the mount/user/pid namespaces and then runs the wrapped
-//! command inside that view. [`NetworkAccess::None`] and
-//! [`NetworkAccess::LocalhostPort`] both use `--unshare-net`, so direct network
-//! egress is structurally unavailable. Restricted networking is provided by an
-//! in-sandbox bridge process that exposes a loopback HTTP proxy port and forwards
-//! it to a bind-mounted pathname Unix socket owned by the host-side proxy.
+//! If networking is fully blocked or fully allowed, we don't bother with the
+//! proxy/socket at all (and simply set/unset `--unshare-net`).
+//!
+//! This design for networking avoids needing seccomp, a fork/exec dance, and
+//! eliminates a race condition involving BPF user notifications.
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use std::ffi::OsString;
@@ -23,10 +31,11 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 const BRIDGE_FLAG: &str = "--zed-linux-sandbox-bridge";
-const PROXY_SOCKET_SANDBOX_PATH: &str = "/tmp/zed-sandbox-proxy.sock";
+const PROXY_SOCKET_SANDBOX_PATH_PREFIX: &str = "/tmp/zed-sandbox";
 const SANDBOX_SETUP_FAILED_EXIT_CODE: i32 = 126;
 const PUMP_BUFFER_SIZE: usize = 64 * 1024;
 
@@ -61,8 +70,6 @@ pub struct SandboxPermissions {
 /// The outcome of preparing a Linux sandbox.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LauncherStatus {
-    /// The sandbox can be created.
-    Success,
     /// No usable `bwrap` binary was found on `PATH` (or bundled).
     BwrapNotFound,
     /// The only `bwrap` found is setuid-root, which we refuse to execute.
@@ -72,15 +79,9 @@ pub enum LauncherStatus {
 }
 
 impl LauncherStatus {
-    /// Whether the command can run fully sandboxed.
-    pub fn is_success(self) -> bool {
-        matches!(self, LauncherStatus::Success)
-    }
-
     /// A human-readable explanation suitable for diagnostics.
     pub fn describe(self) -> &'static str {
         match self {
-            LauncherStatus::Success => "the sandbox was created",
             LauncherStatus::BwrapNotFound => "no usable `bwrap` binary was found on PATH",
             LauncherStatus::SetuidRejected => {
                 "the only available `bwrap` is setuid-root, which Zed refuses to run"
@@ -172,13 +173,32 @@ fn probe_bwrap(bwrap: &Path, bwrap_args: &[String]) -> bool {
 /// before the trailing `-- <command>`) for the given policy.
 ///
 /// `proxy_socket_path` is the host pathname Unix socket used for
-/// [`NetworkAccess::LocalhostPort`]. It is bind-mounted to a stable path inside
+/// [`NetworkAccess::LocalhostPort`]. It is bind-mounted to a unique path inside
 /// the sandbox where the bridge connects to it.
 pub fn build_bwrap_args(
     writable_directories: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
     proxy_socket_path: Option<&Path>,
+) -> Vec<String> {
+    let proxy_socket_sandbox_path = proxy_socket_path
+        .filter(|_| matches!(permissions.network, NetworkAccess::LocalhostPort(_)))
+        .map(|_| unique_proxy_socket_sandbox_path());
+    build_bwrap_args_with_proxy_socket_sandbox_path(
+        writable_directories,
+        permissions,
+        cwd,
+        proxy_socket_path,
+        proxy_socket_sandbox_path.as_deref(),
+    )
+}
+
+fn build_bwrap_args_with_proxy_socket_sandbox_path(
+    writable_directories: &[&Path],
+    permissions: SandboxPermissions,
+    cwd: Option<&Path>,
+    proxy_socket_path: Option<&Path>,
+    proxy_socket_sandbox_path: Option<&Path>,
 ) -> Vec<String> {
     let mut args = Vec::new();
 
@@ -223,9 +243,12 @@ pub fn build_bwrap_args(
         NetworkAccess::None => args.push("--unshare-net".to_string()),
         NetworkAccess::LocalhostPort(_) => {
             args.push("--unshare-net".to_string());
-            if let Some(proxy_socket_path) = proxy_socket_path {
+            if let Some((proxy_socket_path, proxy_socket_sandbox_path)) =
+                proxy_socket_path.zip(proxy_socket_sandbox_path)
+            {
                 let source = proxy_socket_path.to_string_lossy().into_owned();
-                push_bind(&mut args, "--bind", &source, PROXY_SOCKET_SANDBOX_PATH);
+                let destination = proxy_socket_sandbox_path.to_string_lossy().into_owned();
+                push_bind(&mut args, "--bind", &source, &destination);
             }
         }
         NetworkAccess::All => {}
@@ -237,6 +260,21 @@ pub fn build_bwrap_args(
     }
 
     args
+}
+
+/// A unique destination path for the proxy socket bind mount *inside* the
+/// sandbox. Each sandboxed command runs in its own mount namespace, so the path
+/// only needs to be unique enough to avoid colliding with anything a previous
+/// command in the same namespace lineage may have created; combining the pid
+/// with a monotonic counter is sufficient and keeps the path predictable for
+/// diagnostics.
+fn unique_proxy_socket_sandbox_path() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(format!(
+        "{PROXY_SOCKET_SANDBOX_PATH_PREFIX}-{}-{counter}.sock",
+        std::process::id()
+    ))
 }
 
 fn push_bind(args: &mut Vec<String>, flag: &str, source: &str, destination: &str) {
@@ -292,6 +330,9 @@ pub fn check_can_create_sandbox(
 /// `bridge_program` should be the current Zed executable. It is only used for
 /// [`NetworkAccess::LocalhostPort`], where it runs in bridge mode inside the
 /// sandbox before spawning the real command.
+///
+/// The host `proxy_socket_path` is bind-mounted to a per-invocation unique path
+/// inside the sandbox, and that same in-sandbox path is handed to the bridge.
 pub fn wrap_invocation(
     bridge_program: &str,
     permissions: SandboxPermissions,
@@ -307,14 +348,27 @@ pub fn wrap_invocation(
     }
 
     let bwrap = resolve_bwrap().map_err(|status| anyhow!(status.describe()))?;
-    let mut bwrap_args = build_bwrap_args(writable_dirs, permissions, cwd, proxy_socket_path);
+    let proxy_socket_sandbox_path = match permissions.network {
+        NetworkAccess::LocalhostPort(_) => Some(unique_proxy_socket_sandbox_path()),
+        NetworkAccess::None | NetworkAccess::All => None,
+    };
+    let mut bwrap_args = build_bwrap_args_with_proxy_socket_sandbox_path(
+        writable_dirs,
+        permissions,
+        cwd,
+        proxy_socket_path,
+        proxy_socket_sandbox_path.as_deref(),
+    );
     bwrap_args.push("--".to_string());
 
     match permissions.network {
         NetworkAccess::LocalhostPort(port) => {
+            let proxy_socket_sandbox_path = proxy_socket_sandbox_path
+                .as_ref()
+                .context("missing in-sandbox proxy socket path")?;
             bwrap_args.push(bridge_program.to_string());
             bwrap_args.push(BRIDGE_FLAG.to_string());
-            bwrap_args.push(PROXY_SOCKET_SANDBOX_PATH.to_string());
+            bwrap_args.push(proxy_socket_sandbox_path.to_string_lossy().into_owned());
             bwrap_args.push(port.to_string());
             bwrap_args.push("--".to_string());
         }
@@ -607,10 +661,9 @@ mod tests {
             Some(socket.as_path()),
         );
         assert!(restricted.iter().any(|arg| arg == "--unshare-net"));
-        assert!(windows_contains(
-            &restricted,
-            &["--bind", "/tmp/zed-proxy.sock", PROXY_SOCKET_SANDBOX_PATH]
-        ));
+        let sandbox_destination = proxy_socket_bind_destination(&restricted)
+            .expect("restricted run should bind the proxy socket into the sandbox");
+        assert!(sandbox_destination.starts_with(PROXY_SOCKET_SANDBOX_PATH_PREFIX));
     }
 
     #[test]
@@ -627,11 +680,12 @@ mod tests {
 
     #[test]
     fn test_bridge_args_round_trip() {
+        let sandbox_socket_path = "/tmp/zed-sandbox-1234-0.sock";
         let argv = bridge_argv(
             "/path/to/zed",
             vec![
                 BRIDGE_FLAG,
-                PROXY_SOCKET_SANDBOX_PATH,
+                sandbox_socket_path,
                 "8080",
                 "--",
                 "/bin/sh",
@@ -644,10 +698,7 @@ mod tests {
             .expect("should be recognized as bridge invocation")
             .expect("should decode successfully");
 
-        assert_eq!(
-            decoded.socket_path,
-            PathBuf::from(PROXY_SOCKET_SANDBOX_PATH)
-        );
+        assert_eq!(decoded.socket_path, PathBuf::from(sandbox_socket_path));
         assert_eq!(decoded.port, 8080);
         assert_eq!(decoded.program, OsString::from("/bin/sh"));
         assert_eq!(
@@ -671,12 +722,17 @@ mod tests {
             Some(socket.as_path()),
         );
 
+        // The bind destination inside the sandbox and the path handed to the
+        // bridge must be the same unique path.
+        let sandbox_destination = proxy_socket_bind_destination(&args)
+            .expect("restricted run should bind the proxy socket into the sandbox");
+        assert!(sandbox_destination.starts_with(PROXY_SOCKET_SANDBOX_PATH_PREFIX));
         assert!(windows_contains(
             &args,
             &[
                 "/path/to/zed",
                 BRIDGE_FLAG,
-                PROXY_SOCKET_SANDBOX_PATH,
+                &sandbox_destination,
                 "8080",
                 "--"
             ]
@@ -690,18 +746,41 @@ mod tests {
         program_args: &[String],
         proxy_socket_path: Option<&Path>,
     ) -> Vec<String> {
-        let mut bwrap_args = build_bwrap_args(&[], permissions, None, proxy_socket_path);
+        let proxy_socket_sandbox_path = match permissions.network {
+            NetworkAccess::LocalhostPort(_) => Some(unique_proxy_socket_sandbox_path()),
+            NetworkAccess::None | NetworkAccess::All => None,
+        };
+        let mut bwrap_args = build_bwrap_args_with_proxy_socket_sandbox_path(
+            &[],
+            permissions,
+            None,
+            proxy_socket_path,
+            proxy_socket_sandbox_path.as_deref(),
+        );
         bwrap_args.push("--".to_string());
         if let NetworkAccess::LocalhostPort(port) = permissions.network {
+            let proxy_socket_sandbox_path =
+                proxy_socket_sandbox_path.expect("restricted network needs a sandbox socket path");
             bwrap_args.push(bridge_program.to_string());
             bwrap_args.push(BRIDGE_FLAG.to_string());
-            bwrap_args.push(PROXY_SOCKET_SANDBOX_PATH.to_string());
+            bwrap_args.push(proxy_socket_sandbox_path.to_string_lossy().into_owned());
             bwrap_args.push(port.to_string());
             bwrap_args.push("--".to_string());
         }
         bwrap_args.push(program.to_string());
         bwrap_args.extend(program_args.iter().cloned());
         bwrap_args
+    }
+
+    /// Returns the in-sandbox destination of the proxy socket `--bind`, if any.
+    fn proxy_socket_bind_destination(args: &[String]) -> Option<String> {
+        args.windows(3).find_map(|window| {
+            if window[0] == "--bind" && window[1] == "/tmp/zed-proxy.sock" {
+                Some(window[2].clone())
+            } else {
+                None
+            }
+        })
     }
 
     fn windows_contains(haystack: &[String], needle: &[&str]) -> bool {
