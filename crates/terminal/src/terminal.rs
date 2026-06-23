@@ -27,7 +27,7 @@ use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{HideStrategy, Shell, SpawnInTerminal};
+use task::{HideStrategy, Shell, ShellKind, SpawnInTerminal};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
@@ -42,7 +42,10 @@ use std::{
     ops::{BitOr, BitOrAssign, Deref, Range as StdRange},
     path::{Path, PathBuf},
     process::ExitStatus,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use thiserror::Error;
@@ -848,6 +851,44 @@ impl Display for TerminalError {
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+static NEXT_INIT_COMMAND_STARTUP_MARKER_ID: AtomicU64 = AtomicU64::new(1);
+
+const INIT_COMMAND_STARTUP_MARKER_PREFIX: &str = "__zed_init_command_ready_";
+const INIT_COMMAND_STARTUP_MARKER_SUFFIX: &str = "__";
+const INIT_COMMAND_STARTUP_MARKER_SEARCH_LINES: usize = 64;
+
+fn init_command_startup_marker(marker_id: u64) -> String {
+    format!("{INIT_COMMAND_STARTUP_MARKER_PREFIX}{marker_id}{INIT_COMMAND_STARTUP_MARKER_SUFFIX}")
+}
+
+fn init_command_startup_marker_command(shell_kind: ShellKind, marker_id: u64) -> String {
+    // Keep the marker split in the input text so the terminal's local echo of the
+    // command cannot satisfy the handshake; only the command's output contains it.
+    match shell_kind {
+        ShellKind::PowerShell | ShellKind::Pwsh => format!(
+            "Write-Output ('{INIT_COMMAND_STARTUP_MARKER_PREFIX}' + '{marker_id}' + '{INIT_COMMAND_STARTUP_MARKER_SUFFIX}')"
+        ),
+        ShellKind::Cmd => {
+            format!(
+                "<nul set /p zed_init_ready={INIT_COMMAND_STARTUP_MARKER_PREFIX}&echo {marker_id}{INIT_COMMAND_STARTUP_MARKER_SUFFIX}"
+            )
+        }
+        ShellKind::Nushell => {
+            format!(
+                "print $\"{INIT_COMMAND_STARTUP_MARKER_PREFIX}({marker_id}){INIT_COMMAND_STARTUP_MARKER_SUFFIX}\""
+            )
+        }
+        ShellKind::Posix
+        | ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Rc
+        | ShellKind::Fish
+        | ShellKind::Xonsh
+        | ShellKind::Elvish => format!(
+            "printf '%s%s%s\\n' {INIT_COMMAND_STARTUP_MARKER_PREFIX} {marker_id} {INIT_COMMAND_STARTUP_MARKER_SUFFIX}"
+        ),
+    }
+}
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -935,6 +976,8 @@ impl TerminalBuilder {
             },
             child_exited: None,
             keyboard_input_sent: false,
+            init_command_startup_marker: None,
+            init_command_startup_tx: None,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -1158,6 +1201,8 @@ impl TerminalBuilder {
                 },
                 child_exited: None,
                 keyboard_input_sent: false,
+                init_command_startup_marker: None,
+                init_command_startup_tx: None,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -1317,6 +1362,8 @@ pub struct Terminal {
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
     keyboard_input_sent: bool,
+    init_command_startup_marker: Option<String>,
+    init_command_startup_tx: Option<Sender<()>>,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
@@ -1429,6 +1476,7 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             TerminalBackendEvent::Wakeup => {
+                self.detect_init_command_startup_marker();
                 cx.emit(Event::Wakeup);
 
                 if let TerminalType::Pty { info, .. } = &self.terminal_type {
@@ -1714,6 +1762,8 @@ impl Terminal {
 
         let mut term = self.term.lock();
         self.output_processor.advance(&mut *term, &converted);
+        drop(term);
+        self.detect_init_command_startup_marker();
         cx.emit(Event::Wakeup);
     }
 
@@ -1861,7 +1911,64 @@ impl Terminal {
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.keyboard_input_sent = true;
+        self.complete_init_command_startup_handshake();
         self.write_input(input);
+    }
+
+    /// Sends a shell-level marker command and returns a task that completes when
+    /// the marker appears in terminal output.
+    ///
+    /// For non-PTY terminals or terminals whose child has already exited, the
+    /// returned task is already complete.
+    pub fn start_init_command_startup_handshake(&mut self) -> Task<()> {
+        if !self.is_pty() || self.child_exited.is_some() {
+            return Task::ready(());
+        }
+
+        let (startup_tx, startup_rx) = async_channel::bounded(1);
+        let startup_task = self.background_executor.spawn(async move {
+            match startup_rx.recv().await {
+                Ok(()) | Err(_) => {}
+            }
+        });
+
+        let marker_id = NEXT_INIT_COMMAND_STARTUP_MARKER_ID.fetch_add(1, Ordering::Relaxed);
+        self.init_command_startup_marker = Some(init_command_startup_marker(marker_id));
+        self.init_command_startup_tx = Some(startup_tx);
+
+        let shell_kind = self.template.shell.shell_kind(self.path_style.is_windows());
+        let mut input = init_command_startup_marker_command(shell_kind, marker_id).into_bytes();
+        input.push(b'\x0d');
+        self.write_to_pty(input);
+
+        startup_task
+    }
+
+    fn detect_init_command_startup_marker(&mut self) {
+        let Some(marker) = self.init_command_startup_marker.as_deref() else {
+            return;
+        };
+
+        let has_marker = {
+            let term = self.term.lock_unfair();
+            last_non_empty_lines(&term, INIT_COMMAND_STARTUP_MARKER_SEARCH_LINES)
+                .iter()
+                .any(|line| line.contains(marker))
+        };
+
+        if has_marker {
+            self.complete_init_command_startup_handshake();
+        }
+    }
+
+    fn complete_init_command_startup_handshake(&mut self) {
+        self.init_command_startup_marker = None;
+        if let Some(startup_tx) = self.init_command_startup_tx.take() {
+            match startup_tx.try_send(()) {
+                Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
+                Err(async_channel::TrySendError::Closed(())) => {}
+            }
+        }
     }
 
     /// Write a programmatically-generated command to the PTY as if it had been
@@ -2602,6 +2709,7 @@ impl Terminal {
         if let Some(e) = exit_status {
             self.child_exited = Some(e);
         }
+        self.complete_init_command_startup_handshake();
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -2939,6 +3047,66 @@ mod tests {
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[test]
+    fn test_init_command_startup_marker_commands_do_not_contain_marker() {
+        let marker_id = 42;
+        let marker = init_command_startup_marker(marker_id);
+
+        for shell_kind in [
+            ShellKind::Posix,
+            ShellKind::Csh,
+            ShellKind::Tcsh,
+            ShellKind::Rc,
+            ShellKind::Fish,
+            ShellKind::PowerShell,
+            ShellKind::Pwsh,
+            ShellKind::Nushell,
+            ShellKind::Cmd,
+            ShellKind::Xonsh,
+            ShellKind::Elvish,
+        ] {
+            let command = init_command_startup_marker_command(shell_kind, marker_id);
+            assert!(
+                !command.contains(&marker),
+                "startup marker command for {shell_kind:?} should not contain the full marker, got {command:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_init_command_startup_marker_ignores_echoed_command(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let marker_id = 4242;
+        let marker = init_command_startup_marker(marker_id);
+        let command = init_command_startup_marker_command(ShellKind::Posix, marker_id);
+        let (startup_tx, startup_rx) = async_channel::bounded(1);
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.init_command_startup_marker = Some(marker.clone());
+            terminal.init_command_startup_tx = Some(startup_tx);
+            terminal.write_output(command.as_bytes(), cx);
+        });
+        assert!(matches!(
+            startup_rx.try_recv(),
+            Err(async_channel::TryRecvError::Empty)
+        ));
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(marker.as_bytes(), cx);
+        });
+        assert!(startup_rx.try_recv().is_ok());
+    }
 
     #[test]
     fn test_normalize_path_command_name() {
