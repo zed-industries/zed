@@ -819,8 +819,16 @@ impl GitPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_)
-                    | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
+                        this.schedule_update(window, cx);
+                    }
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::GitDirectoryChanged,
+                        true,
+                    )
+                    | GitStoreEvent::GlobalConfigurationUpdated => {
+                        this.git_access = None;
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -3726,7 +3734,7 @@ impl GitPanel {
         let group_by_status = is_tree_view || !sort_by_path;
 
         if let Some(active_repo) = self.active_repository.as_ref() {
-            if self.git_access != Some(GitAccess::Yes) {
+            if self.git_access.is_none() {
                 let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
 
                 cx.spawn_in(window, async move |git_panel, cx| {
