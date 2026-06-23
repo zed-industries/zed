@@ -8107,7 +8107,10 @@ impl Workspace {
             // its first control rather than the toolbar container.
             parts.push(FocusablePart::toolbar(self.titlebar_focus_handle.clone()));
         }
-        parts.extend(dock_part(&self.left_dock, &self.region_focus_handles.left_dock));
+        parts.extend(dock_part(
+            &self.left_dock,
+            &self.region_focus_handles.left_dock,
+        ));
 
         let center_pane = self
             .last_active_center_pane
@@ -8119,8 +8122,14 @@ impl Workspace {
             center_pane.read(cx).focus_handle(cx),
         ));
 
-        parts.extend(dock_part(&self.right_dock, &self.region_focus_handles.right_dock));
-        parts.extend(dock_part(&self.bottom_dock, &self.region_focus_handles.bottom_dock));
+        parts.extend(dock_part(
+            &self.right_dock,
+            &self.region_focus_handles.right_dock,
+        ));
+        parts.extend(dock_part(
+            &self.bottom_dock,
+            &self.region_focus_handles.bottom_dock,
+        ));
         // The status bar is an ARIA toolbar, so region navigation lands on its
         // first control rather than the toolbar container.
         parts.push(FocusablePart::toolbar(
