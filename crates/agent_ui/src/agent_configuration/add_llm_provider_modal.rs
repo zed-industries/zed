@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use feature_flags::{AgentSettingsUiFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task, TaskExt,
@@ -13,7 +14,8 @@ use language_models::provider::open_ai_compatible::{
 };
 use settings::{
     AnthropicCompatibleAvailableModel, AnthropicCompatibleModelCapabilities,
-    AnthropicCompatibleSettingsContent, OpenAiCompatibleSettingsContent, update_settings_file,
+    AnthropicCompatibleSettingsContent, OpenAiCompatibleSettingsContent, OpenAiReasoningEffort,
+    update_settings_file,
 };
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
@@ -126,6 +128,7 @@ struct ModelCapabilityToggles {
     pub supports_parallel_tool_calls: ToggleState,
     pub supports_prompt_cache_key: ToggleState,
     pub supports_chat_completions: ToggleState,
+    pub supports_thinking: ToggleState,
 }
 
 struct ModelInput {
@@ -193,6 +196,7 @@ impl ModelInput {
                 supports_parallel_tool_calls: parallel_tool_calls.into(),
                 supports_prompt_cache_key: prompt_cache_key.into(),
                 supports_chat_completions: chat_completions.into(),
+                supports_thinking: ToggleState::Unselected,
             },
         }
     }
@@ -223,7 +227,13 @@ impl ModelInput {
                 cx,
             )?),
             max_tokens: parse_u64_field(&self.max_tokens, "Max Tokens", cx)?,
-            reasoning_effort: None,
+            reasoning_effort: {
+                if self.capabilities.supports_thinking.selected() {
+                    Some(OpenAiReasoningEffort::Medium)
+                } else {
+                    None
+                }
+            },
             capabilities: OpenAiCompatibleModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
                 images: self.capabilities.supports_images.selected(),
@@ -558,6 +568,22 @@ impl AddLlmProviderModal {
                                     },
                                 )),
                             )
+                            .when(cx.has_flag::<AgentSettingsUiFeatureFlag>(), |parent| {
+                                parent.child(
+                                    Checkbox::new(
+                                        ("supports-thinking", ix),
+                                        model.capabilities.supports_thinking,
+                                    )
+                                    .label("Supports thinking")
+                                    .on_click(cx.listener(
+                                        move |this, checked, _window, cx| {
+                                            this.input.models[ix].capabilities.supports_thinking =
+                                                *checked;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                            })
                     }),
             )
             .when(has_more_than_one_model, |this| {

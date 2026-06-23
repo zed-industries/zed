@@ -5,9 +5,10 @@ use gpui::{AnyView, App, AppContext, AsyncApp, Entity, Task, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, RateLimiter,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -264,6 +265,35 @@ fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::
         .filter(|effort| *effort != open_ai::ReasoningEffort::None)
 }
 
+fn supported_thinking_effort_levels(model: &AvailableModel) -> Vec<LanguageModelEffortLevel> {
+    let default_effort = default_thinking_reasoning_effort(model);
+    [
+        open_ai::ReasoningEffort::Minimal,
+        open_ai::ReasoningEffort::Low,
+        open_ai::ReasoningEffort::Medium,
+        open_ai::ReasoningEffort::High,
+        open_ai::ReasoningEffort::XHigh,
+    ]
+    .into_iter()
+    .filter_map(|effort| {
+        let (name, value) = match effort {
+            open_ai::ReasoningEffort::None => return None,
+            open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
+            open_ai::ReasoningEffort::Low => ("Low", "low"),
+            open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
+            open_ai::ReasoningEffort::High => ("High", "high"),
+            open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+        };
+
+        Some(LanguageModelEffortLevel {
+            name: name.into(),
+            value: value.into(),
+            is_default: Some(effort) == default_effort,
+        })
+    })
+    .collect()
+}
+
 impl LanguageModel for OpenAiCompatibleLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -312,6 +342,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         default_thinking_reasoning_effort(&self.model).is_some()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        supported_thinking_effort_levels(&self.model)
     }
 
     fn supports_split_token_display(&self) -> bool {

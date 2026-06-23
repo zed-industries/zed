@@ -502,4 +502,27 @@ By default, OpenAI-compatible models inherit these capabilities:
 
 If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
 
+For reasoning models (e.g. GPT-5), set `reasoning_effort` so Zed sends the reasoning configuration and handles reasoning content across turns:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "my-provider": {
+        "api_url": "https://example.com/v1",
+        "available_models": [
+          {
+            "name": "gpt-5",
+            "max_tokens": 272000,
+            "reasoning_effort": "high"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Valid values are `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"`. This also enables the thinking effort selector in the agent panel, where you can adjust the effort per conversation. Set `"none"` to explicitly disable reasoning.
+
 Enter the API key in the provider settings UI or set the generated environment variable. Do not put API keys in `settings.json`.
