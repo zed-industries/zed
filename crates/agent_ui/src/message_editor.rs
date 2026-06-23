@@ -11,7 +11,7 @@ use crate::{
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use editor::{
@@ -698,7 +698,6 @@ impl MessageEditor {
             .detach();
     }
 
-    #[cfg(test)]
     pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
@@ -2216,7 +2215,7 @@ mod tests {
 
     use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
-    use agent_client_protocol::schema as acp;
+    use agent_client_protocol::schema::v1 as acp;
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,

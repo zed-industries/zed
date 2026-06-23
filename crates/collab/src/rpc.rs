@@ -493,6 +493,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitWorktreeCreatedAt>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
             .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
             .add_request_stream_handler(
@@ -1493,44 +1494,6 @@ async fn rejoin_room(
             .rejoin_room(request, session.user_id(), session.connection_id)
             .await?;
 
-        // Include fresh LiveKit connection info so that clients whose LiveKit
-        // connection failed (e.g. because their token was revoked by a stale
-        // connection cleanup) can re-establish it.
-        let live_kit_connection_info =
-            session
-                .app_state
-                .livekit_client
-                .as_ref()
-                .and_then(|live_kit| {
-                    let (can_publish, token) = if rejoined_room.role == ChannelRole::Guest {
-                        (
-                            false,
-                            live_kit
-                                .guest_token(
-                                    &rejoined_room.room.livekit_room,
-                                    &session.user_id().to_string(),
-                                )
-                                .trace_err()?,
-                        )
-                    } else {
-                        (
-                            true,
-                            live_kit
-                                .room_token(
-                                    &rejoined_room.room.livekit_room,
-                                    &session.user_id().to_string(),
-                                )
-                                .trace_err()?,
-                        )
-                    };
-
-                    Some(LiveKitConnectionInfo {
-                        server_url: live_kit.url().into(),
-                        token,
-                        can_publish,
-                    })
-                });
-
         response.send(proto::RejoinRoomResponse {
             room: Some(rejoined_room.room.clone()),
             reshared_projects: rejoined_room
@@ -1550,7 +1513,6 @@ async fn rejoin_room(
                 .iter()
                 .map(|rejoined_project| rejoined_project.to_proto())
                 .collect(),
-            live_kit_connection_info,
         })?;
         room_updated(&rejoined_room.room, &session.peer);
 

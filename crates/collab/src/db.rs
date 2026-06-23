@@ -487,7 +487,6 @@ pub struct RejoinedRoom {
     pub rejoined_projects: Vec<RejoinedProject>,
     pub reshared_projects: Vec<ResharedProject>,
     pub channel: Option<channel::Model>,
-    pub role: ChannelRole,
 }
 
 pub struct ResharedProject {

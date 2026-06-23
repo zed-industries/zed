@@ -37,10 +37,29 @@ use tempfile::NamedTempFile;
 /// module deliberately doesn't expose).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SandboxPermissions {
-    /// Allow network access for the command.
-    pub allow_network: bool,
+    /// Network access policy for the command.
+    pub network: NetworkAccess,
     /// Allow unrestricted filesystem writes.
     pub allow_fs_write: bool,
+}
+
+/// Network-access setting for a sandboxed command.
+///
+/// The default ([`NetworkAccess::None`]) blocks all outbound network at the
+/// Seatbelt layer. [`NetworkAccess::LocalhostPort`] confines the command to a
+/// single loopback port — used to force all egress through the in-process
+/// HTTP/HTTPS proxy that enforces a hostname allowlist (see the `http_proxy`
+/// crate). [`NetworkAccess::All`] lifts the restriction entirely.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NetworkAccess {
+    /// All outbound network blocked.
+    #[default]
+    None,
+    /// Outbound TCP allowed only to `localhost:<port>`. Used to confine
+    /// sandboxed commands to the in-process HTTP/HTTPS proxy.
+    LocalhostPort(u16),
+    /// All outbound network allowed.
+    All,
 }
 
 /// A Seatbelt config file written to a temporary path on disk, suitable
@@ -216,13 +235,31 @@ fn generate_seatbelt_config(
         );
     }
 
-    if permissions.allow_network {
-        config.push_str(
-            r#"
+    match permissions.network {
+        NetworkAccess::None => {}
+        NetworkAccess::All => {
+            config.push_str(
+                r#"
 ; Allow network access
 (allow network*)
 "#,
-        );
+            );
+        }
+        NetworkAccess::LocalhostPort(port) => {
+            // Seatbelt rejects IP literals in `(remote tcp ...)` rules — it
+            // only accepts `*` or `localhost` as the host part. The runtime
+            // resolves correctly when the sandboxed process connects to
+            // `127.0.0.1:<port>`, so this is a syntactic constraint, not a
+            // routing one.
+            config.push_str(&format!(
+                r#"
+; Allow outbound network only to the in-process proxy on localhost
+(allow network-outbound (remote tcp "localhost:{port}"))
+; Network binds (sandboxed process picking its own ephemeral source port)
+(allow network-bind (local ip "localhost:*"))
+"#,
+            ));
+        }
     }
 
     Ok(config)
@@ -267,7 +304,7 @@ mod tests {
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             SandboxPermissions {
-                allow_network: false,
+                network: NetworkAccess::None,
                 allow_fs_write: true,
             },
         )
@@ -286,7 +323,7 @@ mod tests {
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             SandboxPermissions {
-                allow_network: true,
+                network: NetworkAccess::All,
                 allow_fs_write: false,
             },
         )
@@ -296,6 +333,24 @@ mod tests {
         assert!(config.contains("/Users/test/projects/myproject"));
         assert!(config.contains("(allow file-write*"));
         assert!(!config.contains("; Allow unrestricted filesystem writes"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_localhost_port_narrows_network() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            SandboxPermissions {
+                network: NetworkAccess::LocalhostPort(54321),
+                allow_fs_write: false,
+            },
+        )
+        .unwrap();
+
+        // Only the loopback proxy port is reachable; no blanket network rule.
+        assert!(config.contains("(allow network-outbound (remote tcp \"localhost:54321\"))"));
+        assert!(config.contains("(allow network-bind (local ip \"localhost:*\"))"));
+        assert!(!config.contains("(allow network*)"));
     }
 
     #[test]
@@ -411,7 +466,7 @@ mod tests {
             &["-c".to_string(), "echo test 2>/dev/null".to_string()],
             &[temp_dir.path()],
             SandboxPermissions {
-                allow_network: false,
+                network: NetworkAccess::None,
                 allow_fs_write: true,
             },
         )
@@ -444,7 +499,7 @@ mod tests {
             ],
             &[temp_dir.path()],
             SandboxPermissions {
-                allow_network: false,
+                network: NetworkAccess::None,
                 allow_fs_write: true,
             },
         )
@@ -542,7 +597,7 @@ mod tests {
             ],
             &[project_dir.path()],
             SandboxPermissions {
-                allow_network: false,
+                network: NetworkAccess::None,
                 allow_fs_write: true,
             },
         )

@@ -344,6 +344,34 @@ impl Model {
         true
     }
 
+    /// Whether this model supports server-side compaction via the
+    /// `context_management` request parameter. OpenAI doesn't publish a
+    /// support matrix, but the GPT-5.5 guide notes compaction is a feature
+    /// shared with GPT-5.4, and the compaction docs exercise the GPT-5.3
+    /// Codex line, so we treat everything from GPT-5.3 onward as supported.
+    ///
+    /// <https://developers.openai.com/api/docs/guides/compaction>
+    pub fn supports_compaction(&self) -> bool {
+        match self {
+            Self::FivePointThreeCodex
+            | Self::FivePointFourNano
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
+            Self::Four
+            | Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::Custom { .. } => false,
+        }
+    }
+
     /// Whether OpenAI's Priority processing tier is available for this model.
     /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
     /// `*-nano`, and legacy `gpt-4` variants are not eligible.
