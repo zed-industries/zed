@@ -1746,6 +1746,19 @@ impl Thread {
         }
     }
 
+    /// The sandbox permissions the user approved "for the rest of this thread",
+    /// as a [`sandbox::SandboxPolicy`] for display alongside the persistent
+    /// "from your settings" policy (see [`crate::settings_sandbox_policy`]).
+    pub fn thread_sandbox_policy(&self) -> sandbox::SandboxPolicy {
+        self.sandbox_grants.borrow().to_policy()
+    }
+
+    /// Whether agent terminal commands are sandboxed for this thread's project,
+    /// so the UI can decide whether to surface the sandbox status at all.
+    pub fn sandboxing_enabled(&self, cx: &App) -> bool {
+        sandboxing_enabled_for_project(self.project.read(cx), cx)
+    }
+
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         let mut thread = DbThread {
@@ -5172,6 +5185,15 @@ impl ToolCallEventStream {
         }
     }
 
+    /// Whether the owning thread is a subagent, so prompts can say "for this
+    /// subagent" instead of "for this thread".
+    fn is_subagent(&self, cx: &App) -> bool {
+        self.thread
+            .as_ref()
+            .and_then(|thread| thread.upgrade())
+            .is_some_and(|thread| thread.read(cx).is_subagent())
+    }
+
     /// Persist the thread so a freshly recorded "for this thread" sandbox grant
     /// survives a reopen. Saving is driven by the agent's `observe` on the
     /// thread entity, so a no-op `notify` is enough to schedule it.
@@ -5372,8 +5394,6 @@ impl ToolCallEventStream {
     /// settings-driven authorization flow for regular tools.
     pub(crate) fn authorize_sandbox(
         &self,
-        title: impl Into<String>,
-        command: Option<String>,
         request: SandboxRequest,
         reason: String,
         cx: &mut App,
@@ -5382,7 +5402,6 @@ impl ToolCallEventStream {
             return Task::ready(Ok(()));
         }
 
-        let title = title.into();
         let (network_hosts, network_all_hosts) = match &request.network {
             crate::sandboxing::NetworkRequest::None => (Vec::new(), false),
             crate::sandboxing::NetworkRequest::AnyHost => (Vec::new(), true),
@@ -5391,13 +5410,21 @@ impl ToolCallEventStream {
             }
         };
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
-            command,
+            // The command stays in the tool-call title (set by the terminal
+            // tool), so the approval card keeps showing it; the details only
+            // describe the requested access and the agent's reason.
+            command: None,
             network_hosts,
             network_all_hosts,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
             reason,
+        };
+        let allow_thread_label = if self.is_subagent(cx) {
+            "Allow for this subagent"
+        } else {
+            "Allow for this thread"
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
@@ -5407,7 +5434,7 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
-                "Allow for this thread",
+                allow_thread_label,
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
@@ -5439,7 +5466,9 @@ impl ToolCallEventStream {
                     ToolCallAuthorization {
                         tool_call: acp::ToolCallUpdate::new(
                             tool_use_id.to_string(),
-                            acp::ToolCallUpdateFields::new().title(title),
+                            // Leave the title untouched so the card keeps
+                            // showing the command (matching the fallback flow).
+                            acp::ToolCallUpdateFields::new(),
                         )
                         .meta(acp_thread::meta_with_sandbox_authorization(
                             sandbox_authorization_details,
@@ -5657,6 +5686,11 @@ impl ToolCallEventStream {
         } else {
             format!("Retry (attempt {retries})")
         };
+        let allow_thread_label = if self.is_subagent(cx) {
+            "Run without sandbox for this subagent"
+        } else {
+            "Run without sandbox for this thread"
+        };
         let options = acp_thread::PermissionOptions::Flat(vec![
             // Retry isn't an allow/deny choice; the UI renders it with its own
             // icon and we dispatch on the option id, so the kind here only
@@ -5675,7 +5709,7 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
-                "Run without sandbox for this thread",
+                allow_thread_label,
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
@@ -7221,8 +7255,6 @@ mod tests {
 
         let authorize = cx.update(|cx| {
             event_stream.authorize_sandbox(
-                "Allow write access?",
-                None,
                 request.clone(),
                 "needs to write build artifacts".to_string(),
                 cx,

@@ -523,6 +523,7 @@ dependencies = [
  "remote_server",
  "reqwest_client",
  "rope",
+ "sandbox",
  "schemars 1.0.4",
  "search",
  "semver",

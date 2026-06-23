@@ -458,11 +458,8 @@ async fn run_terminal_tool(
                     .to_string(),
             );
         };
-        let title = sandbox_approval_title(&request);
-        let command = Some(input.command.clone());
-        let approve = cx.update(|cx| {
-            event_stream.authorize_sandbox(title, command, request.clone(), reason.to_string(), cx)
-        });
+        let approve =
+            cx.update(|cx| event_stream.authorize_sandbox(request.clone(), reason.to_string(), cx));
         if let Err(error) = approve.await {
             if want_unsandboxed {
                 return Ok(format!(
@@ -957,65 +954,6 @@ fn build_network_request(sandbox: &TerminalSandboxInput) -> Result<NetworkReques
         }
     }
     Ok(NetworkRequest::Hosts(patterns))
-}
-
-/// User-facing title for the sandbox-escalation approval prompt. Only called
-/// when the request actually asks for something (see
-/// [`crate::sandboxing::SandboxRequest::needs_escalation`]).
-fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String {
-    if request.unsandboxed {
-        return "Allow this command to run outside the sandbox?".to_string();
-    }
-
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(network_clause) = network_clause(&request.network) {
-        parts.push(network_clause);
-    }
-    if request.allow_fs_write_all {
-        parts.push("unrestricted filesystem writes".to_string());
-    } else if !request.write_paths.is_empty() {
-        parts.push(format!(
-            "write access to {}",
-            write_path_summary(&request.write_paths)
-        ));
-    }
-    match parts.as_slice() {
-        [] => "Allow this command extra permissions?".to_string(),
-        [only] => format!("Allow {only}?"),
-        [first, second] => format!("Allow {first} and {second}?"),
-        _ => format!("Allow {}?", parts.join(", ")),
-    }
-}
-
-/// The network clause for the approval title, or `None` when no network was
-/// requested.
-fn network_clause(network: &NetworkRequest) -> Option<String> {
-    match network {
-        NetworkRequest::None => None,
-        NetworkRequest::AnyHost => Some("arbitrary network access".to_string()),
-        NetworkRequest::Hosts(hosts) => Some(format_hosts_clause(hosts)),
-    }
-}
-
-fn format_hosts_clause(hosts: &[http_proxy::HostPattern]) -> String {
-    let names: Vec<String> = hosts.iter().map(|host| host.to_string()).collect();
-    match names.as_slice() {
-        [] => "network access".to_string(),
-        [single] => format!("network access to {single}"),
-        [first, second] => format!("network access to {first} and {second}"),
-        _ => {
-            let (last, init) = names.split_last().expect("non-empty");
-            format!("network access to {}, and {last}", init.join(", "))
-        }
-    }
-}
-
-fn write_path_summary(paths: &[PathBuf]) -> String {
-    match paths {
-        [] => "0 paths".to_string(),
-        [path] => path.display().to_string(),
-        paths => format!("{} paths", paths.len()),
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2755,19 +2693,6 @@ mod tests {
         );
     }
 
-    fn sandbox_request(
-        network: NetworkRequest,
-        all: bool,
-        paths: &[&str],
-    ) -> crate::sandboxing::SandboxRequest {
-        crate::sandboxing::SandboxRequest {
-            network,
-            allow_fs_write_all: all,
-            unsandboxed: false,
-            write_paths: paths.iter().map(PathBuf::from).collect(),
-        }
-    }
-
     #[test]
     fn test_join_write_paths_resolves_relative_and_absolute() {
         let base = PathBuf::from(if cfg!(windows) {
@@ -2879,26 +2804,6 @@ mod tests {
             PathBuf::from("/abs/b")
         };
         assert_eq!(joined, vec![expected_escape, expected_abs]);
-    }
-
-    #[test]
-    fn test_sandbox_approval_title_unsandboxed() {
-        let mut request = sandbox_request(NetworkRequest::AnyHost, true, &["/tmp/build"]);
-        request.unsandboxed = true;
-        assert_eq!(
-            sandbox_approval_title(&request),
-            "Allow this command to run outside the sandbox?"
-        );
-    }
-
-    #[test]
-    fn test_sandbox_approval_title_summarizes_multiple_paths_by_count() {
-        let title = sandbox_approval_title(&sandbox_request(
-            NetworkRequest::None,
-            false,
-            &["/a", "/b", "/c", "/d"],
-        ));
-        assert_eq!(title, "Allow write access to 4 paths?");
     }
 
     #[test]
@@ -3283,80 +3188,6 @@ mod tests {
                 .map(|h| http_proxy::HostPattern::parse(h).unwrap())
                 .collect(),
         )
-    }
-
-    #[test]
-    fn test_sandbox_approval_title_all_access_and_network() {
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(NetworkRequest::AnyHost, true, &[])),
-            "Allow arbitrary network access and unrestricted filesystem writes?"
-        );
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(NetworkRequest::AnyHost, false, &[])),
-            "Allow arbitrary network access?"
-        );
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(NetworkRequest::None, true, &[])),
-            "Allow unrestricted filesystem writes?"
-        );
-    }
-
-    #[test]
-    fn test_sandbox_approval_title_specific_hosts() {
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(host_request(&["github.com"]), false, &[])),
-            "Allow network access to github.com?"
-        );
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(
-                host_request(&["github.com", "*.npmjs.org"]),
-                false,
-                &[]
-            )),
-            "Allow network access to github.com and *.npmjs.org?"
-        );
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(
-                host_request(&["github.com", "npmjs.org", "pypi.org"]),
-                false,
-                &[]
-            )),
-            "Allow network access to github.com, npmjs.org, and pypi.org?"
-        );
-    }
-
-    #[test]
-    fn test_sandbox_approval_title_per_path_writes() {
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(
-                NetworkRequest::None,
-                false,
-                &["/tmp/build"]
-            )),
-            "Allow write access to /tmp/build?"
-        );
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(
-                host_request(&["github.com"]),
-                false,
-                &["/tmp/build"]
-            )),
-            "Allow network access to github.com and write access to /tmp/build?"
-        );
-    }
-
-    #[test]
-    fn test_all_access_takes_precedence_over_paths_in_title() {
-        // When all-access is requested, the specific paths are redundant and
-        // should not be listed.
-        assert_eq!(
-            sandbox_approval_title(&sandbox_request(
-                NetworkRequest::None,
-                true,
-                &["/tmp/build"]
-            )),
-            "Allow unrestricted filesystem writes?"
-        );
     }
 
     #[test]

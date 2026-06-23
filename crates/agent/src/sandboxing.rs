@@ -30,8 +30,33 @@ use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
 use project::Project;
+use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 use settings::Settings;
 use std::path::PathBuf;
+
+/// Translate the persistent "allow always" sandbox settings into the
+/// cross-platform [`SandboxPolicy`] used for display. This is the "from your
+/// settings" half of the sandbox status surface; the per-thread overrides come
+/// from [`ThreadSandboxGrants::to_policy`].
+pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy {
+    let fs = if persistent.allow_fs_write_all {
+        SandboxFsPolicy::Unrestricted
+    } else {
+        SandboxFsPolicy::Restricted {
+            writable_paths: persistent.write_paths.clone(),
+        }
+    };
+    let network = if persistent.allow_all_hosts {
+        SandboxNetPolicy::Unrestricted
+    } else if persistent.network_hosts.is_empty() {
+        SandboxNetPolicy::Blocked
+    } else {
+        SandboxNetPolicy::Restricted {
+            allowed_domains: persistent.network_hosts.clone(),
+        }
+    };
+    SandboxPolicy { fs, network }
+}
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
 /// sandbox for this process. See module docs for the policy.
@@ -236,6 +261,34 @@ impl ThreadSandboxGrants {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn record_fallback(&mut self) {
         self.sandbox_fallback = true;
+    }
+
+    /// Translate the per-thread overrides into the cross-platform
+    /// [`SandboxPolicy`] used for display. This is the "overridden in this
+    /// thread" half of the sandbox status surface; the persistent half comes
+    /// from [`settings_sandbox_policy`].
+    pub fn to_policy(&self) -> SandboxPolicy {
+        let fs = if self.allow_fs_write_all {
+            SandboxFsPolicy::Unrestricted
+        } else {
+            SandboxFsPolicy::Restricted {
+                writable_paths: self.write_paths.clone(),
+            }
+        };
+        let network = if self.network_any_host {
+            SandboxNetPolicy::Unrestricted
+        } else if self.network_hosts.is_empty() {
+            SandboxNetPolicy::Blocked
+        } else {
+            SandboxNetPolicy::Restricted {
+                allowed_domains: self
+                    .network_hosts
+                    .iter()
+                    .map(|host| host.to_string())
+                    .collect(),
+            }
+        };
+        SandboxPolicy { fs, network }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -445,6 +498,77 @@ mod tests {
             &restored,
             &request(NetworkRequest::AnyHost, true, &["/anywhere"])
         ));
+    }
+
+    #[test]
+    fn thread_grants_to_policy_maps_paths_and_domains() {
+        use sandbox::{SandboxFsPolicy, SandboxNetPolicy};
+
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&request(hosts(&["github.com"]), false, &["/tmp/build"]));
+        let policy = grants.to_policy();
+        assert_eq!(
+            policy.fs,
+            SandboxFsPolicy::Restricted {
+                writable_paths: vec![PathBuf::from("/tmp/build")]
+            }
+        );
+        assert_eq!(
+            policy.network,
+            SandboxNetPolicy::Restricted {
+                allowed_domains: vec!["github.com".to_string()]
+            }
+        );
+
+        // No grants at all: writes restricted to nothing, network blocked.
+        let empty = ThreadSandboxGrants::default().to_policy();
+        assert_eq!(
+            empty.fs,
+            SandboxFsPolicy::Restricted {
+                writable_paths: Vec::new()
+            }
+        );
+        assert_eq!(empty.network, SandboxNetPolicy::Blocked);
+
+        // The broad escapes map to the unrestricted variants.
+        let mut broad = ThreadSandboxGrants::default();
+        broad.record(&request(NetworkRequest::AnyHost, true, &[]));
+        let policy = broad.to_policy();
+        assert_eq!(policy.fs, SandboxFsPolicy::Unrestricted);
+        assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
+    }
+
+    #[test]
+    fn settings_policy_maps_persistent_permissions() {
+        use sandbox::{SandboxFsPolicy, SandboxNetPolicy};
+
+        let persistent = SandboxPermissions {
+            write_paths: vec![PathBuf::from("/var/log")],
+            network_hosts: vec!["*.npmjs.org".to_string()],
+            ..Default::default()
+        };
+        let policy = settings_sandbox_policy(&persistent);
+        assert_eq!(
+            policy.fs,
+            SandboxFsPolicy::Restricted {
+                writable_paths: vec![PathBuf::from("/var/log")]
+            }
+        );
+        assert_eq!(
+            policy.network,
+            SandboxNetPolicy::Restricted {
+                allowed_domains: vec!["*.npmjs.org".to_string()]
+            }
+        );
+
+        let unrestricted = SandboxPermissions {
+            allow_all_hosts: true,
+            allow_fs_write_all: true,
+            ..Default::default()
+        };
+        let policy = settings_sandbox_policy(&unrestricted);
+        assert_eq!(policy.fs, SandboxFsPolicy::Unrestricted);
+        assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
     }
 
     #[test]
