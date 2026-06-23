@@ -258,10 +258,10 @@ impl OpenAiCompatibleLanguageModel {
     }
 }
 
-fn supports_selectable_thinking_effort(model: &AvailableModel) -> bool {
+fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::ReasoningEffort> {
     model
         .reasoning_effort
-        .is_some_and(|effort| effort != open_ai::ReasoningEffort::None)
+        .filter(|effort| *effort != open_ai::ReasoningEffort::None)
 }
 
 impl LanguageModel for OpenAiCompatibleLanguageModel {
@@ -311,7 +311,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        supports_selectable_thinking_effort(&self.model)
+        default_thinking_reasoning_effort(&self.model).is_some()
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -367,9 +367,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                self.model
-                    .reasoning_effort
-                    .filter(|effort| *effort != open_ai::ReasoningEffort::None),
+                default_thinking_reasoning_effort(&self.model),
                 self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
             );
             let completions = self.stream_response(request, cx);
@@ -403,16 +401,25 @@ mod tests {
 
     #[test]
     fn configured_reasoning_effort_supports_thinking() {
-        assert!(supports_selectable_thinking_effort(&available_model(Some(
-            open_ai::ReasoningEffort::High
-        ))));
+        assert_eq!(
+            default_thinking_reasoning_effort(&available_model(Some(
+                open_ai::ReasoningEffort::High
+            ))),
+            Some(open_ai::ReasoningEffort::High)
+        );
     }
 
     #[test]
     fn missing_or_none_reasoning_effort_does_not_support_thinking() {
-        assert!(!supports_selectable_thinking_effort(&available_model(None)));
-        assert!(!supports_selectable_thinking_effort(&available_model(
-            Some(open_ai::ReasoningEffort::None)
-        )));
+        assert_eq!(
+            default_thinking_reasoning_effort(&available_model(None)),
+            None
+        );
+        assert_eq!(
+            default_thinking_reasoning_effort(&available_model(Some(
+                open_ai::ReasoningEffort::None
+            ))),
+            None
+        );
     }
 }
