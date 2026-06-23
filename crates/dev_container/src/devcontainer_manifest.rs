@@ -3225,7 +3225,7 @@ fn parse_mount_definition_string(value: &str) -> Option<MountDefinition> {
 }
 
 fn escape_compose_interpolation(value: &str) -> String {
-    value.replace('$', "$$$$")
+    value.replace('$', "$$")
 }
 
 fn shell_single_quote(value: &str) -> String {
@@ -3325,8 +3325,9 @@ mod test {
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
+            DockerInspect, escape_compose_interpolation, extract_feature_id, find_primary_service,
+            get_remote_user_from_config, image_from_dockerfile, is_local_feature_ref,
+            resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3884,6 +3885,15 @@ mod test {
                 .as_ref()
                 .and_then(|env| env.get("LOCAL_ENV_VAR_4")),
             Some(&"default".to_string())
+        );
+    }
+
+    #[test]
+    fn escape_compose_interpolation_uses_compose_dollar_escape() {
+        assert_eq!(escape_compose_interpolation("pa$word"), "pa$$word");
+        assert_eq!(
+            escape_compose_interpolation("${containerEnv:PATH}"),
+            "$${containerEnv:PATH}"
         );
     }
 

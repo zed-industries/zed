@@ -1208,6 +1208,44 @@ mod test {
     }
 
     #[test]
+    fn should_deserialize_compose_environment_key_only_entries() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "array": {
+                    "image": "node:22-alpine",
+                    "environment": ["USER_INPUT", "DEFINED=value"]
+                },
+                "map": {
+                    "image": "node:22-alpine",
+                    "environment": {
+                        "USER_INPUT": null,
+                        "DEFINED": "value"
+                    }
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        assert_eq!(
+            config.services.get("array").unwrap().environment,
+            Some(HashMap::from([
+                ("DEFINED".to_string(), "value".to_string()),
+                ("USER_INPUT".to_string(), "".to_string()),
+            ]))
+        );
+        assert_eq!(
+            config.services.get("map").unwrap().environment,
+            Some(HashMap::from([(
+                "DEFINED".to_string(),
+                "value".to_string()
+            )]))
+        );
+    }
+
+    #[test]
     fn should_deserialize_compose_without_volumes() {
         let given_config = r#"
         {
