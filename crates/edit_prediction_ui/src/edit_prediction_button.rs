@@ -1508,7 +1508,11 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Codestral);
     }
 
-    if edit_prediction::deepseek::api_key().is_some() {
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .deepseek
+        .is_some()
+    {
         providers.push(EditPredictionProvider::Deepseek);
     }
 

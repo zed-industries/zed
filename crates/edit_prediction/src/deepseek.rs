@@ -28,8 +28,9 @@ struct DeepseekCompletionRequest {
 ///
 /// Unlike the other FIM providers, Deepseek accepts the prefix (`prompt`) and
 /// `suffix` as separate fields and assembles the FIM prompt server-side, so no
-/// FIM sentinel tokens are formatted here. The completion endpoint lives under
-/// the `/beta` base path (see https://api-docs.deepseek.com/guides/fim_completion).
+/// FIM sentinel tokens are formatted here. `settings.api_url` is used verbatim
+/// as the completions endpoint (e.g. `https://api.deepseek.com/beta/completions`,
+/// see https://api-docs.deepseek.com/guides/fim_completion).
 pub(crate) async fn make_request(
     settings: &OpenAiCompatibleEditPredictionSettings,
     prompt: String,
@@ -48,7 +49,7 @@ pub(crate) async fn make_request(
     let request_body = serde_json::to_string(&request)?;
     let mut http_request_builder = http_client::Request::builder()
         .method(http_client::Method::POST)
-        .uri(format!("{}/beta/completions", settings.api_url))
+        .uri(settings.api_url.as_ref())
         .header("Content-Type", "application/json");
 
     if let Some(api_key) = api_key {
