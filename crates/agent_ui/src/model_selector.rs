@@ -271,6 +271,7 @@ impl PickerDelegate for ModelPickerDelegate {
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(ModelPickerEntry::Model(model_info, _)) =
             self.filtered_entries.get(self.selected_index)
+            && model_info.disabled.is_none()
         {
             self.selector
                 .select_model(model_info.id.clone(), cx)
@@ -336,6 +337,7 @@ impl PickerDelegate for ModelPickerDelegate {
                                     Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
                                     None => this,
                                 })
+                                .disabled(model_info.disabled.clone())
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .is_latest(model_info.is_latest)
@@ -511,6 +513,7 @@ mod tests {
                             description: None,
                             icon: None,
                             is_latest: false,
+                            disabled: None,
                             cost: None,
                         })
                         .collect::<Vec<_>>(),
@@ -618,6 +621,7 @@ mod tests {
                     description: None,
                     icon: None,
                     is_latest: false,
+                    disabled: None,
                     cost: None,
                 },
                 AgentModelInfo {
@@ -626,6 +630,7 @@ mod tests {
                     description: None,
                     icon: None,
                     is_latest: false,
+                    disabled: None,
                     cost: None,
                 },
             ];
@@ -810,6 +815,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
             acp_thread::AgentModelInfo {
@@ -818,6 +824,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
         ]);
@@ -860,6 +867,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
             acp_thread::AgentModelInfo {
@@ -868,6 +876,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
         ]);
