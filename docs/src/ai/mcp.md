@@ -51,7 +51,7 @@ Popular servers available as an extension include:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them easily utilizing the MCP server modal, which you can open by invoking the {#action agent::AddContextServer} action. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
+You can connect both local and remote MCP servers easily utilizing the MCP server modal, which you can open by invoking the {#action agent::AddContextServer} action. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
 
 ```json [settings]
 {
