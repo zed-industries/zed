@@ -207,7 +207,9 @@ mod tests {
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
         assert!(rendered.contains("file contents under `.git` directories"));
-        assert!(rendered.contains("Git metadata directories needed by opened worktrees"));
+        assert!(
+            rendered.contains("worktree metadata that may live outside the project directories")
+        );
         assert!(rendered.contains("inherited SSH agent socket"));
         assert!(rendered.contains("does not allow packet-sending network access"));
         assert!(rendered.contains("for the rest of the thread"));
