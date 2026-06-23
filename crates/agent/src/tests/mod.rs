@@ -3333,6 +3333,89 @@ async fn test_cumulative_token_usage(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_action_log_restored_from_db(cx: &mut TestAppContext) {
+    let ThreadTest {
+        thread,
+        project_context,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    fs.insert_file(
+        path!("/test/file.txt"),
+        "line one\nline two\n".as_bytes().to_vec(),
+    )
+    .await;
+
+    let project = thread.read_with(cx, |thread, _| thread.project().clone());
+    let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/test/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.update(|cx| {
+        action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer
+                .edit([(0usize..0, "inserted line\n")], None, cx)
+                .unwrap()
+        });
+        action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+    });
+    cx.run_until_parked();
+
+    let original_stats = action_log.read_with(cx, |log, cx| log.diff_stats(cx));
+    assert!(
+        original_stats.lines_added > 0,
+        "the inserted line should register as an added line"
+    );
+
+    // Persisting the thread should carry the edit, and reloading it should
+    // reconstruct the same diff stats from the saved diff base.
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(
+        db_thread.action_log.len(),
+        1,
+        "the edited buffer should be persisted with the thread"
+    );
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    let restored = cx.update(|cx| {
+        let thread = thread.read(cx);
+        let project = thread.project.clone();
+        let context_server_registry = thread.context_server_registry.clone();
+        let templates = thread.templates.clone();
+        cx.new(|cx| {
+            Thread::from_db(
+                acp::SessionId::new("restored"),
+                db_thread,
+                project,
+                project_context.clone(),
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    });
+    // `from_db` reopens the buffer and restores its edit tracking in the
+    // background, so let that task settle before checking the stats.
+    cx.run_until_parked();
+
+    let restored_stats =
+        restored.read_with(cx, |thread, cx| thread.action_log().read(cx).diff_stats(cx));
+    assert_eq!(
+        (restored_stats.lines_added, restored_stats.lines_removed),
+        (original_stats.lines_added, original_stats.lines_removed),
+        "the reloaded thread should reproduce the original diff stats"
+    );
+}
+
+#[gpui::test]
 async fn test_cumulative_token_usage_keeps_accounted_usage_monotonic(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();

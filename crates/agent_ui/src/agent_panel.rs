@@ -10955,6 +10955,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            action_log: Vec::new(),
         };
 
         let thread_store = cx.update(|cx| ThreadStore::global(cx));
