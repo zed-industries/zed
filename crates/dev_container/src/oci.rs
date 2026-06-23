@@ -1,9 +1,9 @@
-use std::{path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc};
 
 use fs::Fs;
 use futures::{AsyncRead, AsyncReadExt, io::BufReader};
 use http::Request;
-use http_client::{AsyncBody, HttpClient};
+use http_client::{AsyncBody, HttpClient, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::devcontainer_api::DevContainerError;
@@ -26,27 +26,184 @@ pub(crate) struct ManifestLayer {
     pub(crate) digest: String,
 }
 
-/// Gets a bearer token for pulling from a container registry repository.
+/// Acquires a bearer token (if any) for pulling from an OCI Distribution
+/// registry, following the spec's challenge-response flow.
 ///
-/// This uses the registry's `/token` endpoint directly, which works for
-/// `ghcr.io` and other registries that follow the same convention.  For
-/// registries that require a full `WWW-Authenticate` negotiation flow this
-/// would need to be extended.
-pub(crate) async fn get_oci_token(
+/// 1. Probe `GET /v2/` unauthenticated.
+/// 2. If the registry responds with `200`, no auth is required — return an
+///    empty token. Callers must omit the `Authorization` header in that case.
+/// 3. If the registry responds with `401`, parse the `Www-Authenticate: Bearer`
+///    challenge header and fetch a token from the advertised `realm`, passing
+///    along the registry-supplied `service` and a `repository:<repo>:pull`
+///    scope.
+///
+/// This handles both `ghcr.io`-style registries (which advertise a token realm
+/// via the challenge) and Distribution registries that allow anonymous reads
+/// (which do not host a `/token` endpoint at all).
+pub(crate) async fn get_oci_auth_token(
     registry: &str,
     repository_path: &str,
     client: &Arc<dyn HttpClient>,
 ) -> Result<TokenResponse, String> {
-    let url = format!(
-        "https://{registry}/token?service={registry}&scope=repository:{repository_path}:pull",
-    );
-    log::debug!("Fetching OCI token from: {}", url);
-    get_deserialized_response("", &url, client)
+    let probe_url = format!("https://{registry}/v2/");
+    log::debug!("Probing OCI registry for auth requirements: {}", probe_url);
+    let probe = send_oci_request(&probe_url, "", client).await?;
+
+    if probe.status().is_success() {
+        return Ok(TokenResponse {
+            token: String::new(),
+        });
+    }
+
+    if probe.status() != http::StatusCode::UNAUTHORIZED {
+        return Err(format!(
+            "OCI probe to {} returned unexpected status {}",
+            probe_url,
+            probe.status().as_u16(),
+        ));
+    }
+
+    let header = probe
+        .headers()
+        .get("www-authenticate")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            format!("Registry {registry} returned 401 with no Www-Authenticate header")
+        })?
+        .to_owned();
+
+    let challenge = parse_bearer_challenge(&header)?;
+    let realm = challenge
+        .realm
+        .ok_or_else(|| format!("Bearer challenge from {registry} omitted required `realm`"))?;
+
+    let mut token_url = url::Url::parse(&realm)
+        .map_err(|e| format!("Invalid realm URL {realm} in challenge from {registry}: {e}"))?;
+    {
+        let mut query = token_url.query_pairs_mut();
+        if let Some(service) = challenge.service {
+            query.append_pair("service", &service);
+        }
+        query.append_pair("scope", &format!("repository:{repository_path}:pull"));
+    }
+
+    log::debug!("Fetching OCI token from: {}", token_url);
+    get_deserialized_response("", token_url.as_str(), client).await
+}
+
+/// A parsed `Www-Authenticate: Bearer ...` challenge.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BearerChallenge {
+    realm: Option<String>,
+    service: Option<String>,
+    scope: Option<String>,
+}
+
+/// Parse a `Www-Authenticate` header value carrying the `Bearer` scheme into
+/// the OCI-relevant fields. Anything other than `realm`, `service`, `scope` is
+/// ignored.
+///
+/// The auth-param parser is adapted from the RFC 7235 implementation in
+/// `crates/context_server/src/oauth.rs::parse_auth_params`. It is duplicated
+/// here rather than shared to avoid a cross-crate dependency for ~60 lines of
+/// code; consolidating into a shared crate is a worthwhile follow-up.
+fn parse_bearer_challenge(header: &str) -> Result<BearerChallenge, String> {
+    let header = header.trim();
+    let params_str = if header.len() >= 6 && header[..6].eq_ignore_ascii_case("bearer") {
+        header[6..].trim()
+    } else {
+        return Err(format!(
+            "Www-Authenticate header does not use the Bearer scheme: {header}"
+        ));
+    };
+
+    let params = parse_auth_params(params_str);
+    Ok(BearerChallenge {
+        realm: params.get("realm").cloned(),
+        service: params.get("service").cloned(),
+        scope: params.get("scope").cloned(),
+    })
+}
+
+/// Parse comma-separated `key="value"` or `key=token` parameters from an
+/// auth-param list (RFC 7235 Section 2.1). Keys are lowercased.
+fn parse_auth_params(input: &str) -> HashMap<String, String> {
+    let mut params: HashMap<String, String> = HashMap::new();
+    let mut remaining = input.trim();
+
+    while !remaining.is_empty() {
+        remaining = remaining.trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+        if remaining.is_empty() {
+            break;
+        }
+
+        let eq_pos = match remaining.find('=') {
+            Some(pos) => pos,
+            None => break,
+        };
+
+        let key = remaining[..eq_pos].trim().to_lowercase();
+        remaining = &remaining[eq_pos + 1..];
+        remaining = remaining.trim_start();
+
+        let value;
+        if remaining.starts_with('"') {
+            remaining = &remaining[1..];
+            let mut val = String::new();
+            let mut chars = remaining.char_indices();
+            loop {
+                match chars.next() {
+                    Some((_, '\\')) => {
+                        if let Some((_, c)) = chars.next() {
+                            val.push(c);
+                        }
+                    }
+                    Some((i, '"')) => {
+                        remaining = &remaining[i + 1..];
+                        break;
+                    }
+                    Some((_, c)) => val.push(c),
+                    None => {
+                        remaining = "";
+                        break;
+                    }
+                }
+            }
+            value = val;
+        } else {
+            let end = remaining
+                .find(|c: char| c == ',' || c.is_whitespace())
+                .unwrap_or(remaining.len());
+            value = remaining[..end].to_string();
+            remaining = &remaining[end..];
+        }
+
+        if !key.is_empty() {
+            params.insert(key, value);
+        }
+    }
+
+    params
+}
+
+/// Build and send a GET request to an OCI endpoint, attaching `Authorization`
+/// only when `token` is non-empty.
+async fn send_oci_request(
+    url: &str,
+    token: &str,
+    client: &Arc<dyn HttpClient>,
+) -> Result<Response<AsyncBody>, String> {
+    let mut builder = Request::get(url).header("Accept", "application/vnd.oci.image.manifest.v1+json");
+    if !token.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", token));
+    }
+    let request = builder
+        .body(AsyncBody::default())
+        .map_err(|e| format!("Failed to create request: {e}"))?;
+    client
+        .send(request)
         .await
-        .map_err(|e| {
-            log::error!("OCI token request failed for {}: {e}", url);
-            e
-        })
+        .map_err(|e| format!("Failed to send request to {url}: {e}"))
 }
 
 pub(crate) async fn get_latest_oci_manifest(
@@ -105,14 +262,14 @@ pub(crate) async fn download_oci_tarball(
         None => format!("https://{registry}/v2/{repository_path}/blobs/{blob_digest}"),
     };
 
-    let request = Request::get(&url)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Accept", accept_header)
-        .body(AsyncBody::default())
-        .map_err(|e| {
-            log::error!("Failed to create blob request: {e}");
-            DevContainerError::ResourceFetchFailed
-        })?;
+    let mut builder = Request::get(&url).header("Accept", accept_header);
+    if !token.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", token));
+    }
+    let request = builder.body(AsyncBody::default()).map_err(|e| {
+        log::error!("Failed to create blob request: {e}");
+        DevContainerError::ResourceFetchFailed
+    })?;
 
     let mut response = client.send(request).await.map_err(|e| {
         log::error!("Failed to download feature blob: {e}");
@@ -151,21 +308,7 @@ pub(crate) async fn get_deserialized_response<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let request = match Request::get(url)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Accept", "application/vnd.oci.image.manifest.v1+json")
-        .body(AsyncBody::default())
-    {
-        Ok(request) => request,
-        Err(e) => return Err(format!("Failed to create request: {}", e)),
-    };
-    let response = match client.send(request).await {
-        Ok(response) => response,
-        Err(e) => {
-            return Err(format!("Failed to send request to {}: {}", url, e));
-        }
-    };
-
+    let response = send_oci_request(url, token, client).await?;
     let status = response.status();
     let mut output = String::new();
 
@@ -202,9 +345,12 @@ mod test {
     use http_client::{FakeHttpClient, anyhow};
     use serde::Deserialize;
 
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::oci::{
-        TokenResponse, download_oci_tarball, get_deserializable_oci_blob,
-        get_deserialized_response, get_latest_oci_manifest, get_oci_token,
+        BearerChallenge, TokenResponse, download_oci_tarball, get_deserializable_oci_blob,
+        get_deserialized_response, get_latest_oci_manifest, get_oci_auth_token,
+        parse_bearer_challenge,
     };
 
     async fn build_test_tarball() -> Vec<u8> {
@@ -276,36 +422,183 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_get_oci_token() {
+    async fn test_anonymous_request_omits_authorization_header() {
         let client = FakeHttpClient::create(|request| async move {
-            let host = request.uri().host();
-            if host.is_none() || host.unwrap() != test_oci_registry() {
-                return Err(anyhow!("Unexpected host: {}", host.unwrap_or_default()));
-            }
-            let path = request.uri().path();
-            if path != "/token" {
-                return Err(anyhow!("Unexpected path: {}", path));
-            }
-            let query = request.uri().query();
-            if query.is_none()
-                || query.unwrap()
-                    != format!(
-                        "service=ghcr.io&scope=repository:{}:pull",
-                        test_oci_repository()
-                    )
-            {
-                return Err(anyhow!("Unexpected query: {}", query.unwrap_or_default()));
+            if request.headers().get("Authorization").is_some() {
+                return Err(anyhow!("expected no Authorization header for anonymous"));
             }
             Ok(http_client::Response::builder()
                 .status(200)
-                .body("{ \"token\": \"thisisatoken\" }".into())
+                .body("{ \"token\": \"\" }".into())
                 .unwrap())
         });
 
-        let response = get_oci_token(test_oci_registry(), test_oci_repository(), &client).await;
-
+        let response =
+            get_deserialized_response::<TokenResponse>("", "https://ghcr.io/token", &client).await;
         assert!(response.is_ok());
-        assert_eq!(response.unwrap().token, "thisisatoken".to_string());
+    }
+
+    #[gpui::test]
+    async fn test_token_request_includes_authorization_header() {
+        let client = FakeHttpClient::create(|request| async move {
+            let auth = request
+                .headers()
+                .get("Authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            if auth != "Bearer foo" {
+                return Err(anyhow!("unexpected Authorization header: {auth}"));
+            }
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body("{ \"token\": \"x\" }".into())
+                .unwrap())
+        });
+
+        let response =
+            get_deserialized_response::<TokenResponse>("foo", "https://ghcr.io/token", &client)
+                .await;
+        assert!(response.is_ok());
+    }
+
+    #[gpui::test]
+    async fn test_get_oci_auth_token_anonymous_registry() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |request| {
+                let request_count = request_count.clone();
+                async move {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    let path = request.uri().path();
+                    if path != "/v2/" {
+                        return Err(anyhow!("unexpected path: {path}"));
+                    }
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body("{}".into())
+                        .unwrap())
+                }
+            }
+        });
+
+        let response =
+            get_oci_auth_token("anon.example.com", "some/repo", &client)
+                .await
+                .expect("anonymous probe should succeed");
+        assert_eq!(response.token, "");
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_get_oci_auth_token_follows_challenge() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let client = FakeHttpClient::create({
+            let request_count = request_count.clone();
+            move |request| {
+                let request_count = request_count.clone();
+                async move {
+                    let n = request_count.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        let host = request.uri().host().unwrap_or_default();
+                        if host != "registry.example.com" {
+                            return Err(anyhow!("unexpected probe host: {host}"));
+                        }
+                        if request.uri().path() != "/v2/" {
+                            return Err(anyhow!(
+                                "unexpected probe path: {}",
+                                request.uri().path()
+                            ));
+                        }
+                        return Ok(http_client::Response::builder()
+                            .status(401)
+                            .header(
+                                "Www-Authenticate",
+                                "Bearer realm=\"https://auth.example.com/token\",service=\"registry.example.com\",scope=\"ignored\"",
+                            )
+                            .body("".into())
+                            .unwrap());
+                    }
+                    let host = request.uri().host().unwrap_or_default();
+                    if host != "auth.example.com" {
+                        return Err(anyhow!("unexpected token host: {host}"));
+                    }
+                    if request.uri().path() != "/token" {
+                        return Err(anyhow!(
+                            "unexpected token path: {}",
+                            request.uri().path()
+                        ));
+                    }
+                    let query = request.uri().query().unwrap_or_default();
+                    if !query.contains("service=registry.example.com") {
+                        return Err(anyhow!("missing service in query: {query}"));
+                    }
+                    if !query.contains("scope=repository%3Asome%2Frepo%3Apull") {
+                        return Err(anyhow!("missing scope in query: {query}"));
+                    }
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body("{ \"token\": \"chocolate\" }".into())
+                        .unwrap())
+                }
+            }
+        });
+
+        let response =
+            get_oci_auth_token("registry.example.com", "some/repo", &client)
+                .await
+                .expect("challenge follow should succeed");
+        assert_eq!(response.token, "chocolate");
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[gpui::test]
+    async fn test_get_oci_auth_token_rejects_401_without_challenge() {
+        let client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(401)
+                .body("".into())
+                .unwrap())
+        });
+
+        let response =
+            get_oci_auth_token("registry.example.com", "some/repo", &client).await;
+        assert!(response.is_err());
+        let err = response.unwrap_err();
+        assert!(
+            err.contains("Www-Authenticate"),
+            "expected Www-Authenticate in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_bearer_challenge() {
+        let parsed = parse_bearer_challenge(
+            "Bearer realm=\"https://auth.example.com/token\",service=\"example.com\",scope=\"repository:foo:pull\"",
+        )
+        .expect("quoted challenge");
+        assert_eq!(
+            parsed,
+            BearerChallenge {
+                realm: Some("https://auth.example.com/token".to_string()),
+                service: Some("example.com".to_string()),
+                scope: Some("repository:foo:pull".to_string()),
+            }
+        );
+
+        let parsed = parse_bearer_challenge("bearer realm=https://x/token,service=x")
+            .expect("unquoted challenge");
+        assert_eq!(
+            parsed,
+            BearerChallenge {
+                realm: Some("https://x/token".to_string()),
+                service: Some("x".to_string()),
+                scope: None,
+            }
+        );
+
+        assert!(parse_bearer_challenge("Basic realm=\"x\"").is_err());
     }
 
     #[gpui::test]

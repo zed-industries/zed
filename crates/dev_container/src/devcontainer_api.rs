@@ -19,7 +19,7 @@ use crate::{
     DevContainerContext, DevContainerFeature, DevContainerTemplate,
     devcontainer_json::DevContainer,
     devcontainer_manifest::{read_devcontainer_configuration, spawn_dev_container},
-    devcontainer_templates_repository, get_latest_oci_manifest, get_oci_token, ghcr_registry,
+    devcontainer_templates_repository, get_latest_oci_manifest, get_oci_auth_token, ghcr_registry,
     oci::download_oci_tarball,
 };
 
@@ -329,13 +329,13 @@ pub(crate) async fn apply_devcontainer_template(
     context: &DevContainerContext,
     cx: &mut AsyncWindowContext,
 ) -> Result<DevContainerApply, DevContainerError> {
-    let token = get_oci_token(
+    let token = get_oci_auth_token(
         ghcr_registry(),
         devcontainer_templates_repository(),
         &context.http_client,
     )
     .map_err(|e| {
-        log::error!("Failed to get OCI auth token: {e}");
+        log::error!("Failed to negotiate OCI auth: {e}");
         DevContainerError::ResourceFetchFailed
     })
     .await?;

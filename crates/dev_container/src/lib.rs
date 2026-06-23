@@ -57,7 +57,7 @@ use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_devcontainer_template;
 use crate::oci::get_deserializable_oci_blob;
 use crate::oci::get_latest_oci_manifest;
-use crate::oci::get_oci_token;
+use crate::oci::get_oci_auth_token;
 
 pub use devcontainer_api::{
     DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
@@ -1611,7 +1611,7 @@ fn dispatch_apply_templates(
 async fn get_ghcr_templates(
     client: Arc<dyn HttpClient>,
 ) -> Result<DevContainerTemplatesResponse, String> {
-    let token = get_oci_token(
+    let token = get_oci_auth_token(
         ghcr_registry(),
         devcontainer_templates_repository(),
         &client,
@@ -1648,7 +1648,7 @@ async fn get_ghcr_templates(
 async fn get_ghcr_features(
     client: Arc<dyn HttpClient>,
 ) -> Result<DevContainerFeaturesResponse, String> {
-    let token = get_oci_token(
+    let token = get_oci_auth_token(
         ghcr_registry(),
         devcontainer_templates_repository(),
         &client,

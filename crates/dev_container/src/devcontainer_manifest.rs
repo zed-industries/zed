@@ -26,7 +26,7 @@ use crate::{
         DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
     },
     features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
-    get_oci_token,
+    get_oci_auth_token,
     oci::{TokenResponse, download_oci_tarball, get_oci_manifest},
     safe_id_lower,
 };
@@ -522,11 +522,11 @@ impl DevContainerManifest {
                     DevContainerError::DevContainerParseFailed
                 })?;
                 let TokenResponse { token } =
-                    get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
+                    get_oci_auth_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
                         .await
                         .map_err(|e| {
                             log::error!(
-                                "Failed to get OCI token for feature '{}': {e}",
+                                "Failed to negotiate OCI auth for feature '{}': {e}",
                                 feature_ref
                             );
                             DevContainerError::ResourceFetchFailed
@@ -6517,6 +6517,22 @@ RUN echo $RUBY_VERSION2
     fn fake_http_client() -> Arc<dyn HttpClient> {
         FakeHttpClient::create(|request| async move {
             let (parts, _body) = request.into_parts();
+            // Respond to OCI Distribution `/v2/` probes with a Bearer challenge
+            // pointing at the registry's `/token` endpoint, so that
+            // `get_oci_auth_token` follows the spec-compliant flow.
+            if parts.uri.path() == "/v2/" {
+                let host = parts.uri.host().unwrap_or("ghcr.io");
+                return Ok(http::Response::builder()
+                    .status(401)
+                    .header(
+                        "Www-Authenticate",
+                        format!(
+                            "Bearer realm=\"https://{host}/token\",service=\"{host}\""
+                        ),
+                    )
+                    .body(http_client::AsyncBody::from(""))
+                    .unwrap());
+            }
             if parts.uri.path() == "/token" {
                 let token_response = TokenResponse {
                     token: "token".to_string(),
