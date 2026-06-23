@@ -372,12 +372,13 @@ impl DockerClient for Docker {
             log::error!("Error running command {e} in container exec");
             DevContainerError::ContainerNotValid(container_id.to_string())
         })?;
+        let std_out = String::from_utf8_lossy(&output.stdout);
+        log::debug!("Command output:\n {std_out}");
         if !output.status.success() {
             let std_err = String::from_utf8_lossy(&output.stderr);
             log::error!("Command produced a non-successful output. StdErr: {std_err}");
+            return Err(DevContainerError::DevContainerScriptsFailed);
         }
-        let std_out = String::from_utf8_lossy(&output.stdout);
-        log::debug!("Command output:\n {std_out}");
 
         Ok(())
     }
@@ -745,10 +746,12 @@ mod test {
         devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
         docker::{
-            Docker, DockerComposeConfig, DockerComposeService, DockerComposeServicePort,
-            DockerComposeVolume, DockerInspect, DockerPs, parse_find_process_output,
+            Docker, DockerClient, DockerComposeConfig, DockerComposeService,
+            DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
+            parse_find_process_output,
         },
     };
+    use util::command::Command;
 
     #[test]
     fn should_parse_simple_env_var() {
@@ -846,6 +849,28 @@ mod test {
                 OsStr::new(given_id)
             ]
         )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn docker_exec_returns_error_on_nonzero_exit() {
+        let docker = Docker {
+            docker_cli: "false".to_string(),
+            has_buildx: false,
+        };
+
+        let result = gpui::block_on(docker.run_docker_exec(
+            "container",
+            "/workspace",
+            "root",
+            &HashMap::new(),
+            Command::new("true"),
+        ));
+
+        assert!(matches!(
+            result,
+            Err(DevContainerError::DevContainerScriptsFailed)
+        ));
     }
 
     #[test]
