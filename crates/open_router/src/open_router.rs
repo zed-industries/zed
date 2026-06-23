@@ -147,6 +147,8 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
@@ -260,7 +262,11 @@ impl MessageContent {
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
         if parts.len() == 1
-            && let MessagePart::Text { text, .. } = &parts[0]
+            && let MessagePart::Text {
+                text,
+                cache_control,
+            } = &parts[0]
+            && cache_control.is_none()
         {
             return Self::Plain(text.clone());
         }
@@ -349,9 +355,7 @@ pub enum MessagePart {
         cache_control: Option<CacheControl>,
     },
     #[serde(rename = "image_url")]
-    Image {
-        image_url: String,
-    },
+    Image { image_url: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
