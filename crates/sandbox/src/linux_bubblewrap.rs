@@ -294,8 +294,22 @@ fn probe_bwrap(bwrap: &Path, bwrap_args: &[String]) -> bool {
 /// `writable_directories` should be the project's worktree paths (plus any
 /// user-approved paths), *not* the command's working directory, which is
 /// model-controlled and would let the model widen its own writable scope.
+///
+/// `protected_paths` are paths whose contents must stay inaccessible even when
+/// they sit under a writable directory or the root is bound read-write (e.g.
+/// `.git` metadata when Git access hasn't been approved). Each is shadowed: a
+/// directory with an ephemeral `tmpfs` (real contents hidden, writes land in
+/// throwaway storage) and a file with an empty read-only bind of `/dev/null`.
+///
+/// `allowed_unix_socket_paths` are Unix domain sockets to re-expose on top of
+/// any overlay that would otherwise hide them (notably `--tmpfs /tmp`), so
+/// local IPC such as the inherited SSH agent socket keeps working. AF_UNIX
+/// connectivity is unaffected by `--unshare-net`, so this grants no IP network
+/// access.
 pub fn build_bwrap_args(
     writable_directories: &[&Path],
+    protected_paths: &[&Path],
+    allowed_unix_socket_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
 ) -> Vec<String> {
@@ -333,6 +347,51 @@ pub fn build_bwrap_args(
             let path = canonical.to_string_lossy().into_owned();
             push_bind(&mut args, "--bind", &path, &path);
         }
+    }
+
+    // Shadow protected paths last among the filesystem binds so the overlay
+    // wins over the root bind and any writable bind above it. Unlike the macOS
+    // Seatbelt policy (which denies `file-read-data` while leaving metadata
+    // readable), bwrap hides the real contents entirely behind an empty
+    // overlay; the security goal — keeping the real path unreadable and
+    // unwritable — is the same.
+    for protected_path in protected_paths {
+        // Resolve through an existing parent when the leaf is missing so a
+        // not-yet-created `.git` (before `git init`) overlays the same real path
+        // the writable bind above uses, even on a symlinked root.
+        let canonical = crate::canonicalize_allowing_missing_leaf(protected_path);
+        let destination = canonical.to_string_lossy().into_owned();
+        match std::fs::symlink_metadata(&canonical) {
+            Ok(metadata) if metadata.is_dir() => {
+                args.push("--tmpfs".to_string());
+                args.push(destination);
+            }
+            Ok(_) => {
+                // A file (e.g. a linked worktree's `.git` gitlink): mask it
+                // with an empty, read-only `/dev/null`.
+                push_bind(&mut args, "--ro-bind", "/dev/null", &destination);
+            }
+            Err(_) => {
+                // Doesn't exist yet: still overlay a tmpfs so a command can't
+                // `git init` and write real metadata into a writable worktree.
+                args.push("--tmpfs".to_string());
+                args.push(destination);
+            }
+        }
+    }
+
+    // Re-expose explicitly allowed Unix domain sockets on top of any overlay
+    // that would otherwise hide them. Done after the protected overlays and the
+    // `/tmp` tmpfs so the socket always wins.
+    for socket_path in allowed_unix_socket_paths {
+        let canonical = socket_path
+            .canonicalize()
+            .unwrap_or_else(|_| socket_path.to_path_buf());
+        if !canonical.exists() {
+            continue;
+        }
+        let path = canonical.to_string_lossy().into_owned();
+        push_bind(&mut args, "--bind", &path, &path);
     }
 
     for flag in [
@@ -392,6 +451,8 @@ struct LauncherInvocation {
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
     writable_dirs: Vec<PathBuf>,
+    protected_paths: Vec<PathBuf>,
+    allowed_unix_socket_paths: Vec<PathBuf>,
     program: OsString,
     args: Vec<OsString>,
 }
@@ -405,18 +466,29 @@ struct LauncherInvocation {
 /// `status_socket_name` (when given).
 ///
 /// The encoding is positional, one value per argv entry, so paths and
-/// arguments containing spaces round-trip without escaping:
-/// `[FLAG, socket, allow_network, allow_fs_write, cwd, N, writable_1.., program, args..]`.
+/// arguments containing spaces round-trip without escaping. Each path list is a
+/// count followed by that many entries:
+/// `[FLAG, socket, allow_network, allow_fs_write, cwd,
+///   N_writable, writable.., N_protected, protected.., N_sockets, sockets..,
+///   program, args..]`.
 pub fn wrap_invocation(
     launcher_program: &str,
     status_socket_name: Option<&str>,
     permissions: SandboxPermissions,
     writable_dirs: &[&Path],
+    protected_paths: &[&Path],
+    allowed_unix_socket_paths: &[&Path],
     cwd: Option<&Path>,
     program: &str,
     args: &[String],
 ) -> (String, Vec<String>) {
-    let mut launcher_args = Vec::with_capacity(writable_dirs.len() + args.len() + 7);
+    let mut launcher_args = Vec::with_capacity(
+        writable_dirs.len()
+            + protected_paths.len()
+            + allowed_unix_socket_paths.len()
+            + args.len()
+            + 9,
+    );
     launcher_args.push(SANDBOX_LAUNCHER_FLAG.to_string());
     launcher_args.push(status_socket_name.unwrap_or("").to_string());
     launcher_args.push(encode_bool(permissions.allow_network));
@@ -425,13 +497,20 @@ pub fn wrap_invocation(
         cwd.map(|cwd| cwd.to_string_lossy().into_owned())
             .unwrap_or_default(),
     );
-    launcher_args.push(writable_dirs.len().to_string());
-    for directory in writable_dirs {
-        launcher_args.push(directory.to_string_lossy().into_owned());
-    }
+    push_path_list(&mut launcher_args, writable_dirs);
+    push_path_list(&mut launcher_args, protected_paths);
+    push_path_list(&mut launcher_args, allowed_unix_socket_paths);
     launcher_args.push(program.to_string());
     launcher_args.extend(args.iter().cloned());
     (launcher_program.to_string(), launcher_args)
+}
+
+/// Encode a path list as a count followed by one argv entry per path.
+fn push_path_list(launcher_args: &mut Vec<String>, paths: &[&Path]) {
+    launcher_args.push(paths.len().to_string());
+    for path in paths {
+        launcher_args.push(path.to_string_lossy().into_owned());
+    }
 }
 
 /// If this process was re-executed as a sandbox launcher (its first argument
@@ -473,19 +552,34 @@ fn run_launcher(invocation: LauncherInvocation) -> ! {
         .iter()
         .map(PathBuf::as_path)
         .collect();
+    let protected: Vec<&Path> = invocation
+        .protected_paths
+        .iter()
+        .map(PathBuf::as_path)
+        .collect();
+    let allowed_unix_sockets: Vec<&Path> = invocation
+        .allowed_unix_socket_paths
+        .iter()
+        .map(PathBuf::as_path)
+        .collect();
 
-    let (bwrap, bwrap_args) =
-        match prepare_sandbox(&writable, invocation.permissions, invocation.cwd.as_deref()) {
-            Ok(prepared) => prepared,
-            Err(status) => {
-                report_status(socket.as_deref(), status);
-                eprintln!(
-                    "zed: could not create sandbox: {}; aborting",
-                    status.describe()
-                );
-                std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
-            }
-        };
+    let (bwrap, bwrap_args) = match prepare_sandbox(
+        &writable,
+        &protected,
+        &allowed_unix_sockets,
+        invocation.permissions,
+        invocation.cwd.as_deref(),
+    ) {
+        Ok(prepared) => prepared,
+        Err(status) => {
+            report_status(socket.as_deref(), status);
+            eprintln!(
+                "zed: could not create sandbox: {}; aborting",
+                status.describe()
+            );
+            std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+        }
+    };
 
     // Everything is in place: report success, then `exec` the sandboxed command.
     // A failure of the final `exec` is fail-closed (a hard error, never a silent
@@ -512,6 +606,8 @@ fn run_launcher(invocation: LauncherInvocation) -> ! {
 /// fall back to an unsandboxed run).
 fn prepare_sandbox(
     writable_dirs: &[&Path],
+    protected_paths: &[&Path],
+    allowed_unix_socket_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
 ) -> Result<(PathBuf, Vec<String>), LauncherStatus> {
@@ -520,7 +616,13 @@ fn prepare_sandbox(
         BwrapLocation::OnlySetuid => return Err(LauncherStatus::SetuidRejected),
         BwrapLocation::NotFound => return Err(LauncherStatus::BwrapNotFound),
     };
-    let bwrap_args = build_bwrap_args(writable_dirs, permissions, cwd);
+    let bwrap_args = build_bwrap_args(
+        writable_dirs,
+        protected_paths,
+        allowed_unix_socket_paths,
+        permissions,
+        cwd,
+    );
     if !probe_bwrap(&bwrap, &bwrap_args) {
         return Err(LauncherStatus::SandboxProbeFailed);
     }
@@ -537,10 +639,19 @@ fn prepare_sandbox(
 /// never silently skipped on the strength of this result alone.
 pub fn check_can_create_sandbox(
     writable_dirs: &[&Path],
+    protected_paths: &[&Path],
+    allowed_unix_socket_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
 ) -> std::result::Result<(), LauncherStatus> {
-    prepare_sandbox(writable_dirs, permissions, cwd).map(|_| ())
+    prepare_sandbox(
+        writable_dirs,
+        protected_paths,
+        allowed_unix_socket_paths,
+        permissions,
+        cwd,
+    )
+    .map(|_| ())
 }
 
 /// Send a one-shot `status` datagram to the status channel (if one was given).
@@ -599,19 +710,9 @@ fn decode_launcher_args(mut args: impl Iterator<Item = OsString>) -> Result<Laun
             Some(PathBuf::from(value))
         }
     };
-    let count = args
-        .next()
-        .context("missing writable directory count")?
-        .to_str()
-        .context("writable directory count is not valid UTF-8")?
-        .parse::<usize>()
-        .context("invalid writable directory count")?;
-    let mut writable_dirs = Vec::with_capacity(count);
-    for _ in 0..count {
-        writable_dirs.push(PathBuf::from(
-            args.next().context("missing writable directory")?,
-        ));
-    }
+    let writable_dirs = decode_path_list(&mut args, "writable directory")?;
+    let protected_paths = decode_path_list(&mut args, "protected path")?;
+    let allowed_unix_socket_paths = decode_path_list(&mut args, "allowed unix socket")?;
     let program = args.next().context("missing program to run")?;
     let args: Vec<OsString> = args.collect();
 
@@ -623,9 +724,31 @@ fn decode_launcher_args(mut args: impl Iterator<Item = OsString>) -> Result<Laun
         },
         cwd,
         writable_dirs,
+        protected_paths,
+        allowed_unix_socket_paths,
         program,
         args,
     })
+}
+
+/// Decode a path list (a count followed by that many entries) produced by
+/// [`push_path_list`]. `what` names the list for error messages.
+fn decode_path_list(args: &mut impl Iterator<Item = OsString>, what: &str) -> Result<Vec<PathBuf>> {
+    let count = args
+        .next()
+        .with_context(|| format!("missing {what} count"))?
+        .to_str()
+        .with_context(|| format!("{what} count is not valid UTF-8"))?
+        .parse::<usize>()
+        .with_context(|| format!("invalid {what} count"))?;
+    let mut paths = Vec::with_capacity(count);
+    for _ in 0..count {
+        paths.push(PathBuf::from(
+            args.next()
+                .with_context(|| format!("missing {what} entry"))?,
+        ));
+    }
+    Ok(paths)
 }
 
 fn encode_bool(value: bool) -> String {
@@ -685,6 +808,8 @@ mod tests {
         let writable = tempfile::tempdir().unwrap();
         let args = build_bwrap_args(
             &[writable.path()],
+            &[],
+            &[],
             SandboxPermissions::default(),
             Some(writable.path()),
         );
@@ -705,10 +830,12 @@ mod tests {
 
     #[test]
     fn test_build_bwrap_args_network_namespace_follows_permission() {
-        let denied = build_bwrap_args(&[], SandboxPermissions::default(), None);
+        let denied = build_bwrap_args(&[], &[], &[], SandboxPermissions::default(), None);
         assert!(denied.iter().any(|arg| arg == "--unshare-net"));
 
         let allowed = build_bwrap_args(
+            &[],
+            &[],
             &[],
             SandboxPermissions {
                 allow_network: true,
@@ -725,12 +852,101 @@ mod tests {
             allow_network: false,
             allow_fs_write: true,
         };
-        let args = build_bwrap_args(&[], permissions, None);
+        let args = build_bwrap_args(&[], &[], &[], permissions, None);
         assert!(windows_contains(&args, &["--bind", "/", "/"]));
         assert!(!windows_contains(&args, &["--ro-bind", "/", "/"]));
         // With unrestricted writes the host's real `/tmp` stays writable, so
         // no ephemeral tmpfs is layered over it.
         assert!(!windows_contains(&args, &["--tmpfs", "/tmp"]));
+    }
+
+    #[test]
+    fn test_build_bwrap_args_shadows_protected_directory_with_tmpfs() {
+        let project = tempfile::tempdir().unwrap();
+        let git_dir = project.path().join(".git");
+        std::fs::create_dir(&git_dir).unwrap();
+
+        let args = build_bwrap_args(
+            &[project.path()],
+            &[git_dir.as_path()],
+            &[],
+            SandboxPermissions::default(),
+            None,
+        );
+
+        let git_canonical = git_dir.canonicalize().unwrap();
+        let git_str = git_canonical.to_string_lossy().into_owned();
+        // The writable project is bound rw, then the `.git` directory is shadowed
+        // with a tmpfs on top so its real contents can't be read or written.
+        assert!(windows_contains(&args, &["--tmpfs", &git_str]));
+
+        let project_canonical = project.path().canonicalize().unwrap();
+        let project_str = project_canonical.to_string_lossy().into_owned();
+        let tmpfs_index = args
+            .windows(2)
+            .position(|w| w == ["--tmpfs".to_string(), git_str.clone()])
+            .unwrap();
+        let bind_index = args
+            .windows(3)
+            .position(|w| {
+                w == [
+                    "--bind".to_string(),
+                    project_str.clone(),
+                    project_str.clone(),
+                ]
+            })
+            .unwrap();
+        assert!(
+            bind_index < tmpfs_index,
+            "the protected tmpfs must be applied after the writable bind so it wins"
+        );
+    }
+
+    #[test]
+    fn test_build_bwrap_args_masks_protected_file_with_dev_null() {
+        let project = tempfile::tempdir().unwrap();
+        let gitlink = project.path().join(".git");
+        std::fs::write(&gitlink, "gitdir: /elsewhere\n").unwrap();
+
+        let args = build_bwrap_args(
+            &[project.path()],
+            &[gitlink.as_path()],
+            &[],
+            SandboxPermissions::default(),
+            None,
+        );
+
+        let gitlink_canonical = gitlink.canonicalize().unwrap();
+        let gitlink_str = gitlink_canonical.to_string_lossy().into_owned();
+        assert!(windows_contains(
+            &args,
+            &["--ro-bind", "/dev/null", &gitlink_str]
+        ));
+    }
+
+    #[test]
+    fn test_build_bwrap_args_rebinds_allowed_unix_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        // `build_bwrap_args` only checks that the path exists, so a regular file
+        // stands in for a socket here (binding a real socket under a long temp
+        // path would overflow `sun_path`).
+        let socket = dir.path().join("agent.sock");
+        std::fs::write(&socket, b"").unwrap();
+
+        let args = build_bwrap_args(
+            &[],
+            &[],
+            &[socket.as_path()],
+            SandboxPermissions::default(),
+            None,
+        );
+
+        let socket_canonical = socket.canonicalize().unwrap();
+        let socket_str = socket_canonical.to_string_lossy().into_owned();
+        assert!(windows_contains(
+            &args,
+            &["--bind", &socket_str, &socket_str]
+        ));
     }
 
     #[test]
@@ -744,11 +960,15 @@ mod tests {
             allow_fs_write: false,
         };
 
+        let protected = PathBuf::from("/home/user/project dir/.git");
+        let socket = PathBuf::from("/tmp/ssh agent/sock");
         let (launcher, launcher_args) = wrap_invocation(
             "/path/to/zed",
             Some("zed-sandbox-status-abc"),
             permissions,
             &[writable.as_path()],
+            &[protected.as_path()],
+            &[socket.as_path()],
             Some(cwd.as_path()),
             &program,
             &args,
@@ -766,6 +986,8 @@ mod tests {
         assert_eq!(decoded.permissions, permissions);
         assert_eq!(decoded.cwd.as_deref(), Some(cwd.as_path()));
         assert_eq!(decoded.writable_dirs, vec![writable]);
+        assert_eq!(decoded.protected_paths, vec![protected]);
+        assert_eq!(decoded.allowed_unix_socket_paths, vec![socket]);
         assert_eq!(decoded.program, OsString::from(program));
         assert_eq!(
             decoded.args,
@@ -780,8 +1002,17 @@ mod tests {
             allow_network: true,
             allow_fs_write: true,
         };
-        let (launcher, launcher_args) =
-            wrap_invocation("/path/to/zed", None, permissions, &[], None, &program, &[]);
+        let (launcher, launcher_args) = wrap_invocation(
+            "/path/to/zed",
+            None,
+            permissions,
+            &[],
+            &[],
+            &[],
+            None,
+            &program,
+            &[],
+        );
 
         let decoded = parse_launcher_args(launcher_argv(launcher, launcher_args))
             .unwrap()
@@ -791,6 +1022,8 @@ mod tests {
         assert_eq!(decoded.permissions, permissions);
         assert_eq!(decoded.cwd, None);
         assert!(decoded.writable_dirs.is_empty());
+        assert!(decoded.protected_paths.is_empty());
+        assert!(decoded.allowed_unix_socket_paths.is_empty());
         assert_eq!(decoded.program, OsString::from("/bin/true"));
         assert!(decoded.args.is_empty());
     }

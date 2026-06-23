@@ -777,18 +777,76 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
 /// ...) Windows keeps in the environment block — so they must be skipped or
 /// bwrap aborts with "setenv failed".
 ///
-/// Beyond that, a few variables hold Windows-specific values that would be
-/// meaningless or actively break the command inside WSL: `PATH` would shadow
-/// WSL's own `PATH` and stop the shell from finding Linux executables, the
-/// temp-dir variables point at Windows paths that don't exist in WSL (bwrap
-/// provides a fresh tmpfs `/tmp` instead), and WSL interop variables would
-/// undermine the explicit interop block above. Matched case-insensitively
-/// because Windows environment variable names are.
+/// Beyond that, many variables hold Windows-specific values that would be
+/// meaningless or actively break the command inside WSL, so they are dropped
+/// rather than forwarded: `PATH`/`PATHEXT` would shadow WSL's own `PATH` and
+/// stop the shell from finding Linux executables, the temp-dir variables point
+/// at Windows paths that don't exist in WSL (bwrap provides a fresh tmpfs
+/// `/tmp` instead), the WSL interop variables would undermine the explicit
+/// interop block above, a Windows-set `HOME` would clobber the distro's own
+/// `$HOME` and break the shell, and the rest are Windows system locations,
+/// shell settings, host/session identity, and CPU descriptors that are either
+/// wrong or misleading inside Linux. This is a blocklist rather than an allowlist so
+/// genuinely portable variables (e.g. `LANG`, `CARGO_TERM_COLOR`, `PAGER`)
+/// still reach the command; it only needs to cover the variables Windows
+/// populates by default. Matched case-insensitively because Windows
+/// environment variable names are.
 fn is_forwardable_env_var(name: &str) -> bool {
     if name.is_empty() || name.contains('=') {
         return false;
     }
-    const BLOCKED: [&str; 6] = ["PATH", "TMPDIR", "TMP", "TEMP", "WSL_INTEROP", "WSLENV"];
+    const BLOCKED: &[&str] = &[
+        // Shadow or break the Linux process environment.
+        "PATH",
+        "PATHEXT",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        // Would undermine the explicit WSL interop block above.
+        "WSL_INTEROP",
+        "WSLENV",
+        // Windows system locations and shell, meaningless inside Linux.
+        "OS",
+        "COMSPEC",
+        "WINDIR",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        // When Windows has `HOME` set (e.g. for git), it's a Windows path that
+        // would clobber the distro's correct Linux `$HOME` and break the shell.
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "HOMESHARE",
+        "USERPROFILE",
+        "PUBLIC",
+        "ALLUSERSPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+        "COMMONPROGRAMFILES",
+        "COMMONPROGRAMFILES(X86)",
+        "COMMONPROGRAMW6432",
+        "PSMODULEPATH",
+        "DRIVERDATA",
+        "ONEDRIVE",
+        // Windows host/session identity, misleading inside Linux.
+        "COMPUTERNAME",
+        "USERNAME",
+        "USERDOMAIN",
+        "USERDOMAIN_ROAMINGPROFILE",
+        "LOGONSERVER",
+        "SESSIONNAME",
+        // Windows CPU descriptors.
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "PROCESSOR_ARCHITEW6432",
+        "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL",
+        "PROCESSOR_REVISION",
+    ];
     !BLOCKED
         .iter()
         .any(|blocked| name.eq_ignore_ascii_case(blocked))
@@ -1224,9 +1282,12 @@ mod tests {
     fn bwrap_does_not_forward_windows_specific_env() {
         // These hold Windows paths/values that would break or be meaningless
         // inside WSL, so they must never cross the boundary. Names are matched
-        // case-insensitively, as Windows env var names are.
+        // case-insensitively, as Windows env var names are. `(x86)` variants
+        // contain parentheses but no `=`, so they'd pass the `setenv` filter
+        // and must be blocked by name.
         let env = HashMap::from([
             ("Path".to_string(), r"C:\Windows\System32".to_string()),
+            ("PATHEXT".to_string(), ".COM;.EXE;.BAT".to_string()),
             (
                 "TEMP".to_string(),
                 r"C:\Users\me\AppData\Local\Temp".to_string(),
@@ -1236,9 +1297,59 @@ mod tests {
                 r"C:\Users\me\AppData\Local\Temp".to_string(),
             ),
             ("TMPDIR".to_string(), r"C:\tmp".to_string()),
+            ("OS".to_string(), "Windows_NT".to_string()),
+            (
+                "ComSpec".to_string(),
+                r"C:\Windows\system32\cmd.exe".to_string(),
+            ),
+            ("windir".to_string(), r"C:\Windows".to_string()),
+            ("SystemRoot".to_string(), r"C:\Windows".to_string()),
+            ("HOME".to_string(), r"C:\Users\me".to_string()),
+            ("USERPROFILE".to_string(), r"C:\Users\me".to_string()),
+            (
+                "APPDATA".to_string(),
+                r"C:\Users\me\AppData\Roaming".to_string(),
+            ),
+            (
+                "LOCALAPPDATA".to_string(),
+                r"C:\Users\me\AppData\Local".to_string(),
+            ),
+            (
+                "ProgramFiles(x86)".to_string(),
+                r"C:\Program Files (x86)".to_string(),
+            ),
+            ("USERNAME".to_string(), "me".to_string()),
+            ("COMPUTERNAME".to_string(), "DESKTOP-ABC".to_string()),
+            ("PROCESSOR_ARCHITECTURE".to_string(), "AMD64".to_string()),
+            ("NUMBER_OF_PROCESSORS".to_string(), "16".to_string()),
         ]);
         let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
         assert!(!args.iter().any(|arg| arg == "--setenv"));
+    }
+
+    #[test]
+    fn bwrap_forwards_portable_env_alongside_windows_specific_env() {
+        // A blocklist (not an allowlist) means genuinely portable variables
+        // still reach the command even when Windows-only ones are present.
+        let env = HashMap::from([
+            ("USERPROFILE".to_string(), r"C:\Users\me".to_string()),
+            ("LANG".to_string(), "en_US.UTF-8".to_string()),
+            ("CARGO_TERM_COLOR".to_string(), "always".to_string()),
+        ]);
+        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "LANG", "en_US.UTF-8"])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "CARGO_TERM_COLOR", "always"])
+        );
+        assert!(!args.windows(3).any(|window| {
+            matches!(window, [flag, name, _]
+                if flag.as_str() == "--setenv"
+                    && name.eq_ignore_ascii_case("USERPROFILE"))
+        }));
     }
 
     #[test]

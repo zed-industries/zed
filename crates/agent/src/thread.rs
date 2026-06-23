@@ -5371,6 +5371,7 @@ impl ToolCallEventStream {
             command,
             network_hosts,
             network_all_hosts,
+            allow_git_access: request.allow_git_access,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
@@ -5564,6 +5565,9 @@ impl ToolCallEventStream {
                         agent.set_sandbox_network_hosts(host_strings);
                     }
                 }
+                if request.allow_git_access {
+                    agent.allow_sandbox_git_access();
+                }
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
                 }
@@ -5729,8 +5733,10 @@ impl ToolCallEventStream {
         })
     }
 
-    /// Persist the `allow_unsandboxed` setting so future commands skip the
-    /// sandbox when it can't be created, without prompting again.
+    /// Persist the `allow_unsandboxed` setting. Going forward this turns
+    /// sandboxing off for the model-facing surface: later turns expose the
+    /// plain `terminal` tool (with no sandbox prompt section) and commands run
+    /// without an OS sandbox. On Windows, WSL sandbox setup is skipped.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn persist_sandbox_unsandboxed_permission(fs: Option<Arc<dyn Fs>>, cx: &AsyncApp) {
         let Some(fs) = fs else {
@@ -7177,6 +7183,7 @@ mod tests {
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
             network: crate::sandboxing::NetworkRequest::None,
+            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -7202,6 +7209,7 @@ mod tests {
                 .expect("sandbox authorization should include request details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
+        assert_eq!(details.allow_git_access, request.allow_git_access);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);

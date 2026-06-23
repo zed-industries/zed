@@ -5674,7 +5674,8 @@ impl AgentPanel {
                         if !showing_terminal {
                             menu = menu
                                 .header("MCP Servers")
-                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .action("Add Custom Server…", Box::new(AddContextServer::local()))
+                                .action("Add Remote Server…", Box::new(AddContextServer::remote()))
                                 .action(
                                     "Install New Servers…",
                                     Box::new(zed_actions::Extensions {

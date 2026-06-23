@@ -1340,7 +1340,7 @@ async fn connection_lost(
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
 
             log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id(), session.connection_id);
-            leave_room_for_session(&session, session.connection_id, None).await.trace_err();
+            leave_room_for_session(&session, session.connection_id).await.trace_err();
             leave_channel_buffers_for_session(&session)
                 .await
                 .trace_err();
@@ -1494,44 +1494,6 @@ async fn rejoin_room(
             .rejoin_room(request, session.user_id(), session.connection_id)
             .await?;
 
-        // Include fresh LiveKit connection info so that clients whose LiveKit
-        // connection failed (e.g. because their token was revoked by a stale
-        // connection cleanup) can re-establish it.
-        let live_kit_connection_info =
-            session
-                .app_state
-                .livekit_client
-                .as_ref()
-                .and_then(|live_kit| {
-                    let (can_publish, token) = if rejoined_room.role == ChannelRole::Guest {
-                        (
-                            false,
-                            live_kit
-                                .guest_token(
-                                    &rejoined_room.room.livekit_room,
-                                    &session.user_id().to_string(),
-                                )
-                                .trace_err()?,
-                        )
-                    } else {
-                        (
-                            true,
-                            live_kit
-                                .room_token(
-                                    &rejoined_room.room.livekit_room,
-                                    &session.user_id().to_string(),
-                                )
-                                .trace_err()?,
-                        )
-                    };
-
-                    Some(LiveKitConnectionInfo {
-                        server_url: live_kit.url().into(),
-                        token,
-                        can_publish,
-                    })
-                });
-
         response.send(proto::RejoinRoomResponse {
             room: Some(rejoined_room.room.clone()),
             reshared_projects: rejoined_room
@@ -1551,7 +1513,6 @@ async fn rejoin_room(
                 .iter()
                 .map(|rejoined_project| rejoined_project.to_proto())
                 .collect(),
-            live_kit_connection_info,
         })?;
         room_updated(&rejoined_room.room, &session.peer);
 
@@ -1703,7 +1664,7 @@ async fn leave_room(
     response: Response<proto::LeaveRoom>,
     session: MessageContext,
 ) -> Result<()> {
-    leave_room_for_session(&session, session.connection_id, None).await?;
+    leave_room_for_session(&session, session.connection_id).await?;
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -3438,7 +3399,7 @@ async fn join_channel_internal(
                 "cleaning up stale connection",
             );
             drop(db);
-            leave_room_for_session(&session, connection, Some(channel_id)).await?;
+            leave_room_for_session(&session, connection).await?;
             db = session.db().await;
         }
 
@@ -4068,11 +4029,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     Ok(())
 }
 
-async fn leave_room_for_session(
-    session: &Session,
-    connection_id: ConnectionId,
-    rejoining_channel_id: Option<ChannelId>,
-) -> Result<()> {
+async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
     let room_id;
@@ -4081,7 +4038,6 @@ async fn leave_room_for_session(
     let delete_livekit_room;
     let room;
     let channel;
-    let left_channel_id;
 
     if let Some(mut left_room) = session.db().await.leave_room(connection_id).await? {
         contacts_to_update.insert(session.user_id());
@@ -4096,22 +4052,11 @@ async fn leave_room_for_session(
         delete_livekit_room = left_room.deleted;
         room = mem::take(&mut left_room.room);
         channel = mem::take(&mut left_room.channel);
-        left_channel_id = channel.as_ref().map(|channel| channel.id);
 
         room_updated(&room, &session.peer);
     } else {
         return Ok(());
     }
-
-    // When this cleanup is part of rejoining the same channel, the user is
-    // immediately re-entering this LiveKit room with the same identity, which
-    // LiveKit handles by evicting the prior session. Calling
-    // `remove_participant` here is therefore redundant, and worse: on LiveKit
-    // Cloud it revokes the identity's tokens (including the freshly issued one
-    // for the rejoin), leaving the user connected to collab but unable to join
-    // audio. Skip the removal in that case.
-    let skip_livekit_removal =
-        rejoining_channel_id.is_some() && left_channel_id == rejoining_channel_id;
 
     if let Some(channel) = channel {
         channel_updated(
@@ -4145,12 +4090,10 @@ async fn leave_room_for_session(
     }
 
     if let Some(live_kit) = session.app_state.livekit_client.as_ref() {
-        if !skip_livekit_removal {
-            live_kit
-                .remove_participant(livekit_room.clone(), session.user_id().to_string())
-                .await
-                .trace_err();
-        }
+        live_kit
+            .remove_participant(livekit_room.clone(), session.user_id().to_string())
+            .await
+            .trace_err();
 
         if delete_livekit_room {
             live_kit.delete_room(livekit_room).await.trace_err();

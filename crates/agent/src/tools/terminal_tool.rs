@@ -115,11 +115,11 @@ pub struct SandboxedTerminalToolInput {
         `https://` URLs rather than `git@`/`ssh://`."
     )]
     #[cfg_attr(
-        target_os = "linux",
-        doc = "\nNOTE: on Linux the sandbox cannot restrict network access to specific \
-        hosts. Any value here grants the command unrestricted outbound network access \
-        (exactly like `allow_all_hosts`), and the user is asked to approve access to \
-        all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
+        any(target_os = "linux", target_os = "windows"),
+        doc = "\nNOTE: on Linux and Windows the sandbox cannot restrict network access to \
+        specific hosts. Any value here grants the command unrestricted outbound network \
+        access (exactly like `allow_all_hosts`), and the user is asked to approve access \
+        to all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
         directly when per-host restriction isn't available."
     )]
     #[serde(default)]
@@ -161,18 +161,36 @@ pub struct SandboxedTerminalToolInput {
     /// set of paths is known. Requesting it triggers a user approval prompt.
     #[serde(default, alias = "allow_fs_write")]
     pub allow_fs_write_all: Option<bool>,
+    /// Set to `true` when the command needs Git metadata access.
+    ///
+    /// Sandboxed commands cannot read file contents from, or write to, protected
+    /// `.git` paths for opened worktrees and discovered repositories by default.
+    /// Set this for Git operations that need those paths. Requesting it
+    /// triggers a user approval prompt.
+    #[serde(default)]
+    pub allow_git_access: Option<bool>,
     /// Set to `true` only as a last resort, to run the command fully outside
     /// the sandbox.
     ///
     /// First try the narrower options (`allow_hosts`, `fs_write_paths`,
-    /// `allow_fs_write_all`); use this only when the command needs behavior
-    /// the sandbox can't grant on a per-permission basis. Requesting it
-    /// triggers a user approval prompt.
+    /// `allow_fs_write_all`, `allow_git_access`); use this only when the command
+    /// needs behavior the sandbox can't grant on a per-permission basis.
+    /// Requesting it triggers a user approval prompt.
+    #[cfg_attr(
+        target_os = "windows",
+        doc = "\nOn Windows, running unsandboxed also switches the shell. Sandboxed \
+        commands run under WSL's Linux bash; an unsandboxed command instead runs in the \
+        host's default shell — Git Bash (or scoop's bash) when one is installed, otherwise \
+        PowerShell/cmd. Path conventions change accordingly (e.g. `C:\\...` or `/c/...` \
+        rather than WSL's `/mnt/c/...`), so a command written for the sandboxed shell may \
+        behave differently here."
+    )]
     #[serde(default)]
     pub unsandboxed: Option<bool>,
     /// A short justification for why this command needs the sandbox
-    /// permission(s) it requests (`allow_network`, `fs_write_paths`,
-    /// `allow_fs_write_all`, or `unsandboxed`).
+    /// permission(s) it requests (`allow_hosts`, `allow_all_hosts`,
+    /// `fs_write_paths`, `allow_fs_write_all`, `allow_git_access`, or
+    /// `unsandboxed`).
     ///
     /// Required whenever you request any of those permissions; omit it for
     /// ordinary commands that request none. Write it in your own voice — it
@@ -188,6 +206,7 @@ struct TerminalSandboxInput {
     allow_all_hosts: Option<bool>,
     fs_write_paths: Vec<String>,
     allow_fs_write_all: Option<bool>,
+    allow_git_access: Option<bool>,
     unsandboxed: Option<bool>,
     reason: Option<String>,
 }
@@ -230,6 +249,7 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
                 allow_all_hosts: input.allow_all_hosts,
                 fs_write_paths: input.fs_write_paths,
                 allow_fs_write_all: input.allow_fs_write_all,
+                allow_git_access: input.allow_git_access,
                 unsandboxed: input.unsandboxed,
                 reason: input.reason,
             }),
@@ -373,6 +393,7 @@ async fn run_terminal_tool(
 
     authorize.await.map_err(|e| e.to_string())?;
 
+    let want_git_access = sandboxing && sandbox_input.allow_git_access == Some(true);
     let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
     let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
 
@@ -432,6 +453,7 @@ async fn run_terminal_tool(
 
     let request = crate::sandboxing::SandboxRequest {
         network,
+        allow_git_access: !want_unsandboxed && want_git_access,
         allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
         unsandboxed: want_unsandboxed,
         write_paths,
@@ -474,6 +496,13 @@ async fn run_terminal_tool(
     // create the sandbox it aborts. As the consumer we may still run the command
     // without a sandbox (when the user has opted into that), but we record
     // *why* in `sandbox_not_applied` so we can warn the user and tell the agent.
+    // Only the Linux/Windows sandbox-creation fallbacks (and the matching
+    // "for this thread" grant) ever reassign this, so on other platforms the
+    // binding stays `None` and wouldn't need `mut`.
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "windows")),
+        allow(unused_mut)
+    )]
     let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         let sandbox_permissions = cx.update(|cx| {
@@ -482,13 +511,7 @@ async fn run_terminal_tool(
                 .clone()
         });
 
-        if sandbox_permissions.allow_unsandboxed {
-            // Unsandboxed execution is permanently allowed in settings: skip
-            // the sandbox machinery entirely and run the command the same way
-            // the unsandboxed terminal tool does.
-            sandbox_not_applied = Some(acp_thread::SandboxNotAppliedReason::DisabledForever);
-            None
-        } else if event_stream.sandbox_fallback_granted_for_thread() {
+        if event_stream.sandbox_fallback_granted_for_thread() {
             // The user allowed unsandboxed execution for the rest of this
             // thread after an earlier sandbox failure (Linux and Windows, which
             // share the `authorize_sandbox_fallback` flow).
@@ -500,16 +523,14 @@ async fn run_terminal_tool(
             None
         } else {
             let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
-            let writable_paths: Vec<PathBuf> = cx.update(|cx| {
-                project
-                    .read(cx)
-                    .worktrees(cx)
-                    .map(|w| w.read(cx).abs_path().to_path_buf())
-                    .collect::<Vec<_>>()
-            });
+            let sandbox_paths =
+                cx.update(|cx| sandbox_paths(project.read(cx), effective.allow_git_access, cx));
             let wrap = acp_thread::SandboxWrap {
-                writable_paths,
+                writable_paths: sandbox_paths.writable_paths,
                 extra_write_paths: effective.write_paths,
+                protected_paths: sandbox_paths.protected_paths,
+                allowed_unix_socket_paths: Vec::new(),
+                allow_git_access: effective.allow_git_access,
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
@@ -698,22 +719,41 @@ async fn run_terminal_tool(
     // chose to run through), tell the agent so it can account for the weaker
     // isolation. Computed here — after the Windows fallback above may have set
     // the reason — so every affected command communicates the state.
-    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| match reason {
-        acp_thread::SandboxNotAppliedReason::DisabledForever => {
-            "Note: this command ran WITHOUT an OS sandbox because unsandboxed execution is \
-             enabled in settings."
-                .to_string()
+    let sandbox_note = sandbox_not_applied.as_ref().map(|reason| {
+        // Only the Windows-specific block below mutates this; on other
+        // platforms the note is returned exactly as built.
+        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+        let mut note = match reason {
+            acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
+                "Note: this command ran WITHOUT an OS sandbox because the user allowed unsandboxed \
+                 execution for the rest of this thread."
+                    .to_string()
+            }
+            acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
+                "Note: this command ran WITHOUT an OS sandbox because one could not be \
+                 created ({}).",
+                error.user_facing_message()
+            ),
+        };
+        // On Windows, running without a sandbox also changes the interpreter:
+        // the sandboxed path runs the command under WSL's Linux shell, but
+        // every unsandboxed path that reaches here falls back to the host
+        // shell (Git Bash, or PowerShell/cmd when no bash is installed) against
+        // native Windows paths. The model writes commands for the WSL/Linux
+        // sandbox, so the loss of isolation isn't the whole story — warn it
+        // that the shell and path conventions differ too, or a command that
+        // worked sandboxed may silently misbehave or fail here.
+        #[cfg(target_os = "windows")]
+        {
+            note.push(' ');
+            note.push_str(
+                "It also ran under the host shell (Git Bash, or PowerShell/cmd when no bash is \
+                 installed) instead of WSL's Linux shell, so the interpreter and path \
+                 conventions differ from the sandbox: Linux-only commands and `/mnt/...` paths \
+                 may fail. Rewrite the command for the host shell if it doesn't work.",
+            );
         }
-        acp_thread::SandboxNotAppliedReason::DisabledForThisThread => {
-            "Note: this command ran WITHOUT an OS sandbox because you allowed unsandboxed \
-             execution for the rest of this thread."
-                .to_string()
-        }
-        acp_thread::SandboxNotAppliedReason::ErrorLinuxWsl(error) => format!(
-            "Note: I tried to run this command inside an OS sandbox, but it could not be \
-             created ({}). It ran WITHOUT a sandbox.",
-            error.user_facing_message()
-        ),
+        note
     });
 
     let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
@@ -940,6 +980,9 @@ fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String
     if let Some(network_clause) = network_clause(&request.network) {
         parts.push(network_clause);
     }
+    if request.allow_git_access {
+        parts.push("Git metadata access".to_string());
+    }
     if request.allow_fs_write_all {
         parts.push("unrestricted filesystem writes".to_string());
     } else if !request.write_paths.is_empty() {
@@ -1137,6 +1180,59 @@ fn process_content(
     content
 }
 
+struct SandboxPaths {
+    writable_paths: Vec<PathBuf>,
+    protected_paths: Vec<PathBuf>,
+}
+
+fn sandbox_paths(project: &Project, allow_git_access: bool, cx: &App) -> SandboxPaths {
+    let mut writable_paths = Vec::new();
+    let mut git_paths = Vec::new();
+
+    for worktree in project.worktrees(cx) {
+        let worktree = worktree.read(cx);
+        let worktree_abs_path = worktree.abs_path();
+        writable_paths.push(worktree_abs_path.to_path_buf());
+        // Protect `<worktree>/.git` even when it doesn't exist yet, so a command
+        // can't `git init` and then write to the freshly created metadata.
+        git_paths.push(worktree_abs_path.join(".git"));
+
+        // `Worktree` derefs to `Snapshot`; read the field directly instead of
+        // cloning the whole snapshot just for this path.
+        if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
+            git_paths.push(root_repo_common_dir.to_path_buf());
+        }
+    }
+
+    // `Repository` derefs to `RepositorySnapshot`, so read the few path fields
+    // directly rather than cloning the entire snapshot (which carries the
+    // per-path status tree) for each repository.
+    for repository in project.git_store().read(cx).repositories().values() {
+        let repository = repository.read(cx);
+        git_paths.push(repository.dot_git_abs_path.to_path_buf());
+        git_paths.push(repository.repository_dir_abs_path.to_path_buf());
+        git_paths.push(repository.common_dir_abs_path.to_path_buf());
+    }
+
+    git_paths.sort();
+    git_paths.dedup();
+
+    let protected_paths = if allow_git_access {
+        writable_paths.extend(git_paths);
+        Vec::new()
+    } else {
+        git_paths
+    };
+
+    writable_paths.sort();
+    writable_paths.dedup();
+
+    SandboxPaths {
+        writable_paths,
+        protected_paths,
+    }
+}
+
 fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
 
@@ -1174,6 +1270,7 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::Fs;
 
     #[test]
     fn test_initial_title_shows_full_multiline_command() {
@@ -1203,6 +1300,91 @@ mod tests {
             !title.contains("…") && !title.contains("..."),
             "Should NOT contain ellipsis"
         )
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_paths_protect_git_paths_until_git_access_is_allowed(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/main_repo",
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.add_linked_worktree_for_repo(
+            Path::new("/main_repo/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from("/linked_worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.write(Path::new("/linked_worktree/file.txt"), b"content")
+            .await
+            .expect("linked worktree file should be written");
+
+        let project = project::Project::test(fs, [Path::new("/linked_worktree")], cx).await;
+        let paths_without_git_access = cx.update(|cx| sandbox_paths(project.read(cx), false, cx));
+
+        assert!(
+            paths_without_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/linked_worktree"))
+        );
+        assert!(
+            paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/linked_worktree/.git"))
+        );
+        assert!(
+            !paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/linked_worktree/.gitignore"))
+        );
+        assert!(
+            paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/main_repo/.git"))
+        );
+        assert!(
+            paths_without_git_access
+                .protected_paths
+                .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
+        );
+
+        let paths_with_git_access = cx.update(|cx| sandbox_paths(project.read(cx), true, cx));
+
+        assert!(paths_with_git_access.protected_paths.is_empty());
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/linked_worktree"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/linked_worktree/.git"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/main_repo/.git"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
+        );
     }
 
     #[test]
@@ -2731,6 +2913,7 @@ mod tests {
     ) -> crate::sandboxing::SandboxRequest {
         crate::sandboxing::SandboxRequest {
             network,
+            allow_git_access: false,
             allow_fs_write_all: all,
             unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
@@ -2894,6 +3077,10 @@ mod tests {
             "schema should advertise allow_fs_write_all: {schema}"
         );
         assert!(
+            schema.contains("allow_git_access"),
+            "schema should advertise allow_git_access: {schema}"
+        );
+        assert!(
             schema.contains("unsandboxed"),
             "schema should advertise unsandboxed: {schema}"
         );
@@ -2914,6 +3101,7 @@ mod tests {
         assert_eq!(input.allow_all_hosts, None);
         assert!(input.fs_write_paths.is_empty());
         assert_eq!(input.allow_fs_write_all, None);
+        assert_eq!(input.allow_git_access, None);
         assert_eq!(input.unsandboxed, None);
     }
 
@@ -2973,6 +3161,7 @@ mod tests {
                 .expect("legacy allow_fs_write should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
+        assert!(!details.allow_git_access);
         assert!(details.allow_fs_write_all);
         assert!(!details.unsandboxed);
         assert!(details.write_paths.is_empty());
@@ -3071,6 +3260,7 @@ mod tests {
                 .expect("unsandboxed should request sandbox authorization details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
+        assert!(!details.allow_git_access);
         assert!(!details.allow_fs_write_all);
         assert!(details.unsandboxed);
         assert!(details.write_paths.is_empty());
@@ -3267,6 +3457,13 @@ mod tests {
         assert_eq!(
             sandbox_approval_title(&sandbox_request(NetworkRequest::None, true, &[])),
             "Allow unrestricted filesystem writes?"
+        );
+
+        let mut request = sandbox_request(NetworkRequest::AnyHost, false, &[]);
+        request.allow_git_access = true;
+        assert_eq!(
+            sandbox_approval_title(&request),
+            "Allow arbitrary network access and Git metadata access?"
         );
     }
 

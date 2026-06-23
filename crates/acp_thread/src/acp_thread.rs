@@ -60,6 +60,45 @@ impl std::fmt::Display for MaxOutputTokensError {
 
 impl std::error::Error for MaxOutputTokensError {}
 
+/// Resolve the socket path(s) the sandbox may allow for the inherited
+/// `SSH_AUTH_SOCK`. The value is validated against the resolved directory
+/// environment the child command will actually run with, not Zed's own process
+/// environment, since the two can differ (direnv, a login shell, etc.).
+///
+/// Returns both the path as the child will pass it to `connect()` and its
+/// canonical form, because the two diverge when `SSH_AUTH_SOCK` points through
+/// a symlink (e.g. `/tmp` -> `/private/tmp` on macOS) and it isn't guaranteed
+/// which form Seatbelt matches the `remote unix-socket` literal against.
+#[cfg(unix)]
+fn trusted_ssh_auth_socket_paths(path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    let path = path.into();
+    if !path.is_absolute() {
+        return Vec::new();
+    }
+
+    let Ok(canonical) = path.canonicalize() else {
+        return Vec::new();
+    };
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return Vec::new();
+    };
+    use std::os::unix::fs::FileTypeExt as _;
+    if !metadata.file_type().is_socket() {
+        return Vec::new();
+    }
+
+    if canonical == path {
+        vec![canonical]
+    } else {
+        vec![path, canonical]
+    }
+}
+
+#[cfg(not(unix))]
+fn trusted_ssh_auth_socket_paths(_path: impl Into<PathBuf>) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
@@ -175,6 +214,8 @@ pub struct SandboxAuthorizationDetails {
     /// builds still render the network request.
     #[serde(default, alias = "network")]
     pub network_all_hosts: bool,
+    #[serde(default)]
+    pub allow_git_access: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
     #[serde(default)]
@@ -3489,6 +3530,21 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let mut env = env.await;
+                let mut sandbox_wrap = sandbox_wrap;
+                // Only expose the inherited SSH agent socket once Git access has
+                // been approved. The workflow that needs it (commit signing)
+                // already requires writing to `.git`, so gating it here keeps the
+                // agent socket out of reach of ordinary sandboxed commands.
+                // Validate the value the child will actually connect to, taken
+                // from its resolved environment rather than Zed's own.
+                if let Some(sandbox_wrap) = &mut sandbox_wrap
+                    && sandbox_wrap.allow_git_access
+                    && let Some(ssh_auth_socket) = env.get("SSH_AUTH_SOCK")
+                {
+                    sandbox_wrap
+                        .allowed_unix_socket_paths
+                        .extend(trusted_ssh_auth_socket_paths(ssh_auth_socket.clone()));
+                }
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3542,6 +3598,34 @@ impl AcpThread {
                         };
                         (task_command, task_args, sandbox_config, None)
                     } else {
+                        // No sandbox wrap means we're running unsandboxed, and
+                        // on Windows that deliberately changes the shell: the
+                        // sandboxed path runs under WSL's Linux bash, but this
+                        // fallback uses the host's `shell` (resolved above via
+                        // `get_default_system_shell_preferring_bash`) against
+                        // the native cwd. That resolution prefers Git Bash (or
+                        // scoop's bash), only dropping to the native Windows
+                        // shell (PowerShell/cmd) when no bash is installed — so
+                        // the interpreter usually stays bash-compatible, but its
+                        // path conventions differ from WSL's (e.g. `/c/...` or
+                        // native `C:\...` rather than `/mnt/c/...`). This is
+                        // unlike Linux/macOS, where the unsandboxed path (the
+                        // `#[cfg(not(target_os = "windows"))]` block below)
+                        // reuses the exact same shell and merely omits the bwrap
+                        // wrapper, so shell semantics are preserved untouched.
+                        //
+                        // The shell switch is intentional on Windows. The only
+                        // ways to reach this branch are: the model asking for
+                        // `unsandboxed: true` (often to run a Windows program),
+                        // the user choosing "run unsandboxed" after a sandbox-
+                        // creation failure, the `allow_unsandboxed` setting, or a
+                        // per-thread fallback grant. For the fallback cases the
+                        // command isn't one the model chose to run unsandboxed,
+                        // so the terminal tool's `sandbox_not_applied` note
+                        // warns it that the command ran without a sandbox *and*,
+                        // on Windows, that the shell and its path conventions
+                        // changed too (see `sandbox_note` in the terminal tool),
+                        // so it can adapt a command written for WSL.
                         let (task_command, task_args) =
                             ShellBuilder::new(&Shell::Program(shell), is_windows)
                                 .redirect_stdin_to_dev_null()
@@ -3549,6 +3633,12 @@ impl AcpThread {
                         (task_command, task_args, None, cwd.clone())
                     };
 
+                // On Linux/macOS the same shell (`/bin/sh`) is used whether or
+                // not we sandbox: `ShellBuilder` builds the command, and
+                // `apply_sandbox_wrap` either wraps it in bwrap (`Some`) or
+                // returns it untouched (`None`). Either way the interpreter is
+                // identical, so the unsandboxed fallback keeps shell semantics
+                // intact — unlike Windows, which falls back to the host shell.
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, sandbox_config, spawn_cwd) = {
                     let (task_command, task_args) =
@@ -3862,6 +3952,34 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_trusted_ssh_auth_socket_path_requires_socket() {
+        use std::os::unix::net::UnixListener;
+
+        // Bind under `/tmp`: the default temp dir on macOS (`/var/folders/...`)
+        // overflows the `sun_path` limit for Unix sockets. `TempDir` still
+        // cleans up on drop, even if the test panics.
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-sock-")
+            .tempdir_in("/tmp")
+            .expect("temporary socket directory should be created");
+        let socket_path = temp_dir.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
+
+        // A real socket resolves to (at least) its canonical path.
+        let canonical = socket_path
+            .canonicalize()
+            .expect("socket path should canonicalize");
+        assert!(trusted_ssh_auth_socket_paths(socket_path).contains(&canonical));
+
+        // A directory is not a socket, and a relative path is rejected outright.
+        assert!(trusted_ssh_auth_socket_paths(temp_dir.path().to_path_buf()).is_empty());
+        assert!(trusted_ssh_auth_socket_paths("relative.sock").is_empty());
+
+        drop(listener);
     }
 
     #[test]

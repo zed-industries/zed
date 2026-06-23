@@ -1134,11 +1134,7 @@ impl ProjectPickerModal {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .modal(false)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding()
+                .embedded()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
