@@ -53,6 +53,29 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
     }
 }
 
+/// Parses the contents of an `os-release` file (as found at `/etc/os-release`
+/// and described by the systemd spec) into a human-readable string such as
+/// `"ubuntu 24.04"`, combining the `ID` and `VERSION_ID` fields.
+///
+/// Returns `None` if no `ID` field is present. When `VERSION_ID` is absent
+/// (e.g. on rolling releases), only the `ID` is returned.
+pub fn parse_os_release(content: &str) -> Option<String> {
+    let mut id = None;
+    let mut version_id = None;
+    for line in content.lines() {
+        match line.split_once('=') {
+            Some(("ID", value)) => id = Some(value.trim_matches('"')),
+            Some(("VERSION_ID", value)) => version_id = Some(value.trim_matches('"')),
+            _ => {}
+        }
+    }
+    let id = id?;
+    Some(match version_id {
+        Some(version) => format!("{id} {version}"),
+        None => id.to_string(),
+    })
+}
+
 /// Removes characters from the end of the string if its length is greater than `max_chars` and
 /// appends "..." to the string. Returns string unchanged if its length is smaller than max_chars.
 pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
@@ -791,6 +814,23 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_os_release() {
+        let os_release =
+            "NAME=\"Ubuntu\"\nID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n";
+        assert_eq!(
+            parse_os_release(os_release),
+            Some("ubuntu 24.04".to_string())
+        );
+
+        // VERSION_ID may be absent (e.g. rolling releases like Arch).
+        assert_eq!(parse_os_release("ID=arch\n"), Some("arch".to_string()));
+
+        // Without an ID there is nothing usable to report.
+        assert_eq!(parse_os_release("VERSION_ID=1\n"), None);
+        assert_eq!(parse_os_release(""), None);
+    }
 
     #[test]
     fn test_extend_sorted() {
