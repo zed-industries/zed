@@ -3,7 +3,7 @@ use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, ThreadStatus,
     UserMessageId,
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
@@ -289,7 +289,7 @@ fn always_allow_tools(cx: &mut TestAppContext) {
 fn disable_sandboxing(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.sandbox_permissions.disabled = true;
+        settings.sandbox_permissions.allow_unsandboxed = true;
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 }

@@ -12,7 +12,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
@@ -5703,7 +5703,8 @@ impl AgentPanel {
                         if !showing_terminal {
                             menu = menu
                                 .header("MCP Servers")
-                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .action("Add Custom Server…", Box::new(AddContextServer::local()))
+                                .action("Add Remote Server…", Box::new(AddContextServer::remote()))
                                 .action(
                                     "Install New Servers…",
                                     Box::new(zed_actions::Extensions {
@@ -7532,6 +7533,12 @@ mod tests {
             // echoing the keystrokes.
             settings.terminal_init_command = Some("printf 'init_ran_%s\\n' 42".to_string());
             AgentSettings::override_global(settings, cx);
+
+            // Force a POSIX shell rather than relying on the developer's login
+            // shell, which may not support `$((...))` arithmetic (e.g. fish).
+            let mut terminal_settings = TerminalSettings::get_global(cx).clone();
+            terminal_settings.shell = task::Shell::Program("/bin/sh".to_string());
+            TerminalSettings::override_global(terminal_settings, cx);
         });
 
         let terminal_id = TerminalId::new();

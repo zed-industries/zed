@@ -116,6 +116,8 @@ mod imp {
             Some(channel.name()),
             permissions,
             writable_dirs,
+            &[],
+            &[],
             cwd,
             program,
             args,

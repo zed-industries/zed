@@ -99,6 +99,8 @@ enum ViMotion {
     WordRight,
     WordRightEnd,
     Bracket,
+    ParagraphUp,
+    ParagraphDown,
 }
 
 #[derive(Clone, Debug)]
@@ -2054,6 +2056,8 @@ impl Terminal {
             "H" => Some(ViMotion::High),
             "M" => Some(ViMotion::Middle),
             "L" => Some(ViMotion::Low),
+            "{" => Some(ViMotion::ParagraphUp),
+            "}" => Some(ViMotion::ParagraphDown),
             _ => None,
         };
 
