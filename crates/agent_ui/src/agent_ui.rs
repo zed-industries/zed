@@ -353,9 +353,9 @@ pub struct NewThread;
 #[serde(rename_all = "snake_case")]
 pub enum ContextServerType {
     /// A context server that runs locally via stdin/stdout.
+    #[default]
     Local,
     /// A context server that is connected to over HTTP.
-    #[default]
     Remote,
 }
 
@@ -371,7 +371,7 @@ pub struct AddContextServer {
 
 impl Default for AddContextServer {
     fn default() -> Self {
-        Self::remote()
+        Self::local()
     }
 }
 
