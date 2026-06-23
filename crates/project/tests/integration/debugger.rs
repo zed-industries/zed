@@ -174,14 +174,12 @@ mod go_locator {
     }
 
     #[gpui::test]
-    async fn test_go_locator_subtest(_: &mut TestAppContext) {
+    async fn test_go_locator_unescapes_nested_subtest_regex(_: &mut TestAppContext) {
         let locator = GoLocator;
         let delve = DebugAdapterName("Delve".into());
 
-        // The `go-subtest` task template uses the \^...\$ format for the `-run`
-        // arg so the GoLocator strips the shell escaping before passing it to
-        // Delve. Previously the template used single quotes ('^...$') which
-        // Delve passed literally to the test binary, breaking all subtests.
+        // Delve receives the `-run` regex with no shell, so GoLocator must strip
+        // the escaping itself.
         let task = TaskTemplate {
             label: "test subtest".into(),
             command: "go".into(),
