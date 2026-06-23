@@ -3,7 +3,7 @@ use crate::{
     example::{ActualCursor, Example, ExamplePrompt},
     headless::EpAppState,
     progress::{ExampleProgress, Step},
-    retrieve_context::run_context_retrieval,
+    retrieve_context::{ContextRetrievalType, run_context_retrieval},
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::AsyncApp;
@@ -30,7 +30,15 @@ pub async fn run_format_prompt(
     example_progress: &ExampleProgress,
     cx: AsyncApp,
 ) -> Result<()> {
-    run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
+    run_context_retrieval(
+        example,
+        app_state.clone(),
+        example_progress,
+        vec![ContextRetrievalType::Lsp],
+        false,
+        cx.clone(),
+    )
+    .await?;
 
     let step_progress = example_progress.start(Step::FormatPrompt);
 

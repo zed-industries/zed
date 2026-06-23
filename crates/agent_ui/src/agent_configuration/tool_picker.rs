@@ -25,7 +25,14 @@ impl ToolPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .modal(false)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 
@@ -34,7 +41,14 @@ impl ToolPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| {
+            Picker::list(delegate, window, cx)
+                .modal(false)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
@@ -49,7 +63,7 @@ impl Focusable for ToolPicker {
 
 impl Render for ToolPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
@@ -155,6 +169,10 @@ impl ToolPickerDelegate {
 impl PickerDelegate for ToolPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "tool picker"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_items.len()
     }
@@ -173,11 +191,7 @@ impl PickerDelegate for ToolPickerDelegate {
     }
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
-        let item = &self.filtered_items[ix];
-        match item {
-            PickerItem::Tool { .. } => true,
-            PickerItem::ContextServer { .. } => false,
-        }
+        matches!(self.filtered_items.get(ix), Some(PickerItem::Tool { .. }))
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -245,7 +259,9 @@ impl PickerDelegate for ToolPickerDelegate {
             return;
         }
 
-        let item = &self.filtered_items[self.selected_index];
+        let Some(item) = self.filtered_items.get(self.selected_index) else {
+            return;
+        };
 
         let PickerItem::Tool {
             name: tool_name,

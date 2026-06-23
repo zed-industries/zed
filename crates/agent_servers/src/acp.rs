@@ -3,10 +3,11 @@ use acp_thread::{
     AgentSessionListResponse,
 };
 use action_log::ActionLog;
-use agent_client_protocol::schema::{self as acp, ErrorCode};
-use agent_client_protocol::{
-    Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder, SentRequest,
+use agent_client_protocol::schema::{
+    ProtocolVersion,
+    v1::{self as acp, ErrorCode},
 };
+use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder};
 use anyhow::anyhow;
 use async_channel;
 use collections::{HashMap, HashSet};
@@ -15,15 +16,17 @@ use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, Future, FutureExt as _, StreamExt as _};
-use project::agent_server_store::{AgentServerCommand, AgentServerStore};
+use project::agent_server_store::{
+    AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
+};
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
+use settings::SettingsStore;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use std::{any::Any, cell::RefCell, collections::VecDeque};
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
@@ -32,18 +35,17 @@ use util::path_list::PathList;
 use util::process::Child;
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
-use crate::GEMINI_ID;
+use crate::{CURSOR_ID, GEMINI_ID};
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
+const PARAMETERIZED_MODEL_PICKER_META_KEY: &str = "parameterizedModelPicker";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
-const ACP_RESPONSE_CHANNEL_CANCELLED: &str =
-    "response channel cancelled — connection may have dropped";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcpDebugMessageDirection {
@@ -228,35 +230,6 @@ fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) ->
     }
 }
 
-/// Awaits the response to an ACP request from a GPUI foreground task.
-///
-/// The ACP SDK offers two ways to consume a [`SentRequest`]:
-///   - [`SentRequest::block_task`]: linear `.await` inside a spawned task.
-///   - [`SentRequest::on_receiving_result`]: a callback invoked when the
-///     response arrives, with the guarantee that no other inbound messages
-///     are processed while the callback runs. This is the recommended form
-///     inside SDK handler callbacks, where [`block_task`] would deadlock.
-///
-/// We use `on_receiving_result` with a oneshot bridge here (rather than
-/// [`block_task`]) so that our handler-side code paths can share a single
-/// request-awaiting helper. The SDK callback itself is trivial (one channel
-/// send) so the extra ordering guarantee it imposes on the dispatch loop is
-/// negligible.
-fn into_foreground_future<T: JsonRpcResponse>(
-    sent: SentRequest<T>,
-) -> impl Future<Output = Result<T, acp::Error>> {
-    let (tx, rx) = futures::channel::oneshot::channel();
-    let spawn_result = sent.on_receiving_result(async move |result| {
-        tx.send(result).ok();
-        Ok(())
-    });
-    async move {
-        spawn_result?;
-        rx.await
-            .map_err(|_| acp::Error::internal_error().data(ACP_RESPONSE_CHANNEL_CANCELLED))?
-    }
-}
-
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
 pub struct UnsupportedVersion;
@@ -421,16 +394,82 @@ pub struct AcpConnection {
     auth_methods: Vec<acp::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
-    default_mode: Option<acp::SessionModeId>,
-    default_model: Option<acp::ModelId>,
-    default_config_options: HashMap<String, String>,
+    defaults: AcpConnectionDefaults,
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_log: AcpDebugLog,
+    _settings_subscription: Subscription,
     _io_task: Task<()>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
+}
+
+#[derive(Clone, Default)]
+struct AcpConnectionDefaults {
+    mode: Rc<RefCell<Option<acp::SessionModeId>>>,
+    config_options: Rc<RefCell<HashMap<String, String>>>,
+}
+
+impl AcpConnectionDefaults {
+    fn new(mode: Option<acp::SessionModeId>, config_options: HashMap<String, String>) -> Self {
+        Self {
+            mode: Rc::new(RefCell::new(mode)),
+            config_options: Rc::new(RefCell::new(config_options)),
+        }
+    }
+
+    fn mode(&self) -> Option<acp::SessionModeId> {
+        self.mode.borrow().clone()
+    }
+
+    fn config_option(&self, config_id: &str) -> Option<String> {
+        self.config_options.borrow().get(config_id).cloned()
+    }
+
+    fn set(&self, mode: Option<acp::SessionModeId>, config_options: HashMap<String, String>) {
+        *self.mode.borrow_mut() = mode;
+        *self.config_options.borrow_mut() = config_options;
+    }
+
+    fn refresh_from_settings(&self, agent_id: &AgentId, cx: &App) {
+        let Some(settings_store) = cx.try_global::<SettingsStore>() else {
+            self.set(None, HashMap::default());
+            return;
+        };
+        let settings = settings_store.get::<AllAgentServersSettings>(None);
+        let Some(agent_settings) = settings.get(agent_id.as_ref()) else {
+            self.set(None, HashMap::default());
+            return;
+        };
+
+        let default_config_options = match agent_settings {
+            CustomAgentServerSettings::Custom {
+                default_config_options,
+                ..
+            }
+            | CustomAgentServerSettings::Registry {
+                default_config_options,
+                ..
+            } => default_config_options.clone(),
+        };
+        self.set(
+            agent_settings.default_mode().map(acp::SessionModeId::new),
+            default_config_options,
+        );
+    }
+
+    fn observe_settings(&self, agent_id: AgentId, cx: &mut App) -> Subscription {
+        if cx.try_global::<SettingsStore>().is_none() {
+            return Subscription::new(|| {});
+        }
+
+        self.refresh_from_settings(&agent_id, cx);
+        let defaults = self.clone();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            defaults.refresh_from_settings(&agent_id, cx);
+        })
+    }
 }
 
 struct PendingAcpSession {
@@ -440,7 +479,6 @@ struct PendingAcpSession {
 
 struct SessionConfigResponse {
     modes: Option<acp::SessionModeState>,
-    models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
 }
 
@@ -465,7 +503,6 @@ impl ConfigOptions {
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
     suppress_abort_err: bool,
-    models: Option<Rc<RefCell<acp::SessionModelState>>>,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
     ref_count: usize,
@@ -513,7 +550,9 @@ impl AgentSessionList for AcpSessionList {
             let acp_request = acp::ListSessionsRequest::new()
                 .cwd(request.cwd)
                 .cursor(request.cursor);
-            let response = into_foreground_future(conn.send_request(acp_request))
+            let response = conn
+                .send_request(acp_request)
+                .block_task()
                 .await
                 .map_err(map_acp_error)?;
             Ok(AgentSessionListResponse {
@@ -542,12 +581,12 @@ impl AgentSessionList for AcpSessionList {
         })
     }
 
-    fn supports_delete(&self, cx: &App) -> bool {
-        self.supports_delete && cx.has_flag::<AcpBetaFeatureFlag>()
+    fn supports_delete(&self) -> bool {
+        self.supports_delete
     }
 
     fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
-        if !self.supports_delete(cx) {
+        if !self.supports_delete() {
             return Task::ready(Err(anyhow::anyhow!("delete_session not supported")));
         }
 
@@ -555,7 +594,8 @@ impl AgentSessionList for AcpSessionList {
         let updates_tx = self.updates_tx.clone();
         let session_id = session_id.clone();
         cx.foreground_executor().spawn(async move {
-            into_foreground_future(conn.send_request(acp::DeleteSessionRequest::new(session_id)))
+            conn.send_request(acp::DeleteSessionRequest::new(session_id))
+                .block_task()
                 .await
                 .map_err(map_acp_error)?;
             updates_tx
@@ -587,7 +627,6 @@ pub async fn connect(
     command: AgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp::SessionModeId>,
-    default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
@@ -597,7 +636,6 @@ pub async fn connect(
         command.clone(),
         agent_server_store,
         default_mode,
-        default_model,
         default_config_options,
         cx,
     )
@@ -605,7 +643,7 @@ pub async fn connect(
     Ok(Rc::new(conn) as _)
 }
 
-const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1;
+const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
 
 /// Build a `Client` connection over `transport` with Zed's full
 /// agent→client handler set wired up.
@@ -698,6 +736,25 @@ fn connect_client_future(
         )
 }
 
+fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
+    let mut meta = acp::Meta::from_iter([
+        ("terminal_output".into(), true.into()),
+        ("terminal-auth".into(), true.into()),
+    ]);
+
+    if agent_id.as_ref() == CURSOR_ID {
+        meta.insert(PARAMETERIZED_MODEL_PICKER_META_KEY.into(), true.into());
+    }
+
+    acp::ClientCapabilities::new()
+        .fs(acp::FileSystemCapabilities::new()
+            .read_text_file(true)
+            .write_text_file(true))
+        .terminal(true)
+        .auth(acp::AuthCapabilities::new().terminal(true))
+        .meta(meta)
+}
+
 impl AcpConnection {
     pub fn subscribe_debug_messages(
         &self,
@@ -714,7 +771,6 @@ impl AcpConnection {
         command: AgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
         default_mode: Option<acp::SessionModeId>,
-        default_model: Option<acp::ModelId>,
         default_config_options: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
@@ -731,7 +787,7 @@ impl AcpConnection {
                 project.remote_client().and_then(|client| {
                     let template = client
                         .read(cx)
-                        .build_command_with_options(
+                        .build_command(
                             Some(command.path.display().to_string()),
                             &command.args,
                             &command.env.clone().into_iter().flatten().collect(),
@@ -883,42 +939,24 @@ impl AcpConnection {
             }
         });
 
-        let initialize_response = into_foreground_future(
-            connection.send_request(
-                acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                    .client_capabilities(
-                        acp::ClientCapabilities::new()
-                            .fs(acp::FileSystemCapabilities::new()
-                                .read_text_file(true)
-                                .write_text_file(true))
-                            .terminal(true)
-                            .auth(acp::AuthCapabilities::new().terminal(true))
-                            .meta(acp::Meta::from_iter([
-                                ("terminal_output".into(), true.into()),
-                                ("terminal-auth".into(), true.into()),
-                            ])),
-                    )
+        let initialize_response = connection
+            .send_request(
+                acp::InitializeRequest::new(ProtocolVersion::V1)
+                    .client_capabilities(client_capabilities_for_agent(&agent_id))
                     .client_info(
                         acp::Implementation::new("zed", version)
                             .title(release_channel.map(ToOwned::to_owned)),
                     ),
-            ),
-        )
-        .boxed_local();
+            )
+            .block_task()
+            .boxed_local();
         let (response, status_fut) =
             match futures::future::select(initialize_response, status_fut).await {
                 futures::future::Either::Left((Ok(response), status_fut)) => (response, status_fut),
                 futures::future::Either::Left((Err(error), status_fut)) => {
-                    let response_channel_cancelled = error.code == ErrorCode::InternalError
-                        && error.data.as_ref().and_then(|data| data.as_str())
-                            == Some(ACP_RESPONSE_CHANNEL_CANCELLED);
-                    if !response_channel_cancelled {
-                        return Err(error.into());
-                    }
-
                     let timer = cx
                         .background_executor()
-                        .timer(Duration::from_millis(250))
+                        .timer(std::time::Duration::from_millis(250))
                         .boxed_local();
                     if let futures::future::Either::Left((load_error, _timer)) =
                         futures::future::select(status_fut, timer).await
@@ -996,6 +1034,13 @@ impl AcpConnection {
         } else {
             response.auth_methods
         };
+        let defaults = AcpConnectionDefaults::new(default_mode, default_config_options);
+        let settings_subscription = cx.update({
+            let agent_id = agent_id.clone();
+            let defaults = defaults.clone();
+            move |cx| defaults.observe_settings(agent_id, cx)
+        });
+
         Ok(Self {
             id: agent_id,
             auth_methods,
@@ -1006,11 +1051,10 @@ impl AcpConnection {
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
-            default_mode,
-            default_model,
-            default_config_options,
+            defaults,
             session_list,
             debug_log,
+            _settings_subscription: settings_subscription,
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
@@ -1031,10 +1075,14 @@ impl AcpConnection {
         agent_server_store: WeakEntity<AgentServerStore>,
         io_task: Task<()>,
         dispatch_task: Task<()>,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Self {
+        let agent_id = AgentId::new("test");
+        let defaults = AcpConnectionDefaults::default();
+        let settings_subscription = defaults.observe_settings(agent_id.clone(), cx);
+
         Self {
-            id: AgentId::new("test"),
+            id: agent_id,
             telemetry_id: "test".into(),
             agent_version: None,
             connection,
@@ -1043,12 +1091,11 @@ impl AcpConnection {
             auth_methods: vec![],
             agent_server_store,
             agent_capabilities,
-            default_mode: None,
-            default_model: None,
-            default_config_options: HashMap::default(),
+            defaults,
             child: None,
             session_list: None,
             debug_log: AcpDebugLog::default(),
+            _settings_subscription: settings_subscription,
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
@@ -1130,14 +1177,13 @@ impl AcpConnection {
                     // Register the session before awaiting the RPC so that any
                     // `session/update` notifications that arrive during the call
                     // (e.g. history replay during `session/load`) can find the thread.
-                    // Modes/models/config are filled in once the response arrives.
+                    // Modes/config are filled in once the response arrives.
                     this.sessions.borrow_mut().insert(
                         session_id.clone(),
                         AcpSession {
                             thread: thread.downgrade(),
                             suppress_abort_err: false,
                             session_modes: None,
-                            models: None,
                             config_options: None,
                             ref_count: 1,
                         },
@@ -1155,8 +1201,8 @@ impl AcpConnection {
                             }
                         };
 
-                    let (modes, models, config_options) =
-                        config_state(response.modes, response.models, response.config_options);
+                    let (modes, config_options) =
+                        config_state(response.modes, response.config_options);
 
                     if let Some(config_opts) = config_options.as_ref() {
                         this.apply_default_config_options(&session_id, config_opts, cx);
@@ -1181,7 +1227,6 @@ impl AcpConnection {
                             )));
                         };
                         session.session_modes = modes;
-                        session.models = models;
                         session.config_options = config_options.map(ConfigOptions::new);
                         session.ref_count = ref_count;
                     }
@@ -1215,7 +1260,7 @@ impl AcpConnection {
             config_opts_ref
                 .iter()
                 .filter_map(|config_option| {
-                    let default_value = self.default_config_options.get(&*config_option.id.0)?;
+                    let default_value = self.defaults.config_option(config_option.id.0.as_ref())?;
 
                     let is_valid = match &config_option.kind {
                         acp::SessionConfigKind::Select(select) => match &select.options {
@@ -1241,11 +1286,7 @@ impl AcpConnection {
                             }
                             _ => None,
                         };
-                        Some((
-                            config_option.id.clone(),
-                            default_value.clone(),
-                            initial_value,
-                        ))
+                        Some((config_option.id.clone(), default_value, initial_value))
                     } else {
                         log::warn!(
                             "`{}` is not a valid value for config option `{}` in {}",
@@ -1267,15 +1308,15 @@ impl AcpConnection {
                 let config_opts = config_options.clone();
                 let conn = self.connection.clone();
                 async move |_| {
-                    let result = into_foreground_future(conn.send_request(
-                        acp::SetSessionConfigOptionRequest::new(
+                    let result = conn
+                        .send_request(acp::SetSessionConfigOptionRequest::new(
                             session_id,
                             config_id_clone.clone(),
                             default_value_id,
-                        ),
-                    ))
-                    .await
-                    .log_err();
+                        ))
+                        .block_task()
+                        .await
+                        .log_err();
 
                     if result.is_none() {
                         if let Some(initial) = initial_value {
@@ -1477,18 +1518,17 @@ impl AgentConnection for AcpConnection {
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
-            let response = into_foreground_future(
-                self.connection.send_request(
-                    directories.into_new_session_request(mcp_servers),
-                ),
-            )
+            let response = self
+                .connection
+                .send_request(directories.into_new_session_request(mcp_servers))
+                .block_task()
             .await
             .map_err(map_acp_error)?;
 
-            let (modes, models, config_options) =
-                config_state(response.modes, response.models, response.config_options);
+            let (modes, config_options) = config_state(response.modes, response.config_options);
 
-            if let Some(default_mode) = self.default_mode.clone() {
+            let default_mode = self.defaults.mode();
+            if let Some(default_mode) = default_mode {
                 if let Some(modes) = modes.as_ref() {
                     let mut modes_ref = modes.borrow_mut();
                     let has_mode = modes_ref
@@ -1505,12 +1545,12 @@ impl AgentConnection for AcpConnection {
                             let modes = modes.clone();
                             let conn = self.connection.clone();
                             async move |_| {
-                                let result = into_foreground_future(
-                                    conn.send_request(acp::SetSessionModeRequest::new(
+                                let result = conn
+                                    .send_request(acp::SetSessionModeRequest::new(
                                         session_id,
                                         default_mode,
-                                    )),
-                                )
+                                    ))
+                                    .block_task()
                                 .await
                                 .log_err();
 
@@ -1532,55 +1572,6 @@ impl AgentConnection for AcpConnection {
 
                         log::warn!(
                             "`{default_mode}` is not valid {name} mode. Available options:\n{available_modes}",
-                        );
-                    }
-                }
-            }
-
-            if let Some(default_model) = self.default_model.clone() {
-                if let Some(models) = models.as_ref() {
-                    let mut models_ref = models.borrow_mut();
-                    let has_model = models_ref
-                        .available_models
-                        .iter()
-                        .any(|model| model.model_id == default_model);
-
-                    if has_model {
-                        let initial_model_id = models_ref.current_model_id.clone();
-
-                        cx.spawn({
-                            let default_model = default_model.clone();
-                            let session_id = response.session_id.clone();
-                            let models = models.clone();
-                            let conn = self.connection.clone();
-                            async move |_| {
-                                let result = into_foreground_future(
-                                    conn.send_request(acp::SetSessionModelRequest::new(
-                                        session_id,
-                                        default_model,
-                                    )),
-                                )
-                                .await
-                                .log_err();
-
-                                if result.is_none() {
-                                    models.borrow_mut().current_model_id = initial_model_id;
-                                }
-                            }
-                        })
-                        .detach();
-
-                        models_ref.current_model_id = default_model;
-                    } else {
-                        let available_models = models_ref
-                            .available_models
-                            .iter()
-                            .map(|model| format!("- `{}`: {}", model.model_id, model.name))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-
-                        log::warn!(
-                            "`{default_model}` is not a valid {name} model. Available options:\n{available_models}",
                         );
                     }
                 }
@@ -1614,7 +1605,6 @@ impl AgentConnection for AcpConnection {
                     thread: thread.downgrade(),
                     suppress_abort_err: false,
                     session_modes: modes,
-                    models,
                     config_options: config_options.map(ConfigOptions::new),
                     ref_count: 1,
                 },
@@ -1664,14 +1654,15 @@ impl AgentConnection for AcpConnection {
             title,
             move |connection, session_id, directories| {
                 Box::pin(async move {
-                    let response = into_foreground_future(connection.send_request(
-                        directories.into_load_session_request(session_id.clone(), mcp_servers),
-                    ))
-                    .await
-                    .map_err(map_acp_error)?;
+                    let response = connection
+                        .send_request(
+                            directories.into_load_session_request(session_id.clone(), mcp_servers),
+                        )
+                        .block_task()
+                        .await
+                        .map_err(map_acp_error)?;
                     Ok(SessionConfigResponse {
                         modes: response.modes,
-                        models: response.models,
                         config_options: response.config_options,
                     })
                 })
@@ -1707,14 +1698,16 @@ impl AgentConnection for AcpConnection {
             title,
             move |connection, session_id, directories| {
                 Box::pin(async move {
-                    let response = into_foreground_future(connection.send_request(
-                        directories.into_resume_session_request(session_id.clone(), mcp_servers),
-                    ))
-                    .await
-                    .map_err(map_acp_error)?;
+                    let response = connection
+                        .send_request(
+                            directories
+                                .into_resume_session_request(session_id.clone(), mcp_servers),
+                        )
+                        .block_task()
+                        .await
+                        .map_err(map_acp_error)?;
                     Ok(SessionConfigResponse {
                         modes: response.modes,
-                        models: response.models,
                         config_options: response.config_options,
                     })
                 })
@@ -1760,10 +1753,9 @@ impl AgentConnection for AcpConnection {
                 let conn = self.connection.clone();
                 let session_id = session_id.clone();
                 return cx.foreground_executor().spawn(async move {
-                    into_foreground_future(
-                        conn.send_request(acp::CloseSessionRequest::new(session_id)),
-                    )
-                    .await?;
+                    conn.send_request(acp::CloseSessionRequest::new(session_id))
+                        .block_task()
+                        .await?;
                     Ok(())
                 });
             }
@@ -1787,10 +1779,9 @@ impl AgentConnection for AcpConnection {
         let conn = self.connection.clone();
         let session_id = session_id.clone();
         cx.foreground_executor().spawn(async move {
-            into_foreground_future(
-                conn.send_request(acp::CloseSessionRequest::new(session_id.clone())),
-            )
-            .await?;
+            conn.send_request(acp::CloseSessionRequest::new(session_id.clone()))
+                .block_task()
+                .await?;
             Ok(())
         })
     }
@@ -1839,7 +1830,8 @@ impl AgentConnection for AcpConnection {
     fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
         let conn = self.connection.clone();
         cx.foreground_executor().spawn(async move {
-            into_foreground_future(conn.send_request(acp::AuthenticateRequest::new(method_id)))
+            conn.send_request(acp::AuthenticateRequest::new(method_id))
+                .block_task()
                 .await?;
             Ok(())
         })
@@ -1856,7 +1848,9 @@ impl AgentConnection for AcpConnection {
 
         let conn = self.connection.clone();
         cx.foreground_executor().spawn(async move {
-            into_foreground_future(conn.send_request(acp::LogoutRequest::new())).await?;
+            conn.send_request(acp::LogoutRequest::new())
+                .block_task()
+                .await?;
             Ok(())
         })
     }
@@ -1871,7 +1865,7 @@ impl AgentConnection for AcpConnection {
         let sessions = self.sessions.clone();
         let session_id = params.session_id.clone();
         cx.foreground_executor().spawn(async move {
-            let result = into_foreground_future(conn.send_request(params)).await;
+            let result = conn.send_request(params).block_task().await;
 
             let mut suppress_abort_err = false;
 
@@ -1952,27 +1946,6 @@ impl AgentConnection for AcpConnection {
         }
     }
 
-    fn model_selector(
-        &self,
-        session_id: &acp::SessionId,
-    ) -> Option<Rc<dyn acp_thread::AgentModelSelector>> {
-        let sessions = self.sessions.clone();
-        let sessions_ref = sessions.borrow();
-        let Some(session) = sessions_ref.get(session_id) else {
-            return None;
-        };
-
-        if let Some(models) = session.models.as_ref() {
-            Some(Rc::new(AcpModelSelector::new(
-                session_id.clone(),
-                self.connection.clone(),
-                models.clone(),
-            )) as _)
-        } else {
-            None
-        }
-    }
-
     fn session_config_options(
         &self,
         session_id: &acp::SessionId,
@@ -2020,8 +1993,8 @@ pub mod test_support {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use acp_thread::{
-        AgentModelSelector, AgentSessionConfigOptions, AgentSessionModes, AgentSessionRetry,
-        AgentSessionSetTitle, AgentSessionTruncate, AgentTelemetry, UserMessageId,
+        AgentSessionConfigOptions, AgentSessionModes, AgentSessionRetry, AgentSessionSetTitle,
+        AgentSessionTruncate, AgentTelemetry, UserMessageId,
     };
 
     use super::*;
@@ -2271,13 +2244,6 @@ pub mod test_support {
             self.inner.set_title(session_id, cx)
         }
 
-        fn model_selector(
-            &self,
-            session_id: &acp::SessionId,
-        ) -> Option<Rc<dyn AgentModelSelector>> {
-            self.inner.model_selector(session_id)
-        }
-
         fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
             self.inner.telemetry()
         }
@@ -2423,10 +2389,10 @@ pub mod test_support {
             .await
             .context("failed to receive fake ACP connection handle")?;
 
-        let response = into_foreground_future(
-            client_conn.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
-        )
-        .await?;
+        let response = client_conn
+            .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
+            .block_task()
+            .await?;
 
         let agent_capabilities = response.agent_capabilities;
 
@@ -2497,10 +2463,33 @@ pub mod test_support {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use feature_flags::FeatureFlag as _;
-
     use super::*;
-    use gpui::UpdateGlobal as _;
+    use settings::Settings as _;
+
+    #[test]
+    fn cursor_client_capabilities_include_parameterized_model_picker_meta() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID));
+        let meta = capabilities
+            .meta
+            .expect("expected client capabilities meta");
+
+        assert_eq!(
+            meta.get(PARAMETERIZED_MODEL_PICKER_META_KEY),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(meta.get("terminal_output"), Some(&serde_json::json!(true)));
+        assert_eq!(meta.get("terminal-auth"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn non_cursor_client_capabilities_do_not_include_parameterized_model_picker_meta() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let meta = capabilities
+            .meta
+            .expect("expected client capabilities meta");
+
+        assert!(!meta.contains_key(PARAMETERIZED_MODEL_PICKER_META_KEY));
+    }
 
     #[test]
     fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
@@ -2800,25 +2789,6 @@ mod tests {
         );
     }
 
-    fn set_acp_beta_override(cx: &mut App, value: &str) {
-        let store = settings::SettingsStore::test(cx);
-        cx.set_global(store);
-        settings::SettingsStore::update_global(cx, |store, _| {
-            store.register_setting::<feature_flags::FeatureFlagsSettings>();
-        });
-        feature_flags::FeatureFlagStore::init(cx);
-
-        let value = value.to_string();
-        settings::SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |content| {
-                content
-                    .feature_flags
-                    .get_or_insert_default()
-                    .insert(AcpBetaFeatureFlag::NAME.to_string(), value);
-            });
-        });
-    }
-
     async fn connect_session_list_test_agent(
         sessions: Vec<acp::SessionInfo>,
         cx: &mut gpui::TestAppContext,
@@ -2903,31 +2873,6 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    async fn session_delete_support_requires_beta_flag_and_capability(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let connection = connect_session_delete_test_agent(deleted_sessions, cx).await;
-        let session_list = AcpSessionList::new(connection.clone(), true);
-        let missing_capability = AcpSessionList::new(connection, false);
-
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-
-            assert_eq!(
-                session_list.supports_delete(cx),
-                cx.has_flag::<AcpBetaFeatureFlag>()
-            );
-            assert!(!missing_capability.supports_delete(cx));
-
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-            assert!(session_list.supports_delete(cx));
-            assert!(!missing_capability.supports_delete(cx));
-        });
-    }
-
     async fn connect_session_delete_test_agent(
         deleted_sessions: Arc<std::sync::Mutex<Vec<acp::SessionId>>>,
         cx: &mut gpui::TestAppContext,
@@ -2971,6 +2916,61 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn settings_changes_refresh_active_connection_defaults(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let harness = test_support::connect_fake_acp_connection(project, cx).await;
+
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(HashMap::from_iter([(
+                    "test".to_string(),
+                    settings::CustomAgentServerSettings::Custom {
+                        path: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        env: HashMap::default(),
+                        default_mode: Some("manual".to_string()),
+                        default_config_options: HashMap::from_iter([(
+                            "mode".to_string(),
+                            "manual".to_string(),
+                        )]),
+                        favorite_config_option_values: HashMap::default(),
+                    }
+                    .into(),
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            harness.connection.defaults.mode(),
+            Some(acp::SessionModeId::new("manual"))
+        );
+        assert_eq!(
+            harness.connection.defaults.config_option("mode").as_deref(),
+            Some("manual")
+        );
+
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(HashMap::default()),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(harness.connection.defaults.mode(), None);
+        assert_eq!(harness.connection.defaults.config_option("mode"), None);
+    }
+
+    #[gpui::test]
     async fn session_list_delete_sends_session_delete_when_supported(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -2979,11 +2979,6 @@ mod tests {
         let session_list = AcpSessionList::new(connection, true);
         let session_id = acp::SessionId::new("session-to-delete");
 
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
         cx.update(|cx| session_list.delete_session(&session_id, cx))
             .await
             .expect("delete_session failed");
@@ -3003,11 +2998,6 @@ mod tests {
         let session_list = AcpSessionList::new(connection, false);
         let session_id = acp::SessionId::new("session-to-delete");
 
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
-        });
         let error = cx
             .update(|cx| session_list.delete_session(&session_id, cx))
             .await
@@ -3023,36 +3013,6 @@ mod tests {
                 .expect("deleted sessions lock should not be poisoned")
                 .is_empty()
         );
-    }
-
-    #[gpui::test]
-    async fn logout_support_requires_agent_capability(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| set_acp_beta_override(cx, "off"));
-        assert!(!cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()));
-
-        let fs = fs::FakeFs::new(cx.executor());
-        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
-        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
-        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
-
-        assert!(!harness.connection.supports_logout());
-        let unsupported_logout = cx.update(|cx| harness.connection.logout(cx));
-        let error = unsupported_logout
-            .await
-            .expect_err("logout should be rejected when the agent does not advertise support");
-        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
-        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
-
-        Rc::get_mut(&mut harness.connection)
-            .expect("test harness should own the only ACP connection handle")
-            .agent_capabilities
-            .auth = acp::AgentAuthCapabilities::new().logout(acp::LogoutCapabilities::new());
-
-        assert!(harness.connection.supports_logout());
-        cx.update(|cx| harness.connection.logout(cx))
-            .await
-            .expect("logout should be sent when the agent advertises support");
-        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 1);
     }
 
     #[cfg(not(windows))]
@@ -3085,7 +3045,6 @@ mod tests {
             project,
             command,
             agent_server_store,
-            None,
             None,
             HashMap::default(),
             &mut async_cx,
@@ -3265,11 +3224,11 @@ mod tests {
             .await
             .expect("failed to receive ACP connection handle");
 
-        let response = into_foreground_future(
-            client_conn.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
-        )
-        .await
-        .expect("failed to initialize ACP connection");
+        let response = client_conn
+            .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
+            .block_task()
+            .await
+            .expect("failed to initialize ACP connection");
 
         let agent_capabilities = response.agent_capabilities;
 
@@ -3464,6 +3423,7 @@ mod tests {
                     acp_thread::AgentThreadEntry::AssistantMessage(_) => "assistant",
                     acp_thread::AgentThreadEntry::ToolCall(_) => "tool_call",
                     acp_thread::AgentThreadEntry::CompletedPlan(_) => "plan",
+                    acp_thread::AgentThreadEntry::ContextCompaction(_) => "compaction",
                 })
                 .collect::<Vec<_>>()
         });
@@ -3730,20 +3690,17 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 
 fn config_state(
     modes: Option<acp::SessionModeState>,
-    models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
 ) -> (
     Option<Rc<RefCell<acp::SessionModeState>>>,
-    Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
     if let Some(opts) = config_options {
-        return (None, None, Some(Rc::new(RefCell::new(opts))));
+        return (None, Some(Rc::new(RefCell::new(opts))));
     }
 
     let modes = modes.map(|modes| Rc::new(RefCell::new(modes)));
-    let models = models.map(|models| Rc::new(RefCell::new(models)));
-    (modes, models, None)
+    (modes, None)
 }
 
 struct AcpSessionModes {
@@ -3772,10 +3729,10 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
         };
         let state = self.state.clone();
         cx.foreground_executor().spawn(async move {
-            let result = into_foreground_future(
-                connection.send_request(acp::SetSessionModeRequest::new(session_id, mode_id)),
-            )
-            .await;
+            let result = connection
+                .send_request(acp::SetSessionModeRequest::new(session_id, mode_id))
+                .block_task()
+                .await;
 
             if result.is_err() {
                 state.borrow_mut().current_mode_id = old_mode_id;
@@ -3785,79 +3742,6 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
 
             Ok(())
         })
-    }
-}
-
-struct AcpModelSelector {
-    session_id: acp::SessionId,
-    connection: ConnectionTo<Agent>,
-    state: Rc<RefCell<acp::SessionModelState>>,
-}
-
-impl AcpModelSelector {
-    fn new(
-        session_id: acp::SessionId,
-        connection: ConnectionTo<Agent>,
-        state: Rc<RefCell<acp::SessionModelState>>,
-    ) -> Self {
-        Self {
-            session_id,
-            connection,
-            state,
-        }
-    }
-}
-
-impl acp_thread::AgentModelSelector for AcpModelSelector {
-    fn list_models(&self, _cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
-        Task::ready(Ok(acp_thread::AgentModelList::Flat(
-            self.state
-                .borrow()
-                .available_models
-                .clone()
-                .into_iter()
-                .map(acp_thread::AgentModelInfo::from)
-                .collect(),
-        )))
-    }
-
-    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>> {
-        let connection = self.connection.clone();
-        let session_id = self.session_id.clone();
-        let old_model_id;
-        {
-            let mut state = self.state.borrow_mut();
-            old_model_id = state.current_model_id.clone();
-            state.current_model_id = model_id.clone();
-        };
-        let state = self.state.clone();
-        cx.foreground_executor().spawn(async move {
-            let result = into_foreground_future(
-                connection.send_request(acp::SetSessionModelRequest::new(session_id, model_id)),
-            )
-            .await;
-
-            if result.is_err() {
-                state.borrow_mut().current_model_id = old_model_id;
-            }
-
-            result?;
-
-            Ok(())
-        })
-    }
-
-    fn selected_model(&self, _cx: &mut App) -> Task<Result<acp_thread::AgentModelInfo>> {
-        let state = self.state.borrow();
-        Task::ready(
-            state
-                .available_models
-                .iter()
-                .find(|m| m.model_id == state.current_model_id)
-                .cloned()
-                .map(acp_thread::AgentModelInfo::from)
-                .ok_or_else(|| anyhow::anyhow!("Model not found")),
-        )
     }
 }
 
@@ -3887,10 +3771,12 @@ impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
         let watch_tx = self.watch_tx.clone();
 
         cx.foreground_executor().spawn(async move {
-            let response = into_foreground_future(connection.send_request(
-                acp::SetSessionConfigOptionRequest::new(session_id, config_id, value),
-            ))
-            .await?;
+            let response = connection
+                .send_request(acp::SetSessionConfigOptionRequest::new(
+                    session_id, config_id, value,
+                ))
+                .block_task()
+                .await?;
 
             *state.borrow_mut() = response.config_options.clone();
             watch_tx.borrow_mut().send(()).ok();
@@ -3930,6 +3816,15 @@ fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
     responder.respond_with_error(err).log_err();
 }
 
+fn respond_result<T: JsonRpcResponse>(responder: Responder<T>, result: Result<T, acp::Error>) {
+    match result {
+        Ok(response) => {
+            responder.respond(response).log_err();
+        }
+        Err(err) => respond_err(responder, err),
+    }
+}
+
 fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     responder: Responder<acp::RequestPermissionResponse>,
@@ -3941,6 +3836,8 @@ fn handle_request_permission(
         Err(e) => return respond_err(responder, e),
     };
 
+    let cancellation = responder.cancellation();
+    let tool_call_id = args.tool_call.tool_call_id.clone();
     cx.spawn(async move |cx| {
         let result: Result<_, acp::Error> = async {
             let task = thread
@@ -3953,7 +3850,9 @@ fn handle_request_permission(
                     )
                 })
                 .flatten_acp()?;
-            Ok(task.await)
+            cancellation
+                .run_until_cancelled(async { Ok(task.await) })
+                .await
         }
         .await;
 
@@ -3963,7 +3862,16 @@ fn handle_request_permission(
                     .respond(acp::RequestPermissionResponse::new(outcome.into()))
                     .log_err();
             }
-            Err(e) => respond_err(responder, e),
+            Err(e) => {
+                if e.code == ErrorCode::RequestCancelled {
+                    thread
+                        .update(cx, |thread, cx| {
+                            thread.cancel_tool_call_authorization(&tool_call_id, cx)
+                        })
+                        .log_err();
+                }
+                respond_err(responder, e)
+            }
         }
     })
     .detach();
@@ -4016,24 +3924,19 @@ fn handle_read_text_file(
     };
 
     cx.spawn(async move |cx| {
-        let result: Result<_, acp::Error> = async {
-            thread
-                .update(cx, |thread, cx| {
-                    thread.read_text_file(args.path, args.line, args.limit, false, cx)
-                })
-                .map_err(acp::Error::from)?
-                .await
-        }
-        .await;
+        let cancellation = responder.cancellation();
+        let result = cancellation
+            .run_until_cancelled(async {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.read_text_file(args.path, args.line, args.limit, false, cx)
+                    })
+                    .map_err(acp::Error::from)?
+                    .await
+            })
+            .await;
 
-        match result {
-            Ok(content) => {
-                responder
-                    .respond(acp::ReadTextFileResponse::new(content))
-                    .log_err();
-            }
-            Err(e) => respond_err(responder, e),
-        }
+        respond_result(responder, result.map(acp::ReadTextFileResponse::new));
     })
     .detach();
 }
@@ -4109,7 +4012,7 @@ fn handle_session_notification(
                                 0,
                                 cx.background_executor(),
                                 thread.project().read(cx).path_style(cx),
-                            )?;
+                            );
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
                                 TerminalProviderEvent::Created {
@@ -4121,7 +4024,6 @@ fn handle_session_notification(
                                 },
                                 cx,
                             );
-                            anyhow::Ok(())
                         })
                         .log_err();
                 }
@@ -4345,25 +4247,20 @@ fn handle_wait_for_terminal_exit(
     };
 
     cx.spawn(async move |cx| {
-        let result: Result<_, acp::Error> = async {
-            let exit_status = thread
-                .update(cx, |thread, cx| {
-                    anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
-                })
-                .flatten_acp()?
-                .await;
-            Ok(exit_status)
-        }
-        .await;
+        let cancellation = responder.cancellation();
+        let result = cancellation
+            .run_until_cancelled(async {
+                let exit_status = thread
+                    .update(cx, |thread, cx| {
+                        anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
+                    })
+                    .flatten_acp()?
+                    .await;
+                Ok(exit_status)
+            })
+            .await;
 
-        match result {
-            Ok(exit_status) => {
-                responder
-                    .respond(acp::WaitForTerminalExitResponse::new(exit_status))
-                    .log_err();
-            }
-            Err(e) => respond_err(responder, e),
-        }
+        respond_result(responder, result.map(acp::WaitForTerminalExitResponse::new));
     })
     .detach();
 }

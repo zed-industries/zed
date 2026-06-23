@@ -261,7 +261,7 @@
     "bindings": {
       "ctrl-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
-      "shift-alt-l": "agent::OpenRulesLibrary",
+      "shift-alt-l": "agent::ManageSkills",
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
@@ -291,6 +291,29 @@
       "ctrl-alt-down": "agent::ScrollOutputLineDown",
       "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
       "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
+      "ctrl-f": "agent::ToggleSearch",
+      "f3": "agent::SelectNextThreadMatch",
+      "shift-f3": "agent::SelectPreviousThreadMatch",
+      "alt-c": "search::ToggleCaseSensitive",
+      "alt-w": "search::ToggleWholeWord",
+      "alt-r": "search::ToggleRegex",
+    },
+  },
+  {
+    "context": "AcpThreadSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "agent::DismissThreadSearch",
+      "enter": "agent::SelectNextThreadMatch",
+      "shift-enter": "agent::SelectPreviousThreadMatch",
+      "ctrl-f": "search::FocusSearch",
+    },
+  },
+  {
+    "context": "AcpThreadSearchBar > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-enter": "agent::SelectPreviousThreadMatch",
     },
   },
   {
@@ -384,15 +407,6 @@
     },
   },
   {
-    "context": "RulesLibrary",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-n": "rules_library::NewRule",
-      "ctrl-shift-s": "rules_library::ToggleDefaultRule",
-      "ctrl-w": "workspace::CloseWindow",
-    },
-  },
-  {
     "context": "BufferSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -438,6 +452,7 @@
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-r": "search::ToggleRegex", // vscode
+      "ctrl-alt-p": "project_search::OpenTextFinder",
     },
   },
   {
@@ -468,6 +483,7 @@
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-r": "search::ToggleRegex", // vscode
+      "ctrl-alt-p": "project_search::OpenTextFinder",
     },
   },
   {
@@ -611,10 +627,10 @@
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-r": "projects::OpenRecent",
       // Change to open path modal for existing remote connection by setting the parameter
-      // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
-      "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      // "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": true }],
+      "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false }],
       "shift-alt-b": "branches::OpenRecent",
       "shift-alt-w": "git::Worktree",
       "shift-alt-enter": "toast::RunAction",
@@ -732,6 +748,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "menu::Confirm",
+      "shift-r": "agent::RenameSelectedThread",
     },
   },
   {
@@ -1011,7 +1028,7 @@
     },
   },
   {
-    "context": "GitCommit > Editor",
+    "context": "GitCommit > Editor && mode == auto_height",
     "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel",
@@ -1147,6 +1164,10 @@
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      // Picker bindings (TogglePreview, SetPreviewRight/Below/Hidden,
+      // ToggleActionsMenu) live in keymaps/specific-overrides.json, which is
+      // loaded after the base keymap so they win over conflicting base-keymap
+      // Editor bindings.
     },
   },
   {
@@ -1168,19 +1189,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
-      "ctrl-shift-a": "file_finder::ToggleSplitMenu",
-      "ctrl-shift-i": "file_finder::ToggleFilterMenu",
-    },
-  },
-  {
-    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-shift-p": "file_finder::SelectPrevious",
-      "ctrl-j": "pane::SplitDown",
-      "ctrl-k": "pane::SplitUp",
-      "ctrl-h": "pane::SplitLeft",
-      "ctrl-l": "pane::SplitRight",
+      "ctrl-shift-i": "search::ToggleIncludeIgnored",
     },
   },
   {
@@ -1498,6 +1507,7 @@
       "ctrl--": "image_viewer::ZoomOut",
       "ctrl-0": "image_viewer::ResetZoom",
       "ctrl-1": "image_viewer::ZoomToActualSize",
+      "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-shift-0": "image_viewer::FitToView",
     },
   },
@@ -1559,7 +1569,6 @@
       "ctrl-m": "notebook::AddCodeBlock",
       "ctrl-shift-m": "notebook::AddMarkdownBlock",
       "ctrl-shift-r": "notebook::RestartKernel",
-      "ctrl-c": "notebook::InterruptKernel",
       "escape": "notebook::EnterCommandMode",
     },
   },
@@ -1582,6 +1591,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-w": "workspace::CloseWindow",
+      "ctrl-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
     },
@@ -1591,6 +1601,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-w": "workspace::CloseWindow",
+      "ctrl-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
     },

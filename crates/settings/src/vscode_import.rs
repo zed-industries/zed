@@ -194,6 +194,7 @@ impl VsCodeSettings {
             helix_mode: None,
             hide_mouse: None,
             image_viewer: None,
+            markdown_preview: None,
             journal: None,
             language_models: None,
             line_indicator_format: None,
@@ -277,6 +278,7 @@ impl VsCodeSettings {
             code_lens: None,
             jupyter: None,
             lsp_document_colors: None,
+            lsp_document_links: self.read_bool("editor.links"),
             lsp_highlight_debounce: None,
             middle_click_paste: None,
             minimap: self.minimap_content(),
@@ -473,13 +475,12 @@ impl VsCodeSettings {
     }
 
     fn minimap_content(&self) -> Option<MinimapContent> {
-        let minimap_enabled = self.read_bool("editor.minimap.enabled");
-        let autohide = self.read_bool("editor.minimap.autohide");
+        let minimap_enabled = self.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = self.read_bool("editor.minimap.autohide").unwrap_or(false);
         let show = match (minimap_enabled, autohide) {
-            (Some(true), Some(false)) => Some(ShowMinimap::Always),
-            (Some(true), _) => Some(ShowMinimap::Auto),
-            (Some(false), _) => Some(ShowMinimap::Never),
-            _ => None,
+            (true, false) => Some(ShowMinimap::Always),
+            (true, true) => Some(ShowMinimap::Auto),
+            (false, _) => Some(ShowMinimap::Never),
         };
 
         skip_default(MinimapContent {
@@ -862,6 +863,7 @@ impl VsCodeSettings {
             Some(TelemetrySettingsContent {
                 metrics: Some(metrics),
                 diagnostics: Some(diagnostics),
+                anthropic_retention: None,
             })
         })
     }
@@ -1010,6 +1012,7 @@ impl VsCodeSettings {
             bottom_dock_layout: None,
             centered_layout: None,
             cli_default_open_behavior: None,
+            default_open_behavior: None,
             close_on_file_delete: None,
             close_panel_on_toggle: None,
             command_aliases: Default::default(),
@@ -1085,6 +1088,7 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|r| !r.is_empty()),
+            scan_symlinks: None,
             private_files: None,
             hidden_files: None,
             read_only_files: self

@@ -2,11 +2,12 @@ use anyhow::{Context as _, Result};
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{Global, SharedString};
+use gpui::{App, Global, SharedString};
 use serde::{Deserialize, Serialize};
-use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
+use url::Url;
 use util::paths::component_matches_ignore_ascii_case;
 
 /// First segment of the skills directory path: `.agents`.
@@ -41,7 +42,6 @@ pub struct SkillScopeId(pub usize);
 /// entries would fan out an equally large number of concurrent OS-level I/O
 /// operations, potentially exhausting file descriptors or stalling the app.
 const SKILL_IO_CONCURRENCY: usize = 16;
-const SKILL_READ_CHUNK_SIZE: usize = 4096;
 
 /// Maximum size for a single SKILL.md file (100KB)
 pub const MAX_SKILL_FILE_SIZE: usize = 100 * 1024;
@@ -51,6 +51,24 @@ pub const MAX_SKILL_DESCRIPTIONS_SIZE: usize = 50 * 1024;
 
 /// The name of the skill definition file
 pub const SKILL_FILE_NAME: &str = "SKILL.md";
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SkillLoadWarning {
+    DescriptionTooLong { actual_len: usize, max_len: usize },
+}
+
+impl SkillLoadWarning {
+    pub fn message(&self) -> String {
+        match self {
+            Self::DescriptionTooLong {
+                actual_len,
+                max_len,
+            } => format!(
+                "Skill description is {actual_len} bytes, exceeding the {max_len}-byte limit. The skill was loaded, but long descriptions may consume more model-context tokens."
+            ),
+        }
+    }
+}
 
 /// Represents a loaded skill with all its metadata and content.
 #[derive(Debug, Clone)]
@@ -62,6 +80,8 @@ pub struct Skill {
     pub directory_path: PathBuf,
     /// Absolute path to the SKILL.md file
     pub skill_file_path: PathBuf,
+    /// Non-fatal issues found while loading this skill.
+    pub load_warnings: Vec<SkillLoadWarning>,
     /// When `true`, this skill is hidden from the model's catalog and the
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
@@ -176,6 +196,11 @@ pub struct ProjectSkillGroup {
 
 impl Global for SkillIndex {}
 
+/// Rescan skill agent skill directories when skills are created or modified via UI
+pub struct SkillsUpdatedHook(pub Rc<dyn Fn(&mut App)>);
+
+impl Global for SkillsUpdatedHook {}
+
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
@@ -185,7 +210,7 @@ pub struct SkillMetadata {
     pub disable_model_invocation: bool,
 }
 
-/// Minimal skill info for system prompt (not full content).
+/// Minimal skill info for system prompt.
 ///
 /// `Serialize` is required for handlebars rendering of the system prompt
 /// template (see `ProjectContext` in `prompt_store`). `PartialEq, Eq` lets
@@ -243,17 +268,7 @@ pub fn parse_skill_frontmatter(
     content: &str,
     source: SkillSource,
 ) -> Result<Skill> {
-    if content.len() > MAX_SKILL_FILE_SIZE {
-        anyhow::bail!(
-            "SKILL.md file exceeds maximum size of {}KB",
-            MAX_SKILL_FILE_SIZE / 1024
-        );
-    }
-
-    let (metadata, _body) = extract_frontmatter(content)?;
-
-    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
-    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
+    let (metadata, _body, load_warnings) = parse_skill_file_content_for_loading(content)?;
 
     let directory_path = skill_file_path
         .parent()
@@ -266,9 +281,63 @@ pub fn parse_skill_frontmatter(
         source,
         directory_path,
         skill_file_path: skill_file_path.to_path_buf(),
+        load_warnings,
         disable_model_invocation: metadata.disable_model_invocation,
         embedded_body: None,
     })
+}
+
+/// Extract the YAML frontmatter and body from a SKILL.md file without
+/// validating the metadata fields.
+pub fn extract_skill_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
+    if content.len() > MAX_SKILL_FILE_SIZE {
+        anyhow::bail!(
+            "SKILL.md file exceeds maximum size of {}KB",
+            MAX_SKILL_FILE_SIZE / 1024
+        );
+    }
+
+    extract_frontmatter(content)
+}
+
+/// Parse and validate the YAML frontmatter and body from a SKILL.md file.
+pub fn parse_skill_file_content(content: &str) -> Result<(SkillMetadata, &str)> {
+    let (metadata, body) = extract_skill_frontmatter(content)?;
+
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
+
+    Ok((metadata, body))
+}
+
+fn parse_skill_file_content_for_loading(
+    content: &str,
+) -> Result<(SkillMetadata, &str, Vec<SkillLoadWarning>)> {
+    let (metadata, body) = extract_skill_frontmatter(content)?;
+
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    let load_warnings =
+        validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
+
+    Ok((metadata, body, load_warnings))
+}
+
+fn validate_description_for_loading(
+    description: &str,
+) -> Result<Vec<SkillLoadWarning>, &'static str> {
+    if description.trim().is_empty() {
+        return Err("Skill description cannot be empty");
+    }
+
+    let mut warnings = Vec::new();
+    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+        warnings.push(SkillLoadWarning::DescriptionTooLong {
+            actual_len: description.len(),
+            max_len: MAX_SKILL_DESCRIPTION_LEN,
+        });
+    }
+
+    Ok(warnings)
 }
 
 fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
@@ -347,8 +416,9 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
 /// by [`validate_name`].
 pub const MAX_SKILL_NAME_LEN: usize = 64;
 
-/// Maximum length (in bytes) for a valid skill description. Mirrors the
-/// upper bound enforced by [`validate_description`].
+/// Maximum recommended length (in bytes) for a skill description. The
+/// create-skill UI enforces this as a hard limit, while the loader emits a
+/// warning and still loads longer descriptions.
 ///
 /// Byte-based rather than char-based because that's what `.len()` returns
 /// and what every caller currently measures; the UI also surfaces this
@@ -456,8 +526,8 @@ pub fn validate_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Validate a skill description against the rules enforced by both the
-/// loader and the create-skill UI.
+/// Validate a skill description against the strict rules enforced by the
+/// create-skill UI and imported/shared skill parsing.
 pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
@@ -545,53 +615,15 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
         .await
 }
 
-/// Returns the byte index ONE PAST the end of the closing frontmatter
-/// delimiter line in `bytes`, or `None` if no closing delimiter has been
-/// seen yet. Used by the chunked reader to know when it has enough
-/// bytes to stop pulling from disk.
+/// Read `skill_file_path` from disk and parse its frontmatter. The
+/// SKILL.md body is parsed away by `parse_skill_frontmatter` and not
+/// surfaced here; it's re-read on demand via `read_skill_body` when a
+/// skill is actually being loaded for the model.
 ///
-/// Scans for the first `\n---` line followed by `\n`, `\r\n`, or EOF
-/// (excluding the opening line itself, which sits at byte 0 and is
-/// naturally skipped because we only consider lines following a `\n`).
-/// This may overshoot in pathological cases (e.g. `---` inside a quoted
-/// YAML string), but `parse_skill_frontmatter`'s candidate-and-validate
-/// logic still produces a correct result or a YAML parse error.
-fn closing_delimiter_end(bytes: &[u8]) -> Option<usize> {
-    for (i, &b) in bytes.iter().enumerate() {
-        if b != b'\n' {
-            continue;
-        }
-        let line_start = i + 1;
-        if line_start + 3 > bytes.len() {
-            continue;
-        }
-        if &bytes[line_start..line_start + 3] != b"---" {
-            continue;
-        }
-        let after_dashes = line_start + 3;
-        if after_dashes == bytes.len() {
-            return Some(after_dashes);
-        }
-        if bytes[after_dashes] == b'\n' {
-            return Some(after_dashes + 1);
-        }
-        if after_dashes + 1 < bytes.len()
-            && bytes[after_dashes] == b'\r'
-            && bytes[after_dashes + 1] == b'\n'
-        {
-            return Some(after_dashes + 2);
-        }
-        // Line is `---trailing` or `----`; keep scanning.
-    }
-    None
-}
-
-/// Read just enough of `skill_file_path` from disk to parse its
-/// frontmatter. The SKILL.md body is NOT loaded — that's deferred to
-/// `read_skill_body`, called only when a skill is actually being
-/// materialized for the model. Reading in 4KB chunks keeps the peak
-/// memory cost of loading N skills proportional to total frontmatter
-/// size, not total file size.
+/// We load the whole file in one go rather than streaming up to the
+/// closing `---`. `MAX_SKILL_FILE_SIZE` is 100KB and the metadata check
+/// below caps the worst case at that, so the peak transient cost is
+/// trivially small (≤ `MAX_SKILL_FILE_SIZE` × `SKILL_IO_CONCURRENCY`).
 pub async fn load_skill_frontmatter(
     fs: Arc<dyn Fs>,
     skill_file_path: PathBuf,
@@ -599,10 +631,15 @@ pub async fn load_skill_frontmatter(
 ) -> Result<Skill, SkillLoadError> {
     // Short-circuit on oversized files before reading any of their
     // contents, so a stray multi-GB file named `SKILL.md` can't OOM the
-    // app. We only act on a positive signal that the file is too large;
-    // if metadata fails or is unavailable, we fall through to the read
-    // loop, which is itself capped at `MAX_SKILL_FILE_SIZE`.
-    if let Ok(Some(metadata)) = fs.metadata(&skill_file_path).await
+    // app. If metadata is unavailable, refuse to read.
+    let metadata = fs
+        .metadata(&skill_file_path)
+        .await
+        .map_err(|e| SkillLoadError {
+            path: skill_file_path.clone(),
+            message: format!("Failed to read SKILL.md metadata: {}", e),
+        })?;
+    if let Some(metadata) = metadata
         && metadata.len > MAX_SKILL_FILE_SIZE as u64
     {
         return Err(SkillLoadError {
@@ -614,54 +651,15 @@ pub async fn load_skill_frontmatter(
         });
     }
 
-    let mut reader = fs
-        .open_sync(&skill_file_path)
+    let content = fs
+        .load(&skill_file_path)
         .await
         .map_err(|e| SkillLoadError {
             path: skill_file_path.clone(),
-            message: format!("Failed to open file: {}", e),
+            message: format!("Failed to read file: {}", e),
         })?;
 
-    // The chunked read is intentionally synchronous: `Fs::open_sync`
-    // returns a synchronous `Read` (RealFs uses `std::fs::File`), and
-    // production callers already wrap `load_skills_from_directory` in
-    // `cx.background_spawn`, so any blocking happens on the background
-    // executor — not on the foreground thread. Routing through
-    // `smol::unblock` instead would schedule the work on smol's blocking
-    // pool, whose wakeups don't drive GPUI's test scheduler and therefore
-    // panic with "Parking forbidden" under `TestAppContext`.
-    let read_result: Result<Vec<u8>, io::Error> = (|| {
-        let mut accumulated: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; SKILL_READ_CHUNK_SIZE];
-        loop {
-            let n = reader.read(&mut chunk)?;
-            if n == 0 {
-                break;
-            }
-            accumulated.extend_from_slice(&chunk[..n]);
-            if let Some(end) = closing_delimiter_end(&accumulated) {
-                // Discard body bytes swept up in the last chunk so that e.g. multi-byte
-                // graphemes split at the boundary won't cause `str::from_utf8` to fail.
-                accumulated.truncate(end);
-                break;
-            }
-            if accumulated.len() > MAX_SKILL_FILE_SIZE {
-                break;
-            }
-        }
-        Ok(accumulated)
-    })();
-    let accumulated = read_result.map_err(|e| SkillLoadError {
-        path: skill_file_path.clone(),
-        message: format!("Failed to read file: {}", e),
-    })?;
-
-    let content = std::str::from_utf8(&accumulated).map_err(|e| SkillLoadError {
-        path: skill_file_path.clone(),
-        message: format!("SKILL.md is not valid UTF-8: {}", e),
-    })?;
-
-    parse_skill_frontmatter(&skill_file_path, content, source).map_err(|e| SkillLoadError {
+    parse_skill_frontmatter(&skill_file_path, &content, source).map_err(|e| SkillLoadError {
         path: skill_file_path.clone(),
         message: e.to_string(),
     })
@@ -680,10 +678,18 @@ pub async fn read_skill_body(
         message: format!("Failed to read file: {}", e),
     })?;
 
-    let (_metadata, body) = extract_frontmatter(&content).map_err(|e| SkillLoadError {
-        path: skill_file_path.to_path_buf(),
-        message: e.to_string(),
-    })?;
+    read_skill_body_from_content(skill_file_path, &content)
+}
+
+pub fn read_skill_body_from_content(
+    skill_file_path: &Path,
+    content: &str,
+) -> Result<String, SkillLoadError> {
+    let (_metadata, body, _load_warnings) =
+        parse_skill_file_content_for_loading(content).map_err(|e| SkillLoadError {
+            path: skill_file_path.to_path_buf(),
+            message: e.to_string(),
+        })?;
 
     Ok(body.trim().to_string())
 }
@@ -716,6 +722,7 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
         source: SkillSource::BuiltIn,
         directory_path: synthetic_dir,
         skill_file_path: synthetic_path,
+        load_warnings: Vec::new(),
         disable_model_invocation: metadata.disable_model_invocation,
         embedded_body: Some(body.trim()),
     })
@@ -792,6 +799,58 @@ pub fn is_agents_skills_path(path: &Path) -> bool {
     false
 }
 
+/// The `zed://` scheme used by share links.
+const SKILL_SHARE_LINK_SCHEME: &str = "zed";
+/// The host (the part after `zed://`) that identifies a skill share link.
+const SKILL_SHARE_LINK_HOST: &str = "skill";
+/// The query parameter that carries the embedded `SKILL.md` payload.
+const SKILL_SHARE_LINK_DATA_PARAM: &str = "data";
+
+/// The `zed://` deep-link prefix for a shared skill. Opening a link with this
+/// prefix prompts the recipient to review and install the embedded skill.
+pub const SKILL_SHARE_LINK_PREFIX: &str =
+    concatcp!(SKILL_SHARE_LINK_SCHEME, "://", SKILL_SHARE_LINK_HOST);
+
+/// Build a shareable `zed://skill?data=…` link that fully embeds the given
+/// `SKILL.md` file contents.
+///
+/// The contents are base64url-encoded (no padding) so the link is
+/// self-contained and URL-safe: the recipient doesn't need the skill to be
+/// hosted anywhere. Recover the contents with [`decode_skill_share_link`].
+pub fn encode_skill_share_link(skill_file_content: &str) -> String {
+    use base64::Engine as _;
+    let data =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(skill_file_content.as_bytes());
+    let mut url = Url::parse(SKILL_SHARE_LINK_PREFIX).expect("skill share link prefix is valid");
+    url.query_pairs_mut()
+        .append_pair(SKILL_SHARE_LINK_DATA_PARAM, &data);
+    url.into()
+}
+
+/// Recover the `SKILL.md` contents embedded in a `zed://skill?data=…` link
+/// produced by [`encode_skill_share_link`].
+pub fn decode_skill_share_link(link: &str) -> Result<String> {
+    use base64::Engine as _;
+    let url = Url::parse(link).context("skill share link is not a valid URL")?;
+    anyhow::ensure!(
+        url.scheme() == SKILL_SHARE_LINK_SCHEME && url.host_str() == Some(SKILL_SHARE_LINK_HOST),
+        "not a skill share link"
+    );
+    let data = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == SKILL_SHARE_LINK_DATA_PARAM).then_some(value))
+        .context("skill share link is missing the `data` parameter")?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data.as_bytes())
+        .context("skill share link `data` is not valid base64")?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_SKILL_FILE_SIZE,
+        "shared skill exceeds the maximum size of {MAX_SKILL_FILE_SIZE} bytes"
+    );
+    let content = String::from_utf8(bytes).context("skill share link `data` is not valid UTF-8")?;
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -851,6 +910,26 @@ Do the thing.
         assert_eq!(skill.directory_path, Path::new("/skills/my-skill"));
         // Default: skill is invocable by both model and user.
         assert!(!skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn test_parse_skill_file_content_returns_body() {
+        let content = r#"---
+name: my-skill
+description: A test skill for testing purposes
+---
+
+# My Skill
+
+Do the thing.
+"#;
+
+        let (metadata, body) = parse_skill_file_content(content)
+            .expect("valid skill content should parse successfully");
+
+        assert_eq!(metadata.name, "my-skill");
+        assert_eq!(metadata.description, "A test skill for testing purposes");
+        assert_eq!(body.trim(), "# My Skill\n\nDo the thing.");
     }
 
     #[test]
@@ -1295,8 +1374,8 @@ Content.
     }
 
     #[test]
-    fn test_parse_description_too_long() {
-        let long_desc = "a".repeat(1025);
+    fn test_parse_description_too_long_loads_with_warning() {
+        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
             r#"---
 name: test
@@ -1307,11 +1386,38 @@ Content.
 "#
         );
 
-        let result = parse_skill_frontmatter(
+        let skill = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             &content,
             SkillSource::Global,
+        )
+        .expect("long descriptions should load with a warning");
+
+        assert_eq!(skill.description, long_desc);
+        assert_eq!(skill.load_warnings.len(), 1);
+        assert_eq!(
+            skill.load_warnings[0],
+            SkillLoadWarning::DescriptionTooLong {
+                actual_len: MAX_SKILL_DESCRIPTION_LEN + 1,
+                max_len: MAX_SKILL_DESCRIPTION_LEN,
+            }
         );
+    }
+
+    #[test]
+    fn test_parse_skill_file_content_rejects_description_too_long() {
+        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        let content = format!(
+            r#"---
+name: test
+description: {long_desc}
+---
+
+Content.
+"#
+        );
+
+        let result = parse_skill_file_content(&content);
         assert!(result.is_err());
         let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
         assert!(result.unwrap_err().to_string().contains(&expected));
@@ -1519,6 +1625,41 @@ description: A skill with no body content
     }
 
     #[gpui::test]
+    async fn test_load_symlinked_skill_directory(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/external/my-skill",
+            serde_json::json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: Symlinked skill\n---\n\n# Instructions"
+            }),
+        )
+        .await;
+        fs.create_dir(Path::new("/skills")).await.unwrap();
+        fs.create_symlink(
+            Path::new("/skills/my-skill"),
+            PathBuf::from("/external/my-skill"),
+        )
+        .await
+        .unwrap();
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        assert_eq!(results.len(), 1);
+        let skill = results[0].as_ref().expect("Should load successfully");
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "Symlinked skill");
+        assert_eq!(
+            skill.skill_file_path,
+            Path::new("/skills/my-skill/SKILL.md")
+        );
+    }
+
+    #[gpui::test]
     async fn test_load_nested_skills(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1686,6 +1827,7 @@ description: A skill with no body content
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };
@@ -1804,46 +1946,6 @@ description: A skill with no body content
     }
 
     #[gpui::test]
-    async fn test_load_skill_frontmatter_with_emoji_at_chunk_boundary(cx: &mut TestAppContext) {
-        // We must be able to load skill frontmatter even when a
-        // multipoint grapheme crosses the chunk read boundary.
-        let fs = FakeFs::new(cx.executor());
-        let frontmatter = "---\nname: my-skill\ndescription: Example skill testing multipoint graphemes at chunk boundary\n---\n";
-
-        // Pad contents so that the emoji's first byte lands
-        // at the last byte of the first read chunk.
-        let padding = "a".repeat(SKILL_READ_CHUNK_SIZE - frontmatter.len() - 1);
-        let content = format!("{frontmatter}{padding}✅");
-
-        assert!(
-            (frontmatter.len() + padding.len()) < SKILL_READ_CHUNK_SIZE,
-            "emoji must start before the second chunk"
-        );
-        assert!(
-            content.len() > SKILL_READ_CHUNK_SIZE,
-            "skill is longer than a chunk, so we know that the emoji crosses chunk boundaries"
-        );
-
-        fs.insert_tree(
-            "/skills",
-            serde_json::json!({
-                "my-skill": {
-                    "SKILL.md": content,
-                }
-            }),
-        )
-        .await;
-
-        load_skill_frontmatter(
-            fs as Arc<dyn Fs>,
-            PathBuf::from("/skills/my-skill/SKILL.md"),
-            SkillSource::Global,
-        )
-        .await
-        .expect("frontmatter should parse even when a multipoint grapheme such as an emoji crosses the byte chunk boundary");
-    }
-
-    #[gpui::test]
     async fn test_read_skill_body_returns_trimmed_body(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1863,6 +1965,27 @@ description: A skill with no body content
         // Trimmed: no leading blank line after the closing `---`, and no
         // trailing whitespace.
         assert_eq!(body, "# Instructions\n\nDo the thing.");
+    }
+
+    #[gpui::test]
+    async fn test_read_skill_body_accepts_description_too_long(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "long-description": {
+                    "SKILL.md": format!("---\nname: long-description\ndescription: {long_desc}\n---\n\nBody")
+                }
+            }),
+        )
+        .await;
+
+        let body = read_skill_body(fs.as_ref(), Path::new("/skills/long-description/SKILL.md"))
+            .await
+            .expect("body should load despite description-length warning");
+
+        assert_eq!(body, "Body");
     }
 
     #[gpui::test]
@@ -2014,8 +2137,8 @@ description: A skill with no body content
         // "é" is 2 bytes in UTF-8. A string of MAX/2 + 1 "é" characters has
         // only ~MAX/2 + 1 chars but exceeds MAX bytes, so it must be
         // rejected by a byte-based validator (and accepted by a char-based
-        // one). This regression-tests the byte semantics that the loader
-        // and UI both rely on.
+        // one). This regression-tests the byte semantics that strict
+        // validation and load-time warnings both rely on.
         let chars = MAX_SKILL_DESCRIPTION_LEN / 2 + 1;
         let description = "é".repeat(chars);
         assert!(description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN);
@@ -2039,5 +2162,26 @@ description: A skill with no body content
                 );
             }
         }
+    }
+
+    #[test]
+    fn skill_share_link_round_trips() {
+        let content =
+            "---\nname: my-skill\ndescription: Does a thing.\n---\n\n## Steps\n\nDo the thing.\n";
+        let link = encode_skill_share_link(content);
+        let data = link
+            .strip_prefix("zed://skill?data=")
+            .expect("link should start with the skill share prefix");
+        // base64url (no-pad) output must not require percent-encoding.
+        assert!(!data.contains('+') && !data.contains('/') && !data.contains('='));
+        assert_eq!(decode_skill_share_link(&link).unwrap(), content);
+    }
+
+    #[test]
+    fn decode_skill_share_link_rejects_non_skill_links() {
+        assert!(decode_skill_share_link("zed://settings/agent.skills").is_err());
+        assert!(decode_skill_share_link("zed://skill").is_err());
+        assert!(decode_skill_share_link("zed://skill?other=1").is_err());
+        assert!(decode_skill_share_link("zed://skill?data=!!!notbase64").is_err());
     }
 }

@@ -66,6 +66,10 @@ impl ChannelModal {
                 cx,
             )
             .modal(false)
+            .initial_width(rems(34.))
+            .minimum_results_width(rems(34.))
+            .height(rems(24.))
+            .no_vertical_padding()
         });
 
         Self {
@@ -146,7 +150,6 @@ impl Render for ChannelModal {
             .on_action(cx.listener(Self::toggle_mode))
             .on_action(cx.listener(Self::dismiss))
             .elevation_3(cx)
-            .w(rems(34.))
             .child(
                 v_flex()
                     .px_2()
@@ -258,6 +261,10 @@ pub struct ChannelModalDelegate {
 
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "channel modal"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search collaborator by username...".into()

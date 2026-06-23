@@ -123,8 +123,9 @@ impl ProfileSelector {
             let picker = cx.new(|cx| {
                 Picker::list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems(18.))
-                    .max_height(Some(rems(20.).into()))
+                    .minimum_results_width(rems(18.))
+                    .height(rems(20.))
+                    .no_vertical_padding()
             });
 
             self.picker = Some(picker);
@@ -430,6 +431,10 @@ impl ProfilePickerDelegate {
 impl PickerDelegate for ProfilePickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "profile selector"
+    }
+
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
         "Search profiles…".into()
     }
@@ -541,7 +546,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                     provider.set_profile(profile_id.clone(), cx);
 
                     telemetry::event!(
-                        "agent_profile_switched",
+                        "Agent Profile Switched",
                         profile_id = profile_id.as_str(),
                         source = "picker"
                     );

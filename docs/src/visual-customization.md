@@ -76,7 +76,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 
 ### Font ligatures
 
-By default Zed enable font ligatures which will visually combines certain adjacent characters.
+By default Zed enables font ligatures which will visually combine certain adjacent characters.
 
 For example `=>` will be displayed as `→` and `!=` will be `≠`.
 This is purely cosmetic and the individual characters remain unchanged.
@@ -382,6 +382,8 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
+  // Whether to query and display LSP document links in the editor.
+  "lsp_document_links": true,
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
 
@@ -557,7 +559,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left",               // Where to dock: left, right
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
-    "sort_by_path": false,        // Sort by path (false) or status (true)
+    "sort_by": "path",            // path, name
+    "group_by": "status",         // none, status
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }

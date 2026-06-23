@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -560,13 +560,7 @@ async fn run_agent(
 
     let agent = cx.update(|cx| {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        NativeAgent::new(
-            thread_store,
-            Templates::new(),
-            None,
-            app_state.fs.clone(),
-            cx,
-        )
+        NativeAgent::new(thread_store, Templates::new(), app_state.fs.clone(), cx)
     });
 
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
