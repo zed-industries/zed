@@ -755,8 +755,12 @@ pub struct SandboxPermissionsContent {
     /// Default: false
     pub allow_fs_write_all: Option<bool>,
 
-    /// Whether terminal commands may always run outside the sandbox without
-    /// prompting when they request `unsandboxed: true`.
+    /// Whether to persistently run agent terminal commands outside the OS
+    /// sandbox. This is the model-facing "off switch": when true, the sandboxed
+    /// terminal tool is not exposed and the system prompt omits the sandbox
+    /// section, so the model uses the plain `terminal` tool. On Windows, WSL
+    /// sandbox setup is skipped. Distinct from the model-requested
+    /// `unsandboxed: true` escape approved "once" or "for this thread".
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
 

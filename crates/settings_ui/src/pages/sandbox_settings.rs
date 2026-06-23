@@ -50,6 +50,7 @@ pub(crate) fn render_sandbox_settings_page(
     let add_path_input = render_add_path_input(cx);
 
     let empty_border = cx.theme().colors().border_variant;
+    let sandbox_enabled = !permissions.allow_unsandboxed;
 
     v_flex()
         .id("sandbox-settings-page")
@@ -68,6 +69,22 @@ pub(crate) fn render_sandbox_settings_page(
                     .mt_0p5(),
             ),
         )
+        .child(
+            SwitchField::new(
+                "sandbox-enabled",
+                Some("Enable Sandbox"),
+                Some(
+                    "Wrap agent-run terminal commands in an OS-level sandbox. When off, commands run with Zed's own permissions."
+                        .into(),
+                ),
+                sandbox_enabled,
+                move |state, _window, cx| {
+                    set_sandbox_enabled(*state == ToggleState::Selected, cx);
+                },
+            )
+            .tab_index(0),
+        )
+        .when(sandbox_enabled, |this| this
         .when_some(validation_error, |this, error| {
             this.child(
                 Banner::new()
@@ -159,26 +176,6 @@ pub(crate) fn render_sandbox_settings_page(
                     empty_border,
                 )),
         )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_3()
-                .child(SettingsSectionHeader::new("Sandbox").no_padding(true))
-                .child(
-                    SwitchField::new(
-                        "sandbox-allow-unsandboxed",
-                        Some("Allow Unsandboxed Terminal Commands"),
-                        Some(
-                            "Run terminal commands without the OS sandbox."
-                                .into(),
-                        ),
-                        permissions.allow_unsandboxed,
-                        move |state, _window, cx| {
-                            set_allow_unsandboxed(*state == ToggleState::Selected, cx);
-                        },
-                    )
-                    .tab_index(0),
-                ),
         )
         .into_any_element()
 }
@@ -235,8 +232,7 @@ fn render_host_row(index: usize, host: String, cx: &mut Context<SettingsWindow>)
     let host_for_update = host.clone();
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(format!("sandbox-host-{}", index))
+    SettingsInputField::new(format!("sandbox-host-{}", index))
         .with_initial_text(host)
         .tab_index(0)
         .with_buffer_font()
@@ -280,8 +276,7 @@ fn render_host_row(index: usize, host: String, cx: &mut Context<SettingsWindow>)
 fn render_add_host_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id("sandbox-host-new")
+    SettingsInputField::new("sandbox-host-new")
         .with_placeholder("Add domain (e.g. github.com or *.npmjs.org)…")
         .tab_index(0)
         .with_buffer_font()
@@ -320,8 +315,7 @@ fn render_path_row(index: usize, path: PathBuf, cx: &mut Context<SettingsWindow>
     let path_for_update = path.clone();
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(format!("sandbox-path-{}", index))
+    SettingsInputField::new(format!("sandbox-path-{}", index))
         .with_initial_text(path.to_string_lossy().into_owned())
         .tab_index(0)
         .with_buffer_font()
@@ -356,8 +350,7 @@ fn render_path_row(index: usize, path: PathBuf, cx: &mut Context<SettingsWindow>
 fn render_add_path_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id("sandbox-path-new")
+    SettingsInputField::new("sandbox-path-new")
         .with_placeholder("Add an absolute path (e.g. /path/to/directory)…")
         .tab_index(0)
         .with_buffer_font()
@@ -436,6 +429,14 @@ fn update_sandbox_permissions(
     });
 }
 
+fn set_sandbox_enabled(value: bool, cx: &mut App) {
+    // The UI presents an "enabled" switch, but the stored setting is the
+    // inverse (`allow_unsandboxed`).
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.allow_unsandboxed = Some(!value);
+    });
+}
+
 fn set_allow_all_hosts(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_all_hosts = Some(value);
@@ -451,12 +452,6 @@ fn set_allow_git_access(value: bool, cx: &mut App) {
 fn set_allow_fs_write_all(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_fs_write_all = Some(value);
-    });
-}
-
-fn set_allow_unsandboxed(value: bool, cx: &mut App) {
-    update_sandbox_permissions(cx, move |permissions| {
-        permissions.allow_unsandboxed = Some(value);
     });
 }
 

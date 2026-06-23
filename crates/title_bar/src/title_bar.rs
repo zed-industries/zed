@@ -1251,7 +1251,7 @@ impl TitleBar {
                 }
             });
 
-            ButtonLike::new("user-menu").child(
+            ButtonLike::new("user-menu").aria_label("User menu").child(
                 h_flex()
                     .when_some(business_organization, |this, organization| {
                         this.gap_2()
@@ -1261,6 +1261,7 @@ impl TitleBar {
             )
         } else {
             ButtonLike::new("user-menu")
+                .aria_label("User menu")
                 .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
         };
 

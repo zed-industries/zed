@@ -424,6 +424,13 @@ pub struct SandboxPermissions {
     /// Allow sandboxed commands to access protected Git metadata paths.
     pub allow_git_access: bool,
     pub allow_fs_write_all: bool,
+    /// Persistently run agent terminal commands outside the OS sandbox. This is
+    /// the model-facing "off switch": when set, the sandboxed terminal tool is
+    /// not exposed and the system prompt omits the sandbox section, so the
+    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
+    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
+    /// approved "once" or "for this thread", which keeps the sandboxed
+    /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
     pub write_paths: Vec<PathBuf>,
 }

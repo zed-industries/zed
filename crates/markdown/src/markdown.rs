@@ -694,7 +694,7 @@ impl Markdown {
         }
     }
 
-    pub fn source(&self) -> &str {
+    pub fn source(&self) -> &SharedString {
         &self.source
     }
 
@@ -762,7 +762,7 @@ impl Markdown {
     }
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
-        if source == self.source() {
+        if &source == self.source() {
             return;
         }
         self.source = source;
@@ -813,17 +813,14 @@ impl Markdown {
         active: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        let mut indexed_highlights = highlights.into_iter().enumerate().collect::<Vec<_>>();
-        indexed_highlights.sort_by_key(|(_, range)| (range.start, range.end));
-        self.active_search_highlight = active.and_then(|active| {
-            indexed_highlights
-                .iter()
-                .position(|(original_ix, _)| *original_ix == active)
-        });
-        self.search_highlights = indexed_highlights
-            .into_iter()
-            .map(|(_, range)| range)
-            .collect();
+        debug_assert!(
+            highlights
+                .windows(2)
+                .all(|ranges| (ranges[0].start, ranges[0].end) <= (ranges[1].start, ranges[1].end))
+        );
+        self.search_highlights = highlights;
+        self.active_search_highlight =
+            active.filter(|active| *active < self.search_highlights.len());
         cx.notify();
     }
 
@@ -836,6 +833,7 @@ impl Markdown {
     }
 
     pub fn set_active_search_highlight(&mut self, active: Option<usize>, cx: &mut Context<Self>) {
+        let active = active.filter(|active| *active < self.search_highlights.len());
         if self.active_search_highlight != active {
             self.active_search_highlight = active;
             cx.notify();
@@ -3989,6 +3987,26 @@ mod tests {
 
     fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
         render_markdown_with_language_registry(markdown, None, cx)
+    }
+
+    #[gpui::test]
+    fn test_active_search_highlight_uses_match_index(cx: &mut TestAppContext) {
+        let markdown = cx.new(|cx| Markdown::new("zero one two".into(), None, None, cx));
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(vec![0..4, 5..8, 9..12], Some(0), cx);
+            assert_eq!(markdown.search_highlights(), &[0..4, 5..8, 9..12]);
+            assert_eq!(markdown.active_search_highlight(), Some(0));
+
+            markdown.set_active_search_highlight(Some(1), cx);
+            assert_eq!(markdown.active_search_highlight(), Some(1));
+
+            markdown.set_active_search_highlight(Some(2), cx);
+            assert_eq!(markdown.active_search_highlight(), Some(2));
+
+            markdown.set_active_search_highlight(Some(3), cx);
+            assert_eq!(markdown.active_search_highlight(), None);
+        });
     }
 
     #[gpui::test]
