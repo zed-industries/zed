@@ -3364,6 +3364,98 @@ pub mod tests {
     }
 
     #[gpui::test]
+    async fn test_markdown_section_fold_end(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        // Section content is deliberately left unindented, the case the
+        // generic indentation-based fold heuristic fails to handle.
+        let text = concat!(
+            "# Title\n",      // row 0
+            "\n",             // row 1
+            "Intro line.\n",  // row 2
+            "\n",             // row 3
+            "## Section\n",   // row 4
+            "\n",             // row 5
+            "Body line.\n",   // row 6
+            "\n",             // row 7 (trailing blank, must be excluded)
+        );
+
+        let buffer =
+            cx.new(|cx| Buffer::local(text, cx).with_language(language::markdown_lang(), cx));
+        cx.condition(&buffer, |buffer, _| !buffer.is_parsing()).await;
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        // The top-level heading folds the whole document, stopping at the last
+        // non-blank line rather than the trailing blank line.
+        assert_eq!(
+            snapshot.markdown_section_fold_end(MultiBufferRow(0)),
+            Some(Point::new(6, "Body line.".len() as u32)),
+        );
+
+        // A nested heading folds only its own section, which here happens to
+        // share the same last line.
+        assert_eq!(
+            snapshot.markdown_section_fold_end(MultiBufferRow(4)),
+            Some(Point::new(6, "Body line.".len() as u32)),
+        );
+
+        // Rows that do not begin a heading are not foldable as sections.
+        assert_eq!(snapshot.markdown_section_fold_end(MultiBufferRow(1)), None);
+        assert_eq!(snapshot.markdown_section_fold_end(MultiBufferRow(2)), None);
+    }
+
+    #[gpui::test]
+    async fn test_markdown_section_fold_end_only_for_markdown(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let rust_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+
+        let text = "fn main() {\n    let value = 1;\n}\n";
+        let buffer =
+            cx.new(|cx| Buffer::local(text, cx).with_language(rust_language, cx));
+        cx.condition(&buffer, |buffer, _| !buffer.is_parsing()).await;
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(snapshot.markdown_section_fold_end(MultiBufferRow(0)), None);
+    }
+
+    #[gpui::test]
     async fn test_chunks_with_syntax_highlighting_across_blocks(cx: &mut gpui::TestAppContext) {
         cx.background_executor
             .set_block_on_ticks(usize::MAX..=usize::MAX);
