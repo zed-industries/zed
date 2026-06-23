@@ -83,6 +83,7 @@ pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
+    Deepseek,
     Zed,
     Codestral,
     Ollama,
@@ -97,6 +98,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Deepseek
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
             | EditPredictionProvider::Mercury => false,
@@ -108,6 +110,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => Some("Zed AI"),
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Codestral => Some("Codestral"),
+            EditPredictionProvider::Deepseek => Some("Deepseek"),
             EditPredictionProvider::Mercury => Some("Mercury"),
             EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
@@ -133,6 +136,8 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
+    /// Settings specific to Deepseek.
+    pub deepseek: Option<DeepseekEditPredictionSettingsContent>,
     /// Settings specific to Ollama.
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
@@ -233,6 +238,23 @@ pub struct CodestralSettingsContent {
     /// Api URL to use for completions.
     ///
     /// Default: "https://codestral.mistral.ai"
+    pub api_url: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct DeepseekEditPredictionSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: "deepseek-chat"
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 64
+    pub max_output_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "https://api.deepseek.com"
     pub api_url: Option<String>,
 }
 
