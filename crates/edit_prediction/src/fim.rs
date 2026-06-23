@@ -53,12 +53,17 @@ pub fn request_prediction(
         settings::EditPredictionProvider::OpenAiCompatibleApi => {
             settings.open_ai_compatible_api.clone()
         }
+        settings::EditPredictionProvider::Deepseek => settings.deepseek.clone(),
         _ => None,
     }) else {
         return Task::ready(Err(anyhow!("Unsupported edit prediction provider for FIM")));
     };
 
-    let api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
+    let api_key = if provider == settings::EditPredictionProvider::Deepseek {
+        crate::deepseek::api_key()
+    } else {
+        load_open_ai_compatible_api_key_if_needed(provider, cx)
+    };
 
     let result = cx.background_spawn(async move {
         let cursor_offset = cursor_point.to_offset(&snapshot);
@@ -97,21 +102,37 @@ pub fn request_prediction(
         let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
-        let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-        let stop_tokens = get_fim_stop_tokens();
 
         let max_tokens = settings.max_output_tokens;
 
-        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
-            provider,
-            &settings,
-            prompt,
-            max_tokens,
-            stop_tokens,
-            api_key,
-            &http_client,
-        )
-        .await?;
+        let (response_text, request_id) =
+            if provider == settings::EditPredictionProvider::Deepseek {
+                // Deepseek's completion API takes the prefix and suffix as
+                // separate fields, so send them directly instead of encoding
+                // FIM sentinel tokens into a single prompt string.
+                crate::deepseek::make_request(
+                    &settings,
+                    prefix,
+                    suffix,
+                    max_tokens,
+                    api_key,
+                    &http_client,
+                )
+                .await?
+            } else {
+                let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
+                let stop_tokens = get_fim_stop_tokens();
+                open_ai_compatible::send_custom_server_request(
+                    provider,
+                    &settings,
+                    prompt,
+                    max_tokens,
+                    stop_tokens,
+                    api_key,
+                    &http_client,
+                )
+                .await?
+            };
 
         let response_received_at = Instant::now();
 
