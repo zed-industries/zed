@@ -1583,6 +1583,7 @@ impl Thread {
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
                 self.sandbox_grants.clone(),
+                Some(cx.weak_entity()),
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
@@ -1739,7 +1740,9 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
-            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
+                &db_thread.sandbox_grants,
+            ))),
         }
     }
 
@@ -1768,6 +1771,7 @@ impl Thread {
                 }
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            sandbox_grants: self.sandbox_grants.borrow().to_db(),
         };
 
         cx.background_spawn(async move {
@@ -3322,6 +3326,7 @@ impl Thread {
             Some(fs),
             cancellation_rx,
             self.sandbox_grants.clone(),
+            Some(cx.weak_entity()),
         );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
@@ -5084,6 +5089,10 @@ pub struct ToolCallEventStream {
     cancellation_rx: watch::Receiver<bool>,
     /// Shared, thread-scoped sandbox grants (see [`Thread::sandbox_grants`]).
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// The owning thread, used to trigger a save when a "for this thread"
+    /// sandbox grant is recorded so it survives reopening. `None` in tests and
+    /// for streams not tied to a live thread.
+    thread: Option<WeakEntity<Thread>>,
 }
 
 impl ToolCallEventStream {
@@ -5112,6 +5121,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             sandbox_grants,
+            None,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -5128,6 +5138,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            None,
         );
 
         (
@@ -5149,6 +5160,7 @@ impl ToolCallEventStream {
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+        thread: Option<WeakEntity<Thread>>,
     ) -> Self {
         Self {
             tool_use_id,
@@ -5156,7 +5168,18 @@ impl ToolCallEventStream {
             fs,
             cancellation_rx,
             sandbox_grants,
+            thread,
         }
+    }
+
+    /// Persist the thread so a freshly recorded "for this thread" sandbox grant
+    /// survives a reopen. Saving is driven by the agent's `observe` on the
+    /// thread entity, so a no-op `notify` is enough to schedule it.
+    fn persist_thread_grants(thread: &Option<WeakEntity<Thread>>, cx: &AsyncApp) {
+        let Some(thread) = thread else { return };
+        cx.update(|cx| {
+            thread.update(cx, |_thread, cx| cx.notify()).ok();
+        });
     }
 
     /// Returns a future that resolves when the user cancels the tool call.
@@ -5403,6 +5426,7 @@ impl ToolCallEventStream {
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
+        let thread = self.thread.clone();
         let auto_allow_outcome = match auto_resolve_permission_outcome(&options, true) {
             Ok(outcome) => outcome,
             Err(error) => return Task::ready(Err(error)),
@@ -5452,6 +5476,7 @@ impl ToolCallEventStream {
                             &outcome,
                             &request,
                             sandbox_grants.clone(),
+                            thread.clone(),
                             fs.clone(),
                             cx,
                         );
@@ -5490,6 +5515,7 @@ impl ToolCallEventStream {
         outcome: &acp_thread::SelectedPermissionOutcome,
         request: &SandboxRequest,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+        thread: Option<WeakEntity<Thread>>,
         fs: Option<Arc<dyn Fs>>,
         cx: &AsyncApp,
     ) -> Result<()> {
@@ -5502,6 +5528,7 @@ impl ToolCallEventStream {
             Some(acp_thread::SandboxPermission::AllowOnce) => Ok(()),
             Some(acp_thread::SandboxPermission::AllowThread) => {
                 sandbox_grants.borrow_mut().record(request);
+                Self::persist_thread_grants(&thread, cx);
                 Ok(())
             }
             Some(acp_thread::SandboxPermission::AllowAlways) => {
@@ -5667,6 +5694,7 @@ impl ToolCallEventStream {
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
+        let thread = self.thread.clone();
         cx.spawn(async move |cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) = stream
@@ -5712,10 +5740,12 @@ impl ToolCallEventStream {
                 }
                 Some(acp_thread::SandboxPermission::AllowThread) => {
                     sandbox_grants.borrow_mut().record_fallback();
+                    Self::persist_thread_grants(&thread, cx);
                     Ok(SandboxFallbackDecision::RunUnsandboxed)
                 }
                 Some(acp_thread::SandboxPermission::AllowAlways) => {
                     sandbox_grants.borrow_mut().record_fallback();
+                    Self::persist_thread_grants(&thread, cx);
                     Self::persist_sandbox_unsandboxed_permission(fs, cx);
                     Ok(SandboxFallbackDecision::RunUnsandboxed)
                 }

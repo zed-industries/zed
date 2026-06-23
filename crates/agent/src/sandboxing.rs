@@ -238,6 +238,47 @@ impl ThreadSandboxGrants {
         self.sandbox_fallback = true;
     }
 
+    /// Serialize these grants for persistence in the thread's database row.
+    /// Host patterns are written in canonical string form so they round-trip
+    /// through [`HostPattern::parse`] on load.
+    pub fn to_db(&self) -> crate::db::DbSandboxGrants {
+        crate::db::DbSandboxGrants {
+            write_paths: self.write_paths.clone(),
+            network_hosts: self
+                .network_hosts
+                .iter()
+                .map(|host| host.to_string())
+                .collect(),
+            network_any_host: self.network_any_host,
+            allow_fs_write_all: self.allow_fs_write_all,
+            unsandboxed: self.unsandboxed,
+            sandbox_fallback: self.sandbox_fallback,
+        }
+    }
+
+    /// Rebuild thread grants from the persisted form. Host patterns that no
+    /// longer parse (e.g. after a hand-edit) are dropped with a warning rather
+    /// than failing the whole thread load.
+    pub fn from_db(db: &crate::db::DbSandboxGrants) -> Self {
+        let mut network_hosts = Vec::new();
+        for raw in &db.network_hosts {
+            match HostPattern::parse(raw) {
+                Ok(pattern) => insert_host_pattern(&mut network_hosts, pattern),
+                Err(error) => {
+                    log::warn!("ignoring invalid persisted sandbox network host '{raw}': {error}")
+                }
+            }
+        }
+        Self {
+            network_any_host: db.network_any_host,
+            network_hosts,
+            allow_fs_write_all: db.allow_fs_write_all,
+            unsandboxed: db.unsandboxed,
+            sandbox_fallback: db.sandbox_fallback,
+            write_paths: db.write_paths.clone(),
+        }
+    }
+
     /// Record everything in `request` as granted for the rest of the thread,
     /// pruning entries that become redundant.
     pub fn record(&mut self, request: &SandboxRequest) {
@@ -367,6 +408,57 @@ mod tests {
             unsandboxed: true,
             write_paths: Vec::new(),
         }
+    }
+
+    #[test]
+    fn grants_roundtrip_through_db_form() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&request(
+            hosts(&["github.com", "*.npmjs.org"]),
+            false,
+            &["/tmp/build"],
+        ));
+        grants.record(&unsandboxed_request());
+
+        let restored = ThreadSandboxGrants::from_db(&grants.to_db());
+
+        // The restored grants cover exactly what the originals did.
+        assert!(covers(
+            &restored,
+            &request(hosts(&["api.npmjs.org"]), false, &["/tmp/build/cache"])
+        ));
+        assert!(covers(&restored, &unsandboxed_request()));
+        assert_eq!(restored.network_hosts, grants.network_hosts);
+        assert_eq!(restored.write_paths, grants.write_paths);
+        assert_eq!(restored.unsandboxed, grants.unsandboxed);
+    }
+
+    #[test]
+    fn db_form_preserves_any_host_and_write_all() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&request(NetworkRequest::AnyHost, true, &[]));
+
+        let restored = ThreadSandboxGrants::from_db(&grants.to_db());
+        assert!(restored.network_any_host);
+        assert!(restored.allow_fs_write_all);
+        assert!(covers(
+            &restored,
+            &request(NetworkRequest::AnyHost, true, &["/anywhere"])
+        ));
+    }
+
+    #[test]
+    fn db_form_drops_unparsable_persisted_hosts() {
+        let db = crate::db::DbSandboxGrants {
+            // IP literals are explicitly rejected by the host-pattern parser.
+            network_hosts: vec!["github.com".to_string(), "10.0.0.1".to_string()],
+            ..Default::default()
+        };
+        let restored = ThreadSandboxGrants::from_db(&db);
+        assert_eq!(
+            restored.network_hosts,
+            vec![HostPattern::parse("github.com").unwrap()]
+        );
     }
 
     fn covers(grants: &ThreadSandboxGrants, request: &SandboxRequest) -> bool {
