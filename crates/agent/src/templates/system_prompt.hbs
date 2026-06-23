@@ -183,14 +183,6 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
 {{/if}}
 - Network: outbound network access is blocked.
 
-{{#if is_linux}}
-The sandbox can only allow or block outbound network access as a whole — it cannot restrict access to specific hosts. There is no HTTP/HTTPS proxy, so once network access is granted SSH, FTP, and raw sockets work too.
-
-You can request elevated permissions on individual `terminal` calls:
-
-- `allow_all_hosts: true` — allow unrestricted outbound network access. On this platform this is the only way to grant network access.
-- `allow_hosts: ["github.com", ...]` — accepted, but on this platform listing hosts grants unrestricted outbound network access (identical to `allow_all_hosts`), because per-host restriction can't be enforced. Prefer `allow_all_hosts` so the request is explicit.
-{{else}}
 {{#if is_windows}}
 The sandbox can only allow or block outbound network access as a whole — it cannot restrict access to specific hosts. There is no HTTP/HTTPS proxy, so once network access is granted SSH, FTP, and raw sockets work too.
 
@@ -205,7 +197,6 @@ You can request elevated permissions on individual `terminal` calls:
 
 - `allow_hosts: ["github.com", "*.npmjs.org"]` — allow outbound HTTP/HTTPS to specific hosts (exact hostnames or leading-`*.` subdomain wildcards; no IP literals). Prefer this whenever you know which hosts the command needs.
 - `allow_all_hosts: true` — allow outbound HTTP/HTTPS to any host. Use only when the specific hosts can't be enumerated up front.
-{{/if}}
 {{/if}}
 - `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write.
 - `allow_fs_write_all: true` — allow unrestricted filesystem writes. Only use this when the specific paths can't be enumerated up front.

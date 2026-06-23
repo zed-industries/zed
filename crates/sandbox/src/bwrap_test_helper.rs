@@ -24,8 +24,10 @@ mod imp {
     use std::time::Duration;
 
     use anyhow::{Context as _, Result, bail};
-    use sandbox::SandboxPermissions;
-    use sandbox::linux_bubblewrap::{LauncherStatus, StatusChannel, wrap_invocation};
+    use sandbox::linux_bubblewrap::{
+        LauncherStatus, NetworkAccess, SandboxPermissions, check_can_create_sandbox,
+        wrap_invocation,
+    };
 
     /// Internal subcommand: attempt an outbound TCP connection to the given
     /// `host:port`, exiting 0 on success and 1 on any failure. Run *inside* the
@@ -36,8 +38,8 @@ mod imp {
     const SUBCOMMAND_UNIX_CHECK: &str = "__unix_check";
 
     pub fn main() {
-        // If we were re-exec'd as the sandbox launcher, this sets up the sandbox and
-        // execs the wrapped command without returning.
+        // If we were re-exec'd as the restricted-network bridge, this starts
+        // the bridge and execs the wrapped command without returning.
         sandbox::run_sandbox_launcher_if_invoked();
 
         let args: Vec<String> = std::env::args().collect();
@@ -87,17 +89,17 @@ mod imp {
         Ok(())
     }
 
-    /// The outcome of driving the launcher once.
+    /// The outcome of driving the sandbox wrapper once.
     struct LaunchResult {
-        /// The status the launcher reported back, if any.
-        status: Option<LauncherStatus>,
+        /// Whether sandbox preparation succeeded.
+        status: LauncherStatus,
         /// Whether the launched command exited successfully.
         command_succeeded: bool,
     }
 
-    /// Drive the sandbox launcher the same way Zed's terminal integration does:
-    /// bind a status channel, build the launcher invocation, spawn it, and collect
-    /// both the reported status and the command's exit result.
+    /// Drive the sandbox wrapper the same way Zed's terminal integration does:
+    /// probe the sandbox, build the bwrap invocation, spawn it, and collect the
+    /// command's exit result.
     fn drive_launcher(
         program: &str,
         args: &[String],
@@ -105,34 +107,39 @@ mod imp {
         cwd: Option<&Path>,
         permissions: SandboxPermissions,
     ) -> Result<LaunchResult> {
-        let launcher = std::env::current_exe().context("failed to resolve current executable")?;
-        let launcher = launcher
+        if let Err(status) = check_can_create_sandbox(writable_dirs, permissions, cwd) {
+            return Ok(LaunchResult {
+                status,
+                command_succeeded: false,
+            });
+        }
+
+        let bridge_program =
+            std::env::current_exe().context("failed to resolve current executable")?;
+        let bridge_program = bridge_program
             .to_str()
             .context("current executable path is not valid UTF-8")?;
-
-        let channel = StatusChannel::bind().context("failed to bind status channel")?;
-        let (launcher_program, launcher_args) = wrap_invocation(
-            launcher,
-            Some(channel.name()),
+        let (sandbox_program, sandbox_args) = wrap_invocation(
+            bridge_program,
             permissions,
             writable_dirs,
             cwd,
             program,
             args,
-        );
+            None,
+        )
+        .context("failed to build sandbox invocation")?;
 
-        let mut child = Command::new(&launcher_program)
-            .args(&launcher_args)
+        let mut child = Command::new(&sandbox_program)
+            .args(&sandbox_args)
             .spawn()
-            .context("failed to spawn sandbox launcher")?;
-
-        // The launcher connects and reports before it execs, so read the status
-        // while the command runs, then wait for the command to finish.
-        let status = channel.recv(Duration::from_secs(30));
-        let exit = child.wait().context("failed to wait for launcher")?;
+            .context("failed to spawn sandboxed command")?;
+        let exit = child
+            .wait()
+            .context("failed to wait for sandboxed command")?;
 
         Ok(LaunchResult {
-            status,
+            status: LauncherStatus::Success,
             command_succeeded: exit.success(),
         })
     }
@@ -242,7 +249,7 @@ mod imp {
         // even when we expected it to; in that case skip (rather than fail) the
         // enforcement assertions, which would otherwise be testing nothing.
         let probe = drive_launcher("true", &[], &[], None, SandboxPermissions::default())?;
-        if probe.status != Some(LauncherStatus::Success) {
+        if probe.status != LauncherStatus::Success {
             println!(
                 "[sandbox_test]: SKIP: this environment cannot enforce a bwrap sandbox \
              (probe status: {:?})",
@@ -253,11 +260,11 @@ mod imp {
 
         let default = SandboxPermissions::default();
         let fs_write_all = SandboxPermissions {
-            allow_network: false,
+            network: NetworkAccess::None,
             allow_fs_write: true,
         };
         let network_allowed = SandboxPermissions {
-            allow_network: true,
+            network: NetworkAccess::All,
             allow_fs_write: false,
         };
         let mut checks = Checks::new();
@@ -279,7 +286,7 @@ mod imp {
         );
         checks.check(
             "default run reports Success",
-            write_writable.status == Some(LauncherStatus::Success),
+            write_writable.status == LauncherStatus::Success,
         );
 
         // RESTRICT: writing outside any writable bind is denied by the read-only
@@ -393,7 +400,7 @@ mod imp {
         );
         checks.check(
             "allow_fs_write run reports Success",
-            write_escape.status == Some(LauncherStatus::Success),
+            write_escape.status == LauncherStatus::Success,
         );
 
         // RESTRICT: permissions are independent — granting filesystem writes must
@@ -412,19 +419,17 @@ mod imp {
             );
         }
 
-        // RESTRICT: a setuid-root bwrap must be refused, and the launcher must
-        // abort (not run the command). We run as root in the VM, so we can build
-        // one.
+        // RESTRICT: a setuid-root bwrap must be refused, and the command must
+        // not run. We run as root in the VM, so we can build one.
         check_setuid_rejected(&mut checks)?;
 
         checks.finish()
     }
 
     /// Degraded scenario: the sandbox could not be set up (user namespaces
-    /// disabled, or no `bwrap` present). The launcher must report the specific
-    /// reason *and abort* — it never runs the command unsandboxed. (Falling back
-    /// to an unsandboxed run is the consumer's choice; the launcher, and these
-    /// tests, fail closed.)
+    /// disabled, or no `bwrap` present). The wrapper must report the specific
+    /// reason and not run the command unsandboxed. Falling back to an unsandboxed
+    /// run is the consumer's choice; these tests fail closed.
     fn run_degraded_tests(forbidden: &Path, expected_status: LauncherStatus) -> Result<()> {
         let mut checks = Checks::new();
 
@@ -437,7 +442,7 @@ mod imp {
 
         checks.check(
             &format!("reports {expected_status:?} when the sandbox can't be created"),
-            result.status == Some(expected_status),
+            result.status == expected_status,
         );
         // Fail closed: the launcher aborted, so the command did not run and the
         // otherwise-forbidden write never happened.
@@ -450,8 +455,8 @@ mod imp {
     }
 
     /// Build a setuid-root copy of `bwrap`, put it alone on `PATH`, and assert the
-    /// launcher refuses to run it (reporting `SetuidRejected`) and aborts without
-    /// running the command.
+    /// wrapper refuses to run it (reporting `SetuidRejected`) without running the
+    /// command.
     fn check_setuid_rejected(checks: &mut Checks) -> Result<()> {
         let Some(real_bwrap) = find_on_path("bwrap") else {
             println!("[sandbox_test]: SKIP: no bwrap on PATH; skipping setuid rejection check");
@@ -469,7 +474,7 @@ mod imp {
         std::fs::set_permissions(&fake_bwrap, std::fs::Permissions::from_mode(0o4755))
             .context("failed to set setuid bit on fake bwrap")?;
 
-        // Make the setuid copy the *only* bwrap visible, so the launcher can't fall
+        // Make the setuid copy the *only* bwrap visible, so the wrapper can't fall
         // back to a different one.
         let previous_path = std::env::var_os("PATH");
         // SAFETY: the helper is single-threaded here.
@@ -488,7 +493,7 @@ mod imp {
 
         checks.check(
             "a setuid-root bwrap is rejected",
-            result.status == Some(LauncherStatus::SetuidRejected),
+            result.status == LauncherStatus::SetuidRejected,
         );
         checks.check(
             "command does not run after rejecting setuid bwrap (fail-closed)",

@@ -6953,7 +6953,8 @@ impl ThreadView {
                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             });
-        let copy_button = CopyButton::new("copy-command", command_text)
+        let copy_button_id = SharedString::from(format!("{group}-copy-command"));
+        let copy_button = CopyButton::new(copy_button_id, command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
 
@@ -7422,7 +7423,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
-        let card_header_id = SharedString::from("inner-tool-call-header");
+        let card_header_id = SharedString::from(format!("inner-tool-call-header-{entry_ix}"));
 
         let failed_or_canceled = match &tool_call.status {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
@@ -8267,7 +8268,7 @@ impl ThreadView {
             )
             .child(
                 div().absolute().top_1().right_1().child(
-                    CopyButton::new("copy-sandbox-authorization-command", command)
+                    CopyButton::new((group.clone(), entry_ix), command)
                         .tooltip_label("Copy Command")
                         .visible_on_hover(group),
                 ),

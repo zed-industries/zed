@@ -34,20 +34,20 @@ pub mod windows_wsl;
 /// it.
 pub const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
 
-/// Per-command relaxations of the default Bubblewrap (Linux) sandbox.
+/// Per-command relaxations of the Bubblewrap-inside-WSL (Windows) sandbox.
 ///
-/// All-false is the default, fully-sandboxed run. Setting any field
-/// requires user approval before the command is launched.
+/// All-false is the default, fully-sandboxed run. Setting any field requires
+/// user approval before the command is launched.
 ///
-/// Network access is a plain on/off toggle here because Bubblewrap can only
-/// enforce it wholesale (an `--unshare-net` namespace, loopback only). macOS
-/// can additionally confine egress to an allowlist via Seatbelt and the
-/// in-process proxy, so it uses its own richer
-/// [`macos_seatbelt::SandboxPermissions`] instead of this type. Windows reuses
-/// this type, mapping it onto Bubblewrap inside WSL. Some baseline operations
-/// remain denied regardless of these flags; the only way to lift those is to
-/// skip the sandbox entirely, which these integrations deliberately don't
-/// expose.
+/// Network access is a plain on/off toggle here because Bubblewrap inside WSL
+/// can only enforce it wholesale (an `--unshare-net` namespace, loopback only).
+/// macOS ([`macos_seatbelt::SandboxPermissions`]) and Linux
+/// ([`linux_bubblewrap::SandboxPermissions`]) can additionally confine egress to
+/// the in-process proxy, so they use their own richer
+/// [`macos_seatbelt::NetworkAccess`]-style enum instead of this bool. Some
+/// baseline operations remain denied regardless of these flags; the only way to
+/// lift those is to skip the sandbox entirely, which these integrations
+/// deliberately don't expose.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SandboxPermissions {
     /// Allow network access for the command.
@@ -56,14 +56,12 @@ pub struct SandboxPermissions {
     pub allow_fs_write: bool,
 }
 
-/// Handle a possible re-exec of this binary as a sandbox launcher.
+/// Handle a possible re-exec of this binary as an in-sandbox helper.
 ///
-/// On Linux, the terminal integration sandboxes commands by re-executing
-/// this binary as a launcher (see
-/// [`linux_bubblewrap::run_launcher_if_invoked`]); when that marker is present
-/// this sets up the `bwrap` sandbox and `exec`s the wrapped command, never
-/// returning. On every other platform, and for normal launches, it returns
-/// immediately.
+/// On Linux restricted-network runs, Bubblewrap launches this binary in bridge
+/// mode inside the sandbox network namespace so it can expose a loopback proxy
+/// port before spawning the real command. On every other platform, and for
+/// normal launches, this returns immediately.
 ///
 /// Call this at the very top of `main`, before any argument parsing.
 pub fn run_sandbox_launcher_if_invoked() {

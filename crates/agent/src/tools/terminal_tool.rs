@@ -110,13 +110,13 @@ pub struct SandboxedTerminalToolInput {
     /// rejected. Requesting network access triggers a user approval prompt, so
     /// only list hosts you expect the command to need.
     #[cfg_attr(
-        target_os = "macos",
+        any(target_os = "macos", target_os = "linux"),
         doc = "\nHost-specific access is enforced by an HTTP/HTTPS proxy, so use \
         `https://` URLs rather than `git@`/`ssh://`."
     )]
     #[cfg_attr(
-        any(target_os = "linux", target_os = "windows"),
-        doc = "\nNOTE: on Linux and Windows the sandbox cannot restrict network access to \
+        target_os = "windows",
+        doc = "\nNOTE: on Windows the sandbox cannot restrict network access to \
         specific hosts. Any value here grants the command unrestricted outbound network \
         access (exactly like `allow_all_hosts`), and the user is asked to approve access \
         to all hosts rather than the ones you list. Prefer setting `allow_all_hosts` \
@@ -396,15 +396,14 @@ async fn run_terminal_tool(
     };
 
     // Host-specific network access is enforced by a loopback proxy that
-    // confines the sandbox to its port, and only macOS can do that. A
-    // non-local project's terminal can't reach the proxy, and the Linux
-    // sandbox (bwrap) has no host-restriction mechanism at all — it can only
-    // allow or deny the network wholesale. Whenever per-host restriction
-    // isn't enforceable, widen the request to "any host" before prompting, so
-    // the approval the user grants matches what's actually enforced
-    // (unrestricted egress) rather than naming hosts we can't pin.
-    let can_restrict_to_hosts = cfg!(target_os = "macos") && is_local_project;
-    if !can_restrict_to_hosts && network.is_requested() {
+    // confines the sandbox to its port. A non-local project's terminal can't
+    // reach the proxy, and unsupported platforms can only allow/deny the
+    // network wholesale. Whenever per-host restriction isn't enforceable, widen
+    // the request to "any host" before prompting, so the approval the user
+    // grants matches what's actually enforced.
+    let can_restrict_to_hosts =
+        (cfg!(target_os = "macos") || cfg!(target_os = "linux")) && is_local_project;
+    if !can_restrict_to_hosts && matches!(network, NetworkRequest::Hosts(_)) {
         network = NetworkRequest::AnyHost;
     }
 
@@ -910,19 +909,23 @@ fn network_request_to_sandbox_network_access(
         NetworkRequest::None => acp_thread::SandboxNetworkAccess::None,
         NetworkRequest::AnyHost => acp_thread::SandboxNetworkAccess::All,
         NetworkRequest::Hosts(hosts) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 acp_thread::SandboxNetworkAccess::Restricted(http_proxy::Allowlist::from_patterns(
                     hosts.iter().cloned(),
                 ))
             }
-            // Only macOS (Seatbelt plus the loopback proxy) can confine egress
-            // to an allowlist; other sandboxes can only toggle the network
-            // wholesale, so a host-specific grant becomes full network access.
+            // Windows/WSL can only toggle the network wholesale, so a
+            // host-specific grant becomes full network access there.
             // `run_terminal_tool` widens once-requests to `AnyHost` up front so
             // the approval prompt matches — this guards the persistent-grant
             // path (host grants restored from settings).
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "windows")]
+            {
+                let _ = hosts;
+                acp_thread::SandboxNetworkAccess::All
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
             {
                 let _ = hosts;
                 acp_thread::SandboxNetworkAccess::All
@@ -3404,16 +3407,15 @@ mod tests {
             other => panic!("expected unrestricted network access, got {other:?}"),
         }
 
-        // Only macOS can confine egress to an allowlist; other platforms can
-        // only toggle the network wholesale, so a host request becomes full
-        // access there.
+        // macOS and Linux confine host requests through the allowlist proxy;
+        // Windows/WSL still widens them to wholesale network access.
         match network_request_to_sandbox_network_access(&host_request(&["github.com"])) {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             acp_thread::SandboxNetworkAccess::Restricted(allowlist) => {
                 assert!(allowlist.allows("github.com"));
                 assert!(!allowlist.allows("example.com"));
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             acp_thread::SandboxNetworkAccess::All => {}
             other => panic!("unexpected network access for host request, got {other:?}"),
         }
