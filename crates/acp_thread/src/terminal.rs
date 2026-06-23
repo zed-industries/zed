@@ -1,4 +1,4 @@
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 #[cfg(target_os = "linux")]
 use anyhow::Context as _;
 use anyhow::Result;
@@ -178,9 +178,6 @@ impl SandboxWrap {
 /// grow their own failure cases later without a migration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SandboxNotAppliedReason {
-    /// Unsandboxed execution is permanently allowed via the `allow_unsandboxed`
-    /// setting.
-    DisabledForever,
     /// The user allowed unsandboxed execution for the rest of this thread after
     /// an earlier sandbox failure. There is always a preceding tool call whose
     /// reason is [`SandboxNotAppliedReason::ErrorLinuxWsl`].

@@ -50,8 +50,12 @@ pub fn language_model_selector(
             .minimum_results_width(rems(20.))
             .height(rems(20.))
             .no_vertical_padding()
+            .modal(false)
     } else {
-        Picker::list(delegate, window, cx).show_scrollbar(true)
+        Picker::list(delegate, window, cx)
+            .show_scrollbar(true)
+            .minimum_results_width(rems(20.))
+            .initial_width(rems(20.))
     }
 }
 

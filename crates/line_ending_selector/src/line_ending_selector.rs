@@ -65,14 +65,20 @@ impl LineEndingSelector {
         let line_ending = buffer.read(cx).line_ending();
         let delegate =
             LineEndingSelectorDelegate::new(cx.entity().downgrade(), buffer, project, line_ending);
-        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .initial_width(rems(34.))
+                .minimum_results_width(rems(34.))
+                .height(rems(24.))
+                .no_vertical_padding()
+        });
         Self { picker }
     }
 }
 
 impl Render for LineEndingSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
