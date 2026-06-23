@@ -68,6 +68,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             )
             .into_any_element(),
         ),
+        Some(render_deepseek_provider(settings_window, window, cx).into_any_element()),
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
@@ -332,6 +333,140 @@ fn render_api_key_provider(
                 .child(additional_fields),
         )
     })
+}
+
+fn render_deepseek_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let deepseek_settings = deepseek_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(deepseek_settings.iter().enumerate(), true, window, cx)
+        .into_any_element();
+
+    v_flex()
+        .id("deepseek")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("Deepseek")
+                .icon(IconName::AiDeepSeek)
+                .no_padding(true),
+        )
+        .child(
+            Label::new(
+                "Set the DEEPSEEK_API_KEY environment variable and restart Zed to authenticate.",
+            )
+            .size(LabelSize::Small)
+            .color(Color::Muted),
+        )
+        .child(div().px_neg_8().child(additional_fields))
+}
+
+fn deepseek_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The base URL to use for Deepseek's completion API.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .deepseek
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .deepseek
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.deepseek.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some("https://api.deepseek.com"),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The Deepseek model id to use.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .deepseek
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .deepseek
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.deepseek.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some("deepseek-chat"),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .deepseek
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .deepseek
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.deepseek.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
 }
 
 fn render_ollama_provider(
