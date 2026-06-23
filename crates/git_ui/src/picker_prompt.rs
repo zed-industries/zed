@@ -55,13 +55,8 @@ impl PickerPrompt {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .initial_width(rems(rem_width))
-                .minimum_results_width(rems(rem_width))
-                .height(rems(24.))
-                .no_vertical_padding()
-        });
+        let picker =
+            cx.new(|cx| Picker::uniform_list(delegate, window, cx).initial_width(rems(rem_width)));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
             picker,
