@@ -1816,7 +1816,7 @@ impl ContextMenu {
         let this = cx.weak_entity();
         // Report the item's keyboard shortcut to assistive technology, resolving
         // the action's binding the same way the visible accelerator (rendered
-        // below) is. 
+        // below) is.
         let keyboard_shortcut = action.as_ref().and_then(|action| {
             let binding = self
                 .action_context

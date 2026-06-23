@@ -444,7 +444,8 @@ impl RenderOnce for Button {
         // A combobox's value is its visible text, so expose it as the
         // accessible value by default. This lets combobox triggers announce
         // their current selection without each caller wiring it up.
-        if matches!(self.base.aria_role, Some(gpui::Role::ComboBox)) && self.base.aria_value.is_none()
+        if matches!(self.base.aria_role, Some(gpui::Role::ComboBox))
+            && self.base.aria_value.is_none()
         {
             self.base.aria_value = Some(label.clone());
         }

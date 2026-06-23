@@ -128,8 +128,8 @@ impl Render for StatusBar {
             .role(Role::ContentInfo)
             .aria_label("Status bar")
             .tab_group()
-            .on_key_down(cx.listener(
-                |status_bar, event: &gpui::KeyDownEvent, window, cx| {
+            .on_key_down(
+                cx.listener(|status_bar, event: &gpui::KeyDownEvent, window, cx| {
                     if event.keystroke.modifiers.modified() {
                         return;
                     }
@@ -144,8 +144,8 @@ impl Render for StatusBar {
                         }
                         _ => {}
                     }
-                },
-            ))
+                }),
+            )
             .w_full()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))

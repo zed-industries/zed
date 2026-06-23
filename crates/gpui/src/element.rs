@@ -501,10 +501,7 @@ impl<E: Element> Drawable<E> {
                                     crate::window::a11y::debug::NodeDebugInfo {
                                         synthetic: false,
                                         view,
-                                        element_id: global_id
-                                            .0
-                                            .last()
-                                            .map(|id| format!("{id:?}")),
+                                        element_id: global_id.0.last().map(|id| format!("{id:?}")),
                                         source_location,
                                     },
                                 );

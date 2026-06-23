@@ -95,7 +95,10 @@ impl Render for DiagnosticIndicator {
             (errors, warnings) => {
                 let mut parts = Vec::new();
                 if errors > 0 {
-                    parts.push(format!("{errors} error{}", if errors == 1 { "" } else { "s" }));
+                    parts.push(format!(
+                        "{errors} error{}",
+                        if errors == 1 { "" } else { "s" }
+                    ));
                 }
                 if warnings > 0 {
                     parts.push(format!(

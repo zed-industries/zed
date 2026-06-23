@@ -78,7 +78,7 @@ pub struct WorkspaceSettingsContent {
     /// Default: auto ("on" on macOS, "off" otherwise)
     pub when_closing_with_no_tabs: Option<CloseWindowWhenNoItems>,
     /// Whether to optimize Zed's interface for assistive technology such as
-    /// screen readers. 
+    /// screen readers.
     ///
     /// Default: false
     pub accessible_mode: Option<bool>,

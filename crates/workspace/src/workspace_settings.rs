@@ -4,12 +4,12 @@ use crate::DockPosition;
 use collections::HashMap;
 use gpui::{App, Subscription};
 use serde::Deserialize;
-use settings::{CommandAliasTarget, SettingsStore};
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
+use settings::{CommandAliasTarget, SettingsStore};
 
 #[derive(RegisterSetting)]
 pub struct WorkspaceSettings {

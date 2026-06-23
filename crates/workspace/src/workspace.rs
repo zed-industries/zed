@@ -8964,7 +8964,11 @@ impl Render for Workspace {
                                                                 .when_some(paddings.0, |this, p| {
                                                                     this.child(p.border_r_1())
                                                                 })
-                                                                .child(self.render_center(&pane_render_context, window, cx))
+                                                                .child(self.render_center(
+                                                                    &pane_render_context,
+                                                                    window,
+                                                                    cx,
+                                                                ))
                                                                 .when_some(
                                                                     paddings.1,
                                                                     |this, p| {
@@ -9025,7 +9029,11 @@ impl Render for Workspace {
                                                                                 )
                                                                             },
                                                                         )
-                                                                        .child(self.render_center(&pane_render_context, window, cx))
+                                                                        .child(self.render_center(
+                                                                            &pane_render_context,
+                                                                            window,
+                                                                            cx,
+                                                                        ))
                                                                         .when_some(
                                                                             paddings.1,
                                                                             |this, p| {
@@ -9088,7 +9096,11 @@ impl Render for Workspace {
                                                                                 )
                                                                             },
                                                                         )
-                                                                        .child(self.render_center(&pane_render_context, window, cx))
+                                                                        .child(self.render_center(
+                                                                            &pane_render_context,
+                                                                            window,
+                                                                            cx,
+                                                                        ))
                                                                         .when_some(
                                                                             paddings.1,
                                                                             |this, p| {
@@ -9135,7 +9147,11 @@ impl Render for Workspace {
                                                         .when_some(paddings.0, |this, p| {
                                                             this.child(p.border_r_1())
                                                         })
-                                                        .child(self.render_center(&pane_render_context, window, cx))
+                                                        .child(self.render_center(
+                                                            &pane_render_context,
+                                                            window,
+                                                            cx,
+                                                        ))
                                                         .when_some(paddings.1, |this, p| {
                                                             this.child(p.border_l_1())
                                                         }),

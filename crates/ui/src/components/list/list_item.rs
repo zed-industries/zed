@@ -339,14 +339,16 @@ impl RenderOnce for ListItem {
                         this.aria_keyshortcuts(keyshortcuts)
                     })
                     .when(self.aria_role.is_some(), |this| {
-                        this.aria_selected(self.selected)
-                            .when_some(self.aria_checked.or(self.toggle), |this, toggled| {
+                        this.aria_selected(self.selected).when_some(
+                            self.aria_checked.or(self.toggle),
+                            |this, toggled| {
                                 this.aria_toggled(if toggled {
                                     gpui::Toggled::True
                                 } else {
                                     gpui::Toggled::False
                                 })
-                            })
+                            },
+                        )
                     })
                     .group("list_item")
                     .w_full()
