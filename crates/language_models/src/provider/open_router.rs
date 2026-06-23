@@ -757,17 +757,23 @@ impl OpenRouterEventMapper {
         let mut events = Vec::new();
 
         if let Some(usage) = event.usage {
+            let cache_creation_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cache_write_tokens);
+            let cache_read_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cached_tokens);
+            let input_tokens = usage.prompt_tokens.saturating_sub(
+                cache_creation_input_tokens.saturating_add(cache_read_input_tokens),
+            );
+
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
+                input_tokens,
                 output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: usage
-                    .prompt_tokens_details
-                    .as_ref()
-                    .map_or(0, |details| details.cache_write_tokens),
-                cache_read_input_tokens: usage
-                    .prompt_tokens_details
-                    .as_ref()
-                    .map_or(0, |details| details.cached_tokens),
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
             })));
         }
 
@@ -1236,10 +1242,11 @@ mod tests {
         assert_eq!(events.len(), 1);
         match events.into_iter().next() {
             Some(Ok(LanguageModelCompletionEvent::UsageUpdate(usage))) => {
-                assert_eq!(usage.input_tokens, 12);
+                assert_eq!(usage.input_tokens, 4);
                 assert_eq!(usage.output_tokens, 7);
                 assert_eq!(usage.cache_creation_input_tokens, 3);
                 assert_eq!(usage.cache_read_input_tokens, 5);
+                assert_eq!(usage.total_tokens(), 19);
             }
             other => panic!("Expected usage update event, got: {other:?}"),
         }
