@@ -75,6 +75,7 @@ use feature_flags::{
 };
 
 use fs::Fs;
+use futures::FutureExt as _;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
@@ -109,6 +110,7 @@ const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
+const TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
     "agent", // Unfortunately, both Cursor cli + grok
     "agy",
@@ -2058,6 +2060,7 @@ impl AgentPanel {
         run_init_command
             .then(|| AgentSettings::get_global(cx).terminal_init_command.clone())
             .flatten()
+            .filter(|command| !command.trim().is_empty())
     }
 
     fn write_terminal_init_command(
@@ -2082,7 +2085,15 @@ impl AgentPanel {
 
         let terminal = terminal.downgrade();
         cx.spawn(async move |_this, cx| {
-            startup.await;
+            // Fall back to the timeout so the init command is still delivered if
+            // the shell never echoes the marker.
+            let timeout = cx
+                .background_executor()
+                .timer(TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT);
+            futures::select_biased! {
+                _ = startup.fuse() => {}
+                _ = timeout.fuse() => {}
+            }
 
             let input = Self::terminal_init_command_input(command);
             if let Err(error) = terminal.update(cx, move |terminal, cx| {
@@ -7527,15 +7538,12 @@ mod tests {
         cx.executor().allow_parking();
         cx.update(|_, cx| {
             let mut settings = AgentSettings::get_global(cx).clone();
-            // The output (`init_ran_42`) is distinct from the command text,
-            // which the PTY also echoes back. Finding the output therefore
-            // proves the shell actually executed the command rather than merely
-            // echoing the keystrokes.
+            // `init_ran_42` is the command's output, not its echoed text, so finding
+            // it proves the shell executed the command rather than just echoing it.
             settings.terminal_init_command = Some("printf 'init_ran_%s\\n' 42".to_string());
             AgentSettings::override_global(settings, cx);
 
-            // Force a POSIX shell rather than relying on the developer's login
-            // shell, which may not support `$((...))` arithmetic (e.g. fish).
+            // Force a known POSIX shell so the test doesn't depend on the developer's login shell.
             let mut terminal_settings = TerminalSettings::get_global(cx).clone();
             terminal_settings.shell = task::Shell::Program("/bin/sh".to_string());
             TerminalSettings::override_global(terminal_settings, cx);

@@ -864,8 +864,8 @@ fn init_command_startup_marker(marker_id: u64) -> String {
 }
 
 fn init_command_startup_marker_command(shell_kind: ShellKind, marker_id: u64) -> String {
-    // Keep the marker split in the input text so the terminal's local echo of the
-    // command cannot satisfy the handshake; only the command's output contains it.
+    // Split the marker across the command so its echo can't satisfy the
+    // handshake; only the command's output contains the contiguous marker.
     match shell_kind {
         ShellKind::PowerShell | ShellKind::Pwsh => format!(
             "Write-Output ('{INIT_COMMAND_STARTUP_MARKER_PREFIX}' + '{marker_id}' + '{INIT_COMMAND_STARTUP_MARKER_SUFFIX}')"
@@ -1918,14 +1918,20 @@ impl Terminal {
     }
 
     /// Sends a shell-level marker command and returns a task that completes when
-    /// the marker appears in terminal output.
+    /// the marker appears in terminal output. Already complete for non-PTY
+    /// terminals or those whose child has exited.
     ///
-    /// For non-PTY terminals or terminals whose child has already exited, the
-    /// returned task is already complete.
+    /// Call at most once per terminal: a second handshake drops the previous
+    /// `Sender`, which would write the init command twice.
     pub fn start_init_command_startup_handshake(&mut self) -> Task<()> {
         if !self.is_pty() || self.child_exited.is_some() {
             return Task::ready(());
         }
+
+        debug_assert!(
+            self.init_command_startup_tx.is_none(),
+            "start_init_command_startup_handshake called while a handshake is already in flight"
+        );
 
         let (startup_tx, startup_rx) = async_channel::bounded(1);
         let startup_task = self.background_executor.spawn(async move {
@@ -1989,6 +1995,10 @@ impl Terminal {
         input: impl Into<Cow<'static, [u8]>>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Ends the handshake even if the marker was never seen (timeout
+        // fallback), so detection stops scanning on every wakeup.
+        self.complete_init_command_startup_handshake();
+
         if self.keyboard_input_sent || self.child_exited.is_some() {
             return false;
         }
