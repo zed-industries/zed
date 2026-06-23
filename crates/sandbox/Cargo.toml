@@ -37,18 +37,20 @@ name = "wsl_sandbox_test_helper"
 path = "src/wsl_sandbox_test_helper.rs"
 required-features = ["wsl-test"]
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[dependencies]
 anyhow.workspace = true
+futures.workspace = true
+http_proxy.workspace = true
+log.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-anyhow.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-anyhow.workspace = true
-log.workspace = true
 smol.workspace = true

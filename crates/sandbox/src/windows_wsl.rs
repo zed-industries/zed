@@ -32,7 +32,16 @@ use smol::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-use crate::{NetworkAccess, SandboxPermissions, WSL_SANDBOX_UNAVAILABLE_PREFIX};
+use crate::WSL_SANDBOX_UNAVAILABLE_PREFIX;
+
+/// Per-command relaxations of the WSL/Bubblewrap sandbox. Windows can only
+/// toggle network access wholesale (no loopback-proxy confinement yet), so this
+/// is a plain bool rather than the richer cross-platform [`crate::SandboxNetPolicy`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SandboxPermissions {
+    pub(crate) allow_network: bool,
+    pub(crate) allow_fs_write: bool,
+}
 
 /// Exit code the environment probe script uses to signal that `bwrap` is not
 /// installed, distinguishing that from WSL itself failing to start a shell.
@@ -740,10 +749,8 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
         "/proc".to_string(),
     ]);
 
-    match permissions.network {
-        NetworkAccess::None => args.push("--unshare-net".to_string()),
-        NetworkAccess::All => {}
-        NetworkAccess::LocalhostPort { .. } => args.push("--unshare-net".to_string()),
+    if !permissions.allow_network {
+        args.push("--unshare-net".to_string());
     }
 
     args.extend([
@@ -1136,7 +1143,7 @@ mod tests {
         let args = build_bwrap_args(
             &[],
             SandboxPermissions {
-                network: NetworkAccess::All,
+                allow_network: true,
                 allow_fs_write: false,
             },
             None,
@@ -1187,7 +1194,7 @@ mod tests {
         let args = build_bwrap_args(
             &[],
             SandboxPermissions {
-                network: NetworkAccess::All,
+                allow_network: true,
                 allow_fs_write: true,
             },
             None,

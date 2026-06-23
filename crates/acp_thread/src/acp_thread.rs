@@ -3488,7 +3488,7 @@ impl AcpThread {
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let mut env = env.await;
+                let env = env.await;
                 let shell = project
                     .update(cx, |project, cx| {
                         project
@@ -3496,17 +3496,13 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                // Spawn the network proxy (if the wrap requests network) before
-                // generating the sandbox policy, since the policy must pin the
-                // child to the proxy's loopback port. This also injects the
-                // child's proxy env vars. On Windows, restricted host access is
-                // not supported yet, so proxy setup rejects restricted requests
-                // before command preparation.
-                let (proxy_handle, network_policy) =
-                    setup_network_proxy(sandbox_wrap.as_ref(), &mut env, cx)?;
 
+                // The sandbox owns the network proxy (for restricted-network
+                // policies) and injects the child's proxy env vars, returning
+                // the env to spawn with. On Windows, restricted host access is
+                // rejected inside the sandbox before command preparation.
                 #[cfg(target_os = "windows")]
-                let (task_command, task_args, sandbox_config, spawn_cwd) =
+                let (task_command, task_args, task_env, sandbox, spawn_cwd) =
                     if sandbox_wrap.is_some() {
                         let (task_command, task_args) = task::ShellBuilder::new(
                             &Shell::Program("/bin/sh".to_string()),
@@ -3520,11 +3516,10 @@ impl AcpThread {
                             task_args,
                             cwd.clone(),
                             sandbox_wrap,
-                            network_policy,
-                            env.clone(),
+                            env,
                         ));
                         let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
-                        let (task_command, task_args, sandbox_config) = futures::select_biased! {
+                        let (task_command, task_args, task_env, sandbox) = futures::select_biased! {
                             result = wrap.fuse() => result?,
                             _ = timeout.fuse() => return Err(anyhow::Error::new(
                                 sandbox::SandboxError::WslUnavailable(format!(
@@ -3533,7 +3528,7 @@ impl AcpThread {
                                 )),
                             )),
                         };
-                        (task_command, task_args, sandbox_config, None)
+                        (task_command, task_args, task_env, sandbox, None)
                     } else {
                         // No sandbox wrap means we're running unsandboxed, and
                         // on Windows that deliberately changes the shell: the
@@ -3543,25 +3538,24 @@ impl AcpThread {
                             ShellBuilder::new(&Shell::Program(shell), is_windows)
                                 .redirect_stdin_to_dev_null()
                                 .build(Some(command.clone()), &args);
-                        (task_command, task_args, None, cwd.clone())
+                        (task_command, task_args, env, None, cwd.clone())
                     };
 
                 #[cfg(not(target_os = "windows"))]
-                let (task_command, task_args, sandbox_config, spawn_cwd) = {
+                let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let (task_command, task_args) =
                         ShellBuilder::new(&Shell::Program(shell), is_windows)
                             .redirect_stdin_to_dev_null()
                             .build(Some(command.clone()), &args);
-                    let (task_command, task_args, sandbox_config) = prepare_sandbox_wrap(
+                    let (task_command, task_args, task_env, sandbox) = prepare_sandbox_wrap(
                         task_command,
                         task_args,
                         cwd.clone(),
                         sandbox_wrap,
-                        network_policy,
-                        env.clone(),
+                        env,
                     )
                     .await?;
-                    (task_command, task_args, sandbox_config, cwd.clone())
+                    (task_command, task_args, task_env, sandbox, cwd.clone())
                 };
                 let terminal = project
                     .update(cx, |project, cx| {
@@ -3570,7 +3564,7 @@ impl AcpThread {
                                 command: Some(task_command),
                                 args: task_args,
                                 cwd: spawn_cwd,
-                                env,
+                                env: task_env,
                                 ..Default::default()
                             },
                             cx,
@@ -3586,8 +3580,7 @@ impl AcpThread {
                         output_byte_limit.map(|l| l as usize),
                         terminal,
                         language_registry,
-                        sandbox_config,
-                        proxy_handle,
+                        sandbox,
                         cx,
                     )
                 }))
@@ -3669,7 +3662,6 @@ impl AcpThread {
                 language_registry,
                 // External terminal providers manage their own sandboxing
                 // (if any). We don't wrap their commands.
-                None,
                 None,
                 cx,
             )

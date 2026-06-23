@@ -1,5 +1,9 @@
-//! Test binary used exclusively in the NixOS integration test for bwrap at
-//! `nix/tests/sandboxing`. See the comment there.
+//! Test binary used exclusively by the NixOS integration tests for the
+//! Bubblewrap sandbox at `nix/tests/sandboxing`. See the comment there.
+//!
+//! It drives the sandbox crate's *public* API only (`Sandbox`, `SandboxPolicy`,
+//! …) — never platform internals — so it doubles as a check that the public API
+//! is sufficient to express and enforce the policies the agent needs.
 
 #![allow(
     clippy::disallowed_methods,
@@ -19,32 +23,30 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod imp {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use anyhow::{Context as _, Result, bail};
     use sandbox::{
-        CommandAndArgs, NetworkAccess, SandboxConfiguration, SandboxError, SandboxPermissions,
-        run_sandboxed,
+        CommandAndArgs, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
     };
 
-    /// Internal subcommand: attempt an outbound TCP connection to the given
-    /// `host:port`, exiting 0 on success and 1 on any failure. Run *inside* the
-    /// sandbox to check whether the network is reachable.
-    const SUBCOMMAND_NET_CHECK: &str = "__net_check";
-    /// Internal subcommand: create an `AF_UNIX` socket, exiting 0 on success. Used
-    /// to confirm local IPC still works while IP networking is denied.
-    const SUBCOMMAND_UNIX_CHECK: &str = "__unix_check";
+    /// Internal subcommand: round-trip a byte through the echo server at the
+    /// given `host:port`, honoring `HTTP_PROXY` when set (the restricted-network
+    /// case routes through the sandbox proxy via HTTP CONNECT). Exits 0 on a
+    /// successful round-trip, non-zero otherwise. Run *inside* the sandbox.
+    const SUBCOMMAND_ECHO_CHECK: &str = "__echo_check";
 
     pub fn main() {
-        // If we were re-exec'd as the restricted-network bridge, this starts
-        // the bridge and execs the wrapped command without returning.
+        // If we were re-exec'd as the restricted-network bridge, this starts the
+        // bridge and execs the wrapped command without returning.
         sandbox::run_sandbox_launcher_if_invoked();
 
         let args: Vec<String> = std::env::args().collect();
         let result = match args.get(1).map(String::as_str) {
-            Some(SUBCOMMAND_NET_CHECK) => run_net_check(args.get(2).map(String::as_str)),
-            Some(SUBCOMMAND_UNIX_CHECK) => run_unix_check(),
+            Some(SUBCOMMAND_ECHO_CHECK) => run_echo_check(args.get(2).map(String::as_str)),
             _ => run_tests(),
         };
 
@@ -54,119 +56,91 @@ mod imp {
         }
     }
 
-    /// Inner command: try to open a TCP connection. Inside the sandbox's own
-    /// network namespace there is no route out, so this exits non-zero.
+    /// Inner command: prove (or fail to prove) reachability of an echo server.
     ///
-    /// A host like `echo:7000` can resolve to several addresses (e.g. IPv6 and
-    /// IPv4); we must try all of them and only fail if none connect. Trying just
-    /// the first would spuriously "fail" the allowed-network case whenever the
-    /// first address happens to be one with no route (commonly IPv6).
-    fn run_net_check(address: Option<&str>) -> Result<()> {
-        use std::net::ToSocketAddrs as _;
-        let address = address.context("net check requires a host:port argument")?;
-        let resolved = address
-            .to_socket_addrs()
-            .with_context(|| format!("failed to resolve {address:?}"))?;
-        let mut last_error = None;
-        for socket_address in resolved {
-            match std::net::TcpStream::connect_timeout(&socket_address, Duration::from_secs(5)) {
-                Ok(_) => return Ok(()),
-                Err(error) => last_error = Some(error),
+    /// With `HTTP_PROXY` set we open an HTTP `CONNECT` tunnel through the proxy
+    /// and then echo a byte; a policy denial shows up as a non-200 status. With
+    /// no proxy we connect directly. Either way, a clean round-trip means the
+    /// destination was reachable under the active network policy.
+    fn run_echo_check(target: Option<&str>) -> Result<()> {
+        let target = target.context("echo check requires a host:port argument")?;
+        let proxy = std::env::var("HTTP_PROXY")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("http_proxy")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+
+        let mut stream = match proxy {
+            Some(proxy_url) => {
+                let proxy_addr = proxy_url
+                    .trim()
+                    .strip_prefix("http://")
+                    .unwrap_or(proxy_url.trim())
+                    .trim_end_matches('/')
+                    .to_string();
+                let mut stream = TcpStream::connect(&proxy_addr)
+                    .with_context(|| format!("failed to connect to proxy {proxy_addr}"))?;
+                stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+                write!(
+                    stream,
+                    "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n"
+                )
+                .context("failed to send CONNECT to proxy")?;
+                let status = read_status_line(&mut stream)?;
+                if !status.contains(" 200") {
+                    bail!("proxy refused CONNECT to {target}: {status:?}");
+                }
+                stream
+            }
+            None => {
+                let stream = TcpStream::connect(target)
+                    .with_context(|| format!("failed to connect to {target}"))?;
+                stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+                stream
+            }
+        };
+
+        stream
+            .write_all(b"ping\n")
+            .context("failed to write to echo server")?;
+        let mut buffer = [0u8; 32];
+        let read = stream
+            .read(&mut buffer)
+            .context("failed to read from echo server")?;
+        let echoed = String::from_utf8_lossy(&buffer[..read]);
+        if echoed.contains("ping") {
+            Ok(())
+        } else {
+            bail!("echo server returned unexpected data: {echoed:?}");
+        }
+    }
+
+    /// Read an HTTP status line (up to the first CRLF), then drain the rest of
+    /// the header block (up to the blank line) so the stream is positioned at
+    /// the tunneled body.
+    fn read_status_line(stream: &mut TcpStream) -> Result<String> {
+        let mut header = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let read = stream
+                .read(&mut byte)
+                .context("failed reading proxy reply")?;
+            if read == 0 {
+                break;
+            }
+            header.push(byte[0]);
+            if header.ends_with(b"\r\n\r\n") {
+                break;
+            }
+            if header.len() > 64 * 1024 {
+                bail!("proxy reply headers too large");
             }
         }
-        match last_error {
-            Some(error) => Err(error).with_context(|| format!("failed to connect to {address}")),
-            None => bail!("{address:?} resolved to no socket addresses"),
-        }
-    }
-
-    /// Inner command: create an `AF_UNIX` socket. Local IPC is not categorically
-    /// blocked by the sandbox, so this must succeed even when IP networking is
-    /// denied.
-    fn run_unix_check() -> Result<()> {
-        std::os::unix::net::UnixDatagram::unbound().context("failed to create AF_UNIX socket")?;
-        Ok(())
-    }
-
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum LauncherStatus {
-        Success,
-        BwrapNotFound,
-        SetuidRejected,
-        SandboxProbeFailed,
-    }
-
-    /// The outcome of driving the sandbox wrapper once.
-    struct LaunchResult {
-        /// Whether sandbox preparation succeeded.
-        status: LauncherStatus,
-        /// Whether the launched command exited successfully.
-        command_succeeded: bool,
-    }
-
-    /// Drive the sandbox wrapper the same way Zed's terminal integration does:
-    /// probe the sandbox, build the bwrap invocation, spawn it, and collect the
-    /// command's exit result.
-    fn drive_launcher(
-        program: &str,
-        args: &[String],
-        writable_dirs: &[&Path],
-        cwd: Option<&Path>,
-        permissions: SandboxPermissions,
-    ) -> Result<LaunchResult> {
-        let sandbox = SandboxConfiguration {
-            writable_paths: writable_dirs
-                .iter()
-                .map(|path| path.to_path_buf())
-                .collect(),
-            permissions,
-        };
-        if let Err(error) = sandbox.can_create_sandbox(cwd) {
-            return Ok(LaunchResult {
-                status: launcher_status(error)?,
-                command_succeeded: false,
-            });
-        }
-
-        let output = run_sandboxed(
-            &sandbox,
-            &CommandAndArgs {
-                program: program.to_string(),
-                args: args.to_vec(),
-                env: Default::default(),
-                cwd: cwd.map(Path::to_path_buf),
-            },
-        )
-        .context("failed to run sandboxed command")?;
-
-        Ok(LaunchResult {
-            status: LauncherStatus::Success,
-            command_succeeded: output.status.success(),
-        })
-    }
-
-    fn launcher_status(error: SandboxError) -> Result<LauncherStatus> {
-        match error {
-            SandboxError::BwrapNotFound => Ok(LauncherStatus::BwrapNotFound),
-            SandboxError::BwrapSetuidRejected => Ok(LauncherStatus::SetuidRejected),
-            SandboxError::SandboxProbeFailed => Ok(LauncherStatus::SandboxProbeFailed),
-            error => bail!("unexpected sandbox setup error: {error}"),
-        }
-    }
-
-    /// Run `sh -c <script>` inside the sandbox and report whether it succeeded.
-    fn run_in_sandbox(
-        script: &str,
-        writable_dirs: &[&Path],
-        permissions: SandboxPermissions,
-    ) -> Result<LaunchResult> {
-        drive_launcher(
-            "sh",
-            &["-c".to_string(), script.to_string()],
-            writable_dirs,
-            None,
-            permissions,
-        )
+        let text = String::from_utf8_lossy(&header);
+        Ok(text.lines().next().unwrap_or_default().to_string())
     }
 
     /// Tracks assertion results so we can report a summary and a single exit code.
@@ -205,19 +179,43 @@ mod imp {
         }
     }
 
+    /// What the machine under test is expected to do when asked to sandbox.
+    enum Expectation {
+        /// The sandbox is enforceable; run the full policy matrix.
+        Enforced,
+        /// The sandbox can't be created; `Sandbox::can_create` must report this
+        /// error, and the consumer must fail closed.
+        CannotCreate(SandboxError),
+    }
+
     fn run_tests() -> Result<()> {
-        let expect_enforced = std::env::var("ZED_TEST_SANDBOX_ENFORCED").unwrap_or_default() == "1";
-        let echo_address = std::env::var("ZED_TEST_ECHO_ADDR").ok();
-        let expected_degrade_status = std::env::var("ZED_TEST_EXPECTED_DEGRADE_STATUS").ok();
+        // The proxy runs in *this* process for restricted-network policies, and
+        // the echo servers live on the VM's private network, which the proxy's
+        // DNS-rebinding protection would otherwise reject. This escape hatch is
+        // test-only (see `http_proxy`).
+        // SAFETY: single-threaded at this point.
+        unsafe {
+            std::env::set_var("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS", "1");
+        }
 
-        println!(
-            "[sandbox_test]: starting (expect_enforced={expect_enforced}, echo={echo_address:?}, \
-             expected_degrade={expected_degrade_status:?})"
-        );
+        let expect = match std::env::var("ZED_TEST_EXPECT").as_deref() {
+            Ok("enforced") => Expectation::Enforced,
+            Ok("bwrap_not_found") => Expectation::CannotCreate(SandboxError::BwrapNotFound),
+            Ok("setuid_rejected") => Expectation::CannotCreate(SandboxError::BwrapSetuidRejected),
+            Ok("probe_failed") => Expectation::CannotCreate(SandboxError::SandboxProbeFailed),
+            other => bail!(
+                "ZED_TEST_EXPECT must be `enforced`, `bwrap_not_found`, `setuid_rejected`, or \
+                 `probe_failed`, got {other:?}"
+            ),
+        };
 
-        // A host scratch tree the sandbox tests write into. Kept outside `/tmp`
-        // because the sandbox overlays a fresh tmpfs there, which would mask
-        // whether writes really hit (or were blocked from hitting) the host.
+        let echo1 = std::env::var("ZED_TEST_ECHO1").context("ZED_TEST_ECHO1 must be set")?;
+        let echo2 = std::env::var("ZED_TEST_ECHO2").context("ZED_TEST_ECHO2 must be set")?;
+        println!("[sandbox_test]: starting (echo1={echo1}, echo2={echo2})");
+
+        // A host scratch tree the tests write into. Kept outside `/tmp` because
+        // the sandbox overlays a fresh tmpfs there, which would mask whether
+        // writes really hit (or were blocked from hitting) the host.
         let base = PathBuf::from(format!("/sandbox-test-{}", std::process::id()));
         let writable = base.join("writable");
         let forbidden = base.join("forbidden");
@@ -227,290 +225,269 @@ mod imp {
         std::fs::create_dir_all(&readable).context("failed to create readable scratch dir")?;
         let _cleanup = Cleanup(base);
 
-        if expect_enforced {
-            run_enforced_tests(&writable, &forbidden, &readable, echo_address.as_deref())
-        } else {
-            // Outside the enforced scenario, the sandbox could not be set up. The
-            // scenario tells us *why* so we can assert the exact reported status.
-            let expected = match expected_degrade_status.as_deref() {
-                Some("bwrap_not_found") => LauncherStatus::BwrapNotFound,
-                Some("probe_failed") => LauncherStatus::SandboxProbeFailed,
-                other => bail!(
-                    "ZED_TEST_EXPECTED_DEGRADE_STATUS must be `bwrap_not_found` or \
-                     `probe_failed`, got {other:?}"
-                ),
-            };
-            run_degraded_tests(&forbidden, expected)
+        match expect {
+            Expectation::Enforced => {
+                run_enforced_matrix(&writable, &forbidden, &readable, &echo1, &echo2)
+            }
+            Expectation::CannotCreate(expected) => {
+                run_cannot_create(&writable, &forbidden, expected)
+            }
         }
     }
 
-    /// Enforced scenario: unprivileged user namespaces are available and `bwrap`
-    /// is present, so the sandbox must actually be enforced. We assert, for every
-    /// access the sandbox is supposed to *grant*, that it really is granted, and
-    /// for every restriction it is supposed to *impose*, that it really holds.
-    fn run_enforced_tests(
+    #[derive(Clone, Copy)]
+    enum FsMode {
+        Unrestricted,
+        Restricted,
+    }
+
+    #[derive(Clone, Copy)]
+    enum NetMode {
+        Unrestricted,
+        Blocked,
+        Restricted,
+    }
+
+    impl FsMode {
+        fn label(self) -> &'static str {
+            match self {
+                FsMode::Unrestricted => "fs=unrestricted",
+                FsMode::Restricted => "fs=restricted",
+            }
+        }
+    }
+
+    impl NetMode {
+        fn label(self) -> &'static str {
+            match self {
+                NetMode::Unrestricted => "net=unrestricted",
+                NetMode::Blocked => "net=blocked",
+                NetMode::Restricted => "net=restricted",
+            }
+        }
+    }
+
+    /// On the enforced machine, run every fs × network combination and verify
+    /// that allowed operations succeed and blocked operations fail.
+    fn run_enforced_matrix(
         writable: &Path,
         forbidden: &Path,
         readable: &Path,
-        echo_address: Option<&str>,
+        echo1: &str,
+        echo2: &str,
     ) -> Result<()> {
-        // First confirm this environment can enforce a sandbox at all. Nested
-        // virtualization quirks can leave a VM unable to set up user namespaces
-        // even when we expected it to; in that case skip (rather than fail) the
-        // enforcement assertions, which would otherwise be testing nothing.
-        let probe = drive_launcher("true", &[], &[], None, SandboxPermissions::default())?;
-        if probe.status != LauncherStatus::Success {
+        // Nested-virtualization quirks can leave a VM unable to set up user
+        // namespaces even when we expected enforcement; skip rather than fail.
+        let probe_policy = SandboxPolicy {
+            fs: SandboxFsPolicy::Restricted {
+                writable_paths: Vec::new(),
+            },
+            network: SandboxNetPolicy::Blocked,
+        };
+        if let Err(error) = Sandbox::can_create(&probe_policy, None) {
             println!(
-                "[sandbox_test]: SKIP: this environment cannot enforce a bwrap sandbox \
-             (probe status: {:?})",
-                probe.status
+                "[sandbox_test]: SKIP: this environment cannot enforce a bwrap sandbox ({error})"
             );
             return Ok(());
         }
 
-        let default = SandboxPermissions::default();
-        let fs_write_all = SandboxPermissions {
-            network: NetworkAccess::None,
-            allow_fs_write: true,
-        };
-        let network_allowed = SandboxPermissions {
-            network: NetworkAccess::All,
-            allow_fs_write: false,
-        };
+        // Seed a host file outside every writable dir to prove reads are allowed
+        // everywhere regardless of the write policy.
+        let readable_file = readable.join("host-data.txt");
+        std::fs::write(&readable_file, "host data").context("failed to seed readable file")?;
+
+        let echo1_host = host_of(echo1);
+
         let mut checks = Checks::new();
+        for fs in [FsMode::Unrestricted, FsMode::Restricted] {
+            for net in [NetMode::Unrestricted, NetMode::Blocked, NetMode::Restricted] {
+                run_combo(
+                    &mut checks,
+                    fs,
+                    net,
+                    writable,
+                    forbidden,
+                    &readable_file,
+                    echo1,
+                    echo2,
+                    &echo1_host,
+                )?;
+            }
+        }
+        checks.finish()
+    }
 
-        // GRANT: writing into a writable bind succeeds and lands on the host file.
-        let writable_file = writable.join("from-sandbox.txt");
-        let write_writable = run_in_sandbox(
-            &format!("echo zed > {}", shell_quote(&writable_file)),
-            &[writable],
-            default.clone(),
+    #[allow(clippy::too_many_arguments)]
+    fn run_combo(
+        checks: &mut Checks,
+        fs: FsMode,
+        net: NetMode,
+        writable: &Path,
+        forbidden: &Path,
+        readable_file: &Path,
+        echo1: &str,
+        echo2: &str,
+        echo1_host: &str,
+    ) -> Result<()> {
+        let fs_policy = match fs {
+            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted,
+            FsMode::Restricted => SandboxFsPolicy::Restricted {
+                writable_paths: vec![writable.to_path_buf()],
+            },
+        };
+        let net_policy = match net {
+            NetMode::Unrestricted => SandboxNetPolicy::Unrestricted,
+            NetMode::Blocked => SandboxNetPolicy::Blocked,
+            NetMode::Restricted => SandboxNetPolicy::Restricted {
+                allowed_domains: vec![echo1_host.to_string()],
+            },
+        };
+        let mut sandbox = Sandbox::new(SandboxPolicy {
+            fs: fs_policy,
+            network: net_policy,
+        })
+        .with_context(|| {
+            format!(
+                "failed to create sandbox for {} {}",
+                fs.label(),
+                net.label()
+            )
+        })?;
+
+        let scope = format!("[{} {}]", fs.label(), net.label());
+
+        // Reads are always allowed (root is bound read-only).
+        let read_host = run_command(
+            &mut sandbox,
+            "sh",
+            &["-c", &format!("cat {}", shell_quote(readable_file))],
         )?;
         checks.check(
-            "GRANT: write into a writable dir succeeds",
-            write_writable.command_succeeded,
-        );
-        checks.check(
-            "GRANT: write into a writable dir lands on the host",
-            writable_file.exists(),
-        );
-        checks.check(
-            "default run reports Success",
-            write_writable.status == LauncherStatus::Success,
+            &format!("{scope} read of a host file is allowed"),
+            read_host,
         );
 
-        // RESTRICT: writing outside any writable bind is denied by the read-only
-        // root, and must not leak to the host.
-        let forbidden_file = forbidden.join("escaped.txt");
-        let write_forbidden = run_in_sandbox(
-            &format!("echo zed > {}", shell_quote(&forbidden_file)),
-            &[],
-            default.clone(),
+        // Writing into the writable dir: allowed under both fs modes (it's
+        // either unrestricted, or explicitly granted).
+        let writable_file = writable.join(format!("w-{}-{}.txt", fs.label(), net.label()));
+        let _ = std::fs::remove_file(&writable_file);
+        let wrote_writable = run_command(
+            &mut sandbox,
+            "sh",
+            &["-c", &format!("echo zed > {}", shell_quote(&writable_file))],
         )?;
         checks.check(
-            "RESTRICT: write outside writable dirs is denied",
-            !write_forbidden.command_succeeded,
+            &format!("{scope} write into the writable dir is allowed"),
+            wrote_writable && writable_file.exists(),
         );
+
+        // Writing outside any writable dir: allowed only when fs is unrestricted.
+        let forbidden_file = forbidden.join(format!("f-{}-{}.txt", fs.label(), net.label()));
+        let _ = std::fs::remove_file(&forbidden_file);
+        let wrote_forbidden = run_command(
+            &mut sandbox,
+            "sh",
+            &[
+                "-c",
+                &format!("echo zed > {}", shell_quote(&forbidden_file)),
+            ],
+        )?;
+        match fs {
+            FsMode::Unrestricted => checks.check(
+                &format!("{scope} write outside writable dirs is allowed"),
+                wrote_forbidden && forbidden_file.exists(),
+            ),
+            FsMode::Restricted => checks.check(
+                &format!("{scope} write outside writable dirs is blocked"),
+                !wrote_forbidden && !forbidden_file.exists(),
+            ),
+        }
+
+        // Network reachability of echo1 / echo2 depends only on the net policy.
+        let exe = current_exe_str()?;
+        let reach_echo1 = run_command(&mut sandbox, &exe, &[SUBCOMMAND_ECHO_CHECK, echo1])?;
+        let reach_echo2 = run_command(&mut sandbox, &exe, &[SUBCOMMAND_ECHO_CHECK, echo2])?;
+        match net {
+            NetMode::Unrestricted => {
+                checks.check(&format!("{scope} echo1 reachable"), reach_echo1);
+                checks.check(&format!("{scope} echo2 reachable"), reach_echo2);
+            }
+            NetMode::Blocked => {
+                checks.check(&format!("{scope} echo1 blocked"), !reach_echo1);
+                checks.check(&format!("{scope} echo2 blocked"), !reach_echo2);
+            }
+            NetMode::Restricted => {
+                checks.check(
+                    &format!("{scope} allowed domain echo1 reachable"),
+                    reach_echo1,
+                );
+                checks.check(
+                    &format!("{scope} disallowed domain echo2 blocked"),
+                    !reach_echo2,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// On a degraded machine, `Sandbox::can_create` must report the specific
+    /// failure for every policy, and we must fail closed (never run the command).
+    fn run_cannot_create(writable: &Path, forbidden: &Path, expected: SandboxError) -> Result<()> {
+        let mut checks = Checks::new();
+        let policies = [
+            SandboxPolicy {
+                fs: SandboxFsPolicy::Unrestricted,
+                network: SandboxNetPolicy::Unrestricted,
+            },
+            SandboxPolicy {
+                fs: SandboxFsPolicy::Restricted {
+                    writable_paths: vec![writable.to_path_buf()],
+                },
+                network: SandboxNetPolicy::Blocked,
+            },
+        ];
+
+        for policy in policies {
+            match Sandbox::can_create(&policy, None) {
+                Ok(()) => checks.check(&format!("can_create reports {expected:?} (got Ok)"), false),
+                Err(error) => checks.check(
+                    &format!("can_create reports {expected:?} (got {error:?})"),
+                    error == expected,
+                ),
+            }
+        }
+
+        // Fail-closed: a consumer that respects `can_create` never runs the
+        // command, so the otherwise-forbidden write never happens.
+        let forbidden_file = forbidden.join("degraded.txt");
         checks.check(
-            "RESTRICT: denied write did not leak to the host",
+            "degraded machine performs no forbidden write",
             !forbidden_file.exists(),
         );
 
-        // GRANT: the whole filesystem is readable (root is bound read-only), so a
-        // host file outside every writable dir can still be read.
-        let readable_file = readable.join("host-data.txt");
-        std::fs::write(&readable_file, "host data").context("failed to seed readable file")?;
-        let read_host = run_in_sandbox(
-            &format!("cat {}", shell_quote(&readable_file)),
-            &[],
-            default.clone(),
-        )?;
-        checks.check(
-            "GRANT: host files outside writable dirs are still readable",
-            read_host.command_succeeded,
-        );
-
-        // GRANT + RESTRICT: `/tmp` is a writable tmpfs, but it is ephemeral and
-        // must not leak to the host's real `/tmp`.
-        let tmp_path = PathBuf::from(format!("/tmp/zed-sandbox-ephemeral-{}", std::process::id()));
-        let write_tmp = run_in_sandbox(
-            &format!("echo zed > {}", shell_quote(&tmp_path)),
-            &[],
-            default.clone(),
-        )?;
-        checks.check(
-            "GRANT: writing to /tmp succeeds",
-            write_tmp.command_succeeded,
-        );
-        checks.check(
-            "RESTRICT: /tmp writes are ephemeral (do not leak to the host)",
-            !tmp_path.exists(),
-        );
-
-        // RESTRICT + GRANT: outbound TCP is denied by the network namespace, but
-        // works when network access is explicitly granted (the latter also proves
-        // the peer is reachable, so the denial is the sandbox's doing).
-        if let Some(echo_address) = echo_address {
-            let net_denied = drive_launcher(
-                &current_exe_str()?,
-                &[SUBCOMMAND_NET_CHECK.to_string(), echo_address.to_string()],
-                &[],
-                None,
-                default.clone(),
-            )?;
-            checks.check(
-                "RESTRICT: outbound TCP is blocked when network is denied",
-                !net_denied.command_succeeded,
-            );
-
-            let net_allowed = drive_launcher(
-                &current_exe_str()?,
-                &[SUBCOMMAND_NET_CHECK.to_string(), echo_address.to_string()],
-                &[],
-                None,
-                network_allowed,
-            )?;
-            checks.check(
-                "GRANT: outbound TCP works when network is allowed",
-                net_allowed.command_succeeded,
-            );
-        } else {
-            println!("[sandbox_test]: SKIP: no ZED_TEST_ECHO_ADDR; skipping network checks");
-        }
-
-        // GRANT: local AF_UNIX IPC keeps working even while IP networking is
-        // denied.
-        let unix_ok = drive_launcher(
-            &current_exe_str()?,
-            &[SUBCOMMAND_UNIX_CHECK.to_string()],
-            &[],
-            None,
-            default.clone(),
-        )?;
-        checks.check(
-            "GRANT: AF_UNIX sockets still work while network is denied",
-            unix_ok.command_succeeded,
-        );
-
-        // GRANT (escape hatch): `allow_fs_write` lets the command write anywhere,
-        // and the write reaches the host.
-        let escape_file = forbidden.join("escape-hatch.txt");
-        let write_escape = run_in_sandbox(
-            &format!("echo zed > {}", shell_quote(&escape_file)),
-            &[],
-            fs_write_all.clone(),
-        )?;
-        checks.check(
-            "GRANT: allow_fs_write lets the command write outside writable dirs",
-            write_escape.command_succeeded,
-        );
-        checks.check(
-            "GRANT: allow_fs_write write lands on the host",
-            escape_file.exists(),
-        );
-        checks.check(
-            "allow_fs_write run reports Success",
-            write_escape.status == LauncherStatus::Success,
-        );
-
-        // RESTRICT: permissions are independent — granting filesystem writes must
-        // not also grant network access.
-        if let Some(echo_address) = echo_address {
-            let net_with_fs_write = drive_launcher(
-                &current_exe_str()?,
-                &[SUBCOMMAND_NET_CHECK.to_string(), echo_address.to_string()],
-                &[],
-                None,
-                fs_write_all.clone(),
-            )?;
-            checks.check(
-                "RESTRICT: allow_fs_write does not also grant network access",
-                !net_with_fs_write.command_succeeded,
-            );
-        }
-
-        // RESTRICT: a setuid-root bwrap must be refused, and the command must
-        // not run. We run as root in the VM, so we can build one.
-        check_setuid_rejected(&mut checks)?;
-
         checks.finish()
     }
 
-    /// Degraded scenario: the sandbox could not be set up (user namespaces
-    /// disabled, or no `bwrap` present). The wrapper must report the specific
-    /// reason and not run the command unsandboxed. Falling back to an unsandboxed
-    /// run is the consumer's choice; these tests fail closed.
-    fn run_degraded_tests(forbidden: &Path, expected_status: LauncherStatus) -> Result<()> {
-        let mut checks = Checks::new();
-
-        let forbidden_file = forbidden.join("degraded.txt");
-        let result = run_in_sandbox(
-            &format!("echo zed > {}", shell_quote(&forbidden_file)),
-            &[],
-            SandboxPermissions::default(),
-        )?;
-
-        checks.check(
-            &format!("reports {expected_status:?} when the sandbox can't be created"),
-            result.status == expected_status,
-        );
-        // Fail closed: the launcher aborted, so the command did not run and the
-        // otherwise-forbidden write never happened.
-        checks.check(
-            "command does not run when the sandbox can't be created (fail-closed)",
-            !result.command_succeeded && !forbidden_file.exists(),
-        );
-
-        checks.finish()
-    }
-
-    /// Build a setuid-root copy of `bwrap`, put it alone on `PATH`, and assert the
-    /// wrapper refuses to run it (reporting `SetuidRejected`) without running the
-    /// command.
-    fn check_setuid_rejected(checks: &mut Checks) -> Result<()> {
-        let Some(real_bwrap) = find_on_path("bwrap") else {
-            println!("[sandbox_test]: SKIP: no bwrap on PATH; skipping setuid rejection check");
-            return Ok(());
+    /// Wrap and run a command inside `sandbox`, returning whether it exited 0.
+    fn run_command(sandbox: &mut Sandbox, program: &str, args: &[&str]) -> Result<bool> {
+        let command = CommandAndArgs {
+            program: program.to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            env: Default::default(),
+            cwd: None,
         };
+        let output = futures::executor::block_on(sandbox.execute(&command))
+            .map_err(|error| anyhow::anyhow!("failed to run sandboxed command: {error}"))?;
+        Ok(output.status.success())
+    }
 
-        let dir = PathBuf::from(format!("/sandbox-test-setuid-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).context("failed to create setuid test dir")?;
-        let _cleanup = Cleanup(dir.clone());
-        let fake_bwrap = dir.join("bwrap");
-        std::fs::copy(&real_bwrap, &fake_bwrap).context("failed to copy bwrap")?;
-
-        // chown root (we are root) and set the setuid bit: 04755.
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&fake_bwrap, std::fs::Permissions::from_mode(0o4755))
-            .context("failed to set setuid bit on fake bwrap")?;
-
-        // Make the setuid copy the *only* bwrap visible, so the wrapper can't fall
-        // back to a different one.
-        let previous_path = std::env::var_os("PATH");
-        // SAFETY: the helper is single-threaded here.
-        unsafe {
-            std::env::set_var("PATH", &dir);
-        }
-        let result = drive_launcher("true", &[], &[], None, SandboxPermissions::default());
-        // SAFETY: still single-threaded; restore PATH regardless of the outcome.
-        unsafe {
-            match previous_path {
-                Some(path) => std::env::set_var("PATH", path),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-        let result = result?;
-
-        checks.check(
-            "a setuid-root bwrap is rejected",
-            result.status == LauncherStatus::SetuidRejected,
-        );
-        checks.check(
-            "command does not run after rejecting setuid bwrap (fail-closed)",
-            !result.command_succeeded,
-        );
-
-        Ok(())
+    /// The hostname portion of a `host:port` string.
+    fn host_of(host_port: &str) -> String {
+        host_port
+            .rsplit_once(':')
+            .map(|(host, _)| host.to_string())
+            .unwrap_or_else(|| host_port.to_string())
     }
 
     fn current_exe_str() -> Result<String> {
@@ -521,21 +498,13 @@ mod imp {
             .to_string())
     }
 
-    /// Find an executable named `name` by walking `PATH`.
-    fn find_on_path(name: &str) -> Option<PathBuf> {
-        let path = std::env::var_os("PATH")?;
-        std::env::split_paths(&path)
-            .map(|directory| directory.join(name))
-            .find(|candidate| candidate.is_file())
-    }
-
     /// Single-quote a path for safe interpolation into an `sh -c` script.
     fn shell_quote(path: &Path) -> String {
         let raw = path.to_string_lossy();
         format!("'{}'", raw.replace('\'', "'\\''"))
     }
 
-    /// Removes a directory tree on drop, so scratch dirs don't pile up across runs.
+    /// Removes a directory tree on drop, so scratch dirs don't pile up.
     struct Cleanup(PathBuf);
 
     impl Drop for Cleanup {

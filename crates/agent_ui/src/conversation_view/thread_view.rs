@@ -664,6 +664,19 @@ enum ToolCallLayout {
     Floating,
 }
 
+impl ToolCallLayout {
+    /// Stable discriminant used to disambiguate element ids when the same tool
+    /// call is rendered in more than one layout at once (e.g. inline in the
+    /// list *and* in the floating awaiting-permission row).
+    fn id_str(self) -> &'static str {
+        match self {
+            ToolCallLayout::Standalone => "standalone",
+            ToolCallLayout::Embedded => "embedded",
+            ToolCallLayout::Floating => "floating",
+        }
+    }
+}
+
 fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Option<String> {
     if file.path().file_name().is_some() {
         return None;
@@ -7366,10 +7379,22 @@ impl ThreadView {
         layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let has_terminals = tool_call.terminals().next().is_some();
 
-        div().w_full().map(|this| {
+        // Give every tool-call subtree a unique element-id prefix derived from
+        // the globally-unique tool call id and the layout. This single wrapper
+        // is what keeps all the `entry_ix`-keyed element ids inside the card
+        // collision-free, even when the same tool call is rendered in multiple
+        // places at once (inline list + floating awaiting-permission row) or
+        // when subagent entries are inlined into the parent view's element tree.
+        let container_id = ElementId::Name(SharedString::from(format!(
+            "tool-call-{}-{}",
+            tool_call.id.0,
+            layout.id_str()
+        )));
+
+        div().w_full().id(container_id).map(|this| {
             if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
@@ -8084,11 +8109,27 @@ impl ThreadView {
                     .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
                     .child(
-                        h_flex().gap_1().child(
-                            Label::new("Write access")
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Write access")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("•")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    paths.len(),
+                                    if paths.len() == 1 { "path" } else { "paths" }
+                                ))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
-                        ),
+                            ),
                     )
                     .child(
                         Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
@@ -8112,89 +8153,35 @@ impl ThreadView {
                         }
                     })),
             )
-            .when(is_open && !paths.is_empty(), |this| {
-                this.child(
-                    v_flex()
-                        .gap_0p5()
-                        .child(
-                            Label::new("Reason from agent")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx),
-                        )
-                        .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
-                )
-            })
-            .when(!paths.is_empty(), |this| {
-                this.child(
-                    h_flex()
-                        .id(("sandbox-authorization-details-header", entry_ix))
-                        .p_1()
-                        .justify_between()
-                        .cursor_pointer()
-                        .hover(|style| style.bg(cx.theme().colors().element_hover))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Label::new("Write access")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    Label::new("•")
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Disabled),
-                                )
-                                .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        paths.len(),
-                                        if paths.len() == 1 { "path" } else { "paths" }
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                ),
-                        )
-                        .child(
-                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown),
-                        )
-                        .on_click(cx.listener({
-                            let tool_call_id = tool_call_id.clone();
-                            move |this, _event, _window, cx| {
-                                if this
-                                    .collapsed_sandbox_authorization_details
-                                    .remove(&tool_call_id)
-                                {
-                                    cx.notify();
-                                    return;
-                                }
-
-                                this.collapsed_sandbox_authorization_details
-                                    .insert(tool_call_id.clone());
-                                cx.notify();
-                            }
-                        })),
-                )
-                .when(is_open, |this| {
+            .when(is_open, |this| {
+                this.when(!details.reason.is_empty(), |this| {
                     this.child(
                         v_flex()
-                            .id(("sandbox-authorization-paths-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                                self.render_sandbox_authorization_path_row(
-                                    entry_ix,
-                                    path_ix,
-                                    path,
-                                    path_ix < paths.len() - 1,
-                                    cx,
-                                )
-                            })),
+                            .gap_0p5()
+                            .child(
+                                Label::new("Reason from agent")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .buffer_font(cx),
+                            )
+                            .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
                     )
                 })
+                .child(
+                    v_flex()
+                        .id(("sandbox-authorization-paths-list", entry_ix))
+                        .max_h_40()
+                        .overflow_y_scroll()
+                        .children(paths.iter().enumerate().map(|(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
+                        })),
+                )
             })
             .into_any_element()
     }

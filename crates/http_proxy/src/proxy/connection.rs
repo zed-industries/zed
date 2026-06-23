@@ -491,6 +491,12 @@ fn plan_route(host: &str, port: u16, state: &RuntimeState) -> Result<Route, Rout
 /// already blocks them for direct connections from the sandbox; the proxy
 /// (which runs outside the sandbox) must not reopen them.
 fn is_forbidden_ip(ip: IpAddr) -> bool {
+    // Test-only escape hatch: the sandbox integration tests run against echo
+    // servers on a private VM network, which this filter would otherwise reject.
+    // Never set this in production — it disables DNS-rebinding protection.
+    if std::env::var_os("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS").is_some() {
+        return false;
+    }
     match ip {
         IpAddr::V4(v4) => is_forbidden_ipv4(v4),
         IpAddr::V6(v6) => {
