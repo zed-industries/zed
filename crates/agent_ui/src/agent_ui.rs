@@ -865,6 +865,7 @@ fn update_command_palette_filter(cx: &mut App) {
                 }
                 EditPredictionProvider::Zed
                 | EditPredictionProvider::Codestral
+                | EditPredictionProvider::Deepseek
                 | EditPredictionProvider::Ollama
                 | EditPredictionProvider::OpenAiCompatibleApi
                 | EditPredictionProvider::Mercury => {

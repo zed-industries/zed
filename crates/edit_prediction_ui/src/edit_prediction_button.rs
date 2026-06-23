@@ -272,6 +272,54 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::Deepseek => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("deepseek")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::Deepseek,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Anchor::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("deepseek-icon", IconName::AiDeepSeek)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                let settings = all_language_settings(None, cx);
+                                let tooltip_meta =
+                                    match settings.edit_predictions.deepseek.as_ref() {
+                                        Some(settings) if !settings.model.trim().is_empty() => {
+                                            format!("Powered by Deepseek ({})", settings.model)
+                                        }
+                                        _ => "Deepseek model not configured — configure a model before use"
+                                            .to_string(),
+                                    };
+
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             EditPredictionProvider::Ollama => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let this = cx.weak_entity();
@@ -1458,6 +1506,10 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     if codestral::codestral_api_key(cx).is_some() {
         providers.push(EditPredictionProvider::Codestral);
+    }
+
+    if edit_prediction::deepseek::api_key().is_some() {
+        providers.push(EditPredictionProvider::Deepseek);
     }
 
     if edit_prediction::ollama::is_available(cx) {

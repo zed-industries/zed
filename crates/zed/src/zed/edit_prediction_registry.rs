@@ -120,6 +120,13 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
             Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
         }
         EditPredictionProvider::Codestral => Some(EditPredictionProviderConfig::Codestral),
+        EditPredictionProvider::Deepseek => Some(EditPredictionProviderConfig::Zed(
+            // Deepseek runs through the FIM dispatch but skips token formatting,
+            // so the prompt format is unused; `Infer` is a harmless placeholder.
+            EditPredictionModel::Fim {
+                format: EditPredictionPromptFormat::Infer,
+            },
+        )),
         EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi => {
             let custom_settings = if provider == EditPredictionProvider::Ollama {
                 settings.ollama.as_ref()?
