@@ -477,6 +477,79 @@ pub fn decide_permission_from_settings(
     )
 }
 
+/// Decides permission for multiple representations of the same logical input.
+///
+/// Unlike [`decide_permission_from_settings`], this treats each input as an
+/// alternative spelling of one action instead of as a batch of separate actions:
+/// any matching deny pattern denies, otherwise any matching confirm pattern
+/// confirms, otherwise any matching allow pattern allows. If no pattern matches,
+/// the usual default applies.
+pub fn decide_permission_for_input_alternatives(
+    tool_name: &str,
+    inputs: &[String],
+    settings: &AgentSettings,
+) -> ToolPermissionDecision {
+    if let Some(denial) = check_hardcoded_security_rules(tool_name, inputs, ShellKind::system()) {
+        return denial;
+    }
+
+    let permissions = &settings.tool_permissions;
+    let rules = permissions.tools.get(tool_name);
+
+    if let Some(error) = rules.and_then(|rules| check_invalid_patterns(tool_name, rules)) {
+        return ToolPermissionDecision::Deny(error);
+    }
+
+    let Some(rules) = rules else {
+        return match permissions.default {
+            ToolPermissionMode::Allow => ToolPermissionDecision::Allow,
+            ToolPermissionMode::Deny => {
+                ToolPermissionDecision::Deny("Blocked by global default: deny".into())
+            }
+            ToolPermissionMode::Confirm => ToolPermissionDecision::Confirm,
+        };
+    };
+
+    let mut matched_confirm = false;
+    let mut matched_allow = false;
+    for input in inputs {
+        if rules.always_deny.iter().any(|regex| regex.is_match(input)) {
+            return ToolPermissionDecision::Deny(format!(
+                "Input blocked by security rule for {} tool",
+                tool_name
+            ));
+        }
+
+        if rules
+            .always_confirm
+            .iter()
+            .any(|regex| regex.is_match(input))
+        {
+            matched_confirm = true;
+        }
+
+        if rules.always_allow.iter().any(|regex| regex.is_match(input)) {
+            matched_allow = true;
+        }
+    }
+
+    if matched_confirm {
+        return ToolPermissionDecision::Confirm;
+    }
+
+    if matched_allow {
+        return ToolPermissionDecision::Allow;
+    }
+
+    match rules.default.unwrap_or(permissions.default) {
+        ToolPermissionMode::Deny => {
+            ToolPermissionDecision::Deny(format!("{} tool is disabled", tool_name))
+        }
+        ToolPermissionMode::Allow => ToolPermissionDecision::Allow,
+        ToolPermissionMode::Confirm => ToolPermissionDecision::Confirm,
+    }
+}
+
 /// Normalizes a path by collapsing `.` and `..` segments without touching the filesystem.
 pub fn normalize_path(raw: &str) -> String {
     let is_absolute = Path::new(raw).has_root();
