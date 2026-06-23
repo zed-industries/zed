@@ -1910,6 +1910,14 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
+                    project::Event::RemoteIdChanged(Some(_))
+                    | project::Event::Reshared
+                    | project::Event::HostReshared => {
+                        // The per-change selection broadcast is skipped while the
+                        // project is unshared, so re-publish current selections
+                        // once it becomes (re)shared.
+                        editor.republish_active_selections(window, cx);
+                    }
                     project::Event::RefreshCodeLens => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
