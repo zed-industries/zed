@@ -120,12 +120,13 @@ impl Render for StatusBar {
             .id("status-bar")
             .track_focus(&self.focus_handle)
             .key_context("StatusBar")
-            // Expose the status bar as a landmark so assistive technology can
-            // navigate to it (and so focusing it via region navigation
-            // announces "Status bar"). The controls inside form a tab group
-            // (an ARIA toolbar): Tab steps through them and arrow keys move
-            // between them once focus is inside.
-            .role(Role::ContentInfo)
+            // Expose the status bar as an ARIA toolbar so assistive technology
+            // announces it as a toolbar and region navigation can reach its
+            // controls. The controls inside form a tab group: region navigation
+            // lands on the first control (per the ARIA toolbar pattern), Tab
+            // steps through them, and arrow keys move between them once focus is
+            // inside.
+            .role(Role::Toolbar)
             .aria_label("Status bar")
             .tab_group()
             .on_key_down(
