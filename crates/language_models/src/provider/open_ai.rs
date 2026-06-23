@@ -314,18 +314,13 @@ fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModel
         .iter()
         .copied()
         .filter_map(|effort| {
-            let (name, value) = match effort {
-                open_ai::ReasoningEffort::None => return None,
-                open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
-                open_ai::ReasoningEffort::Low => ("Low", "low"),
-                open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
-                open_ai::ReasoningEffort::High => ("High", "high"),
-                open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-            };
+            if !open_ai_reasoning_effort_is_supported(effort) {
+                return None;
+            }
 
             Some(LanguageModelEffortLevel {
-                name: name.into(),
-                value: value.into(),
+                name: effort.label().into(),
+                value: effort.value().into(),
                 is_default: Some(effort) == default_effort,
             })
         })

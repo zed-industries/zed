@@ -265,39 +265,19 @@ fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::
         .filter(|effort| *effort != open_ai::ReasoningEffort::None)
 }
 
-fn reasoning_effort_display(effort: open_ai::ReasoningEffort) -> (&'static str, &'static str) {
-    match effort {
-        open_ai::ReasoningEffort::None => ("None", "none"),
-        open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
-        open_ai::ReasoningEffort::Low => ("Low", "low"),
-        open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
-        open_ai::ReasoningEffort::High => ("High", "high"),
-        open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-    }
-}
-
 fn supported_thinking_effort_levels(model: &AvailableModel) -> Vec<LanguageModelEffortLevel> {
     let Some(default_effort) = default_thinking_reasoning_effort(model) else {
         return Vec::new();
     };
 
-    [
-        open_ai::ReasoningEffort::Minimal,
-        open_ai::ReasoningEffort::Low,
-        open_ai::ReasoningEffort::Medium,
-        open_ai::ReasoningEffort::High,
-        open_ai::ReasoningEffort::XHigh,
-    ]
-    .into_iter()
-    .map(|effort| {
-        let (name, value) = reasoning_effort_display(effort);
-        LanguageModelEffortLevel {
-            name: name.into(),
-            value: value.into(),
+    open_ai::ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
+        .into_iter()
+        .map(|effort| LanguageModelEffortLevel {
+            name: effort.label().into(),
+            value: effort.value().into(),
             is_default: effort == default_effort,
-        }
-    })
-    .collect()
+        })
+        .collect()
 }
 
 fn selected_thinking_reasoning_effort(

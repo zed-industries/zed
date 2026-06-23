@@ -141,27 +141,6 @@ struct ModelInput {
     capabilities: ModelCapabilityToggles,
 }
 
-fn open_ai_reasoning_efforts() -> [OpenAiReasoningEffort; 5] {
-    [
-        OpenAiReasoningEffort::Minimal,
-        OpenAiReasoningEffort::Low,
-        OpenAiReasoningEffort::Medium,
-        OpenAiReasoningEffort::High,
-        OpenAiReasoningEffort::XHigh,
-    ]
-}
-
-fn open_ai_reasoning_effort_label(effort: OpenAiReasoningEffort) -> &'static str {
-    match effort {
-        OpenAiReasoningEffort::None => "None",
-        OpenAiReasoningEffort::Minimal => "Minimal",
-        OpenAiReasoningEffort::Low => "Low",
-        OpenAiReasoningEffort::Medium => "Medium",
-        OpenAiReasoningEffort::High => "High",
-        OpenAiReasoningEffort::XHigh => "Extra High",
-    }
-}
-
 impl ModelInput {
     fn new(model_index: usize, window: &mut Window, cx: &mut App) -> Self {
         let base_tab_index = (3 + (model_index * 4)) as isize;
@@ -529,11 +508,11 @@ impl AddLlmProviderModal {
         let weak_self = cx.weak_entity();
 
         let effort_menu = ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
-            for effort in open_ai_reasoning_efforts() {
+            for effort in OpenAiReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE {
                 let is_selected = effort == selected_effort;
                 let weak_self = weak_self.clone();
                 menu.push_item(
-                    ContextMenuEntry::new(open_ai_reasoning_effort_label(effort))
+                    ContextMenuEntry::new(effort.label())
                         .toggleable(IconPosition::End, is_selected)
                         .handler(move |_window, cx| {
                             weak_self
@@ -570,7 +549,7 @@ impl AddLlmProviderModal {
                                     ElementId::Name(
                                         format!("reasoning-effort-selector-{ix}").into(),
                                     ),
-                                    open_ai_reasoning_effort_label(selected_effort),
+                                    selected_effort.label(),
                                     effort_menu,
                                 )
                                 .style(DropdownStyle::Outlined)
