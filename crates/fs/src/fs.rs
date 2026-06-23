@@ -400,18 +400,12 @@ impl From<MTime> for proto::Timestamp {
 
 slotmap::new_key_type! { pub struct TrashId; }
 
-// TODO!: Should we convert these to `from_proto` and `to_proto` for the sake of
-// consistency with other `Id` types like:
-//
-// * `WorktreeId`
-// * `ChannelId`
-// * `ProjectId`
 impl TrashId {
-    pub fn from_u64(value: u64) -> Self {
+    pub fn from_proto(value: u64) -> Self {
         KeyData::from_ffi(value).into()
     }
 
-    pub fn to_u64(&self) -> u64 {
+    pub fn to_proto(self) -> u64 {
         self.0.as_ffi()
     }
 }

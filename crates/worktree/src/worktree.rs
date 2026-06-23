@@ -1073,7 +1073,7 @@ impl Worktree {
             .await?;
 
         Ok(proto::TrashProjectEntryResponse {
-            trash_id: trash_id.to_u64(),
+            trash_id: trash_id.to_proto(),
             worktree_scan_id: scan_id as u64,
         })
     }
@@ -1105,7 +1105,7 @@ impl Worktree {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             (
                 this.scan_id(),
-                this.restore_entry(TrashId::from_u64(request.trash_id), cx),
+                this.restore_entry(TrashId::from_proto(request.trash_id), cx),
             )
         });
 
@@ -2280,7 +2280,7 @@ impl RemoteWorktree {
                 this.snapshot = snapshot.clone();
             })?;
 
-            Ok(TrashId::from_u64(trash_id))
+            Ok(TrashId::from_proto(trash_id))
         })
     }
 
@@ -2312,7 +2312,7 @@ impl RemoteWorktree {
     fn restore_entry(&mut self, trash_id: TrashId, cx: &Context<Worktree>) -> Task<Result<Entry>> {
         let project_id = self.project_id();
         let worktree_id = self.id().to_proto();
-        let trash_id = trash_id.to_u64();
+        let trash_id = trash_id.to_proto();
 
         let request = self.client.request(proto::RestoreProjectEntry {
             project_id,
