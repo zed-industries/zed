@@ -17,6 +17,9 @@ use std::{
 use crate::SandboxFallbackDecision;
 use crate::sandboxing::{NetworkRequest, sandboxing_enabled_for_project};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use sandbox_git_paths::{SandboxGitPathCandidates, sandbox_git_paths};
+
+mod sandbox_git_paths;
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -523,14 +526,24 @@ async fn run_terminal_tool(
             None
         } else {
             let effective = event_stream.effective_sandbox_request(&request, &sandbox_permissions);
-            let sandbox_paths =
-                cx.update(|cx| sandbox_paths(project.read(cx), effective.allow_git_access, cx));
+            let (fs, sandbox_path_candidates) = cx.update(|cx| {
+                (
+                    project.read(cx).fs().clone(),
+                    SandboxGitPathCandidates::from_project(project.read(cx), cx),
+                )
+            });
+            let sandbox_paths = sandbox_git_paths(
+                sandbox_path_candidates,
+                fs.as_ref(),
+                effective.allow_git_access,
+            )
+            .await;
             let wrap = acp_thread::SandboxWrap {
                 writable_paths: sandbox_paths.writable_paths,
                 extra_write_paths: effective.write_paths,
                 protected_paths: sandbox_paths.protected_paths,
                 allowed_unix_socket_paths: Vec::new(),
-                allow_git_access: effective.allow_git_access,
+                allow_git_access: sandbox_paths.git_access_granted,
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
@@ -1180,59 +1193,6 @@ fn process_content(
     content
 }
 
-struct SandboxPaths {
-    writable_paths: Vec<PathBuf>,
-    protected_paths: Vec<PathBuf>,
-}
-
-fn sandbox_paths(project: &Project, allow_git_access: bool, cx: &App) -> SandboxPaths {
-    let mut writable_paths = Vec::new();
-    let mut git_paths = Vec::new();
-
-    for worktree in project.worktrees(cx) {
-        let worktree = worktree.read(cx);
-        let worktree_abs_path = worktree.abs_path();
-        writable_paths.push(worktree_abs_path.to_path_buf());
-        // Protect `<worktree>/.git` even when it doesn't exist yet, so a command
-        // can't `git init` and then write to the freshly created metadata.
-        git_paths.push(worktree_abs_path.join(".git"));
-
-        // `Worktree` derefs to `Snapshot`; read the field directly instead of
-        // cloning the whole snapshot just for this path.
-        if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
-            git_paths.push(root_repo_common_dir.to_path_buf());
-        }
-    }
-
-    // `Repository` derefs to `RepositorySnapshot`, so read the few path fields
-    // directly rather than cloning the entire snapshot (which carries the
-    // per-path status tree) for each repository.
-    for repository in project.git_store().read(cx).repositories().values() {
-        let repository = repository.read(cx);
-        git_paths.push(repository.dot_git_abs_path.to_path_buf());
-        git_paths.push(repository.repository_dir_abs_path.to_path_buf());
-        git_paths.push(repository.common_dir_abs_path.to_path_buf());
-    }
-
-    git_paths.sort();
-    git_paths.dedup();
-
-    let protected_paths = if allow_git_access {
-        writable_paths.extend(git_paths);
-        Vec::new()
-    } else {
-        git_paths
-    };
-
-    writable_paths.sort();
-    writable_paths.dedup();
-
-    SandboxPaths {
-        writable_paths,
-        protected_paths,
-    }
-}
-
 fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
 
@@ -1270,7 +1230,6 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::Fs;
 
     #[test]
     fn test_initial_title_shows_full_multiline_command() {
@@ -1300,91 +1259,6 @@ mod tests {
             !title.contains("…") && !title.contains("..."),
             "Should NOT contain ellipsis"
         )
-    }
-
-    #[gpui::test]
-    async fn test_sandbox_paths_protect_git_paths_until_git_access_is_allowed(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        crate::tests::init_test(cx);
-
-        let fs = fs::FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/main_repo",
-            serde_json::json!({
-                ".git": {},
-                "file.txt": "content",
-            }),
-        )
-        .await;
-        fs.add_linked_worktree_for_repo(
-            Path::new("/main_repo/.git"),
-            false,
-            git::repository::Worktree {
-                path: PathBuf::from("/linked_worktree"),
-                ref_name: Some("refs/heads/feature".into()),
-                sha: "abc123".into(),
-                is_main: false,
-                is_bare: false,
-            },
-        )
-        .await;
-        fs.write(Path::new("/linked_worktree/file.txt"), b"content")
-            .await
-            .expect("linked worktree file should be written");
-
-        let project = project::Project::test(fs, [Path::new("/linked_worktree")], cx).await;
-        let paths_without_git_access = cx.update(|cx| sandbox_paths(project.read(cx), false, cx));
-
-        assert!(
-            paths_without_git_access
-                .writable_paths
-                .contains(&PathBuf::from("/linked_worktree"))
-        );
-        assert!(
-            paths_without_git_access
-                .protected_paths
-                .contains(&PathBuf::from("/linked_worktree/.git"))
-        );
-        assert!(
-            !paths_without_git_access
-                .protected_paths
-                .contains(&PathBuf::from("/linked_worktree/.gitignore"))
-        );
-        assert!(
-            paths_without_git_access
-                .protected_paths
-                .contains(&PathBuf::from("/main_repo/.git"))
-        );
-        assert!(
-            paths_without_git_access
-                .protected_paths
-                .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
-        );
-
-        let paths_with_git_access = cx.update(|cx| sandbox_paths(project.read(cx), true, cx));
-
-        assert!(paths_with_git_access.protected_paths.is_empty());
-        assert!(
-            paths_with_git_access
-                .writable_paths
-                .contains(&PathBuf::from("/linked_worktree"))
-        );
-        assert!(
-            paths_with_git_access
-                .writable_paths
-                .contains(&PathBuf::from("/linked_worktree/.git"))
-        );
-        assert!(
-            paths_with_git_access
-                .writable_paths
-                .contains(&PathBuf::from("/main_repo/.git"))
-        );
-        assert!(
-            paths_with_git_access
-                .writable_paths
-                .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
-        );
     }
 
     #[test]
