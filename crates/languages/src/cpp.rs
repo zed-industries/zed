@@ -22,6 +22,7 @@ pub(crate) struct CppContextProvider;
 const CATCH2_TEST_PROGRAM: &str = "CATCH2_TEST_PROGRAM";
 const CATCH2_TEST_CWD: &str = "CATCH2_TEST_CWD";
 const CATCH2_TEST_ADDITIONAL_ARGS: &str = "CATCH2_TEST_ADDITIONAL_ARGS";
+const CATCH2_TEST_BUILD_TASK: &str = "CATCH2_TEST_BUILD_TASK";
 const CATCH2_TEST_NAME_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowed("_test_name"));
 const CATCH2_SECTION_NAME_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("_section_name"));
@@ -40,13 +41,13 @@ impl ContextProvider for CppContextProvider {
         if let Some(raw) = variables.get(&CATCH2_TEST_NAME_VARIABLE) {
             new_vars.insert(
                 VariableName::Custom(Cow::Borrowed("CATCH2_TEST_NAME")),
-                raw.to_owned(),
+                raw.trim_matches('"').to_owned(),
             );
         }
         if let Some(raw) = variables.get(&CATCH2_SECTION_NAME_VARIABLE) {
             new_vars.insert(
                 VariableName::Custom(Cow::Borrowed("CATCH2_SECTION_NAME")),
-                raw.to_owned(),
+                raw.trim_matches('"').to_owned(),
             );
         }
 
@@ -62,14 +63,31 @@ impl ContextProvider for CppContextProvider {
         let settings = LanguageSettings::resolve(buffer.map(|b| b.read(cx)), Some(&language), cx);
         let Some(executable) = settings.tasks.variables.get(CATCH2_TEST_PROGRAM).cloned() else {
             let error_msg = format!(
-                "Catch2 test executable not configured. \
-                 Set the {CATCH2_TEST_PROGRAM} variable under \
-                 languages.C++.tasks.variables in your settings.json."
+                "<<EOF
+Catch2 tests not configured.
+Add this configuration to your settings.json:
+
+{{
+ \"languages\": {{
+   \"C++\": {{
+     \"tasks\": {{
+       \"variables\": {{
+         \"CATCH2_TEST_PROGRAM\": \"<path to test program>\",
+         \"CATCH2_TEST_CWD\": \"<path to current working directory for test execution>\",
+         \"CATCH2_TEST_ADDITIONAL_ARGS\": \"<additional arguments passed to the test program>\",
+         \"CATCH2_TEST_BUILD_TASK\": \"<build task name, to run before debug sessions>\"
+        }}
+      }}
+    }}
+  }}
+}}
+"
             );
+
             return Task::ready(Some(TaskTemplates(vec![
                 TaskTemplate {
                     label: "catch2 run test case (not configured)".to_owned(),
-                    command: "echo".to_owned(),
+                    command: "cat".to_owned(),
                     args: vec![error_msg.clone()],
                     tags: vec!["catch2-test".to_owned()],
                     ..TaskTemplate::default()
@@ -98,10 +116,21 @@ impl ContextProvider for CppContextProvider {
             .map(|s| s.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default();
 
-        let catch2_test_name =
-            VariableName::Custom(Cow::Borrowed("CATCH2_TEST_NAME")).template_value();
-        let catch2_section_name =
-            VariableName::Custom(Cow::Borrowed("CATCH2_SECTION_NAME")).template_value();
+        let build_task_env: collections::HashMap<String, String> = settings
+            .tasks
+            .variables
+            .get(CATCH2_TEST_BUILD_TASK)
+            .map(|name| {
+                let mut map = collections::HashMap::default();
+                map.insert(CATCH2_TEST_BUILD_TASK.to_owned(), name.clone());
+                map
+            })
+            .unwrap_or_default();
+
+        let catch2_test_name = VariableName::Custom(Cow::Borrowed("CATCH2_TEST_NAME"))
+            .template_value_with_whitespace();
+        let catch2_section_name = VariableName::Custom(Cow::Borrowed("CATCH2_SECTION_NAME"))
+            .template_value_with_whitespace();
 
         let mut test_args = vec![catch2_test_name.clone()];
         test_args.extend(extra_args.iter().cloned());
@@ -120,6 +149,7 @@ impl ContextProvider for CppContextProvider {
                 args: test_args,
                 tags: vec!["catch2-test".to_owned()],
                 cwd: cwd.clone(),
+                env: build_task_env.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -128,6 +158,7 @@ impl ContextProvider for CppContextProvider {
                 args: section_args,
                 tags: vec!["catch2-section".to_owned()],
                 cwd: cwd.clone(),
+                env: build_task_env,
                 ..TaskTemplate::default()
             },
         ])))
