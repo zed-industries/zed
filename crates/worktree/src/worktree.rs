@@ -871,7 +871,7 @@ impl Worktree {
                     is_directory,
                 });
                 cx.spawn(async move |this, cx| {
-                    let response = request.await?; // TODO!(yara) HERE
+                    let response = request.await?;
                     match response.entry {
                         Some(entry) => this
                             .update(cx, |worktree, cx| {

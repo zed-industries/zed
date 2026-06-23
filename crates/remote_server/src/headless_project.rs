@@ -310,7 +310,6 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
         session.add_entity_request_handler(Self::handle_download_file_by_path);
 
-        // TODO!(yara) add message handlers here (+ look for the other side, recv on UI side client)
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -328,7 +327,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_kill_kernel);
 
         BufferStore::init(&session);
-        WorktreeStore::init(&session); // TODO!(yara) maybe here
+        WorktreeStore::init(&session);
         SettingsObserver::init(&session);
         LspStore::init(&session);
         TaskStore::init(Some(&session));

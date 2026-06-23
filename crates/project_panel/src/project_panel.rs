@@ -2398,9 +2398,11 @@ impl ProjectPanel {
         });
     }
 
-    // TODO!(yara|dino) this should be split up, trashing and deleting are
-    // fundamentally different. Adding to the existing differences trashing will
-    // no longer need a confirmation with the introduction of undo
+    // TODO(yara|dino): trashing and deleting are conceptually distinct, even
+    // more so with the fact that trashing can now be undone, whereas deleting
+    // cannot.
+    // Worth splitting them, and exploring dropping the trash confirmation now
+    // that trash is undoable.
     fn remove(
         &mut self,
         trash: bool,
