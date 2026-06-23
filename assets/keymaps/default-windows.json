@@ -33,10 +33,6 @@
       "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
-      "shift-f5": "debugger::Stop",
-      "ctrl-shift-f5": "debugger::RerunSession",
-      "f10": "debugger::StepOver",
-      "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-shift-i": "edit_prediction::ToggleMenu",
       "shift-alt-l": "lsp_tool::ToggleMenu",
@@ -601,9 +597,11 @@
     "bindings": {
       // Move focus between the major regions of the window (editor, open
       // panels, status bar). Accessibility navigation; mirrors VS Code's
-      // "Focus Next/Previous Part".
+      // "Focus Next/Previous Part". `ctrl-f6` mirrors `f6` so region navigation
+      // stays available even while a debug session rebinds plain `f6` to Pause.
       "f6": "workspace::FocusNextPart",
       "shift-f6": "workspace::FocusPreviousPart",
+      "ctrl-f6": "workspace::FocusNextPart",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
       "ctrl-r": "projects::OpenRecent",
@@ -1070,13 +1068,18 @@
     },
   },
   {
-    // Pause the running program. Scoped to the debug panel being focused with a
-    // running thread so that F6 stays free for region navigation
-    // (workspace::FocusNextPart) everywhere else.
-    "context": "DebugPanel && debugger_running",
+    // While a debug session is live, debugger controls take over their F-keys.
+    // `f6` becomes Pause (region navigation stays on `ctrl-f6` / `shift-f6`),
+    // and step/stop/rerun are scoped here so they're inert when not debugging.
+    // `debugger::Start` stays global so a session can be started from anywhere.
+    "context": "Workspace && debugger_session",
     "use_key_equivalents": true,
     "bindings": {
       "f6": "debugger::Pause",
+      "shift-f5": "debugger::Stop",
+      "ctrl-shift-f5": "debugger::RerunSession",
+      "f10": "debugger::StepOver",
+      "shift-f11": "debugger::StepOut",
     },
   },
   {

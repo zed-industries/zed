@@ -216,14 +216,18 @@ fn node_to_json(
 
     // Which action types the node supports. AccessKit keeps these in a private
     // bitset with no getter or iterator, so we probe each variant. `Action::n`
-    // (from AccessKit's `enumn` feature) enumerates the variants for us, so this
-    // can't drift out of sync with AccessKit's `Action` enum the way a
-    // hand-maintained list would.
-    let on_action: Vec<String> = (0u8..)
-        .map_while(Action::n)
-        .filter(|action| node.supports_action(*action))
-        .map(|action| format!("{action:?}"))
-        .collect();
+    // (from AccessKit's `enumn` feature) maps a discriminant to its variant,
+    // returning `None` past the last one - so this can't drift out of sync with
+    // AccessKit's `Action` enum the way a hand-maintained list would.
+    let mut next_action = 0u8;
+    let on_action: Vec<String> = std::iter::from_fn(move || {
+        let action = Action::n(next_action)?;
+        next_action += 1;
+        Some(action)
+    })
+    .filter(|action| node.supports_action(*action))
+    .map(|action| format!("{action:?}"))
+    .collect();
     if !on_action.is_empty() {
         aria.insert("on_action".into(), json!(on_action));
     }

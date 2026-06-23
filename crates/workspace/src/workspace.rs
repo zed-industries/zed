@@ -7413,6 +7413,16 @@ impl Workspace {
                 ThreadStatus::Stopped => context.add("debugger_stopped"),
                 ThreadStatus::Exited | ThreadStatus::Ended => {}
             }
+            // A coarse "there is a live debug session" flag (running, stepping,
+            // or stopped at a breakpoint) used to gate debugger controls like
+            // step/pause/stop. Distinct from `debugger_running`, which is only
+            // true while the program is actually executing.
+            if matches!(
+                status,
+                ThreadStatus::Running | ThreadStatus::Stepping | ThreadStatus::Stopped
+            ) {
+                context.add("debugger_session");
+            }
         }
 
         if self.left_dock.read(cx).is_open() {
