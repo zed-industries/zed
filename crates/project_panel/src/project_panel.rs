@@ -5,7 +5,6 @@ mod utils;
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
-use command_palette_hooks::CommandPaletteFilter;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
     items::{
@@ -756,18 +755,6 @@ impl ProjectPanel {
                 },
             )
             .detach();
-
-            let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_remote();
-
-            // Make sure the trash option is never displayed anywhere on remote
-            // hosts since they may not support trashing. May want to dynamically
-            // detect this in the future.
-            if is_remote {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&trash_action);
-                });
-            }
 
             let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
