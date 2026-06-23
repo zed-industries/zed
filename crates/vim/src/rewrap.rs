@@ -3,6 +3,7 @@ use collections::HashMap;
 use editor::{
     Bias, DisplayPoint, Editor, MultiBufferOffset, RewrapOptions, SelectionEffects,
     display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement,
 };
 use gpui::{Action, Context, Window};
 use language::SelectionGoal;
@@ -22,14 +23,14 @@ fn head_offset_for_keep_cursor(
     display_map: &DisplaySnapshot,
     selection: &Selection<DisplayPoint>,
 ) -> MultiBufferOffset {
-    let off = selection.head().to_offset(display_map, Bias::Left);
+    let point = selection.head();
 
     // When the selection isn't reversed, the offset works out to be after the head position. It
     // needs to be adjusted so that the cursor ends up in the same position as it does in neovim.
     if selection.reversed {
-        off
+        point.to_offset(display_map, Bias::Left)
     } else {
-        off.saturating_sub_usize(1)
+        movement::saturating_left(display_map, point).to_offset(display_map, Bias::Left)
     }
 }
 
@@ -61,7 +62,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
                             if let Some(offset) = selection_head_offsets.remove(&selection.id) {
-                                let point = offset.to_display_point(map);
+                                let point = map.clip_at_line_end(offset.to_display_point(map));
                                 selection.collapse_to(point, SelectionGoal::None);
                             }
                         });
@@ -127,7 +128,7 @@ impl Vim {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
                             let offset = selection_head_offsets.remove(&selection.id).unwrap();
-                            let point = offset.to_display_point(map);
+                            let point = map.clip_at_line_end(offset.to_display_point(map));
                             selection.collapse_to(point, SelectionGoal::None);
                         });
                     });

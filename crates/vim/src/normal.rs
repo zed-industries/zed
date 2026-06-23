@@ -2163,16 +2163,40 @@ mod test {
             .await
             .assert_eq("th th\nth th\nth th\nth th\nth ˇth\nth th\n");
 
-        cx.set_shared_state("th th th th th th\nth th th ˇth th th\n")
+        cx.set_shared_state("th th th th th th\nth th th tˇh th th\n")
             .await;
         cx.simulate_shared_keystrokes("v k b g w").await;
         cx.shared_state()
             .await
-            .assert_eq("th th\nˇth th\nth th\nth th\nth th\nth th\n");
+            .assert_eq("th th\nth ˇth\nth th\nth th\nth th\nth th\n");
 
-        cx.set_shared_state("th «th th thˇ» th th\n").await;
+        cx.set_shared_state("th «th th thˇ» th th").await;
         cx.simulate_shared_keystrokes("g w").await;
-        cx.shared_state().await.assert_eq("th th\nth tˇh\nth th\n");
+        cx.shared_state().await.assert_eq("th th\nth tˇh\nth th");
+
+        cx.set_shared_state("th ˇth th th th th\n").await;
+        cx.simulate_shared_keystrokes("v e e").await;
+        cx.shared_state().await.assert_eq("th «th thˇ» th th th\n");
+
+        cx.set_shared_state("th ˇth th th th th\n").await;
+        cx.simulate_shared_keystrokes("v e e g w").await;
+        cx.shared_state().await.assert_eq("th th\ntˇh th\nth th\n");
+
+        cx.set_shared_state("th «th thˇ» th th th\n").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state().await.assert_eq("th th\ntˇh th\nth th\n");
+
+        cx.set_shared_state("th «th \u{1f340}ˇ» th th th\n").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\n\u{1f340}ˇ th\nth th\n");
+
+        cx.set_shared_state("th «th th \u{1f340}ˇ» th th\n").await;
+        cx.simulate_shared_keystrokes("g w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("th th\nth ˇ\u{1f340}\nth th\n");
     }
 
     #[gpui::test]
