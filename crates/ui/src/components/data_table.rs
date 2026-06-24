@@ -1030,9 +1030,12 @@ impl RenderOnce for Table {
             .interaction_state
             .clone()
             .and_then(|state| state.upgrade());
-        let pinned_cols = self.pinned_cols;
-        let uses_pinned_layout = is_pinned_layout(pinned_cols, self.cols);
-        let resize_handle_pinned_cols = if uses_pinned_layout { pinned_cols } else { 0 };
+        let uses_pinned_layout = is_pinned_layout(self.pinned_cols, self.cols);
+        let pinned_cols = if uses_pinned_layout {
+            self.pinned_cols
+        } else {
+            0
+        };
 
         // Shared by every row's scrollable section so they scroll in lockstep, and read by
         // on_drag_move to compensate drag_x for the horizontal scroll offset.
@@ -1096,7 +1099,7 @@ impl RenderOnce for Table {
                         Some(entity.clone()),
                         Some(render_resize_handles_resizable(
                             entity,
-                            resize_handle_pinned_cols,
+                            pinned_cols,
                             h_scroll_handle.as_ref(),
                             window,
                             cx,
