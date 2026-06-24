@@ -3192,8 +3192,9 @@ mod create_host_tests {
         });
 
         let host_b = SharedString::from("host-b.example");
-        let new_index =
-            modal.update(cx, |modal, cx| modal.create_host_from_ssh_config(&host_b, cx));
+        let new_index = modal.update(cx, |modal, cx| {
+            modal.create_host_from_ssh_config(&host_b, cx)
+        });
         cx.run_until_parked();
 
         let connections = cx.update(|_, cx| {
