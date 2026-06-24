@@ -79,13 +79,8 @@ raw-window-handle = "0.6"
 regex.workspace = true
 refineable.workspace = true
 scheduler.workspace = true
-resvg = { version = "0.45.0", default-features = false, features = [
-    "text",
-    "system-fonts",
-    "memmap-fonts",
-    "raster-images"
-] }
-usvg = { version = "0.45.0", default-features = false }
+resvg.workspace = true
+usvg.workspace = true
 ttf-parser = "0.25"
 util_macros.workspace = true
 schemars.workspace = true

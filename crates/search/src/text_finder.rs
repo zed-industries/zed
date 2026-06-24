@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::atomic::Ordering};
 
+use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -10,7 +11,7 @@ use picker::Picker;
 use project::ProjectPath;
 use text::Anchor;
 use ui::Window;
-use workspace::{DismissDecision, ModalView, Workspace};
+use workspace::{DismissDecision, ModalView, Workspace, searchable::SearchableItemHandle};
 
 mod delegate;
 mod render;
@@ -40,7 +41,8 @@ impl TextFinder {
         pub use zed_actions::text_finder::Toggle;
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
-                Self::open(window, cx).detach();
+                let seed_query = Self::seed_query(workspace, window, cx);
+                Self::open(seed_query, window, cx).detach();
                 return;
             };
 
@@ -66,8 +68,9 @@ impl TextFinder {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     remove_project_search_tab(project_search_item_id, workspace, window, cx);
-                    workspace
-                        .toggle_modal(window, cx, |window, cx| Self::new(delegate, window, cx));
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        Self::new(delegate, None, window, cx)
+                    });
                 })
                 .ok();
         })
@@ -203,7 +206,24 @@ impl TextFinder {
             .update(cx, |p, _| p.delegate.in_progress_search.take_connected())
     }
 
-    pub fn open(window: &mut Window, cx: &mut Context<Workspace>) -> Task<()> {
+    /// The word under the cursor (or current selection) of the active editor,
+    /// used to pre-populate the text finder query. Honors the
+    /// `seed_search_query_from_cursor` setting, matching project search.
+    fn seed_query(
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<String> {
+        let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+        let query = editor.query_suggestion(None, window, cx);
+        (!query.is_empty()).then_some(query)
+    }
+
+    pub fn open(
+        seed_query: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<()> {
         cx.spawn_in(window, async move |workspace, cx| {
             let Ok(delegate_task) = workspace.update_in(cx, |workspace, window, cx| {
                 Delegate::new(workspace, window, cx)
@@ -214,14 +234,20 @@ impl TextFinder {
             let delegate = delegate_task.await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace
-                        .toggle_modal(window, cx, |window, cx| Self::new(delegate, window, cx));
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        Self::new(delegate, seed_query, window, cx)
+                    });
                 })
                 .ok();
         })
     }
 
-    fn new(delegate: Delegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        delegate: Delegate,
+        seed_query: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let project = delegate.project(cx).clone();
         let picker = cx.new(|cx| Picker::list_with_preview(delegate, project, window, cx));
         let picker_weak = picker.downgrade();
@@ -229,6 +255,10 @@ impl TextFinder {
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
+            if let Some(seed_query) = seed_query.as_deref() {
+                picker.set_query(seed_query, window, cx);
+                picker.select_query(window, cx);
+            }
         });
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
