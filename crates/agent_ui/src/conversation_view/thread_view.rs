@@ -9542,16 +9542,9 @@ impl ThreadView {
                         window,
                         cx,
                     )
-                } else if let Some((image, dimensions)) = content.image() {
+                } else if let Some(image) = content.image() {
                     let location = tool_call.locations.first().cloned();
-                    self.render_image_output(
-                        entry_ix,
-                        image.clone(),
-                        dimensions,
-                        location,
-                        card_layout,
-                        cx,
-                    )
+                    self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
                 } else {
                     Empty.into_any_element()
                 }
@@ -9595,18 +9588,11 @@ impl ThreadView {
             );
         }
 
-        let (uri, mime_type) = match &resource.resource {
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
-                (blob.uri.as_str(), blob.mime_type.as_deref())
-            }
-            acp::EmbeddedResourceResource::TextResourceContents(text) => {
-                (text.uri.as_str(), text.mime_type.as_deref())
-            }
-            _ => ("", None),
+        let uri = match &resource.resource {
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
+            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
+            _ => "",
         };
-        let label = mime_type
-            .map(|mime_type| format!("Embedded resource ({mime_type})"))
-            .unwrap_or_else(|| "Embedded resource".to_string());
 
         v_flex()
             .gap_1()
@@ -9623,12 +9609,6 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .child(
-                Label::new(label)
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted)
-                    .buffer_font(cx),
-            )
             .when(!uri.is_empty(), |this| {
                 this.child(
                     Label::new(uri.to_string())
@@ -9832,28 +9812,10 @@ impl ThreadView {
         &self,
         entry_ix: usize,
         image: Arc<gpui::Image>,
-        dimensions: Option<gpui::Size<u32>>,
         location: Option<acp::ToolCallLocation>,
         card_layout: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let format_name = match image.format() {
-            gpui::ImageFormat::Png => "PNG",
-            gpui::ImageFormat::Jpeg => "JPEG",
-            gpui::ImageFormat::Webp => "WebP",
-            gpui::ImageFormat::Gif => "GIF",
-            gpui::ImageFormat::Svg => "SVG",
-            gpui::ImageFormat::Bmp => "BMP",
-            gpui::ImageFormat::Tiff => "TIFF",
-            gpui::ImageFormat::Ico => "ICO",
-            gpui::ImageFormat::Pnm => "PNM",
-        };
-        let dimensions_label = if let Some(size) = dimensions {
-            format!("{}×{} {}", size.width, size.height, format_name)
-        } else {
-            format_name.into()
-        };
-
         v_flex()
             .gap_2()
             .map(|this| {
@@ -9866,27 +9828,17 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        Label::new(dimensions_label)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .when_some(location, |this, _loc| {
-                        this.child(
-                            Button::new(("go-to-file", entry_ix), "Go to File")
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_tool_call_location(entry_ix, 0, window, cx);
-                                })),
-                        )
-                    }),
-            )
+            .when_some(location, |this, _loc| {
+                this.child(
+                    h_flex().w_full().justify_end().child(
+                        Button::new(("go-to-file", entry_ix), "Go to File")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tool_call_location(entry_ix, 0, window, cx);
+                            })),
+                    ),
+                )
+            })
             .child(
                 img(image)
                     .max_w_96()

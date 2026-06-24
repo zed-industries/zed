@@ -1349,9 +1349,12 @@ impl ContentBlock {
         }
     }
 
-    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
         match self {
-            ContentBlock::Image { image, dimensions } => Some((image, *dimensions)),
+            ContentBlock::Image {
+                image,
+                dimensions: _,
+            } => Some(image),
             _ => None,
         }
     }
@@ -1502,7 +1505,7 @@ impl ToolCallContent {
         }
     }
 
-    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
         match self {
             Self::ContentBlock(content) => content.image(),
             _ => None,
