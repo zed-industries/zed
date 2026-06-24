@@ -9,7 +9,7 @@ use agent_client_protocol::schema::v1 as acp;
 use std::cell::RefCell;
 
 use acp_thread::{
-    ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
+    PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
     SandboxNotAppliedReason,
 };
 use agent::{
@@ -6179,15 +6179,7 @@ impl ThreadView {
                 if matches!(tool_call.status, ToolCallStatus::Canceled) {
                     let has_visible_content =
                         tool_call.content.iter().any(|content| match content {
-                            ToolCallContent::ContentBlock(block) => match block {
-                                ContentBlock::Empty => false,
-                                ContentBlock::Markdown { markdown } => {
-                                    !markdown.read(cx).source().trim().is_empty()
-                                }
-                                ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => {
-                                    true
-                                }
-                            },
+                            ToolCallContent::ContentBlock(block) => block.visible_content(cx),
                             ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => true,
                         });
                     if !has_visible_content {
@@ -9527,7 +9519,18 @@ impl ThreadView {
     ) -> AnyElement {
         match content {
             ToolCallContent::ContentBlock(content) => {
-                if let Some(resource_link) = content.resource_link() {
+                if let Some((resource, markdown)) = content.embedded_resource() {
+                    self.render_embedded_resource_output(
+                        resource,
+                        markdown.cloned(),
+                        entry_ix,
+                        context_ix,
+                        tool_call,
+                        card_layout,
+                        window,
+                        cx,
+                    )
+                } else if let Some(resource_link) = content.resource_link() {
                     self.render_resource_link(resource_link, cx)
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
@@ -9567,6 +9570,73 @@ impl ThreadView {
                 cx,
             ),
         }
+    }
+
+    fn render_embedded_resource_output(
+        &self,
+        resource: &acp::EmbeddedResource,
+        markdown: Option<Entity<Markdown>>,
+        entry_ix: usize,
+        context_ix: usize,
+        tool_call: &ToolCall,
+        card_layout: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        if let Some(markdown) = markdown {
+            return self.render_markdown_output(
+                markdown,
+                entry_ix,
+                context_ix,
+                tool_call,
+                card_layout,
+                window,
+                cx,
+            );
+        }
+
+        let (uri, mime_type) = match &resource.resource {
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                (blob.uri.as_str(), blob.mime_type.as_deref())
+            }
+            acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                (text.uri.as_str(), text.mime_type.as_deref())
+            }
+            _ => ("", None),
+        };
+        let label = mime_type
+            .map(|mime_type| format!("Embedded resource ({mime_type})"))
+            .unwrap_or_else(|| "Embedded resource".to_string());
+
+        v_flex()
+            .gap_1()
+            .map(|this| {
+                if card_layout {
+                    this.p_2().when(context_ix > 0, |this| {
+                        this.border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
+                    })
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                }
+            })
+            .child(
+                Label::new(label)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .buffer_font(cx),
+            )
+            .when(!uri.is_empty(), |this| {
+                this.child(
+                    Label::new(uri.to_string())
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_resource_link(
@@ -9906,8 +9976,8 @@ impl ThreadView {
 
         let is_cancelled = matches!(tool_call.status, ToolCallStatus::Canceled)
             || tool_call.content.iter().any(|c| match c {
-                ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                    markdown.read(cx).source() == "User canceled"
+                ToolCallContent::ContentBlock(block) => {
+                    block.text_content(cx) == Some("User canceled")
                 }
                 _ => false,
             });
@@ -10284,14 +10354,12 @@ impl ThreadView {
         if matches!(status, ToolCallStatus::Failed) {
             tool_call.content.iter().find_map(|content| {
                 if let ToolCallContent::ContentBlock(block) = content {
-                    if let acp_thread::ContentBlock::Markdown { markdown } = block {
-                        let source = markdown.read(cx).source().to_string();
-                        if !source.is_empty() {
-                            if source == "User canceled" {
-                                return None;
-                            } else {
-                                return Some(SharedString::from(source));
-                            }
+                    if let Some(source) = block.text_content(cx).filter(|source| !source.is_empty())
+                    {
+                        if source == "User canceled" {
+                            return None;
+                        } else {
+                            return Some(SharedString::from(source));
                         }
                     }
                 }
