@@ -266,6 +266,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     "medium" => "Medium".into(),
                     "high" => "High".into(),
                     "xhigh" => "Extra High".into(),
+                    "max" => "Max".into(),
                     _ => language_model::SharedString::from(level.clone()),
                 };
                 LanguageModelEffortLevel {

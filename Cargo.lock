@@ -5043,6 +5043,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "schemars 1.0.4",
  "serde",
  "serde_json",

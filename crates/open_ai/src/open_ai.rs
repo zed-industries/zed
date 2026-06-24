@@ -260,6 +260,7 @@ impl Model {
                 ReasoningEffort::Medium => &[ReasoningEffort::Medium],
                 ReasoningEffort::High => &[ReasoningEffort::High],
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
+                ReasoningEffort::Max => &[ReasoningEffort::Max],
             },
             Self::O3 => &[
                 ReasoningEffort::Low,
@@ -282,12 +283,14 @@ impl Model {
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
             ],
             Self::FivePointThreeCodex => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
             ],
             Self::FivePointTwo
             | Self::FivePointFour
@@ -299,6 +302,7 @@ impl Model {
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
             ],
             _ => &[],
         }
@@ -428,6 +432,7 @@ mod tests {
             ReasoningEffort::Medium,
             ReasoningEffort::High,
             ReasoningEffort::XHigh,
+            ReasoningEffort::Max,
         ];
 
         assert_eq!(
@@ -463,6 +468,7 @@ mod tests {
             ReasoningEffort::Medium,
             ReasoningEffort::High,
             ReasoningEffort::XHigh,
+            ReasoningEffort::Max,
         ];
 
         assert_eq!(

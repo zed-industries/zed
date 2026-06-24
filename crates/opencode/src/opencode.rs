@@ -667,6 +667,7 @@ impl Model {
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
             ]),
 
             Self::Custom {

@@ -479,7 +479,10 @@ pub fn into_deepseek(
         },
         thinking,
         reasoning_effort: if thinking_enabled {
-            into_deepseek_reasoning_effort(request.thinking_effort.as_deref())
+            request
+                .thinking_effort
+                .as_deref()
+                .and_then(|effort| effort.parse().ok())
         } else {
             None
         },
@@ -519,14 +522,6 @@ fn deepseek_thinking(
     };
 
     Some(deepseek::Thinking { kind })
-}
-
-fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
-    match effort {
-        Some("high") => Some(deepseek::ReasoningEffort::High),
-        Some("max") => Some(deepseek::ReasoningEffort::Max),
-        _ => None,
-    }
 }
 
 pub struct DeepSeekEventMapper {
