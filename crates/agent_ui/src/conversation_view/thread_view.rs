@@ -8440,9 +8440,6 @@ impl ThreadView {
                 .when(has_host_list && is_open, |this| {
                     this.child(
                         v_flex()
-                            .id(("sandbox-network-hosts-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
                             .children(hosts.iter().enumerate().map(|(host_ix, host)| {
                                 h_flex()
                                     .min_w_0()
@@ -8543,9 +8540,6 @@ impl ThreadView {
                 .when(has_path_list && is_open, |this| {
                     this.child(
                         v_flex()
-                            .id(("sandbox-authorization-paths-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
                             .children(paths.iter().enumerate().map(|(path_ix, path)| {
                                 self.render_sandbox_authorization_path_row(
                                     entry_ix,
@@ -8612,9 +8606,9 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
+            .children(git_access_section)
             .children(network_section)
             .children(write_section)
-            .children(git_access_section)
             .children(unsandboxed_section)
             .children(reason_section)
             .into_any_element()

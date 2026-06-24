@@ -35,7 +35,8 @@ mod imp {
 
     use anyhow::{Context as _, Result, bail};
     use sandbox::{
-        CommandAndArgs, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
+        CommandAndArgs, GitSandboxPolicy, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy,
+        SandboxPolicy,
     };
     use serde::Deserialize;
 
@@ -111,6 +112,14 @@ mod imp {
         network_access: NetMode,
         #[serde(default)]
         allowed_domains: Vec<String>,
+        /// `.git` directories to protect (contents read-only on Linux). Selects a
+        /// `Denied` Git policy. Mutually exclusive with `gitAllowed`.
+        #[serde(default)]
+        git_disabled: Vec<String>,
+        /// `.git` directories to make writable. Selects an `Allowed` Git policy.
+        /// Mutually exclusive with `gitDisabled`.
+        #[serde(default)]
+        git_allowed: Vec<String>,
 
         // ---- operation (exactly one) ----
         /// Read this host path from inside the sandbox.
@@ -183,18 +192,35 @@ mod imp {
                 allowed_domains: check.allowed_domains.clone(),
             },
         };
-        SandboxPolicy {
-            fs,
-            network,
-            git: sandbox::GitSandboxPolicy::default(),
-        }
+        // `gitAllowed` and `gitDisabled` are mutually exclusive; `gitAllowed`
+        // wins if both are (mistakenly) set. With neither, the default protects
+        // an empty set of dirs, which is a no-op.
+        let git = if !check.git_allowed.is_empty() {
+            GitSandboxPolicy::Allowed {
+                git_dirs: check.git_allowed.iter().map(PathBuf::from).collect(),
+            }
+        } else if !check.git_disabled.is_empty() {
+            GitSandboxPolicy::Denied {
+                git_dirs: check.git_disabled.iter().map(PathBuf::from).collect(),
+            }
+        } else {
+            GitSandboxPolicy::default()
+        };
+        SandboxPolicy { fs, network, git }
     }
 
     fn describe(check: &Check) -> String {
         if let Some(name) = &check.name {
             return name.clone();
         }
-        let policy = format!("fs={:?},net={:?}", check.fs, check.network_access);
+        let git = if !check.git_allowed.is_empty() {
+            format!(",git_allowed={:?}", check.git_allowed)
+        } else if !check.git_disabled.is_empty() {
+            format!(",git_disabled={:?}", check.git_disabled)
+        } else {
+            String::new()
+        };
+        let policy = format!("fs={:?},net={:?}{git}", check.fs, check.network_access);
         let op = if let Some(path) = &check.read {
             format!("read {path}")
         } else if let Some(path) = &check.write {

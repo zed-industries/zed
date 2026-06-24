@@ -29,6 +29,210 @@ mod windows_wsl;
 #[cfg(target_os = "windows")]
 pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
 
+/// An opaque handle to a location on the **host** filesystem the sandbox may
+/// grant access to (a writable subtree, a `.git` directory, …).
+///
+/// The entire purpose of this type is to capture the *security-relevant identity*
+/// of a host location once, up front, in a form the enforcement layer can use
+/// without re-resolving a path string later. Re-resolving a path at enforcement
+/// time is the classic time-of-check-to-time-of-use hole: a path that was
+/// verified as safe can be swapped for a symlink before the sandbox actually
+/// binds/allows it, redirecting the grant to an arbitrary host location.
+///
+/// What is captured is platform-specific:
+/// - **macOS**: the fully-canonicalized path, used verbatim as the Seatbelt rule
+///   literal. Seatbelt matches the *resolved* access path against this literal,
+///   so a post-capture swap of a path component fails closed (denied) rather
+///   than redirecting the grant.
+/// - **Linux**: an `O_PATH` file descriptor pinned to the target inode, bound via
+///   `bwrap --bind-fd`, so the mount can't be redirected by a post-capture swap.
+/// - **Windows**: nothing — the WSL sandbox does not enforce these grants yet, so
+///   no identity is captured.
+///
+/// The type is deliberately **opaque**: it does not `Deref`, and it never hands
+/// back its trusted value. The only thing readable is a *display-only* path via
+/// [`HostFilesystemLocation::untrusted_path_display`], suitable for showing a
+/// human but which must never be passed back into a sandbox API as the
+/// location's identity. Equality reflects the actual filesystem object (same
+/// inode), not the textual path.
+#[derive(Clone)]
+pub struct HostFilesystemLocation {
+    /// macOS: the canonicalized path, resolved exactly once at capture time and
+    /// used directly as the Seatbelt rule literal.
+    #[cfg(target_os = "macos")]
+    canonical_path: PathBuf,
+    /// Linux: an `O_PATH` descriptor pinned to the captured inode. Wrapped in an
+    /// `Arc` only so the surrounding policy types can stay `Clone`; cloning
+    /// shares the same underlying descriptor.
+    #[cfg(target_os = "linux")]
+    fd: std::sync::Arc<std::os::fd::OwnedFd>,
+    /// The path exactly as the caller requested it. Kept **only** so the UI can
+    /// show the user which location is being granted. This is never consulted by
+    /// any enforcement path — treat it as untrusted, attacker-influenced text.
+    untrusted_path_for_display: PathBuf,
+}
+
+impl HostFilesystemLocation {
+    /// Capture `path` as a host sandbox location, resolving its identity up front.
+    ///
+    /// On macOS this canonicalizes the path; on Linux it opens an `O_PATH`
+    /// descriptor to it; on Windows it records nothing. The caller is
+    /// responsible for having already *validated* `path` (e.g. confirmed it is
+    /// inside the project, or that a `.git` is not a symlink) — capturing it here
+    /// pins that decision against later tampering. To be race-free, capture
+    /// should happen as part of, or immediately after, that validation, and the
+    /// resulting value should be passed around unchanged from then on (never
+    /// re-derived from a path).
+    pub fn new(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref();
+        let untrusted_path_for_display = path.to_path_buf();
+
+        #[cfg(target_os = "macos")]
+        {
+            let canonical_path = path.canonicalize()?;
+            Ok(Self {
+                canonical_path,
+                untrusted_path_for_display,
+            })
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            // `O_PATH` opens a handle that refers to the inode without granting
+            // read/write on its contents, which is exactly what a bind source
+            // needs. `O_CLOEXEC` keeps the descriptor from leaking into
+            // unrelated children; the bind step re-publishes it deliberately
+            // when launching bwrap.
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_PATH | libc::O_CLOEXEC)
+                .open(path)?;
+            Ok(Self {
+                fd: std::sync::Arc::new(std::os::fd::OwnedFd::from(file)),
+                untrusted_path_for_display,
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Ok(Self {
+                untrusted_path_for_display,
+            })
+        }
+    }
+
+    /// The requested path, for **display only** (e.g. the permission-request UI).
+    ///
+    /// This intentionally returns the untrusted, as-requested path — never the
+    /// captured trusted identity. Do not feed the result back into any sandbox
+    /// API as if it identified this location.
+    pub fn untrusted_path_display(&self) -> std::path::Display<'_> {
+        self.untrusted_path_for_display.display()
+    }
+}
+
+impl fmt::Debug for HostFilesystemLocation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Only the display path is shown; the trusted identity stays opaque.
+        formatter
+            .debug_struct("HostFilesystemLocation")
+            .field("untrusted_path_for_display", &self.untrusted_path_for_display)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for HostFilesystemLocation {
+    /// Two locations are equal when they refer to the **same filesystem object**,
+    /// determined from the captured identity (the inode behind the `O_PATH` fd on
+    /// Linux, the canonical path on macOS) — never from the textual
+    /// display path. This is what lets policy bookkeeping dedupe "the same
+    /// location named two different ways," and refuse to treat "two different
+    /// objects that happen to share a path string" as one.
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            match (linux_fd_identity(&self.fd), linux_fd_identity(&other.fd)) {
+                (Some(a), Some(b)) => a == b,
+                // An `fstat` on an `O_PATH` fd we own should never fail; if it
+                // somehow does we can't prove identity, so report "not equal"
+                // (the safe answer for dedup) and leave a trace.
+                _ => {
+                    log::error!(
+                        "failed to fstat an O_PATH descriptor while comparing sandbox locations"
+                    );
+                    false
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Canonicalization is a bijection on real paths, so equal canonical
+            // paths mean the same directory/file.
+            self.canonical_path == other.canonical_path
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            // No enforcement and no captured identity on these platforms; fall
+            // back to the requested path purely so the type can still be used in
+            // collections.
+            self.untrusted_path_for_display == other.untrusted_path_for_display
+        }
+    }
+}
+
+impl Eq for HostFilesystemLocation {}
+
+/// The `(device, inode)` pair behind an `O_PATH` descriptor, used to decide
+/// whether two [`HostFilesystemLocation`]s refer to the same filesystem object.
+#[cfg(target_os = "linux")]
+fn linux_fd_identity(fd: &std::os::fd::OwnedFd) -> Option<(u64, u64)> {
+    use std::os::fd::AsRawFd as _;
+    // SAFETY: an all-zero `libc::stat` is a valid output buffer for `fstat`.
+    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+    // SAFETY: `fd` is a live, owned descriptor for the duration of the call.
+    let result = unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) };
+    if result == 0 {
+        Some((stat.st_dev as u64, stat.st_ino as u64))
+    } else {
+        None
+    }
+}
+
+/// A path *inside the sandbox* — i.e. where a host location is exposed in the
+/// sandboxed process's view of the filesystem (for example, a bind-mount
+/// destination on Linux).
+///
+/// Unlike [`HostFilesystemLocation`], this needs no hardening and is just a thin
+/// wrapper around a [`PathBuf`]. It only names a location within the sandbox's
+/// own namespace: the worst a tampered sandbox-side path can do is expose the
+/// (already-granted) host files at a *different* path inside the sandbox — it can
+/// never widen which host files are reachable. It is therefore fine to build one
+/// from an ordinary, even attacker-influenced, path.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct SandboxFilesystemLocation(PathBuf);
+
+impl SandboxFilesystemLocation {
+    /// Name a location inside the sandbox's filesystem view.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    /// The in-sandbox path. Safe to read: this is not a trusted host identity.
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+
+    /// Consume this wrapper, yielding the underlying in-sandbox path.
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
+}
+
+impl From<PathBuf> for SandboxFilesystemLocation {
+    fn from(path: PathBuf) -> Self {
+        Self(path)
+    }
+}
+
 /// What a command is allowed to do, expressed as intent. This is the entire
 /// public configuration surface; how each policy is enforced (Seatbelt rules,
 /// Bubblewrap flags, a loopback proxy, …) is an implementation detail.
