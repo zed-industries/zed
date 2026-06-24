@@ -1003,8 +1003,13 @@ impl ContentBlock {
     ) -> Self {
         match block {
             acp::ContentBlock::Resource(resource) => {
-                let markdown = Self::embedded_resource_markdown(&resource, language_registry, cx);
-                Self::EmbeddedResource { resource, markdown }
+                if let Some((image, dimensions)) = Self::decode_embedded_resource_image(&resource) {
+                    Self::Image { image, dimensions }
+                } else {
+                    let markdown =
+                        Self::embedded_resource_markdown(&resource, language_registry, cx);
+                    Self::EmbeddedResource { resource, markdown }
+                }
             }
             block => Self::new(block, language_registry, path_style, cx),
         }
@@ -1090,12 +1095,29 @@ impl ContentBlock {
     fn decode_image(
         image_content: &acp::ImageContent,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        Self::decode_image_data(&image_content.data, &image_content.mime_type)
+    }
+
+    fn decode_embedded_resource_image(
+        resource: &acp::EmbeddedResource,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        let acp::EmbeddedResourceResource::BlobResourceContents(blob) = &resource.resource else {
+            return None;
+        };
+        let mime_type = blob.mime_type.as_deref()?;
+        Self::decode_image_data(&blob.blob, mime_type)
+    }
+
+    fn decode_image_data(
+        data: &str,
+        mime_type: &str,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(image_content.data.as_bytes())
+            .decode(data.as_bytes())
             .ok()?;
-        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        let format = gpui::ImageFormat::from_mime_type(mime_type)?;
         let dimensions = Self::image_dimensions(&bytes, format);
         Some((Arc::new(gpui::Image::from_bytes(format, bytes)), dimensions))
     }
@@ -4166,6 +4188,106 @@ mod tests {
             );
             assert_eq!(untyped.to_markdown(cx), "```\n# plain preview\n```");
             assert_eq!(untyped.text_content(cx), Some("# plain preview"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_renders_embedded_image_blob_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                        "tool://preview.png",
+                    )
+                    .mime_type("image/png".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                image_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::Image { image, dimensions } = &block else {
+                panic!("expected image block, got {block:?}");
+            };
+            assert_eq!(image.format(), gpui::ImageFormat::Png);
+            assert_eq!(
+                dimensions.as_ref().map(|size| (size.width, size.height)),
+                Some((1, 1))
+            );
+            assert_eq!(block.to_markdown(cx), "`Image`");
+            assert_eq!(block.text_content(cx), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_falls_back_for_non_image_blob_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let archive_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new("not an image", "tool://archive.bin")
+                        .mime_type("application/octet-stream".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                archive_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+                panic!("expected embedded resource block, got {block:?}");
+            };
+            assert!(markdown.is_none());
+            match &resource.resource {
+                acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                    assert_eq!(blob.uri, "tool://archive.bin");
+                    assert_eq!(blob.mime_type.as_deref(), Some("application/octet-stream"));
+                }
+                other => panic!("expected blob resource contents, got {other:?}"),
+            }
+            assert_eq!(block.to_markdown(cx), "tool://archive.bin");
+            assert_eq!(block.text_content(cx), None);
+
+            let invalid_image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new("not-base64", "tool://preview.png")
+                        .mime_type("image/png".to_string()),
+                ),
+            ));
+            let invalid = ContentBlock::new_tool_call_content(
+                invalid_image_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            let ContentBlock::EmbeddedResource { resource, markdown } = &invalid else {
+                panic!("expected embedded resource block, got {invalid:?}");
+            };
+            assert!(markdown.is_none());
+            assert_eq!(
+                ContentBlock::embedded_resource_label(resource),
+                "tool://preview.png"
+            );
+            assert_eq!(invalid.to_markdown(cx), "tool://preview.png");
         });
     }
 
