@@ -83,7 +83,7 @@ The available options are:
 | `allow_fs_write_all` | Writes anywhere on the filesystem without prompting.                                                                                                           |
 | `allow_unsandboxed`  | Turns off sandboxing for terminal commands and disables `fetch` network sandbox prompts.                                                                       |
 
-Prefer narrow grants, such as a specific host, Git metadata access, or write path, over `allow_all_hosts`, `allow_fs_write_all`, or `allow_unsandboxed`. Avoid `allow_all_hosts` for fetch unless you want the agent to fetch from any supported non-localhost hostname without prompting. Avoid `allow_unsandboxed` unless you want to turn off sandboxing for both terminal commands and fetch network access.
+Prefer narrow grants, such as a specific host, Git metadata access, or write path, over `allow_all_hosts`, `allow_fs_write_all`, or `allow_unsandboxed`. Avoid `allow_all_hosts` for `fetch` unless you want the agent to fetch from any supported non-localhost hostname without prompting. Avoid `allow_unsandboxed` unless you want to turn off sandboxing for both terminal commands and fetch network access.
 
 ## Platform Support {#platform-support}
 
@@ -105,7 +105,7 @@ On Linux, Zed uses Bubblewrap (`bwrap`) for sandboxing.
 
 Zed only uses a non-setuid `bwrap` binary. The sandbox is built on unprivileged user namespaces, so a setuid-root `bwrap` provides no extra functionality, and running one would mean executing root-privileged setup with arguments partly derived from model-influenced input. If the only `bwrap` found on your `PATH` is setuid-root, Zed refuses to run it; install a non-setuid Bubblewrap to enable sandboxing.
 
-A sandboxed terminal command can write inside open project directories, except for protected Git metadata. It can also write to `/tmp`, which is backed by a fresh temporary filesystem and cleared between terminal tool calls. It cannot write elsewhere, read or write protected Git metadata, or reach the network unless you approve that access.
+A sandboxed terminal command can write inside open project directories, except for protected Git metadata. It can also write to `/tmp`, which is backed by a fresh temporary filesystem and cleared between terminal tool calls. It cannot write elsewhere, write protected Git metadata, or reach the network unless you approve that access. On Linux, existing protected Git metadata is read-only by default.
 
 Host-specific network access works through an HTTP/HTTPS proxy, like on macOS. Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved. If a command needs unrestricted network access, approve all-host network access instead.
 
