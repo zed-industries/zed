@@ -506,6 +506,7 @@ impl AgentConfiguration {
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
                 Plan::ZedBusiness => ("Business", Color::Accent, pro_chip_bg),
+                Plan::ZedVip => ("VIP", Color::Accent, pro_chip_bg),
                 Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 
@@ -537,7 +538,18 @@ impl AgentConfiguration {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Add Custom Server", None, {
                             |window, cx| {
-                                window.dispatch_action(crate::AddContextServer.boxed_clone(), cx)
+                                window.dispatch_action(
+                                    crate::AddContextServer::local().boxed_clone(),
+                                    cx,
+                                )
+                            }
+                        })
+                        .entry("Add Remote Server", None, {
+                            |window, cx| {
+                                window.dispatch_action(
+                                    crate::AddContextServer::remote().boxed_clone(),
+                                    cx,
+                                )
                             }
                         })
                         .entry("Install from Extensions", None, {

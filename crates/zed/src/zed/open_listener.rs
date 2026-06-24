@@ -761,13 +761,9 @@ pub(crate) fn open_options_for_request(
     location: &SerializedWorkspaceLocation,
     cx: &App,
 ) -> workspace::OpenOptions {
-    let open_behavior = open_behavior.unwrap_or_else(|| {
-        match workspace::WorkspaceSettings::get_global(cx).default_open_behavior {
-            settings::DefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
-            settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::Classic,
-        }
-    });
-    open_options_for_behavior(open_behavior, location, cx)
+    open_behavior.map_or_else(workspace::OpenOptions::default, |open_behavior| {
+        open_options_for_behavior(open_behavior, location, cx)
+    })
 }
 
 pub(crate) fn open_options_for_behavior(
@@ -1363,48 +1359,6 @@ mod tests {
         );
         assert!(!options.add_dirs_to_sidebar);
         assert!(options.requesting_window.is_none());
-    }
-
-    #[gpui::test]
-    fn test_open_options_for_request_respects_default_open_behavior(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-
-        let _app_state = init_test(cx);
-
-        // A `None` behavior (e.g. a Finder or URL open) consults the UI-level
-        // `default_open_behavior` setting rather than falling back to fixed
-        // defaults.
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.workspace.default_open_behavior =
-                        Some(settings::DefaultOpenBehavior::NewWindow);
-                });
-            });
-        });
-        let options =
-            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
-        assert_eq!(
-            options.workspace_matching,
-            workspace::WorkspaceMatching::MatchExact
-        );
-        assert!(!options.add_dirs_to_sidebar);
-
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.workspace.default_open_behavior =
-                        Some(settings::DefaultOpenBehavior::ExistingWindow);
-                });
-            });
-        });
-        let options =
-            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
-        assert_eq!(
-            options.workspace_matching,
-            workspace::WorkspaceMatching::MatchExact
-        );
-        assert!(options.add_dirs_to_sidebar);
     }
 
     #[gpui::test]

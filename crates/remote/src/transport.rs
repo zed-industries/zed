@@ -55,6 +55,63 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
     Ok(RemotePlatform { os, arch })
 }
 
+/// The command (program + args) used to read a remote host's OS version, given
+/// its detected OS.
+///
+/// The output is parsed by [`parse_os_version`].
+pub(crate) fn os_version_command(os: RemoteOs) -> (&'static str, &'static [&'static str]) {
+    match os {
+        // Matches the `/etc/os-release` parsing in `client::telemetry::os_version`.
+        RemoteOs::Linux => ("cat", &["/etc/os-release"]),
+        RemoteOs::MacOs => ("sw_vers", &["-productVersion"]),
+        // Prints e.g. "Microsoft Windows [Version 10.0.19045.5011]".
+        RemoteOs::Windows => ("cmd.exe", &["/c", "ver"]),
+    }
+}
+
+/// Parses the output of [`os_version_command`] into a human-readable version
+/// string, matching the conventions used by `client::telemetry::os_version`.
+///
+/// For Linux this is `"{ID} {VERSION_ID}"` (e.g. `"ubuntu 24.04"`); for macOS it
+/// is the product version (e.g. `"15.6.1"`); for Windows it is the
+/// `major.minor.build` version (e.g. `"10.0.19045"`). Returns `None` if nothing
+/// usable could be parsed.
+pub(crate) fn parse_os_version(os: RemoteOs, output: &str) -> Option<String> {
+    let output = output.trim();
+    if output.is_empty() {
+        return None;
+    }
+    match os {
+        RemoteOs::Linux => util::parse_os_release(output),
+        RemoteOs::MacOs => {
+            // `sw_vers -productVersion` prints a single version line.
+            output
+                .lines()
+                .next_back()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+        }
+        RemoteOs::Windows => parse_windows_version(output),
+    }
+}
+
+/// Extracts a `major.minor.build` version from the output of `cmd.exe /c ver`,
+/// e.g. `"Microsoft Windows [Version 10.0.19045.5011]"` -> `"10.0.19045"`.
+///
+/// Scans for the first dotted run of integers (rather than relying on the
+/// surrounding, potentially localized, text) and drops the trailing revision so
+/// the format matches `client::telemetry::os_version` on Windows.
+fn parse_windows_version(output: &str) -> Option<String> {
+    output
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .filter_map(|token| {
+            let parts: Vec<&str> = token.split('.').filter(|part| !part.is_empty()).collect();
+            (parts.len() >= 3 && parts.iter().all(|part| part.parse::<u32>().is_ok()))
+                .then(|| parts[..3].join("."))
+        })
+        .next()
+}
+
 /// Parses the output of `echo $SHELL` to determine the remote shell.
 /// Takes the last line to skip possible shell initialization output.
 fn parse_shell(output: &str, fallback_shell: &str) -> String {
@@ -444,6 +501,48 @@ mod tests {
 
         assert!(parse_platform("Windows x86_64\n").is_err());
         assert!(parse_platform("Linux armv7l\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_os_version() {
+        // Linux delegates to `util::parse_os_release` (tested there); confirm
+        // the dispatch is wired up.
+        let os_release = "ID=ubuntu\nVERSION_ID=\"24.04\"\n";
+        assert_eq!(
+            parse_os_version(RemoteOs::Linux, os_release),
+            Some("ubuntu 24.04".to_string())
+        );
+
+        // macOS `sw_vers -productVersion` prints a bare version, possibly after
+        // shell initialization noise.
+        assert_eq!(
+            parse_os_version(RemoteOs::MacOs, "15.6.1\n"),
+            Some("15.6.1".to_string())
+        );
+        assert_eq!(
+            parse_os_version(RemoteOs::MacOs, "shell noise\n26.0\n"),
+            Some("26.0".to_string())
+        );
+        assert_eq!(parse_os_version(RemoteOs::MacOs, ""), None);
+
+        // Windows `cmd.exe /c ver`, with the trailing revision dropped to match
+        // the `major.minor.build` format used by local Windows telemetry.
+        assert_eq!(
+            parse_os_version(
+                RemoteOs::Windows,
+                "Microsoft Windows [Version 10.0.19045.5011]\n"
+            ),
+            Some("10.0.19045".to_string())
+        );
+        // Localized output: only the version number is relied upon.
+        assert_eq!(
+            parse_os_version(
+                RemoteOs::Windows,
+                "Microsoft Windows [Versione 10.0.22631.1]"
+            ),
+            Some("10.0.22631".to_string())
+        );
+        assert_eq!(parse_os_version(RemoteOs::Windows, "no version here"), None);
     }
 
     #[test]
