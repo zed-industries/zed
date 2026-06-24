@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
 use smol::{fs, io::AsyncReadExt};
-use std::mem;
 use std::{
     env::{
         self,
@@ -178,34 +177,60 @@ pub struct ReleaseAsset {
     pub url: String,
 }
 
-struct MacOsUnmounter<'a> {
-    mount_path: PathBuf,
-    background_executor: &'a BackgroundExecutor,
+struct MountedMacOsDiskImage {
+    mount_path: Option<PathBuf>,
+    installer_dir: Option<InstallerDir>,
+    background_executor: BackgroundExecutor,
 }
 
-impl Drop for MacOsUnmounter<'_> {
+impl MountedMacOsDiskImage {
+    fn new(
+        mount_path: PathBuf,
+        installer_dir: InstallerDir,
+        background_executor: BackgroundExecutor,
+    ) -> Self {
+        Self {
+            mount_path: Some(mount_path),
+            installer_dir: Some(installer_dir),
+            background_executor,
+        }
+    }
+
+    async fn detach(mut self) -> Result<()> {
+        let mount_path = self
+            .mount_path
+            .as_ref()
+            .context("disk image already detached")?;
+        let result = detach_macos_disk_image(mount_path).await;
+        if result.is_err() {
+            return result;
+        }
+
+        self.mount_path.take();
+        if let Some(installer_dir) = self.installer_dir.take() {
+            finish_installer_dir_cleanup(installer_dir.close());
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for MountedMacOsDiskImage {
     fn drop(&mut self) {
-        let mount_path = mem::take(&mut self.mount_path);
+        let Some(mount_path) = self.mount_path.take() else {
+            return;
+        };
+
+        let installer_dir = self.installer_dir.take();
         self.background_executor
             .spawn(async move {
-                let unmount_output = new_command("hdiutil")
-                    .args(["detach", "-force"])
-                    .arg(&mount_path)
-                    .output()
-                    .await;
-                match unmount_output {
-                    Ok(output) if output.status.success() => {
-                        log::info!("Successfully unmounted the disk image");
-                    }
-                    Ok(output) => {
-                        log::error!(
-                            "Failed to unmount disk image: {:?}",
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                    }
-                    Err(error) => {
-                        log::error!("Error while trying to unmount disk image: {:?}", error);
-                    }
+                if let Err(error) = detach_macos_disk_image(&mount_path).await {
+                    log::error!("Failed to unmount disk image during cleanup: {error:#}");
+                    return;
+                }
+
+                if let Some(installer_dir) = installer_dir {
+                    finish_installer_dir_cleanup(installer_dir.close());
                 }
             })
             .detach();
@@ -350,6 +375,14 @@ impl InstallerDir {
     fn path(&self) -> &Path {
         self.0.path()
     }
+
+    fn close(self) -> Result<()> {
+        self.0.close().context("failed to remove installer dir")
+    }
+
+    fn close_after<T>(self, install_result: Result<T>) -> Result<T> {
+        finish_install_with_cleanup(install_result, self.close())
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -371,6 +404,14 @@ impl InstallerDir {
 
     fn path(&self) -> &Path {
         self.0.as_path()
+    }
+
+    fn close(self) -> Result<()> {
+        std::fs::remove_dir_all(&self.0).context("failed to remove installer dir")
+    }
+
+    fn close_after<T>(self, install_result: Result<T>) -> Result<T> {
+        finish_install_with_cleanup(install_result, self.close())
     }
 }
 
@@ -737,8 +778,8 @@ impl AutoUpdater {
                 installer_dir,
                 target_path.clone(),
                 running_app_path,
-                channel,
                 background_executor,
+                channel,
             ))
             .await
         };
@@ -767,17 +808,13 @@ impl AutoUpdater {
         status: AutoUpdateStatus,
     ) -> Result<Option<VersionCheckType>> {
         let parsed_fetched_version = fetched_version.parse::<Version>();
+        let fetched_sha = Self::fetched_sha(&fetched_version, parsed_fetched_version.as_ref().ok());
 
         if let AutoUpdateStatus::Updated { version, .. } = status {
             match version {
                 VersionCheckType::Sha(cached_version) => {
-                    let should_download =
-                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
-                            version.build.as_str().rsplit('.').next()
-                                != Some(&cached_version.full())
-                        });
-                    let newer_version = should_download
-                        .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
+                    let newer_version = (fetched_sha != cached_version.full())
+                        .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_sha)));
                     return Ok(newer_version);
                 }
                 VersionCheckType::Semantic(cached_version) => {
@@ -794,14 +831,9 @@ impl AutoUpdater {
                 let should_download = app_commit_sha
                     .ok()
                     .flatten()
-                    .map(|sha| {
-                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
-                            version.build.as_str().rsplit('.').next() != Some(&sha)
-                        })
-                    })
-                    .unwrap_or(true);
-                let newer_version = should_download
-                    .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
+                    .is_none_or(|sha| fetched_sha != sha);
+                let newer_version =
+                    should_download.then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_sha)));
                 Ok(newer_version)
             }
             _ => Self::check_if_fetched_version_is_newer_non_nightly(
@@ -809,6 +841,14 @@ impl AutoUpdater {
                 parsed_fetched_version?,
             ),
         }
+    }
+
+    fn fetched_sha(fetched_version: &str, parsed_fetched_version: Option<&Version>) -> String {
+        parsed_fetched_version
+            .and_then(|version| version.build.as_str().rsplit('.').next())
+            .filter(|sha| !sha.is_empty())
+            .unwrap_or(fetched_version)
+            .to_owned()
     }
 
     fn check_dependencies() -> Result<()> {
@@ -846,21 +886,24 @@ impl AutoUpdater {
         installer_dir: InstallerDir,
         target_path: PathBuf,
         running_app_path: PathBuf,
-        channel: &str,
         background_executor: BackgroundExecutor,
+        channel: &str,
     ) -> Result<Option<PathBuf>> {
         match OS {
             "macos" => {
                 install_release_macos(
-                    &installer_dir,
+                    installer_dir,
                     &target_path,
                     running_app_path,
-                    &background_executor,
+                    background_executor,
                 )
                 .await
             }
             "linux" => {
-                install_release_linux(&installer_dir, &target_path, channel, running_app_path).await
+                let install_result =
+                    install_release_linux(&installer_dir, &target_path, channel, running_app_path)
+                        .await;
+                installer_dir.close_after(install_result)
             }
             "windows" => install_release_windows(&target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
@@ -1073,10 +1116,10 @@ async fn install_release_linux(
 }
 
 async fn install_release_macos(
-    temp_dir: &InstallerDir,
+    temp_dir: InstallerDir,
     downloaded_dmg: &Path,
     running_app_path: PathBuf,
-    background_executor: &BackgroundExecutor,
+    background_executor: BackgroundExecutor,
 ) -> Result<Option<PathBuf>> {
     let running_app_filename = running_app_path
         .file_name()
@@ -1101,29 +1144,74 @@ async fn install_release_macos(
         "failed to mount: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
-
-    // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
-    let _unmounter = MacOsUnmounter {
-        mount_path: mount_path.clone(),
-        background_executor,
-    };
+    let mounted_disk_image =
+        MountedMacOsDiskImage::new(mount_path.clone(), temp_dir, background_executor);
 
     let mut cmd = new_command("rsync");
     cmd.args(["-av", "--delete", "--exclude", "Icon?"])
         .arg(&mounted_app_path)
         .arg(&running_app_path);
-    let output = cmd
+    let copy_result = cmd
         .output()
         .await
-        .with_context(|| "failed to rsync: {cmd}")?;
+        .with_context(|| "failed to rsync: {cmd}")
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(anyhow::format_err!(
+                    "failed to copy app: {:?}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        });
 
-    anyhow::ensure!(
-        output.status.success(),
-        "failed to copy app: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    finish_macos_copy_with_detach(copy_result, mounted_disk_image.detach().await)?;
 
     Ok(None)
+}
+
+fn finish_install_with_cleanup<T>(
+    install_result: Result<T>,
+    cleanup_result: Result<()>,
+) -> Result<T> {
+    finish_installer_dir_cleanup(cleanup_result);
+
+    install_result
+}
+
+fn finish_installer_dir_cleanup(cleanup_result: Result<()>) {
+    if let Err(error) = cleanup_result {
+        log::warn!("Failed to remove installer dir: {error:#}");
+    }
+}
+
+fn finish_macos_copy_with_detach(copy_result: Result<()>, detach_result: Result<()>) -> Result<()> {
+    if let Err(error) = detach_result {
+        log::warn!("Failed to unmount update disk image: {error:#}");
+    }
+
+    copy_result
+}
+
+async fn detach_macos_disk_image(mount_path: &Path) -> Result<()> {
+    let unmount_output = new_command("hdiutil")
+        .args(["detach", "-force"])
+        .arg(mount_path)
+        .output()
+        .await;
+
+    match unmount_output {
+        Ok(output) if output.status.success() => {
+            log::info!("Successfully unmounted the disk image");
+            Ok(())
+        }
+        Ok(output) => anyhow::bail!(
+            "Failed to unmount disk image: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(error) => Err(error).context("Error while trying to unmount disk image"),
+    }
 }
 
 async fn cleanup_windows() -> Result<()> {
@@ -1508,7 +1596,7 @@ mod tests {
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+            Some(VersionCheckType::Sha(AppCommitSha::new("c".to_string())))
         );
     }
 
@@ -1577,7 +1665,117 @@ mod tests {
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+            Some(VersionCheckType::Sha(AppCommitSha::new("c".to_string())))
         );
+    }
+
+    #[test]
+    fn test_nightly_does_not_redownload_after_updating_to_fetched_version() {
+        let release_channel = ReleaseChannel::Nightly;
+        let installed_version = semver::Version::new(1, 0, 0);
+        let fetched_sha = "1.0.0+nightly.b".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            Ok(Some("a".to_string())),
+            installed_version.clone(),
+            fetched_sha.clone(),
+            AutoUpdateStatus::Idle,
+        )
+        .unwrap()
+        .expect("a newer nightly version should be available");
+
+        let next_check = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            Ok(Some("a".to_string())),
+            installed_version,
+            fetched_sha,
+            AutoUpdateStatus::Updated {
+                version: newer_version,
+            },
+        );
+
+        assert_eq!(next_check.unwrap(), None);
+    }
+
+    #[test]
+    fn test_nightly_uses_full_fetched_version_when_version_has_no_sha_metadata() {
+        let release_channel = ReleaseChannel::Nightly;
+        let installed_version = semver::Version::new(1, 0, 0);
+        let fetched_version = "1.0.0".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            Ok(Some("a".to_string())),
+            installed_version,
+            fetched_version.clone(),
+            AutoUpdateStatus::Idle,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_version)))
+        );
+    }
+
+    #[test]
+    fn test_nightly_with_no_sha_metadata_updates_when_fetched_version_changes() {
+        let release_channel = ReleaseChannel::Nightly;
+        let installed_version = semver::Version::new(1, 0, 0);
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            Ok(Some("a".to_string())),
+            installed_version,
+            "1.0.1".to_string(),
+            AutoUpdateStatus::Updated {
+                version: VersionCheckType::Sha(AppCommitSha::new("1.0.0".to_string())),
+            },
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Sha(AppCommitSha::new(
+                "1.0.1".to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn test_install_cleanup_failure_does_not_override_successful_install() {
+        let result =
+            finish_install_with_cleanup::<()>(Ok(()), Err(anyhow::format_err!("cleanup failed")));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_install_cleanup_failure_does_not_hide_install_failure() {
+        let result = finish_install_with_cleanup::<()>(
+            Err(anyhow::format_err!("install failed")),
+            Err(anyhow::format_err!("cleanup failed")),
+        );
+
+        let error = result.expect_err("install failure should be returned");
+        assert!(error.to_string().contains("install failed"));
+    }
+
+    #[test]
+    fn test_macos_detach_failure_does_not_override_successful_copy() {
+        let result =
+            finish_macos_copy_with_detach(Ok(()), Err(anyhow::format_err!("detach failed")));
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_macos_detach_failure_does_not_hide_copy_failure() {
+        let result = finish_macos_copy_with_detach(
+            Err(anyhow::format_err!("copy failed")),
+            Err(anyhow::format_err!("detach failed")),
+        );
+
+        let error = result.expect_err("copy failure should be returned");
+        assert!(error.to_string().contains("copy failed"));
     }
 }
