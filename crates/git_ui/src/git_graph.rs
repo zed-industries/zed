@@ -3819,7 +3819,13 @@ impl GitGraph {
 
         let message_lines = message.read_with(cx, |m, _| m.source().lines().count());
         let message_style = editor::hover_markdown_style(window, cx);
-        let expanded_height = window.line_height() * 12.min(message_lines);
+        let rem_size = window.rem_size();
+        let line_height = message_style
+            .base_text_style
+            .line_height_in_pixels(rem_size);
+        // TODO: How to handle commit messages that have fewer than 12 lines, but the
+        // lines are very long, i.e. how to account for reflow.
+        let expanded_height = line_height * 12.min(message_lines);
 
         v_flex()
             .py_2()
