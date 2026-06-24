@@ -644,6 +644,20 @@ impl MacWindowState {
         }
     }
 
+    fn set_native_titlebar_hidden(&mut self, hidden: bool) {
+        let Some(buttons) = self.traffic_light_buttons() else {
+            return;
+        };
+        let Some(titlebar_container) = Self::titlebar_container(&buttons.close) else {
+            return;
+        };
+        unsafe {
+            let hidden = if hidden { YES } else { NO };
+            let titlebar_container = Retained::as_ptr(&titlebar_container) as id;
+            let _: () = msg_send![titlebar_container, setHidden: hidden];
+        }
+    }
+
     fn start_display_link(&mut self) {
         self.stop_display_link();
         unsafe {
@@ -2391,19 +2405,19 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let mut lock = window_state.as_ref().lock();
     lock.fullscreen_restore_bounds = lock.bounds();
     lock.restore_traffic_light();
+    lock.set_native_titlebar_hidden(true);
 
-    let min_version = NSOperatingSystemVersion::new(15, 3, 0);
-
-    if is_macos_version_at_least(min_version) {
+    if lock.transparent_titlebar {
         unsafe {
-            lock.native_window.setTitlebarAppearsTransparent_(NO);
+            lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
     }
 }
 
 extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
+    lock.set_native_titlebar_hidden(false);
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
