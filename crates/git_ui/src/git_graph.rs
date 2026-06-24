@@ -1896,6 +1896,28 @@ impl GitGraph {
             .into_any_element()
     }
 
+    /// A horizontal dashed line that grows to fill the space between a ref badge
+    /// and the right edge of the gutter, visually connecting the badge to its
+    /// commit node (the canvas paints the rest of the connector up to the node).
+    fn render_dashed_connector(color: Hsla) -> AnyElement {
+        gpui::canvas(
+            move |_bounds, _window, _cx| {},
+            move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
+                let y = bounds.origin.y + bounds.size.height / 2.0;
+                paint_dashed_connector(
+                    bounds.origin.x,
+                    bounds.origin.x + bounds.size.width,
+                    y,
+                    color,
+                    window,
+                );
+            },
+        )
+        .flex_1()
+        .h_full()
+        .into_any_element()
+    }
+
     fn render_table_rows(
         &mut self,
         range: Range<usize>,
@@ -3832,11 +3854,12 @@ impl GitGraph {
                             .w_full()
                             .min_w_0()
                             .items_center()
-                            .justify_end()
+                            .justify_start()
                             .gap_1()
-                            .px_1p5()
+                            .pl_1p5()
                             .child(primary_chip)
-                            .children(count_chip),
+                            .children(count_chip)
+                            .child(Self::render_dashed_connector(accent_color.opacity(0.5))),
                     )
                     .into_any_element(),
             );
