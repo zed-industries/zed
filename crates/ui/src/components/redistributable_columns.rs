@@ -1,11 +1,3 @@
-use std::rc::Rc;
-
-use gpui::{
-    AbsoluteLength, AppContext as _, Bounds, DefiniteLength, DragMoveEvent, Empty, Entity,
-    EntityId, Length, Stateful, WeakEntity,
-};
-use itertools::intersperse_with;
-
 use super::data_table::{
     ResizableColumnsState,
     table_row::{IntoTableRow as _, TableRow},
@@ -15,6 +7,11 @@ use crate::{
     IntoElement, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, h_flex,
     px,
 };
+use gpui::{
+    AbsoluteLength, AppContext as _, Bounds, DefiniteLength, DragMoveEvent, Empty, Entity,
+    EntityId, Length, Stateful, WeakEntity,
+};
+use std::rc::Rc;
 
 pub(crate) const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 pub(crate) const RESIZE_DIVIDER_WIDTH: f32 = 1.0;
@@ -106,6 +103,10 @@ pub struct RedistributableColumnsState {
     pub(crate) committed_widths: TableRow<DefiniteLength>,
     pub(crate) preview_widths: TableRow<DefiniteLength>,
     pub(crate) resize_behavior: TableRow<TableResizeBehavior>,
+    /// When `true` at a given index, the column at that index is hidden (filtered out)
+    /// and is not rendered by the table. Width state is preserved so toggling a column
+    /// back on restores its previous width.
+    pub(crate) is_filtered: TableRow<bool>,
     pub(crate) cached_container_width: Pixels,
 }
 
@@ -125,6 +126,7 @@ impl RedistributableColumnsState {
             committed_widths: widths.clone(),
             preview_widths: widths,
             resize_behavior: resize_behavior.into_table_row(cols),
+            is_filtered: TableRow::from_element(false, cols),
             cached_container_width: Default::default(),
         }
     }
@@ -145,12 +147,75 @@ impl RedistributableColumnsState {
         &self.resize_behavior
     }
 
+    /// Per-column visibility mask. `true` means the column is filtered out (hidden).
+    pub fn column_filter(&self) -> &TableRow<bool> {
+        &self.is_filtered
+    }
+
+    /// Returns `true` when the column at `col_idx` is currently filtered out (hidden).
+    pub fn is_column_filtered(&self, col_idx: usize) -> bool {
+        self.is_filtered.get(col_idx).copied().unwrap_or(false)
+    }
+
+    /// Sets whether the column at `col_idx` is filtered out (hidden).
+    pub fn set_column_filtered(&mut self, col_idx: usize, filtered: bool) {
+        if let Some(slot) = self.is_filtered.as_mut_slice().get_mut(col_idx) {
+            *slot = filtered;
+        }
+    }
+
+    /// Toggles the visibility of the column at `col_idx`, returning the new filtered state.
+    pub fn toggle_column_filtered(&mut self, col_idx: usize) -> bool {
+        let new_state = !self.is_column_filtered(col_idx);
+        self.set_column_filtered(col_idx, new_state);
+        new_state
+    }
+
     pub fn widths_to_render(&self) -> TableRow<Length> {
-        self.preview_widths.map_cloned(Length::Definite)
+        // Filtered (hidden) columns are not rendered, so their fractional width is redistributed
+        // proportionally across the visible columns. This keeps the visible columns filling the
+        // container instead of leaving a gap where the hidden column used to be.
+        let visible_fraction_sum: f32 = self
+            .preview_widths
+            .as_slice()
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !self.is_column_filtered(*idx))
+            .filter_map(|(_, width)| match width {
+                DefiniteLength::Fraction(fraction) => Some(*fraction),
+                DefiniteLength::Absolute(_) => None,
+            })
+            .sum();
+
+        let scale = if visible_fraction_sum > 0.0 {
+            1.0 / visible_fraction_sum
+        } else {
+            1.0
+        };
+
+        let widths: Vec<Length> = self
+            .preview_widths
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(idx, width)| {
+                if self.is_column_filtered(idx) {
+                    Length::Definite(DefiniteLength::Fraction(0.0))
+                } else {
+                    match width {
+                        DefiniteLength::Fraction(fraction) => {
+                            Length::Definite(DefiniteLength::Fraction(fraction * scale))
+                        }
+                        other => Length::Definite(*other),
+                    }
+                }
+            })
+            .collect();
+        TableRow::from_vec(widths, self.preview_widths.cols())
     }
 
     pub fn preview_fractions(&self, rem_size: Pixels) -> TableRow<f32> {
-        if self.cached_container_width > px(0.) {
+        let raw = if self.cached_container_width > px(0.) {
             self.preview_widths
                 .map_ref(|length| Self::get_fraction(length, self.cached_container_width, rem_size))
         } else {
@@ -158,14 +223,52 @@ impl RedistributableColumnsState {
                 DefiniteLength::Fraction(fraction) => *fraction,
                 DefiniteLength::Absolute(_) => 0.0,
             })
+        };
+        self.redistribute_visible_fractions(raw)
+    }
+
+    /// Redistributes the fractions of filtered (hidden) columns proportionally across the visible
+    /// columns so the visible columns fill the available space. Filtered columns become `0.0`.
+    fn redistribute_visible_fractions(&self, fractions: TableRow<f32>) -> TableRow<f32> {
+        let visible_sum: f32 = fractions
+            .as_slice()
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !self.is_column_filtered(*idx))
+            .map(|(_, fraction)| *fraction)
+            .sum();
+
+        if visible_sum <= 0.0 {
+            return fractions;
         }
+
+        let cols = fractions.cols();
+        let scaled: Vec<f32> = fractions
+            .into_vec()
+            .into_iter()
+            .enumerate()
+            .map(|(idx, fraction)| {
+                if self.is_column_filtered(idx) {
+                    0.0
+                } else {
+                    fraction / visible_sum
+                }
+            })
+            .collect();
+
+        TableRow::from_vec(scaled, cols)
     }
 
     pub fn preview_column_width(&self, column_index: usize, window: &Window) -> Option<Pixels> {
         let width = self.preview_widths().as_slice().get(column_index)?;
         match width {
-            DefiniteLength::Fraction(fraction) if self.cached_container_width > px(0.) => {
-                Some(self.cached_container_width * *fraction)
+            DefiniteLength::Fraction(_) if self.cached_container_width > px(0.) => {
+                // Use the redistributed fraction so a column widened by hidden
+                // neighbors reports its actual on-screen width
+                let fraction = *self
+                    .preview_fractions(window.rem_size())
+                    .get(column_index)?;
+                Some(self.cached_container_width * fraction)
             }
             DefiniteLength::Fraction(_) => None,
             DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => Some(*pixels),
@@ -423,62 +526,67 @@ pub fn render_redistributable_columns_resize_handles(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (column_widths, resize_behavior) = {
+    let (column_widths, resize_behavior, column_filter) = {
         let state = columns_state.read(cx);
-        (state.widths_to_render(), state.resize_behavior().clone())
+        (
+            state.widths_to_render(),
+            state.resize_behavior().clone(),
+            state.column_filter().clone(),
+        )
     };
 
-    let mut column_ix = 0;
-    let resize_behavior = Rc::new(resize_behavior);
-    let dividers = intersperse_with(
-        column_widths
-            .as_slice()
-            .iter()
-            .copied()
-            .map(|width| resize_spacer(width).into_any_element()),
-        || {
-            let current_column_ix = column_ix;
-            let resize_behavior = Rc::clone(&resize_behavior);
-            let columns_state = columns_state.clone();
-            column_ix += 1;
+    // Only the visible columns participate in the layout; filtered columns are skipped entirely
+    // (no spacer, no divider) so we don't draw a stray resize line where a hidden column was.
+    let visible_cols: Vec<usize> = (0..column_widths.cols())
+        .filter(|idx| !column_filter.get(*idx).copied().unwrap_or(false))
+        .collect();
 
-            {
-                let divider = div().id(current_column_ix).relative().top_0();
-                let entity_id = columns_state.entity_id();
-                let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
-                    let columns_state = columns_state.clone();
-                    Rc::new(move |window, cx| {
-                        columns_state.update(cx, |columns, cx| {
-                            columns.reset_column_to_initial_width(current_column_ix, window);
-                            cx.notify();
-                        });
-                    })
-                };
-                let on_drag_end: Option<Rc<dyn Fn(&mut App)>> = {
-                    Some(Rc::new(move |cx| {
-                        columns_state.update(cx, |state, _| state.commit_preview());
-                    }))
-                };
-                render_column_resize_divider(
-                    divider,
-                    current_column_ix,
-                    resize_behavior[current_column_ix].is_resizable(),
-                    entity_id,
-                    on_reset,
-                    on_drag_end,
-                    window,
-                    cx,
-                )
-            }
-        },
-    );
+    let mut children: Vec<AnyElement> = Vec::with_capacity(visible_cols.len() * 2);
+    for (position, &col_idx) in visible_cols.iter().enumerate() {
+        children.push(resize_spacer(column_widths[col_idx]).into_any_element());
+
+        // A divider is rendered after every visible column except the last, mirroring the
+        // original `intersperse` behavior but in terms of visible columns.
+        let is_last_visible = position + 1 == visible_cols.len();
+        if is_last_visible {
+            continue;
+        }
+
+        let columns_state = columns_state.clone();
+        let divider = div().id(col_idx).relative().top_0();
+        let entity_id = columns_state.entity_id();
+        let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
+            let columns_state = columns_state.clone();
+            Rc::new(move |window, cx| {
+                columns_state.update(cx, |columns, cx| {
+                    columns.reset_column_to_initial_width(col_idx, window);
+                    cx.notify();
+                });
+            })
+        };
+        let on_drag_end: Option<Rc<dyn Fn(&mut App)>> = {
+            Some(Rc::new(move |cx| {
+                columns_state.update(cx, |state, _| state.commit_preview());
+            }))
+        };
+        children.push(render_column_resize_divider(
+            divider,
+            col_idx,
+            resize_behavior[col_idx].is_resizable(),
+            entity_id,
+            on_reset,
+            on_drag_end,
+            window,
+            cx,
+        ));
+    }
 
     h_flex()
         .id("resize-handles")
         .absolute()
         .inset_0()
         .w_full()
-        .children(dividers)
+        .children(children)
         .into_any_element()
 }
 

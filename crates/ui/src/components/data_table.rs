@@ -312,6 +312,17 @@ impl ColumnWidthConfig {
         }
     }
 
+    /// Per-column visibility mask. `true` at an index means that column is filtered out (hidden).
+    /// Only `Redistributable` columns currently support filtering.
+    pub fn column_filter(&self, cx: &App) -> Option<TableRow<bool>> {
+        match self {
+            ColumnWidthConfig::Redistributable { columns_state, .. } => {
+                Some(columns_state.read(cx).column_filter().clone())
+            }
+            _ => None,
+        }
+    }
+
     /// Table-level width.
     pub fn table_width(&self, window: &Window, cx: &App) -> Option<Length> {
         match self {
@@ -368,6 +379,9 @@ pub struct Table {
     cols: usize,
     disable_base_cell_style: bool,
     pinned_cols: usize,
+    /// Optional per-column visibility mask. When set, it overrides any filter derived from the
+    /// column width config. Columns whose entry is `true` are hidden.
+    column_filter: Option<TableRow<bool>>,
 }
 
 impl Table {
@@ -387,7 +401,18 @@ impl Table {
             disable_base_cell_style: false,
             column_width_config: ColumnWidthConfig::auto(),
             pinned_cols: 0,
+            column_filter: None,
         }
+    }
+
+    /// Sets a per-column visibility mask. Columns whose entry is `true` are filtered out (hidden).
+    ///
+    /// This is useful when column visibility is driven by state that isn't part of the column
+    /// width config (for example a `Static`/`Explicit` width config). When set, this overrides
+    /// any filter derived from the column width config.
+    pub fn column_filter(mut self, filter: TableRow<bool>) -> Self {
+        self.column_filter = Some(filter);
+        self
     }
 
     /// Disables based styling of row cell (paddings, text ellipsis, nowrap, etc), keeping width settings
@@ -646,18 +671,28 @@ pub fn render_table_row(
         });
 
     let pinned_cols = table_context.pinned_cols;
+    let column_filter = &table_context.column_filter;
 
     if is_pinned_layout(pinned_cols, cols) {
-        let mut items_vec: Vec<AnyElement> = items.map(IntoElement::into_any_element).into_vec();
-        let mut widths_vec: Vec<Option<Length>> = column_widths.into_vec();
+        let items_vec: Vec<AnyElement> = items.map(IntoElement::into_any_element).into_vec();
+        let widths_vec: Vec<Option<Length>> = column_widths.into_vec();
 
-        let scrollable_items: Vec<AnyElement> = items_vec.drain(pinned_cols..).collect();
-        let scrollable_widths: Vec<Option<Length>> = widths_vec.drain(pinned_cols..).collect();
+        // Drop filtered columns before splitting into pinned/scrollable sections. The number of
+        // pinned columns that survive filtering determines where the kept cells are split.
+        let pinned_visible = (0..pinned_cols)
+            .filter(|&idx| column_is_visible(column_filter, idx))
+            .count();
+        let mut kept: Vec<(AnyElement, Option<Length>)> = items_vec
+            .into_iter()
+            .zip(widths_vec)
+            .enumerate()
+            .filter(|(idx, _)| column_is_visible(column_filter, *idx))
+            .map(|(_, pair)| pair)
+            .collect();
+        let scrollable: Vec<(AnyElement, Option<Length>)> = kept.drain(pinned_visible..).collect();
 
         let pinned_section = div().flex().flex_row().flex_shrink_0().children(
-            items_vec
-                .into_iter()
-                .zip(widths_vec)
+            kept.into_iter()
                 .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
         );
 
@@ -671,9 +706,8 @@ pub fn render_table_row(
             .flex()
             .child(
                 div().flex().flex_row().children(
-                    scrollable_items
+                    scrollable
                         .into_iter()
-                        .zip(scrollable_widths)
                         .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
                 ),
             );
@@ -691,7 +725,9 @@ pub fn render_table_row(
                 .into_vec()
                 .into_iter()
                 .zip(column_widths.into_vec())
-                .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
+                .enumerate()
+                .filter(|(idx, _)| column_is_visible(column_filter, *idx))
+                .map(|(_, (cell, width))| render_cell(width, cell, &table_context, cx)),
         );
     }
 
@@ -735,52 +771,61 @@ pub fn render_table_header(
 
     let use_ui_font = table_context.use_ui_font;
     let resize_info_ref = resize_info.as_ref();
+    let column_filter = &table_context.column_filter;
 
     if is_pinned_layout(pinned_cols, cols) {
-        let mut headers_vec: Vec<AnyElement> = headers
+        let headers_vec: Vec<AnyElement> = headers
             .into_vec()
             .into_iter()
             .map(IntoElement::into_any_element)
             .collect();
-        let mut widths_vec: Vec<Option<Length>> = column_widths.into_vec();
+        let widths_vec: Vec<Option<Length>> = column_widths.into_vec();
 
-        let scrollable_headers: Vec<AnyElement> = headers_vec.drain(pinned_cols..).collect();
-        let scrollable_widths: Vec<Option<Length>> = widths_vec.drain(pinned_cols..).collect();
+        // Keep the original column index alongside each visible header so that resize info
+        // (which is indexed by original column position) stays correct after filtering.
+        let pinned_visible = (0..pinned_cols)
+            .filter(|&idx| column_is_visible(column_filter, idx))
+            .count();
+        let mut kept: Vec<(usize, AnyElement, Option<Length>)> = headers_vec
+            .into_iter()
+            .zip(widths_vec)
+            .enumerate()
+            .filter(|(idx, _)| column_is_visible(column_filter, *idx))
+            .map(|(idx, (h, width))| (idx, h, width))
+            .collect();
+        let scrollable: Vec<(usize, AnyElement, Option<Length>)> =
+            kept.drain(pinned_visible..).collect();
 
         let pinned_section =
-            div().flex().flex_row().flex_shrink_0().children(
-                headers_vec.into_iter().enumerate().zip(widths_vec).map(
-                    |((header_idx, h), width)| {
-                        render_header_cell(
-                            h,
-                            width,
-                            header_idx,
-                            &shared_element_id,
-                            resize_info_ref,
-                            use_ui_font,
-                            cx,
-                        )
-                    },
-                ),
-            );
-
-        let inner = div().flex().flex_row().children(
-            scrollable_headers
-                .into_iter()
-                .enumerate()
-                .zip(scrollable_widths)
-                .map(|((rel_idx, h), width)| {
+            div()
+                .flex()
+                .flex_row()
+                .flex_shrink_0()
+                .children(kept.into_iter().map(|(header_idx, h, width)| {
                     render_header_cell(
                         h,
                         width,
-                        pinned_cols + rel_idx,
+                        header_idx,
                         &shared_element_id,
                         resize_info_ref,
                         use_ui_font,
                         cx,
                     )
-                }),
-        );
+                }));
+
+        let inner = div().flex().flex_row().children(scrollable.into_iter().map(
+            |(header_idx, h, width)| {
+                render_header_cell(
+                    h,
+                    width,
+                    header_idx,
+                    &shared_element_id,
+                    resize_info_ref,
+                    use_ui_font,
+                    cx,
+                )
+            },
+        ));
         let mut scrollable_section = div()
             .id("table-header-scrollable")
             .flex_grow_1()
@@ -805,6 +850,7 @@ pub fn render_table_header(
                     .into_iter()
                     .enumerate()
                     .zip(column_widths.into_vec())
+                    .filter(|((idx, _), _)| column_is_visible(column_filter, *idx))
                     .map(|((header_idx, h), width)| {
                         render_header_cell(
                             h.into_any_element(),
@@ -832,6 +878,9 @@ pub struct TableRenderContext {
     pub use_ui_font: bool,
     pub disable_base_cell_style: bool,
     pub pinned_cols: usize,
+    /// Per-column visibility mask. When `Some`, columns whose entry is `true` are filtered
+    /// out (hidden) and not rendered. Indices map to the table's original column positions.
+    pub column_filter: Option<TableRow<bool>>,
     /// Scroll handle shared by all scrollable sections in rows and headers.
     /// When `pinned_cols > 0`, each row's scrollable section tracks this handle so all rows
     /// scroll together without requiring per-scroll re-renders.
@@ -850,6 +899,10 @@ impl TableRenderContext {
             use_ui_font: table.use_ui_font,
             disable_base_cell_style: table.disable_base_cell_style,
             pinned_cols: table.pinned_cols,
+            column_filter: table
+                .column_filter
+                .clone()
+                .or_else(|| table.column_width_config.column_filter(cx)),
             h_scroll_handle,
         }
     }
@@ -865,9 +918,23 @@ impl TableRenderContext {
             use_ui_font,
             disable_base_cell_style: false,
             pinned_cols: 0,
+            column_filter: None,
             h_scroll_handle: None,
         }
     }
+
+    /// Sets the per-column visibility mask. Columns whose entry is `true` are hidden.
+    pub fn with_column_filter(mut self, column_filter: Option<TableRow<bool>>) -> Self {
+        self.column_filter = column_filter;
+        self
+    }
+}
+
+/// Returns `true` when the column at `col_idx` should be rendered (i.e. not filtered out).
+fn column_is_visible(filter: &Option<TableRow<bool>>, col_idx: usize) -> bool {
+    filter
+        .as_ref()
+        .map_or(true, |mask| !mask.get(col_idx).copied().unwrap_or(false))
 }
 
 /// Builds resize dividers for the given column range, positioned absolutely from `left: 0`.
