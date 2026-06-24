@@ -3076,10 +3076,9 @@ mod tests {
         let task = cx.update(|cx| tool.run(crate::ToolInput::resolved(input), event_stream, cx));
 
         let authorization = receiver.expect_authorization().await;
-        assert_eq!(
-            authorization.tool_call.fields.title.as_deref(),
-            Some("Allow this command to run outside the sandbox?")
-        );
+        // The sandbox approval deliberately leaves the tool-call title untouched
+        // so the card keeps showing the command being approved.
+        assert_eq!(authorization.tool_call.fields.title, None);
         let details =
             acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
                 .expect("unsandboxed should request sandbox authorization details");
