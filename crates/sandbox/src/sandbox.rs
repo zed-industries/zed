@@ -659,6 +659,7 @@ pub fn run_sandbox_launcher_if_invoked() {
     linux_bubblewrap::run_launcher_if_invoked();
 }
 
+#[cfg(target_os = "linux")]
 fn policy_writable_paths(policy: &SandboxPolicy) -> Vec<PathBuf> {
     match &policy.fs {
         SandboxFsPolicy::Unrestricted => Vec::new(),
@@ -971,7 +972,7 @@ pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std:
 }
 
 #[cfg(all(test, target_os = "macos"))]
-mod tests {
+mod macos_tests {
     use super::canonicalize_allowing_missing_leaf;
 
     #[test]
