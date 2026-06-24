@@ -10,6 +10,7 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
+use settings::SeedQuerySetting;
 use text::Anchor;
 use ui::Window;
 use workspace::{
@@ -239,12 +240,16 @@ impl TextFinder {
             .update(cx, |p, _| p.delegate.in_progress_search.take_connected())
     }
 
-    /// The query to pre-populate the text finder with, sourced from the active
-    /// item in priority order, mirroring how project search seeds itself: an
-    /// active project search's query, then a focused buffer search bar's query,
-    /// then the word under the cursor (honoring `seed_search_query_from_cursor`).
-    /// Finally falls back to the last query searched in this workspace, so
-    /// reopening the text finder resumes the previous search (JetBrains-style).
+    /// The query to pre-populate the text finder with, sourced in priority order:
+    /// an active project search's query, then a focused buffer search bar's query,
+    /// then an explicit selection in the active editor, then the last query searched
+    /// in this workspace (so reopening resumes the previous search, JetBrains-style).
+    ///
+    /// Only an explicit selection seeds from the editor; the bare word under the
+    /// cursor is ignored. Confirming a match jumps to (and places the cursor on) it,
+    /// so seeding from the cursor on reopen would clobber the search you were in the
+    /// middle of, whereas a deliberate selection (e.g. a double-click) is a clear
+    /// signal to search for that text.
     fn seed_query(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -265,7 +270,7 @@ impl TextFinder {
             }
 
             if let Some(editor) = item.act_as::<Editor>(cx) {
-                let query = editor.query_suggestion(None, window, cx);
+                let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
                 if !query.is_empty() {
                     return Some(query);
                 }
