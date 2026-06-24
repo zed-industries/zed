@@ -224,7 +224,8 @@ impl TextFinder {
             }
         }
 
-        if let Some(query) = crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
+        if let Some(query) =
+            crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
         {
             return Some(query);
         }
