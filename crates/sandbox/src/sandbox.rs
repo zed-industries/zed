@@ -89,7 +89,10 @@ impl HostFilesystemLocation {
 
         #[cfg(target_os = "macos")]
         {
-            let canonical_path = path.canonicalize()?;
+            // `canonicalize_allowing_missing_leaf` resolves through the existing
+            // parent so a not-yet-created leaf (e.g. a `.git` before `git init`)
+            // still yields the real path Seatbelt will match against.
+            let canonical_path = canonicalize_allowing_missing_leaf(path);
             Ok(Self {
                 canonical_path,
                 untrusted_path_for_display,
@@ -120,6 +123,8 @@ impl HostFilesystemLocation {
         }
     }
 
+
+
     /// The requested path, for **display only** (e.g. the permission-request UI).
     ///
     /// This intentionally returns the untrusted, as-requested path — never the
@@ -127,6 +132,32 @@ impl HostFilesystemLocation {
     /// API as if it identified this location.
     pub fn untrusted_path_display(&self) -> std::path::Display<'_> {
         self.untrusted_path_for_display.display()
+    }
+
+    /// macOS: the canonical path captured once at construction, used verbatim as
+    /// the Seatbelt rule literal. Trusted — never re-resolved. Falls back to the
+    /// requested path for a display-only location (which must never reach
+    /// enforcement).
+    #[cfg(target_os = "macos")]
+    pub(crate) fn macos_canonical_path(&self) -> &Path {
+        &self.canonical_path
+    }
+
+    /// Linux: a borrowed handle to the pinned inode, for deriving a bind source
+    /// path and for `fstat`-based identity checks.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn linux_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd as _;
+        self.fd.as_fd()
+    }
+
+    /// Linux: an independent `O_PATH` descriptor to the same pinned inode,
+    /// duplicated (with `O_CLOEXEC`) so the validation server can own and send it
+    /// over `SCM_RIGHTS` without affecting this location's descriptor.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn linux_dup_fd(&self) -> std::io::Result<std::os::fd::OwnedFd> {
+        use std::os::fd::AsFd as _;
+        self.fd.as_fd().try_clone_to_owned()
     }
 }
 
@@ -154,7 +185,7 @@ impl PartialEq for HostFilesystemLocation {
                 (Some(a), Some(b)) => a == b,
                 // An `fstat` on an `O_PATH` fd we own should never fail; if it
                 // somehow does we can't prove identity, so report "not equal"
-                // (the safe answer for dedup) and leave a trace.
+                // (the safe answer) and leave a trace.
                 _ => {
                     log::error!(
                         "failed to fstat an O_PATH descriptor while comparing sandbox locations"
@@ -248,9 +279,13 @@ pub struct SandboxPolicy {
 pub enum SandboxFsPolicy {
     /// Allow unrestricted filesystem writes.
     Unrestricted,
-    /// Reads are allowed everywhere; writes are confined to these directory
-    /// subtrees (and the standard ephemeral locations the platform provides).
-    Restricted { writable_paths: Vec<PathBuf> },
+    /// Reads are allowed everywhere; writes are confined to these locations
+    /// (and the standard ephemeral locations the platform provides). Each is a
+    /// [`HostFilesystemLocation`] captured at validation time, never a bare path
+    /// the enforcement layer would re-resolve.
+    Restricted {
+        writable_paths: Vec<HostFilesystemLocation>,
+    },
 }
 
 /// Outbound-network policy for a sandboxed command.
@@ -275,9 +310,13 @@ pub enum SandboxNetPolicy {
 pub enum GitSandboxPolicy {
     /// `.git` contents are protected: read-only on Linux; content reads and
     /// writes denied on macOS (metadata stays visible either way).
-    Denied { git_dirs: Vec<PathBuf> },
+    Denied {
+        git_dirs: Vec<HostFilesystemLocation>,
+    },
     /// `.git` contents are writable (these dirs are made writable).
-    Allowed { git_dirs: Vec<PathBuf> },
+    Allowed {
+        git_dirs: Vec<HostFilesystemLocation>,
+    },
 }
 
 impl Default for GitSandboxPolicy {
@@ -291,7 +330,7 @@ impl Default for GitSandboxPolicy {
 
 impl GitSandboxPolicy {
     /// The `.git` directories this policy governs, regardless of variant.
-    pub fn git_dirs(&self) -> &[PathBuf] {
+    pub fn git_dirs(&self) -> &[HostFilesystemLocation] {
         match self {
             GitSandboxPolicy::Denied { git_dirs } | GitSandboxPolicy::Allowed { git_dirs } => {
                 git_dirs
@@ -488,7 +527,7 @@ impl std::error::Error for SandboxError {}
 /// Resolved filesystem setup derived from [`SandboxFsPolicy`].
 struct FsSetup {
     allow_fs_write: bool,
-    writable_paths: Vec<PathBuf>,
+    writable_paths: Vec<HostFilesystemLocation>,
 }
 
 /// Resolved network plan derived from [`SandboxNetPolicy`]. For the restricted
@@ -521,6 +560,16 @@ pub struct Sandbox {
     /// In-process network proxy for the restricted-network case, spawned on the
     /// first `wrap`. Dropped on a background thread (the join blocks).
     proxy: Option<ProxyHandle>,
+    /// Linux only: the host endpoint that hands the in-sandbox validator the
+    /// captured `O_PATH` fds over a unix socket. Runs entirely in-process (a
+    /// short-lived background thread, never a separate process) and is owned by
+    /// this `Sandbox` — which is created per command — so it comes up when the
+    /// command is wrapped and is torn down (thread stopped, socket removed) when
+    /// the command finishes. Holds the fds, keeping their inodes pinned until
+    /// then. Created lazily on the wrap that first needs it (a restricted-fs run
+    /// with writable binds); a `Sandbox` normally wraps a single command.
+    #[cfg(target_os = "linux")]
+    validation_fd_sender: Option<linux_bubblewrap::ValidationFdSender>,
     #[cfg(target_os = "macos")]
     seatbelt_config: Option<macos_seatbelt::SeatbeltConfigFile>,
 }
@@ -557,29 +606,35 @@ impl Sandbox {
             network,
             git: policy.git,
             proxy: None,
+            #[cfg(target_os = "linux")]
+            validation_fd_sender: None,
             #[cfg(target_os = "macos")]
             seatbelt_config: None,
         })
     }
 
-    /// Check whether the platform sandbox can be created for `policy` without
+    /// Check whether the platform sandbox can be created on this host without
     /// actually building a command or spawning the proxy. On Linux this runs a
     /// brief `bwrap` probe (call it off the main thread).
-    pub fn can_create(policy: &SandboxPolicy, cwd: Option<&Path>) -> Result<(), SandboxError> {
+    ///
+    /// This answers a purely *environmental* question — is a bwrap sandbox
+    /// possible here at all (a usable `bwrap`, plus the unprivileged user
+    /// namespace and mount scaffolding we rely on)? It deliberately does **not**
+    /// depend on any command's writable grants or working directory: the probe
+    /// runs a bare, representative sandbox and runs `true` in it. (Unlike the
+    /// former Landlock probe, bwrap needs no ABI-matching against the real
+    /// ruleset, so there's no reason to mirror the real command's mounts.)
+    pub fn can_create(policy: &SandboxPolicy) -> Result<(), SandboxError> {
         #[cfg(target_os = "linux")]
         {
-            let writable = policy_writable_paths(policy);
-            let writable: Vec<&Path> = writable.iter().map(PathBuf::as_path).collect();
             let permissions = linux_bubblewrap::SandboxPermissions {
                 network: linux_probe_network(&policy.network),
                 allow_fs_write: matches!(policy.fs, SandboxFsPolicy::Unrestricted),
             };
-            linux_bubblewrap::check_can_create_sandbox(&writable, permissions, cwd)
-                .map_err(map_linux_status)
+            linux_bubblewrap::check_can_create_sandbox(permissions).map_err(map_linux_status)
         }
         #[cfg(target_os = "windows")]
         {
-            let _ = cwd;
             if matches!(policy.network, SandboxNetPolicy::Restricted { .. }) {
                 return Err(unsupported_restricted_network_on_windows());
             }
@@ -587,7 +642,7 @@ impl Sandbox {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            let _ = (policy, cwd);
+            let _ = policy;
             Ok(())
         }
     }
@@ -695,7 +750,7 @@ impl Sandbox {
     /// is empty (Git protection is moot); otherwise `Allowed` git dirs are
     /// writable and `Denied` git dirs are protected.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn git_path_split(&self) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    fn git_path_split(&self) -> (Vec<HostFilesystemLocation>, Vec<HostFilesystemLocation>) {
         if self.fs.allow_fs_write {
             return (Vec::new(), Vec::new());
         }
@@ -724,14 +779,61 @@ impl Sandbox {
             allow_fs_write: self.fs.allow_fs_write,
         };
         let (git_writable, git_protected) = self.git_path_split();
-        let mut writable: Vec<&Path> = self
-            .fs
-            .writable_paths
-            .iter()
-            .map(PathBuf::as_path)
-            .collect();
-        writable.extend(git_writable.iter().map(PathBuf::as_path));
-        let protected_git_dirs: Vec<&Path> = git_protected.iter().map(PathBuf::as_path).collect();
+        // Build the writable binds as (captured fd, bind path) pairs in lockstep.
+        // The bind *path* is derived from the pinned inode (readlink of the
+        // captured `O_PATH` fd), never from an attacker-influenceable string; the
+        // *fd* is what the in-sandbox validator compares the mounted inode
+        // against. The two lists stay in the same order so each fd lines up with
+        // its path on the validator side.
+        let mut writable_owned: Vec<PathBuf> = Vec::new();
+        let mut writable_fds: Vec<std::os::fd::OwnedFd> = Vec::new();
+        for location in self.fs.writable_paths.iter().chain(git_writable.iter()) {
+            let Some(path) = linux_location_path(location) else {
+                continue;
+            };
+            match location.linux_dup_fd() {
+                Ok(fd) => {
+                    writable_owned.push(path);
+                    writable_fds.push(fd);
+                }
+                Err(error) => {
+                    // Fail closed: a bind we can't pin a verifiable fd for is
+                    // dropped rather than bound unverified.
+                    log::warn!(
+                        "[sandbox] could not duplicate fd for writable bind {}: {error}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        let writable: Vec<&Path> = writable_owned.iter().map(PathBuf::as_path).collect();
+        let protected_owned: Vec<PathBuf> =
+            git_protected.iter().filter_map(linux_location_path).collect();
+        let protected_git_dirs: Vec<&Path> =
+            protected_owned.iter().map(PathBuf::as_path).collect();
+
+        // Stand up the host endpoint that sends the captured fds to the
+        // in-sandbox validator, when this run has writable binds to verify. It's
+        // an in-process background thread owned by this (per-command) `Sandbox`,
+        // so it lives only for the command's duration. Created on the wrap that
+        // first needs it; a `Sandbox` normally wraps a single command.
+        if !self.fs.allow_fs_write
+            && !writable_fds.is_empty()
+            && self.validation_fd_sender.is_none()
+        {
+            let sender =
+                linux_bubblewrap::ValidationFdSender::spawn(writable_fds).map_err(|error| {
+                    SandboxError::Io(format!("failed to start sandbox bind validator: {error}"))
+                })?;
+            self.validation_fd_sender = Some(sender);
+        }
+        let validation_socket =
+            self.validation_fd_sender
+                .as_ref()
+                .map(|sender| linux_bubblewrap::ValidationSocket {
+                    host_socket_path: sender.host_socket_path(),
+                    sandbox_socket_path: sender.sandbox_socket_path(),
+                });
 
         let bridge_program = std::env::current_exe()
             .map_err(|error| SandboxError::BridgeExecutableUnavailable(error.to_string()))?;
@@ -751,6 +853,7 @@ impl Sandbox {
             &command.program,
             &command.args,
             proxy_socket_path.as_deref(),
+            validation_socket,
         )
         .map_err(map_anyhow_error)?;
 
@@ -780,14 +883,25 @@ impl Sandbox {
             allow_fs_write: self.fs.allow_fs_write,
         };
         let (git_writable, git_protected) = self.git_path_split();
+        // Each location's canonical path was resolved exactly once at capture
+        // time; pass it straight through as the Seatbelt rule literal. The
+        // profile generator must NOT re-canonicalize (that reopened the
+        // verify-vs-enforce gap); see `generate_seatbelt_config`.
         let mut writable: Vec<&Path> = self
             .fs
             .writable_paths
             .iter()
-            .map(PathBuf::as_path)
+            .map(HostFilesystemLocation::macos_canonical_path)
             .collect();
-        writable.extend(git_writable.iter().map(PathBuf::as_path));
-        let protected: Vec<&Path> = git_protected.iter().map(PathBuf::as_path).collect();
+        writable.extend(
+            git_writable
+                .iter()
+                .map(HostFilesystemLocation::macos_canonical_path),
+        );
+        let protected: Vec<&Path> = git_protected
+            .iter()
+            .map(HostFilesystemLocation::macos_canonical_path)
+            .collect();
 
         // SSH-agent socket handling (commit signing) is deferred, so no unix
         // sockets are allowed for now.
@@ -868,12 +982,19 @@ pub fn run_sandbox_launcher_if_invoked() {
     linux_bubblewrap::run_launcher_if_invoked();
 }
 
+// The createability probe only needs to know whether a sandbox *can* be built
+// (namespaces, `bwrap` availability); it does not enforce any grant, so it runs
+// with no writable binds rather than re-deriving paths from the opaque
+// locations.
+
+/// The current path of the inode pinned by a [`HostFilesystemLocation`]'s
+/// `O_PATH` fd, via `/proc/self/fd`. This resolves to the *pinned inode*, so it
+/// reflects the object captured at validation even if its name was changed,
+/// rather than re-resolving an attacker-influenceable path string.
 #[cfg(target_os = "linux")]
-fn policy_writable_paths(policy: &SandboxPolicy) -> Vec<PathBuf> {
-    match &policy.fs {
-        SandboxFsPolicy::Unrestricted => Vec::new(),
-        SandboxFsPolicy::Restricted { writable_paths } => writable_paths.clone(),
-    }
+fn linux_location_path(location: &HostFilesystemLocation) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd as _;
+    std::fs::read_link(format!("/proc/self/fd/{}", location.linux_fd().as_raw_fd())).ok()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1049,20 +1170,25 @@ mod tests {
 
     #[test]
     fn fs_merge_unrestricted_dominates_else_unions_paths() {
+        // Writable paths are captured as real `HostFilesystemLocation`s (keyed on
+        // the inode), so the union/dedup test needs three distinct real dirs.
+        let dir_a = tempfile::tempdir().expect("create temp dir a");
+        let dir_b = tempfile::tempdir().expect("create temp dir b");
+        let dir_c = tempfile::tempdir().expect("create temp dir c");
+        let location = |dir: &tempfile::TempDir| {
+            HostFilesystemLocation::new(dir.path()).expect("capture temp dir")
+        };
+
         let a = SandboxFsPolicy::Restricted {
-            writable_paths: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+            writable_paths: vec![location(&dir_a), location(&dir_b)],
         };
         let b = SandboxFsPolicy::Restricted {
-            writable_paths: vec![PathBuf::from("/b"), PathBuf::from("/c")],
+            writable_paths: vec![location(&dir_b), location(&dir_c)],
         };
         assert_eq!(
             a.clone().merge(b),
             SandboxFsPolicy::Restricted {
-                writable_paths: vec![
-                    PathBuf::from("/a"),
-                    PathBuf::from("/b"),
-                    PathBuf::from("/c")
-                ],
+                writable_paths: vec![location(&dir_a), location(&dir_b), location(&dir_c)],
             }
         );
         assert_eq!(
@@ -1071,7 +1197,7 @@ mod tests {
         );
         assert_eq!(
             SandboxFsPolicy::Unrestricted.merge(SandboxFsPolicy::Restricted {
-                writable_paths: vec![PathBuf::from("/a")],
+                writable_paths: vec![location(&dir_a)],
             }),
             SandboxFsPolicy::Unrestricted
         );

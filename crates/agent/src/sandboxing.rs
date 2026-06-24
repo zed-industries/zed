@@ -30,7 +30,9 @@ use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
 use project::Project;
-use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
+use sandbox::{
+    GitSandboxPolicy, HostFilesystemLocation, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
+};
 use settings::Settings;
 use std::path::PathBuf;
 
@@ -126,6 +128,13 @@ impl ThreadSandbox {
         match self {
             ThreadSandbox::Unsandboxed => ThreadSandbox::Unsandboxed,
             ThreadSandbox::Sandboxed(policy) => {
+                // Capture each `.git` location (pinning its inode / canonical
+                // path). A location that can't be captured (e.g. doesn't exist)
+                // is dropped — fail-closed.
+                let git_dirs = git_dirs
+                    .into_iter()
+                    .filter_map(|path| HostFilesystemLocation::new(path).ok())
+                    .collect();
                 let git = if allowed {
                     GitSandboxPolicy::Allowed { git_dirs }
                 } else {
@@ -158,7 +167,11 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
         SandboxFsPolicy::Unrestricted
     } else {
         SandboxFsPolicy::Restricted {
-            writable_paths: persistent.write_paths.clone(),
+            writable_paths: persistent
+                .write_paths
+                .iter()
+                .filter_map(|path| HostFilesystemLocation::new(path).ok())
+                .collect(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -437,7 +450,11 @@ impl ThreadSandboxGrants {
             SandboxFsPolicy::Unrestricted
         } else {
             SandboxFsPolicy::Restricted {
-                writable_paths: self.write_paths.clone(),
+                writable_paths: self
+                    .write_paths
+                    .iter()
+                    .filter_map(|path| HostFilesystemLocation::new(path).ok())
+                    .collect(),
             }
         };
         let network = if self.network_any_host {
@@ -613,6 +630,7 @@ pub(crate) fn insert_host_pattern(set: &mut Vec<HostPattern>, pattern: HostPatte
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn hosts(list: &[&str]) -> NetworkRequest {
         NetworkRequest::Hosts(
@@ -644,9 +662,19 @@ mod tests {
 
     #[test]
     fn thread_sandbox_merge_unsandboxed_wins_else_unions_scopes() {
-        let policy = |paths: &[&str], hosts: &[&str]| SandboxPolicy {
+        // Writable paths are captured as real `HostFilesystemLocation`s (which
+        // open an fd and key on the inode), so the test uses real directories.
+        let dir_a = tempfile::tempdir().expect("create temp dir a");
+        let dir_b = tempfile::tempdir().expect("create temp dir b");
+        let path_a = dir_a.path();
+        let path_b = dir_b.path();
+
+        let policy = |paths: &[&Path], hosts: &[&str]| SandboxPolicy {
             fs: SandboxFsPolicy::Restricted {
-                writable_paths: paths.iter().map(PathBuf::from).collect(),
+                writable_paths: paths
+                    .iter()
+                    .map(|p| HostFilesystemLocation::new(p).expect("capture temp dir"))
+                    .collect(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
@@ -661,20 +689,20 @@ mod tests {
         // Unsandboxed on either side wins — the agent runs with ambient access.
         assert!(
             ThreadSandbox::Unsandboxed
-                .merge(ThreadSandbox::Sandboxed(policy(&["/a"], &["a.com"])))
+                .merge(ThreadSandbox::Sandboxed(policy(&[path_a], &["a.com"])))
                 .is_unsandboxed()
         );
         assert!(
-            ThreadSandbox::Sandboxed(policy(&["/a"], &["a.com"]))
+            ThreadSandbox::Sandboxed(policy(&[path_a], &["a.com"]))
                 .merge(ThreadSandbox::Unsandboxed)
                 .is_unsandboxed()
         );
 
         // Two sandboxed layers union their scopes.
         assert_eq!(
-            ThreadSandbox::Sandboxed(policy(&["/a"], &["a.com"]))
-                .merge(ThreadSandbox::Sandboxed(policy(&["/b"], &["b.com"]))),
-            ThreadSandbox::Sandboxed(policy(&["/a", "/b"], &["a.com", "b.com"]))
+            ThreadSandbox::Sandboxed(policy(&[path_a], &["a.com"]))
+                .merge(ThreadSandbox::Sandboxed(policy(&[path_b], &["b.com"]))),
+            ThreadSandbox::Sandboxed(policy(&[path_a, path_b], &["a.com", "b.com"]))
         );
     }
 
@@ -743,13 +771,19 @@ mod tests {
     fn thread_grants_to_policy_maps_paths_and_domains() {
         use sandbox::{SandboxFsPolicy, SandboxNetPolicy};
 
+        // `to_policy` captures real `HostFilesystemLocation`s, so use a real dir.
+        let build_dir = tempfile::tempdir().expect("create temp build dir");
+        let build_path = build_dir.path().to_str().expect("utf-8 temp path");
+
         let mut grants = ThreadSandboxGrants::default();
-        grants.record(&request(hosts(&["github.com"]), false, &["/tmp/build"]));
+        grants.record(&request(hosts(&["github.com"]), false, &[build_path]));
         let policy = grants.to_policy();
         assert_eq!(
             policy.fs,
             SandboxFsPolicy::Restricted {
-                writable_paths: vec![PathBuf::from("/tmp/build")]
+                writable_paths: vec![
+                    HostFilesystemLocation::new(build_dir.path()).expect("capture temp dir")
+                ]
             }
         );
         assert_eq!(
@@ -781,8 +815,10 @@ mod tests {
     fn settings_policy_maps_persistent_permissions() {
         use sandbox::{SandboxFsPolicy, SandboxNetPolicy};
 
+        // `settings_sandbox_policy` captures real `HostFilesystemLocation`s.
+        let log_dir = tempfile::tempdir().expect("create temp log dir");
         let persistent = SandboxPermissions {
-            write_paths: vec![PathBuf::from("/var/log")],
+            write_paths: vec![log_dir.path().to_path_buf()],
             network_hosts: vec!["*.npmjs.org".to_string()],
             ..Default::default()
         };
@@ -790,7 +826,9 @@ mod tests {
         assert_eq!(
             policy.fs,
             SandboxFsPolicy::Restricted {
-                writable_paths: vec![PathBuf::from("/var/log")]
+                writable_paths: vec![
+                    HostFilesystemLocation::new(log_dir.path()).expect("capture temp dir")
+                ]
             }
         );
         assert_eq!(

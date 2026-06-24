@@ -20,7 +20,9 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
+use sandbox::{
+    GitSandboxPolicy, HostFilesystemLocation, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
+};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -4650,15 +4652,15 @@ impl ThreadView {
             // settings scope (greyed) for context above the disabled status.
             (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
                 SandboxTooltipState::DisabledForThread {
-                    settings: augment_settings_sandbox_policy(settings_policy, baseline),
+                    settings: augment_settings_sandbox_policy(&settings_policy, baseline),
                 }
             }
             (
                 ThreadSandbox::Sandboxed(settings_policy),
                 ThreadSandbox::Sandboxed(thread_policy),
             ) => SandboxTooltipState::Enabled {
-                settings: augment_settings_sandbox_policy(settings_policy, baseline),
-                thread: thread_policy,
+                settings: augment_settings_sandbox_policy(&settings_policy, baseline),
+                thread: SandboxPolicyDisplay::from_policy(&thread_policy),
             },
         };
 
@@ -5599,14 +5601,88 @@ impl Render for TokenUsageTooltip {
 enum SandboxTooltipState {
     /// Sandboxing is on: show the settings policy and the per-thread overrides.
     Enabled {
-        settings: SandboxPolicy,
-        thread: SandboxPolicy,
+        settings: SandboxPolicyDisplay,
+        thread: SandboxPolicyDisplay,
     },
     /// Turned off via the persistent `allow_unsandboxed` setting.
     DisabledInSettings,
     /// Turned off for this thread (the "run without sandbox for this thread"
     /// fallback). The settings policy is still shown, greyed out, for context.
-    DisabledForThread { settings: SandboxPolicy },
+    DisabledForThread { settings: SandboxPolicyDisplay },
+}
+
+/// A display-ready snapshot of a sandbox policy for the status tooltip.
+///
+/// The opaque [`HostFilesystemLocation`]s in a policy are stringified up front,
+/// when this is built, so the tooltip state (which outlives the build and is
+/// captured by the lazy tooltip closure) never holds the locations' fds open.
+#[derive(Clone)]
+struct SandboxPolicyDisplay {
+    fs: SandboxFsDisplay,
+    network: SandboxNetPolicy,
+    git: SandboxGitDisplay,
+}
+
+/// The filesystem write-access portion of a [`SandboxPolicyDisplay`].
+#[derive(Clone)]
+enum SandboxFsDisplay {
+    Unrestricted,
+    Restricted(Vec<WritableEntryDisplay>),
+}
+
+/// A single writable entry to display in the sandbox tooltip: either a real host
+/// location (already stringified for display) or the Linux-only host-isolated
+/// `/tmp` overlay, which has no backing host path and is purely a label.
+#[derive(Clone)]
+enum WritableEntryDisplay {
+    Path(String),
+    IsolatedTmp,
+}
+
+/// The Git-access portion of a [`SandboxPolicyDisplay`]: whether `.git` writes
+/// are granted, and the (display-only) `.git` directories the policy governs.
+#[derive(Clone)]
+struct SandboxGitDisplay {
+    allowed: bool,
+    git_dirs: Vec<String>,
+}
+
+impl SandboxPolicyDisplay {
+    /// Display a policy verbatim (used for the per-thread overrides, which carry
+    /// no implicit baseline grants). Takes the policy by reference and stringifies
+    /// its locations immediately, so no fd is retained past this call.
+    fn from_policy(policy: &SandboxPolicy) -> Self {
+        let fs = match &policy.fs {
+            SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+            SandboxFsPolicy::Restricted { writable_paths } => SandboxFsDisplay::Restricted(
+                writable_paths
+                    .iter()
+                    .map(|location| {
+                        WritableEntryDisplay::Path(location.untrusted_path_display().to_string())
+                    })
+                    .collect(),
+            ),
+        };
+        SandboxPolicyDisplay {
+            fs,
+            network: policy.network.clone(),
+            git: SandboxGitDisplay::from_policy(&policy.git),
+        }
+    }
+}
+
+impl SandboxGitDisplay {
+    /// Stringify a Git policy's `.git` directories for display, retaining no fds.
+    fn from_policy(git: &GitSandboxPolicy) -> Self {
+        SandboxGitDisplay {
+            allowed: git.allows_writes(),
+            git_dirs: git
+                .git_dirs()
+                .iter()
+                .map(|location| location.untrusted_path_display().to_string())
+                .collect(),
+        }
+    }
 }
 
 /// Build the hover tooltip for the sandbox status icon. Always opens with a
@@ -5657,11 +5733,6 @@ fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyEl
     body.into_any_element()
 }
 
-/// Render one section of the sandbox status tooltip.
-///
-/// When `show_empty` is true the section is always rendered, and groups that
-/// grant nothing show "None". When false, empty groups are omitted and the
-/// whole section is dropped (`None`) if it grants nothing at all.
 /// Fold the always-granted baseline writable paths (the project's worktree
 /// roots, derived from the same source the terminal tool uses) and, on Linux,
 /// the host-isolated `/tmp` overlay into a settings policy for display. These
@@ -5670,29 +5741,60 @@ fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyEl
 /// section rather than stored. A no-op when the fs is unrestricted (rendered as
 /// "All paths"), since there's nothing to scope.
 fn augment_settings_sandbox_policy(
-    mut policy: SandboxPolicy,
+    policy: &SandboxPolicy,
     baseline: Vec<PathBuf>,
-) -> SandboxPolicy {
-    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
-        let mut merged = baseline;
-        for path in writable_paths.drain(..) {
-            if !merged.contains(&path) {
-                merged.push(path);
+) -> SandboxPolicyDisplay {
+    let fs = match &policy.fs {
+        SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+        SandboxFsPolicy::Restricted { writable_paths } => {
+            // Dedup while we still hold the locations, so "same directory named
+            // two ways" collapses by inode identity rather than by display text.
+            let mut merged: Vec<HostFilesystemLocation> = Vec::new();
+            for path in baseline {
+                // The baseline roots are real directories, so capturing them is
+                // expected to succeed; on the off chance it fails we simply omit
+                // the row rather than block the (display-only) tooltip.
+                if let Ok(location) = HostFilesystemLocation::new(&path) {
+                    if !merged.contains(&location) {
+                        merged.push(location);
+                    }
+                }
             }
+            for location in writable_paths {
+                if !merged.contains(location) {
+                    merged.push(location.clone());
+                }
+            }
+            // Stringify now so the tooltip state holds no fds.
+            let mut entries: Vec<WritableEntryDisplay> = merged
+                .iter()
+                .map(|location| {
+                    WritableEntryDisplay::Path(location.untrusted_path_display().to_string())
+                })
+                .collect();
+            // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+            // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a
+            // real host path, so it can't be a captured location.
+            #[cfg(target_os = "linux")]
+            entries.push(WritableEntryDisplay::IsolatedTmp);
+            SandboxFsDisplay::Restricted(entries)
         }
-        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
-        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
-        // host path, so it can't come from the path source above.
-        #[cfg(target_os = "linux")]
-        merged.push(PathBuf::from("/tmp (isolated)"));
-        *writable_paths = merged;
+    };
+    SandboxPolicyDisplay {
+        fs,
+        network: policy.network.clone(),
+        git: SandboxGitDisplay::from_policy(&policy.git),
     }
-    policy
 }
 
+/// Render one section of the sandbox status tooltip.
+///
+/// When `show_empty` is true the section is always rendered, and groups that
+/// grant nothing show "None". When false, empty groups are omitted and the
+/// whole section is dropped (`None`) if it grants nothing at all.
 fn render_sandbox_policy_section(
     title: &str,
-    policy: &SandboxPolicy,
+    policy: &SandboxPolicyDisplay,
     show_empty: bool,
     cx: &App,
 ) -> Option<AnyElement> {
@@ -5729,20 +5831,22 @@ fn render_sandbox_policy_section(
 
 /// Git access grants nothing to surface unless `.git` writes are allowed *and*
 /// at least one `.git` directory is known.
-fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
-    !git.allows_writes() || git.git_dirs().is_empty()
+fn git_grants_nothing(git: &SandboxGitDisplay) -> bool {
+    !git.allowed || git.git_dirs.is_empty()
 }
 
 /// Rows for the Git-access group: one row per writable `.git` directory (these
 /// may live outside the project for a linked worktree).
-fn sandbox_git_rows(git: &GitSandboxPolicy, cx: &App) -> Vec<AnyElement> {
-    match git {
-        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
-            .iter()
-            .map(|path| sandbox_git_path_row(path, cx))
-            .collect(),
-        _ => Vec::new(),
+fn sandbox_git_rows(git: &SandboxGitDisplay, cx: &App) -> Vec<AnyElement> {
+    if !git.allowed {
+        return Vec::new();
     }
+    git.git_dirs
+        .iter()
+        // The display string was captured up front; reconstruct a throwaway path
+        // here purely to render a label + icon (never used as an identity).
+        .map(|dir| sandbox_git_path_row(Path::new(dir), cx))
+        .collect()
 }
 
 /// A `.git` directory row, tagged with a Git icon to distinguish it from plain
@@ -5764,8 +5868,8 @@ fn sandbox_git_path_row(path: &Path, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
-    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
+fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
+    matches!(fs, SandboxFsDisplay::Restricted(entries) if entries.is_empty())
 }
 
 fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
@@ -5778,15 +5882,21 @@ fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
 
 /// Rows for the write-access group: a message for the "all"/"none" cases, or one
 /// row per granted path.
-fn sandbox_fs_rows(fs: &SandboxFsPolicy, cx: &App) -> Vec<AnyElement> {
+fn sandbox_fs_rows(fs: &SandboxFsDisplay, cx: &App) -> Vec<AnyElement> {
     match fs {
-        SandboxFsPolicy::Unrestricted => vec![sandbox_message_row("All paths (unrestricted)")],
-        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
+        SandboxFsDisplay::Unrestricted => vec![sandbox_message_row("All paths (unrestricted)")],
+        SandboxFsDisplay::Restricted(entries) if entries.is_empty() => {
             vec![sandbox_message_row("None")]
         }
-        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+        SandboxFsDisplay::Restricted(entries) => entries
             .iter()
-            .map(|path| sandbox_path_row(path, cx))
+            .map(|entry| match entry {
+                // The display string was captured up front; see `sandbox_git_rows`.
+                WritableEntryDisplay::Path(path) => sandbox_path_row(Path::new(path), cx),
+                WritableEntryDisplay::IsolatedTmp => {
+                    sandbox_path_row(Path::new("/tmp (isolated)"), cx)
+                }
+            })
             .collect(),
     }
 }

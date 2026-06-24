@@ -137,26 +137,32 @@ impl SandboxWrap {
     /// (fail-open), or refuse (fail-closed). It runs a brief probe subprocess on
     /// Linux, so call it off the main thread. On platforms whose sandbox can't
     /// fail to set up this way it always returns `Ok`.
-    pub fn can_create_sandbox(
-        &self,
-        cwd: Option<&std::path::Path>,
-    ) -> Result<(), LinuxWslSandboxError> {
-        sandbox::Sandbox::can_create(&self.to_policy(), cwd).map_err(LinuxWslSandboxError::from)
+    pub fn can_create_sandbox(&self) -> Result<(), LinuxWslSandboxError> {
+        sandbox::Sandbox::can_create(&self.to_policy()).map_err(LinuxWslSandboxError::from)
     }
 
     /// Translate this request into the cross-platform [`sandbox::SandboxPolicy`].
+    ///
+    /// This is the enforcement-policy construction point, so it **captures** each
+    /// grant as a [`sandbox::HostFilesystemLocation`] (pinning the inode / canonical
+    /// path) rather than passing a re-resolvable path. A location that can't be
+    /// captured (e.g. it doesn't exist) is dropped from the grant — fail-closed.
     fn to_policy(&self) -> sandbox::SandboxPolicy {
         let fs = if self.allow_fs_write {
             sandbox::SandboxFsPolicy::Unrestricted
         } else {
-            sandbox::SandboxFsPolicy::Restricted {
-                writable_paths: self
-                    .writable_paths
-                    .iter()
-                    .cloned()
-                    .chain(self.extra_write_paths.iter().cloned())
-                    .collect(),
-            }
+            let writable_paths = self
+                .writable_paths
+                .iter()
+                .chain(self.extra_write_paths.iter())
+                .filter_map(|path| {
+                    // Create not-yet-existing writable grants (e.g. an approved
+                    // scratch dir) so they can be captured and bound; best-effort.
+                    let _ = std::fs::create_dir_all(path);
+                    sandbox::HostFilesystemLocation::new(path).ok()
+                })
+                .collect();
+            sandbox::SandboxFsPolicy::Restricted { writable_paths }
         };
         let network = match &self.network {
             SandboxNetworkAccess::None => sandbox::SandboxNetPolicy::Blocked,
@@ -169,7 +175,11 @@ impl SandboxWrap {
                     .collect(),
             },
         };
-        let git_dirs = self.git_dirs.clone();
+        let git_dirs = self
+            .git_dirs
+            .iter()
+            .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
+            .collect();
         let git = if self.allow_git_access {
             sandbox::GitSandboxPolicy::Allowed { git_dirs }
         } else {

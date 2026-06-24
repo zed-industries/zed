@@ -637,10 +637,9 @@ async fn run_terminal_tool(
                 let mut retries = 0usize;
                 loop {
                     let probe_wrap = wrap.clone();
-                    let probe_cwd = working_dir.clone();
                     let error = match cx
                         .background_executor()
-                        .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                        .spawn(async move { probe_wrap.can_create_sandbox() })
                         .await
                     {
                         Ok(()) => break Some(wrap),
@@ -686,10 +685,9 @@ async fn run_terminal_tool(
             #[cfg(not(target_os = "linux"))]
             {
                 let probe_wrap = wrap.clone();
-                let probe_cwd = working_dir.clone();
                 match cx
                     .background_executor()
-                    .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                    .spawn(async move { probe_wrap.can_create_sandbox() })
                     .await
                 {
                     Ok(()) => Some(wrap),
