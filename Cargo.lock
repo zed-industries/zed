@@ -116,6 +116,7 @@ dependencies = [
  "language_model",
  "log",
  "markdown",
+ "mime",
  "multi_buffer",
  "parking_lot",
  "portable-pty",
