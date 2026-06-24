@@ -63,58 +63,94 @@ const PROBE_RESULT_PREFIX: &str = "zed-wsl-probe:";
 /// login-shell stdout noise just like [`PROBE_RESULT_PREFIX`].
 const HELPER_RESULT_PREFIX: &str = "zed-wsl-helper:";
 
-/// Ensures a Linux `zed` is available inside WSL to act as the sandbox helper
-/// (`--wsl-sandbox-helper`), and prints its absolute path on a
-/// [`HELPER_RESULT_PREFIX`] line. `$1` is the release channel, `$2` the version
-/// (`latest` for dev builds); they're passed as argv, never interpolated, so a
-/// version/channel string can't inject shell.
+/// Ensures a Linux `zed` matching the running release is available inside WSL to
+/// act as the sandbox helper (`--wsl-sandbox-helper`), and prints its absolute
+/// in-WSL path on a [`HELPER_RESULT_PREFIX`] line. `$1` is the release channel,
+/// `$2` the version (`latest` for dev builds, which have no matching release and
+/// so track the latest nightly); both are passed as argv, never interpolated, so
+/// a version/channel string can't inject shell.
 ///
-/// Order:
-/// 1. If `zed` is already on the login-shell PATH, use it as-is (we trust the
-///    user's PATH; an attacker who can rewrite it has already won).
-/// 2. Else, if a previously-installed managed copy of the *exact* requested
-///    channel+version is present (tracked by a marker file), reuse it.
-/// 3. Else, run the standard Linux install script
-///    (`https://zed.dev/install.sh`) pinned to that channel+version, record the
-///    marker, and use the installed binary.
+/// Unlike a normal Linux install, this deliberately does **not** consult the WSL
+/// `PATH`: inside WSL `zed` typically resolves to the *Windows* `zed.exe` via
+/// interop, which is not a Linux binary and so can't be the helper. It also does
+/// not use the public install script (`install.sh`), which puts `zed` on the
+/// user's `PATH` and writes desktop entries we don't want. Instead the Windows
+/// side resolves the exact channel+version (see `wsl_zed_release`) and this
+/// script downloads that release's Linux tarball straight from
+/// `cloud.zed.dev/releases` and unpacks it into a private, off-`PATH` location
+/// (`~/.local/libexec/zed/<channel>`, the conventional spot for executables run
+/// by other programs rather than directly by the user). One managed copy per
+/// channel is kept, tracked by a marker file so an exact channel+version match
+/// is reused rather than re-downloaded.
 ///
 /// We ship no `zed` (nor `bwrap`) into WSL ourselves; this downloads `zed` on
 /// demand. A missing `curl`/`wget` (or a failed download) is a hard error the
 /// caller surfaces to the user, exactly like a missing `bwrap`.
 const HELPER_PROVISION_SCRIPT: &str = r#"
 set -eu
-if zed_on_path=$(command -v zed 2>/dev/null); then
-    printf 'zed-wsl-helper: %s\n' "$zed_on_path"
-    exit 0
-fi
 channel="$1"
 version="$2"
-suffix=""
-if [ "$channel" != "stable" ]; then suffix="-$channel"; fi
-managed="$HOME/.local/zed$suffix.app/bin/zed"
-marker="$HOME/.cache/zed/wsl-sandbox-helper-version"
+dest="$HOME/.local/libexec/zed/$channel"
+marker="$dest/.zed-wsl-helper-version"
 want="$channel $version"
-if [ -x "$managed" ] && [ "$(cat "$marker" 2>/dev/null)" = "$want" ]; then
-    printf 'zed-wsl-helper: %s\n' "$managed"
-    exit 0
+
+# Reuse an exact, already-installed channel+version.
+if [ "$(cat "$marker" 2>/dev/null || true)" = "$want" ]; then
+    helper=$(find "$dest" -type f -path '*/bin/zed' -print 2>/dev/null | head -n 1 || true)
+    if [ -n "$helper" ] && [ -x "$helper" ]; then
+        printf 'zed-wsl-helper: %s\n' "$helper"
+        exit 0
+    fi
 fi
+
+arch=$(uname -m)
+case "$arch" in
+    x86_64 | amd64) arch="x86_64" ;;
+    aarch64 | arm64) arch="aarch64" ;;
+    *) echo "unsupported WSL architecture for the zed sandbox helper: $arch" >&2; exit 1 ;;
+esac
+url="https://cloud.zed.dev/releases/$channel/$version/download?asset=zed&arch=$arch&os=linux&source=zed-wsl-sandbox"
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/zed-wsl-helper-XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+tarball="$tmp/zed.tar.gz"
 if command -v curl >/dev/null 2>&1; then
-    installer=$(curl -fL https://zed.dev/install.sh)
+    curl -fL "$url" -o "$tarball"
 elif command -v wget >/dev/null 2>&1; then
-    installer=$(wget -O- https://zed.dev/install.sh)
+    wget -O "$tarball" "$url"
 else
     echo 'neither curl nor wget is available in WSL to download zed' >&2
     exit 1
 fi
-printf '%s' "$installer" | ZED_CHANNEL="$channel" ZED_VERSION="$version" sh >&2 || exit 1
-mkdir -p "$(dirname "$marker")"
-printf '%s' "$want" > "$marker"
-if [ -x "$managed" ]; then
-    printf 'zed-wsl-helper: %s\n' "$managed"
-    exit 0
+
+mkdir -p "$tmp/unpacked"
+tar -xzf "$tarball" -C "$tmp/unpacked"
+helper_src=$(find "$tmp/unpacked" -type f -path '*/bin/zed' -print 2>/dev/null | head -n 1 || true)
+if [ -z "$helper_src" ]; then
+    echo 'the downloaded zed tarball did not contain a bin/zed binary' >&2
+    exit 1
 fi
-echo "the zed install script did not produce $managed" >&2
-exit 1
+app=$(dirname "$(dirname "$helper_src")")
+
+# Install atomically: stage the unpacked app next to the destination on the same
+# filesystem, then swap it into place so a concurrent run never sees (or execs) a
+# partially-written install. The whole app dir is kept so the binary's bundled
+# libraries ($ORIGIN/../lib) remain alongside it.
+mkdir -p "$(dirname "$dest")"
+rm -rf "$dest.new" "$dest.old"
+cp -a "$app" "$dest.new"
+if [ -e "$dest" ]; then mv "$dest" "$dest.old"; fi
+mv "$dest.new" "$dest"
+rm -rf "$dest.old"
+printf '%s' "$want" > "$marker"
+
+helper=$(find "$dest" -type f -path '*/bin/zed' -print 2>/dev/null | head -n 1 || true)
+if [ -z "$helper" ] || [ ! -x "$helper" ]; then
+    echo "the installed zed sandbox helper is missing or not executable under $dest" >&2
+    exit 1
+fi
+printf 'zed-wsl-helper: %s\n' "$helper"
+exit 0
 "#;
 
 /// Marks a failure of the Windows WSL sandboxing *environment*: WSL is missing
@@ -517,13 +553,13 @@ fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
 
 /// Ensure a Linux `zed` of the given release `channel`/`version` is available
 /// inside WSL and return its absolute in-WSL path, to be `--exec`'d as the
-/// `--wsl-sandbox-helper`. Runs [`HELPER_PROVISION_SCRIPT`] (which may download
-/// `zed` via the install script on first use).
+/// `--wsl-sandbox-helper`. Runs [`HELPER_PROVISION_SCRIPT`] (which downloads the
+/// matching release tarball into an off-`PATH` location on first use).
 ///
 /// Successful resolutions are cached per `(distro, channel, version)` for the
 /// life of the process — once provisioned, the path won't change. Failures are
-/// not cached, so a user who installs `curl`/`zed` (or fixes networking) after
-/// an error can retry without restarting Zed.
+/// not cached, so a user who installs `curl` (or fixes networking) after an
+/// error can retry without restarting Zed.
 async fn ensure_wsl_zed_helper(
     wsl_exe: &Path,
     distro: Option<&str>,

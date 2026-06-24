@@ -245,14 +245,19 @@ flowchart TD
     Win --> Wsl --> Helper --> Bwrap --> Val --> Cmd
 ```
 
-Distribution: Zed ships no Linux binary into the distro. The Windows side
-provisions one on demand — if `zed` is already on the WSL `PATH` it's used as-is;
-otherwise the standard Linux install script (`https://zed.dev/install.sh`) is run
-inside WSL, pinned to the running channel + version (dev builds, which have no
-matching release, pull the latest nightly). One managed copy is kept, tracked by
-a marker file so an exact version match is reused rather than re-downloaded. We
-ship no `bwrap` either; a missing one is surfaced to the user, same as native
-Linux.
+Distribution: Zed ships no Linux binary into the distro; the Windows side
+provisions one on demand. It deliberately **ignores** the WSL `PATH` — inside
+WSL `zed` usually resolves to the *Windows* `zed.exe` via interop, which is not a
+Linux binary and can't be the helper — and it does **not** use the public
+install script (which puts `zed` on `PATH` and writes desktop entries). Instead
+it resolves the running channel + version (dev builds, which have no matching
+release, track the latest nightly) and downloads that release's Linux tarball
+straight from `cloud.zed.dev/releases`, unpacking it into an off-`PATH` location
+(`~/.local/libexec/zed/<channel>`, the conventional spot for executables run by
+other programs rather than directly by the user). One managed copy per channel is
+kept, tracked by a marker file so an exact version match is reused rather than
+re-downloaded. We ship no `bwrap` either; a missing one is surfaced to the user,
+same as native Linux.
 
 ## Implementation status
 
@@ -262,7 +267,7 @@ Linux.
 | macOS canonical-path seal | implemented |
 | Linux SCM_RIGHTS in-sandbox validator | implemented |
 | WSL helper (`--wsl-sandbox-helper`: capture+validate in WSL, same SCM_RIGHTS detection as native Linux) | implemented (Windows-only; not exercised by the Linux/macOS CI) |
-| WSL helper provisioning (download a matching Linux `zed` via the install script) | implemented (Windows-only) |
+| WSL helper provisioning (download a matching Linux `zed` release into an off-`PATH` location) | implemented (Windows-only) |
 
 Implementation notes for the Linux validator:
 
