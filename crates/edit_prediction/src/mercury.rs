@@ -50,6 +50,7 @@ impl Mercury {
             events,
             related_files,
             debug_tx,
+            trigger,
             ..
         }: EditPredictionModelInput,
         credentials_provider: Arc<dyn CredentialsProvider>,
@@ -140,6 +141,7 @@ impl Mercury {
                 stream: false,
                 stream_options: None,
                 max_completion_tokens: None,
+                max_tokens: None,
                 stop: vec![],
                 temperature: None,
                 tool_choice: None,
@@ -255,6 +257,7 @@ impl Mercury {
                     Some(editable_range),
                     inputs,
                     None,
+                    trigger,
                     cx.background_executor().now() - request_start,
                     cx,
                 )

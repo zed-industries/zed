@@ -3,7 +3,7 @@ use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, ThreadStatus,
     UserMessageId,
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
@@ -281,6 +281,19 @@ fn always_allow_tools(cx: &mut TestAppContext) {
     });
 }
 
+/// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
+/// variant exposed to the model as `terminal`. Tests that register
+/// `TerminalTool` directly need this because sandboxing is enabled by default
+/// for staff (and in debug builds), in which case `Thread::enabled_tools`
+/// would otherwise expose `SandboxedTerminalTool` under that name instead.
+fn disable_sandboxing(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.sandbox_permissions.allow_unsandboxed = true;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+}
+
 #[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
@@ -479,6 +492,32 @@ async fn test_thinking(cx: &mut TestAppContext) {
         )
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
+async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    fake_model.set_supports_thinking(true);
+
+    // With thinking toggled off, a model that can disable thinking honors
+    // the toggle...
+    thread.update(cx, |thread, cx| {
+        thread.set_thinking_enabled(false, cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(!request.thinking_allowed);
+    });
+
+    // ...but a model that always thinks ignores the stale toggle state.
+    fake_model.set_supports_disabling_thinking(false);
+    thread.update(cx, |thread, cx| {
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(request.thinking_allowed);
+    });
 }
 
 #[gpui::test]
@@ -1024,20 +1063,6 @@ async fn expect_tool_call_update_fields(
         .unwrap();
     match event {
         ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => update,
-        event => {
-            panic!("Unexpected event {event:?}");
-        }
-    }
-}
-
-async fn expect_plan(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::Plan {
-    let event = events
-        .next()
-        .await
-        .expect("no plan event received")
-        .unwrap();
-    match event {
-        ThreadEvent::Plan(plan) => plan,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -2203,6 +2228,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2482,6 +2508,7 @@ async fn collect_events_until_stop(
 async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2550,6 +2577,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     // Tests that cancellation properly kills all running terminal tools when multiple are active.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(MultiTerminalEnvironment::new());
@@ -2660,6 +2688,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     // cancel button) properly reports user stopped via the was_stopped_by_user path.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2751,6 +2780,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     // Tests that when a timeout is configured and expires, the tool result indicates timeout.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -3207,6 +3237,146 @@ async fn test_latest_token_usage_counts_cached_input_tokens(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_cumulative_token_usage(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(EchoTool);
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The first request emits two cumulative snapshots; only the final values
+    // must be counted, exactly once.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 10,
+            ..Default::default()
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "hello"}).to_string(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The second request (after the tool call) is counted in addition to the first.
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 200,
+            output_tokens: 30,
+            ..Default::default()
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let expected = TokenUsage {
+        input_tokens: 300,
+        output_tokens: 80,
+        ..Default::default()
+    };
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.cumulative_token_usage(), expected);
+    });
+
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(db_thread.cumulative_token_usage, expected);
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    let restored = cx.update(|cx| {
+        let thread = thread.read(cx);
+        let project = thread.project.clone();
+        let context_server_registry = thread.context_server_registry.clone();
+        let templates = thread.templates.clone();
+        cx.new(|cx| {
+            Thread::from_db(
+                acp::SessionId::new("restored"),
+                db_thread,
+                project,
+                project_context.clone(),
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    });
+    restored.read_with(cx, |thread, _| {
+        assert_eq!(thread.cumulative_token_usage(), expected);
+    });
+}
+
+#[gpui::test]
+async fn test_cumulative_token_usage_keeps_accounted_usage_monotonic(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 10,
+            ..Default::default()
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage::default(),
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..Default::default()
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.cumulative_token_usage(),
+            TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                ..Default::default()
+            }
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_truncate_second_message(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -3369,6 +3539,72 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Hello world".into()))
     });
+}
+
+#[gpui::test]
+async fn test_stream_thread_title_keeps_only_first_line(cx: &mut TestAppContext) {
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = LanguageModelRequest::default();
+
+    let title_task = cx.spawn({
+        let model = model.clone();
+        async move |cx| crate::stream_thread_title(model, request, &cx).await
+    });
+
+    cx.run_until_parked();
+
+    model.send_last_completion_stream_text_chunk("Hello world\nGoodnight Moon");
+    model.end_last_completion_stream();
+
+    let title = title_task.await.unwrap();
+    assert_eq!(title, "Hello world");
+}
+
+#[gpui::test]
+async fn test_stream_thread_title_stops_when_newline_ends_chunk(cx: &mut TestAppContext) {
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = LanguageModelRequest::default();
+
+    let title_task = cx.spawn({
+        let model = model.clone();
+        async move |cx| crate::stream_thread_title(model, request, &cx).await
+    });
+
+    cx.run_until_parked();
+
+    model.send_last_completion_stream_text_chunk("Hello world\n");
+    model.send_last_completion_stream_text_chunk("Goodnight Moon");
+    model.end_last_completion_stream();
+
+    let title = title_task.await.unwrap();
+    assert_eq!(title, "Hello world");
+}
+
+// `Thread::to_markdown` (live native) and `DbThread::to_markdown` (persisted
+// native) must stay byte-for-byte identical for the same messages, since both
+// back the sidebar's native "Open Thread as Markdown" action. This pins that
+// they share a single rendering path.
+#[gpui::test]
+async fn test_db_thread_markdown_matches_live_thread(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_text_chunk("Hey there!");
+    fake_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx)).await;
+    let live_markdown = thread.read_with(cx, |thread, _| thread.to_markdown());
+
+    assert!(!live_markdown.is_empty());
+    assert_eq!(db_thread.to_markdown(), live_markdown);
 }
 
 #[gpui::test]
@@ -3573,7 +3809,6 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     assert_eq!(
         listed_models[&AgentModelGroupName("Fake".into())][0]
             .id
-            .0
             .as_ref(),
         "fake/fake"
     );
@@ -3712,267 +3947,6 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 .raw_output("Hello!")
         )
     );
-}
-
-#[gpui::test]
-async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
-    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    thread.update(cx, |thread, _cx| thread.add_tool(UpdatePlanTool));
-    let fake_model = model.as_fake();
-
-    let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Make a plan"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let input = json!({
-        "plan": [
-            {
-                "step": "Inspect the code",
-                "status": "completed",
-            },
-            {
-                "step": "Implement the tool",
-                "status": "in_progress"
-            },
-            {
-                "step": "Run tests",
-                "status": "pending",
-            }
-        ]
-    });
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
-        LanguageModelToolUse {
-            id: "plan_1".into(),
-            name: UpdatePlanTool::NAME.into(),
-            raw_input: input.to_string(),
-            input,
-            is_input_complete: true,
-            thought_signature: None,
-        },
-    ));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    let tool_call = expect_tool_call(&mut events).await;
-    assert_eq!(
-        tool_call,
-        acp::ToolCall::new("plan_1", "Update plan")
-            .kind(acp::ToolKind::Think)
-            .raw_input(json!({
-                "plan": [
-                    {
-                        "step": "Inspect the code",
-                        "status": "completed",
-                    },
-                    {
-                        "step": "Implement the tool",
-                        "status": "in_progress"
-                    },
-                    {
-                        "step": "Run tests",
-                        "status": "pending",
-                    }
-                ]
-            }))
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                "update_plan".into()
-            )]))
-    );
-
-    let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(
-        update,
-        acp::ToolCallUpdate::new(
-            "plan_1",
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
-        )
-    );
-
-    let plan = expect_plan(&mut events).await;
-    assert_eq!(
-        plan,
-        acp::Plan::new(vec![
-            acp::PlanEntry::new(
-                "Inspect the code",
-                acp::PlanEntryPriority::Medium,
-                acp::PlanEntryStatus::Completed,
-            ),
-            acp::PlanEntry::new(
-                "Implement the tool",
-                acp::PlanEntryPriority::Medium,
-                acp::PlanEntryStatus::InProgress,
-            ),
-            acp::PlanEntry::new(
-                "Run tests",
-                acp::PlanEntryPriority::Medium,
-                acp::PlanEntryStatus::Pending,
-            ),
-        ])
-    );
-
-    let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(
-        update,
-        acp::ToolCallUpdate::new(
-            "plan_1",
-            acp::ToolCallUpdateFields::new()
-                .status(acp::ToolCallStatus::Completed)
-                .raw_output("Plan updated")
-        )
-    );
-}
-
-#[gpui::test]
-async fn test_update_title_tool_sets_thread_title(cx: &mut TestAppContext) {
-    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-    let summary_model = Arc::new(FakeLanguageModel::default());
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["update-title-tool".to_string()]);
-    });
-    thread.update(cx, |thread, cx| {
-        thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
-        thread.set_summarization_model(Some(summary_model.clone()), cx);
-    });
-
-    let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let input = json!({
-        "title": "Session title tool"
-    });
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
-        LanguageModelToolUse {
-            id: "title_1".into(),
-            name: UpdateTitleTool::NAME.into(),
-            raw_input: input.to_string(),
-            input,
-            is_input_complete: true,
-            thought_signature: None,
-        },
-    ));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    let tool_call = expect_tool_call(&mut events).await;
-    assert_eq!(
-        tool_call,
-        acp::ToolCall::new("title_1", "Update title: Session title tool")
-            .kind(acp::ToolKind::Think)
-            .raw_input(json!({
-                "title": "Session title tool"
-            }))
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                "update_title".into()
-            )]))
-    );
-
-    let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(
-        update,
-        acp::ToolCallUpdate::new(
-            "title_1",
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
-        )
-    );
-
-    let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(
-        update,
-        acp::ToolCallUpdate::new(
-            "title_1",
-            acp::ToolCallUpdateFields::new()
-                .status(acp::ToolCallStatus::Completed)
-                .raw_output("Session title updated")
-        )
-    );
-
-    thread.read_with(cx, |thread, _| {
-        assert_eq!(thread.title(), Some("Session title tool".into()));
-    });
-    assert_eq!(summary_model.pending_completions(), Vec::new());
-}
-
-#[gpui::test]
-async fn test_update_title_availability_suppresses_summary_title_generation(
-    cx: &mut TestAppContext,
-) {
-    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-    let summary_model = Arc::new(FakeLanguageModel::default());
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["update-title-tool".to_string()]);
-    });
-    thread.update(cx, |thread, cx| {
-        thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
-        thread.set_summarization_model(Some(summary_model.clone()), cx);
-    });
-
-    let send = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    fake_model.send_last_completion_stream_text_chunk("Done");
-    fake_model.end_last_completion_stream();
-    send.collect::<Vec<_>>().await;
-    cx.run_until_parked();
-
-    thread.read_with(cx, |thread, _| {
-        assert_eq!(thread.title(), None);
-    });
-    assert_eq!(summary_model.pending_completions(), Vec::new());
-}
-
-#[gpui::test]
-async fn test_update_title_flag_without_available_tool_falls_back_to_summary_title_generation(
-    cx: &mut TestAppContext,
-) {
-    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-    let summary_model = Arc::new(FakeLanguageModel::default());
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["update-title-tool".to_string()]);
-    });
-    thread.update(cx, |thread, cx| {
-        thread.set_summarization_model(Some(summary_model.clone()), cx);
-    });
-
-    let send = thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    fake_model.send_last_completion_stream_text_chunk("Done");
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    assert_eq!(summary_model.pending_completions().len(), 1);
-
-    summary_model.send_last_completion_stream_text_chunk("Fallback title");
-    summary_model.end_last_completion_stream();
-    send.collect::<Vec<_>>().await;
-    cx.run_until_parked();
-
-    thread.read_with(cx, |thread, _| {
-        assert_eq!(thread.title(), Some("Fallback title".into()));
-    });
 }
 
 #[gpui::test]
@@ -4487,8 +4461,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             StreamingJsonErrorContextTool::NAME: true,
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
-                            UpdatePlanTool::NAME: true,
-                            UpdateTitleTool::NAME: true,
                         }
                     }
                 }

@@ -166,7 +166,7 @@ pub fn init(cx: &mut App) {
                 })
                 .detach_and_notify_err(workspace_handle, window, cx);
             } else {
-                workspace.show_error(&"There’s no active call; join one first.", cx);
+                workspace.show_error("There’s no active call; join one first.", cx);
             }
         });
         workspace.register_action(|workspace, _: &ShareProject, window, cx| {

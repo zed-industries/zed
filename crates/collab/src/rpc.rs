@@ -30,7 +30,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use collections::{HashMap, HashSet};
+use collections::{HashSet, TypeIdHashMap};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
@@ -313,7 +313,7 @@ pub struct Server {
     peer: Arc<Peer>,
     pub connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    handlers: HashMap<TypeId, MessageHandler>,
+    handlers: TypeIdHashMap<MessageHandler>,
     teardown: watch::Sender<bool>,
 }
 
@@ -493,6 +493,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitWorktreeCreatedAt>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
             .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
             .add_request_stream_handler(
