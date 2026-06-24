@@ -912,11 +912,11 @@ async-process = { git = "https://github.com/zed-industries/async-process.git", r
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
 notify = { git = "https://github.com/zed-industries/notify", rev = "faecbc33db4f59313e5225ef766bfd9e54a54cfd" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "faecbc33db4f59313e5225ef766bfd9e54a54cfd" }
-webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c3a55bbc207008f1ca3474b6037fdd3c443cad0f" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

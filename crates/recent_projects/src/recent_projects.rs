@@ -632,9 +632,7 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .minimum_results_width(rems(rem_width))
-                .height(rems(24.))
-                .no_vertical_padding()
+                .initial_width(rems(rem_width))
                 .show_scrollbar(true)
         });
 
@@ -1583,7 +1581,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
+                            IconButton::new("add_to_workspace", IconName::FolderInclude)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
                                     let focus_handle = self.focus_handle.clone();
@@ -2573,8 +2571,7 @@ mod tests {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .height(Rems::from_pixels(px(240.0), window))
-                .no_vertical_padding()
+                .max_height(Rems::from_pixels(px(240.0), window))
         });
         draw(cx);
         (picker, cx)

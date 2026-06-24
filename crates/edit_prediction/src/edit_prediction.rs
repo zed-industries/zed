@@ -68,7 +68,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
-use util::{RangeExt as _, ResultExt as _};
+use util::ResultExt as _;
 
 pub mod cursor_excerpt;
 pub mod data_collection;
@@ -140,10 +140,6 @@ pub struct EditPredictionJumpsFeatureFlag;
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
@@ -367,7 +363,6 @@ struct ProjectState {
     pending_prediction_captures: Vec<PendingPredictionCapture>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
-    last_jump_prediction_refresh: Option<(EntityId, Instant)>,
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
@@ -502,7 +497,7 @@ impl ProjectState {
 
 #[derive(Debug, Clone)]
 struct CurrentEditPrediction {
-    pub requested_by: PredictionRequestedBy,
+    pub requested_by: EntityId,
     pub prediction: EditPrediction,
     pub was_shown: bool,
     pub shown_with: Option<edit_prediction_types::SuggestionDisplayType>,
@@ -529,13 +524,11 @@ impl CurrentEditPrediction {
             return true;
         };
 
-        let requested_by_buffer_id = self.requested_by.buffer_id();
-
         // This reduces the occurrence of UI thrash from replacing edits
         //
         // TODO: This is fairly arbitrary - should have a more general heuristic that handles multiple edits.
-        if requested_by_buffer_id == Some(self.prediction.buffer.entity_id())
-            && requested_by_buffer_id == Some(old_prediction.prediction.buffer.entity_id())
+        if self.requested_by == self.prediction.buffer.entity_id()
+            && self.requested_by == old_prediction.prediction.buffer.entity_id()
             && old_edits.len() == 1
             && new_edits.len() == 1
         {
@@ -548,28 +541,7 @@ impl CurrentEditPrediction {
     }
 }
 
-#[derive(Debug, Clone)]
-enum PredictionRequestedBy {
-    DiagnosticsUpdate,
-    Buffer(EntityId),
-}
-
-impl PredictionRequestedBy {
-    pub fn buffer_id(&self) -> Option<EntityId> {
-        match self {
-            PredictionRequestedBy::DiagnosticsUpdate => None,
-            PredictionRequestedBy::Buffer(buffer_id) => Some(*buffer_id),
-        }
-    }
-}
-
 const DIAGNOSTIC_LINES_RANGE: u32 = 20;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DiagnosticSearchScope {
-    Local,
-    Global,
-}
 
 #[derive(Debug)]
 struct PendingPrediction {
@@ -1441,7 +1413,6 @@ impl EditPredictionStore {
                 pending_prediction_captures: Vec::new(),
                 next_pending_prediction_id: 0,
                 last_edit_prediction_refresh: None,
-                last_jump_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
                 _subscriptions: [
                     cx.subscribe(&project, Self::handle_project_event),
@@ -1583,24 +1554,6 @@ impl EditPredictionStore {
                         }
                     }
                     push_recent_file(&mut project_state.recently_viewed_files, recent_file);
-                }
-            }
-            project::Event::DiagnosticsUpdated { .. } => {
-                if self
-                    .projects
-                    .get(&project.entity_id())
-                    .and_then(|project_state| project_state.last_edit_source)
-                    == Some(BufferEditSource::Agent)
-                {
-                    return;
-                }
-
-                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
-                    self.refresh_prediction_from_diagnostics(
-                        project,
-                        DiagnosticSearchScope::Global,
-                        cx,
-                    );
                 }
             }
             _ => (),
@@ -1854,19 +1807,10 @@ impl EditPredictionStore {
 
         if prediction.targets_buffer(buffer.read(cx)) {
             Some(BufferEditPrediction::Local { prediction })
+        } else if requested_by == &buffer.entity_id() {
+            Some(BufferEditPrediction::Jump { prediction })
         } else {
-            let show_jump = match requested_by {
-                PredictionRequestedBy::Buffer(requested_by_buffer_id) => {
-                    requested_by_buffer_id == &buffer.entity_id()
-                }
-                PredictionRequestedBy::DiagnosticsUpdate => true,
-            };
-
-            if show_jump {
-                Some(BufferEditPrediction::Jump { prediction })
-            } else {
-                None
-            }
+            None
         }
     }
 
@@ -2439,192 +2383,35 @@ impl EditPredictionStore {
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
-        let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
-
-        self.queue_prediction_refresh(
-            project.clone(),
-            trigger,
-            buffer.entity_id(),
-            cx,
-            move |this, cx| {
-                let Some(request_task) = this
-                    .update(cx, |this, cx| {
-                        this.request_prediction_internal(
-                            project.clone(),
-                            buffer.clone(),
-                            position,
-                            trigger,
-                            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
-                            cx,
-                        )
-                    })
-                    .log_err()
-                else {
-                    return Task::ready(anyhow::Ok(None));
-                };
-
-                cx.spawn(async move |_cx| {
-                    request_task.await.map(|prediction_result| {
-                        prediction_result.map(|prediction_result| {
-                            (
-                                prediction_result,
-                                PredictionRequestedBy::Buffer(buffer.entity_id()),
-                            )
-                        })
-                    })
-                })
-            },
-        )
-    }
-
-    pub fn refresh_prediction_from_diagnostics(
-        &mut self,
-        project: Entity<Project>,
-        scope: DiagnosticSearchScope,
-        cx: &mut Context<Self>,
-    ) {
-        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
-            return;
-        }
-
         if currently_following(&project, cx) {
             return;
         }
 
-        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
-            return;
-        };
+        let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
 
-        // Prefer predictions from buffer
-        if project_state.current_prediction.is_some() {
-            log::debug!(
-                "edit_prediction: diagnostic refresh skipped, current prediction already exists"
-            );
-            return;
-        }
-
-        self.queue_prediction_refresh(
-            project.clone(),
-            PredictEditsRequestTrigger::Diagnostics,
-            project.entity_id(),
-            cx,
-            move |this, cx| {
-                let Some((active_buffer, snapshot, cursor_point)) = this
-                    .read_with(cx, |this, cx| {
-                        let project_state = this.projects.get(&project.entity_id())?;
-                        let (buffer, position) = project_state.active_buffer(&project, cx)?;
-                        let snapshot = buffer.read(cx).snapshot();
-
-                        if !Self::predictions_enabled_at(&snapshot, position, cx) {
-                            return None;
-                        }
-
-                        let cursor_point = position
-                            .map(|pos| pos.to_point(&snapshot))
-                            .unwrap_or_default();
-
-                        Some((buffer, snapshot, cursor_point))
-                    })
-                    .log_err()
-                    .flatten()
-                else {
-                    return Task::ready(anyhow::Ok(None));
-                };
-
-                cx.spawn(async move |cx| {
-                    let diagnostic_search_range = match scope {
-                        DiagnosticSearchScope::Local => {
-                            let diagnostic_search_start =
-                                cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
-                            let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
-                            Point::new(diagnostic_search_start, 0)
-                                ..Point::new(diagnostic_search_end, 0)
-                        }
-                        DiagnosticSearchScope::Global => Default::default(),
-                    };
-
-                    let Some((jump_buffer, jump_position)) = Self::next_diagnostic_location(
-                        active_buffer,
-                        &snapshot,
-                        diagnostic_search_range,
-                        cursor_point,
-                        &project,
+        self.queue_prediction_refresh(project.clone(), buffer.entity_id(), cx, move |this, cx| {
+            let Some(request_task) = this
+                .update(cx, |this, cx| {
+                    this.request_prediction_internal(
+                        project.clone(),
+                        buffer.clone(),
+                        position,
+                        trigger,
                         cx,
                     )
-                    .await?
-                    else {
-                        return anyhow::Ok(None);
-                    };
-
-                    let Some(prediction_result) = this
-                        .update(cx, |this, cx| {
-                            this.request_prediction_internal(
-                                project.clone(),
-                                jump_buffer.clone(),
-                                jump_position,
-                                PredictEditsRequestTrigger::Diagnostics,
-                                cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
-                                cx,
-                            )
-                        })?
-                        .await?
-                    else {
-                        return anyhow::Ok(None);
-                    };
-
-                    this.update(cx, |this, cx| {
-                        Some((
-                            if this
-                                .get_or_init_project(&project, cx)
-                                .current_prediction
-                                .is_none()
-                            {
-                                prediction_result
-                            } else {
-                                EditPredictionResult {
-                                    reject_reason: Some(
-                                        EditPredictionRejectReason::CurrentPreferred,
-                                    ),
-                                    ..prediction_result
-                                }
-                            },
-                            PredictionRequestedBy::DiagnosticsUpdate,
-                        ))
-                    })
                 })
-            },
-        );
-    }
+                .log_err()
+            else {
+                return Task::ready(anyhow::Ok(None));
+            };
 
-    fn predictions_enabled_at(
-        snapshot: &BufferSnapshot,
-        position: Option<language::Anchor>,
-        cx: &App,
-    ) -> bool {
-        let file = snapshot.file();
-        let all_settings = all_language_settings(file, cx);
-        if !all_settings.show_edit_predictions(snapshot.language(), cx)
-            || file.is_some_and(|file| !all_settings.edit_predictions_enabled_for_file(file, cx))
-        {
-            return false;
-        }
-
-        if let Some(last_position) = position {
-            let settings = snapshot.settings_at(last_position, cx);
-
-            if !settings.edit_predictions_disabled_in.is_empty()
-                && let Some(scope) = snapshot.language_scope_at(last_position)
-                && let Some(scope_name) = scope.override_name()
-                && settings
-                    .edit_predictions_disabled_in
-                    .iter()
-                    .any(|s| s == scope_name)
-            {
-                return false;
-            }
-        }
-
-        true
+            cx.spawn(async move |_cx| {
+                request_task.await.map(|prediction_result| {
+                    prediction_result
+                        .map(|prediction_result| (prediction_result, buffer.entity_id()))
+                })
+            })
+        })
     }
 
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -2665,29 +2452,14 @@ impl EditPredictionStore {
     fn queue_prediction_refresh(
         &mut self,
         project: Entity<Project>,
-        request_trigger: PredictEditsRequestTrigger,
         throttle_entity: EntityId,
         cx: &mut Context<Self>,
         do_refresh: impl FnOnce(
             WeakEntity<Self>,
             &mut AsyncApp,
-        )
-            -> Task<Result<Option<(EditPredictionResult, PredictionRequestedBy)>>>
+        ) -> Task<Result<Option<(EditPredictionResult, EntityId)>>>
         + 'static,
     ) {
-        fn select_throttle(
-            project_state: &mut ProjectState,
-            request_trigger: PredictEditsRequestTrigger,
-        ) -> &mut Option<(EntityId, Instant)> {
-            match request_trigger {
-                PredictEditsRequestTrigger::Diagnostics
-                | PredictEditsRequestTrigger::DiagnosticNavigation => {
-                    &mut project_state.last_jump_prediction_refresh
-                }
-                _ => &mut project_state.last_edit_prediction_refresh,
-            }
-        }
-
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
                 EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
@@ -2706,13 +2478,13 @@ impl EditPredictionStore {
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
-        let throttle_at_enqueue = *select_throttle(project_state, request_trigger);
+        let throttle_at_enqueue = project_state.last_edit_prediction_refresh;
 
         let task = cx.spawn(async move |this, cx| {
             let throttle_wait = this
                 .update(cx, |this, cx| {
                     let project_state = this.get_or_init_project(&project, cx);
-                    let throttle = *select_throttle(project_state, request_trigger);
+                    let throttle = project_state.last_edit_prediction_refresh;
 
                     let now = cx.background_executor().now();
                     throttle.and_then(|(last_entity, last_timestamp)| {
@@ -2743,12 +2515,12 @@ impl EditPredictionStore {
                 }
 
                 // Another request has been already sent since this was enqueued
-                if *select_throttle(project_state, request_trigger) != throttle_at_enqueue {
+                if project_state.last_edit_prediction_refresh != throttle_at_enqueue {
                     return;
                 }
 
                 let new_refresh = (throttle_entity, cx.background_executor().now());
-                *select_throttle(project_state, request_trigger) = Some(new_refresh);
+                project_state.last_edit_prediction_refresh = Some(new_refresh);
                 is_cancelled = false;
             })
             .ok();
@@ -2908,7 +2680,6 @@ impl EditPredictionStore {
             active_buffer.clone(),
             position,
             trigger,
-            cx.has_flag::<EditPredictionJumpsFeatureFlag>(),
             cx,
         )
     }
@@ -2919,7 +2690,6 @@ impl EditPredictionStore {
         active_buffer: Entity<Buffer>,
         position: language::Anchor,
         trigger: PredictEditsRequestTrigger,
-        allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let is_cloud_zeta = matches!(self.edit_prediction_model, EditPredictionModel::Zeta)
@@ -2953,7 +2723,6 @@ impl EditPredictionStore {
                 .as_ref()
                 .map(|last_event| last_event.new_snapshot.clone()),
         });
-        let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.iter().map(|e| e.event.clone()).collect();
         let debug_tx = project_state.debug_tx.clone();
@@ -3053,148 +2822,7 @@ impl EditPredictionStore {
             }
         };
 
-        cx.spawn(async move |this, cx| {
-            let prediction = task.await?;
-
-            // Only fall back to diagnostics-based prediction if we got a
-            // the model had nothing to suggest for the buffer
-            if prediction.is_none()
-                && allow_jump
-                && has_events
-                && !matches!(
-                    trigger,
-                    PredictEditsRequestTrigger::Diagnostics
-                        | PredictEditsRequestTrigger::DiagnosticNavigation
-                )
-            {
-                this.update(cx, |this, cx| {
-                    this.refresh_prediction_from_diagnostics(
-                        project,
-                        DiagnosticSearchScope::Local,
-                        cx,
-                    );
-                })?;
-                return anyhow::Ok(None);
-            }
-
-            Ok(prediction)
-        })
-    }
-
-    pub(crate) async fn next_diagnostic_location(
-        active_buffer: Entity<Buffer>,
-        active_buffer_snapshot: &BufferSnapshot,
-        active_buffer_diagnostic_search_range: Range<Point>,
-        active_buffer_cursor_point: Point,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<Option<(Entity<Buffer>, language::Anchor)>> {
-        let collaborator_cursor_rows: Vec<u32> = active_buffer_snapshot
-            .selections_in_range(
-                Anchor::min_max_range_for_buffer(active_buffer_snapshot.remote_id()),
-                false,
-            )
-            .flat_map(|(_, _, _, selections)| {
-                selections.map(|s| s.head().to_point(active_buffer_snapshot).row)
-            })
-            .collect();
-
-        let mut jump_location = active_buffer_snapshot
-            .diagnostic_groups(None)
-            .into_iter()
-            .filter_map(|(_, group)| {
-                let range = &group.entries[group.primary_ix]
-                    .range
-                    .to_point(&active_buffer_snapshot);
-                if range.overlaps(&active_buffer_diagnostic_search_range) {
-                    return None;
-                }
-                let near_collaborator = collaborator_cursor_rows.iter().any(|&collab_row| {
-                    range.start.row.abs_diff(collab_row) <= DIAGNOSTIC_LINES_RANGE
-                });
-                let near_local = active_buffer_cursor_point.row.abs_diff(range.start.row)
-                    <= DIAGNOSTIC_LINES_RANGE;
-                if near_collaborator && !near_local {
-                    return None;
-                }
-                Some(range.start)
-            })
-            .min_by_key(|probe| probe.row.abs_diff(active_buffer_cursor_point.row))
-            .map(|position| {
-                (
-                    active_buffer.clone(),
-                    active_buffer_snapshot.anchor_before(position),
-                )
-            });
-
-        if jump_location.is_none() {
-            let active_buffer_path = active_buffer.read_with(cx, |buffer, cx| {
-                let file = buffer.file()?;
-
-                Some(ProjectPath {
-                    worktree_id: file.worktree_id(cx),
-                    path: file.path().clone(),
-                })
-            });
-
-            let mut candidates: Vec<(ProjectPath, usize)> = project.read_with(cx, |project, cx| {
-                project
-                    .diagnostic_summaries(false, cx)
-                    .filter(|(path, _, _)| Some(path) != active_buffer_path.as_ref())
-                    .map(|(path, _, _)| {
-                        let shared_prefix = path
-                            .path
-                            .components()
-                            .zip(
-                                active_buffer_path
-                                    .as_ref()
-                                    .map(|p| p.path.components())
-                                    .unwrap_or_default(),
-                            )
-                            .take_while(|(a, b)| a == b)
-                            .count();
-                        (path, shared_prefix)
-                    })
-                    .collect()
-            });
-
-            candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
-
-            for (path, _) in candidates {
-                let candidate_buffer = project
-                    .update(cx, |project, cx| project.open_buffer(path, cx))
-                    .await?;
-
-                let (has_collaborators, diagnostic_position) =
-                    candidate_buffer.read_with(cx, |buffer, _cx| {
-                        let snapshot = buffer.snapshot();
-                        let has_collaborators = snapshot
-                            .selections_in_range(
-                                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
-                                false,
-                            )
-                            .next()
-                            .is_some();
-                        let position = buffer
-                            .buffer_diagnostics(None)
-                            .into_iter()
-                            .min_by_key(|entry| entry.diagnostic.severity)
-                            .map(|entry| entry.range.start);
-                        (has_collaborators, position)
-                    });
-
-                if has_collaborators {
-                    continue;
-                }
-
-                if let Some(position) = diagnostic_position {
-                    jump_location = Some((candidate_buffer, position));
-                    break;
-                }
-            }
-        }
-
-        anyhow::Ok(jump_location)
+        task
     }
 
     async fn send_raw_llm_request(

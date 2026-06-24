@@ -169,20 +169,10 @@ impl FileFinder {
         let modal_max_width_setting = FileFinderSettings::get_global(cx).modal_max_width;
 
         let project = delegate.project.clone();
+        let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list_with_preview(delegate, project, window, cx)
-                .minimum_results_width(gpui::rems(34.))
-                .height(gpui::rems(24.))
-                .no_vertical_padding();
-            // The dedicated file finder width setting has been removed in favor of
-            // persisted picker sizes. For migration we still honor it as the initial
-            // width, but only if the user actually changed it from the default;
-            if modal_max_width_setting != FileFinderWidth::default() {
-                let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
-                picker.initial_width(Rems::from_pixels(modal_max_width, window))
-            } else {
-                picker
-            }
+            Picker::uniform_list_with_preview(delegate, project, window, cx)
+                .initial_width(Rems::from_pixels(modal_max_width, window))
         });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
