@@ -104,6 +104,8 @@ actions!(
         Amend,
         /// Enable the --signoff option.
         Signoff,
+        /// Skips the pre-commit hook when committing.
+        SkipPreCommitHook,
         /// Cancels the current git operation.
         Cancel,
         /// Expands the commit message editor.

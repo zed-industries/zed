@@ -393,6 +393,7 @@ message Commit {
     bool amend = 1;
     bool signoff = 2;
     bool allow_empty = 3;
+    bool skip_pre_commit_hook = 4;
   }
 }
 

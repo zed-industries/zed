@@ -3101,6 +3101,7 @@ impl GitStore {
                     CommitOptions {
                         amend: options.amend,
                         signoff: options.signoff,
+                        skip_pre_commit_hook: options.skip_pre_commit_hook,
                         allow_empty: options.allow_empty,
                     },
                     askpass,
@@ -7407,13 +7408,19 @@ impl Repository {
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
-        let rx = self.run_hook(RunHook::PreCommit, cx);
+        let run_hook = if options.skip_pre_commit_hook {
+            None
+        } else {
+            Some(self.run_hook(RunHook::PreCommit, cx))
+        };
 
         self.send_job(
             "commit",
             Some("git commit".into()),
             move |git_repo, _cx| async move {
-                rx.await??;
+                if let Some(rx) = run_hook {
+                    rx.await??;
+                }
 
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
@@ -7443,6 +7450,7 @@ impl Repository {
                                     amend: options.amend,
                                     signoff: options.signoff,
                                     allow_empty: options.allow_empty,
+                                    skip_pre_commit_hook: options.skip_pre_commit_hook,
                                 }),
                                 askpass_id,
                             })
@@ -9935,7 +9943,7 @@ mod tests {
     use super::*;
     use crate::Project;
     use fs::{FakeFs, Fs};
-    use git::repository::{RepoPath, repo_path};
+    use git::repository::{RealGitRepository, RepoPath, repo_path};
     use gpui::TestAppContext;
     use gpui::proptest::prelude::*;
     use rand::{SeedableRng, rngs::StdRng};
@@ -9948,6 +9956,168 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    #[track_caller]
+    fn git_command(working_directory: &Path, arguments: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(working_directory)
+            .env("GIT_CONFIG_GLOBAL", "")
+            .env("GIT_CONFIG_SYSTEM", "")
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@zed.dev")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@zed.dev")
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            output.status.success(),
+            "git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn test_commit_environment() -> Arc<HashMap<String, String>> {
+        Arc::new(HashMap::from_iter([
+            ("GIT_CONFIG_GLOBAL".to_string(), "".to_string()),
+            ("GIT_CONFIG_SYSTEM".to_string(), "".to_string()),
+            ("GIT_AUTHOR_NAME".to_string(), "test".to_string()),
+            ("GIT_AUTHOR_EMAIL".to_string(), "test@zed.dev".to_string()),
+            ("GIT_COMMITTER_NAME".to_string(), "test".to_string()),
+            (
+                "GIT_COMMITTER_EMAIL".to_string(),
+                "test@zed.dev".to_string(),
+            ),
+            ("GIT_ASKPASS".to_string(), "false".to_string()),
+        ]))
+    }
+
+    fn test_commit_options(skip_pre_commit_hook: bool) -> CommitOptions {
+        CommitOptions {
+            amend: false,
+            signoff: false,
+            skip_pre_commit_hook,
+            allow_empty: true,
+        }
+    }
+
+    fn test_repository_with_failing_pre_commit_hook(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Repository>, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().to_path_buf();
+        git_command(&repo_dir, &["init", "-b", "main"]);
+        git_command(&repo_dir, &["commit", "--allow-empty", "-m", "Initial"]);
+
+        let hooks_dir = repo_dir.join(".git/hooks");
+        std::fs::write(
+            hooks_dir.join("pre-commit"),
+            "#!/bin/sh\necho pre-commit hook failed >&2\nexit 1\n",
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let hook_path = hooks_dir.join("pre-commit");
+            let mut permissions = std::fs::metadata(&hook_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(hook_path, permissions).unwrap();
+        }
+
+        let backend = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        backend.set_trusted(true);
+
+        let state = Task::ready(Ok(LocalRepositoryState {
+            fs: FakeFs::new(cx.executor()),
+            backend: Arc::new(backend),
+            environment: test_commit_environment(),
+        }))
+        .shared();
+
+        let repository = cx.update(|cx| {
+            cx.new(|cx| {
+                let snapshot = RepositorySnapshot::empty(
+                    RepositoryId(1),
+                    Arc::from(repo_dir.as_path()),
+                    Some(Arc::from(repo_dir.join(".git").as_path())),
+                    Some(Arc::from(repo_dir.join(".git").as_path())),
+                    Some(Arc::from(repo_dir.join(".git").as_path())),
+                    PathStyle::local(),
+                );
+                let (job_sender, worker_task) =
+                    Repository::spawn_local_git_worker(state.clone(), cx);
+
+                Repository {
+                    this: cx.weak_entity(),
+                    snapshot,
+                    commit_message_buffer: None,
+                    git_store: WeakEntity::new_invalid(),
+                    paths_needing_status_update: Vec::new(),
+                    job_sender,
+                    _worker_task: worker_task,
+                    active_jobs: HashMap::default(),
+                    job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
+                    pending_ops: SumTree::default(),
+                    job_id: 0,
+                    askpass_delegates: Arc::default(),
+                    latest_askpass_id: 0,
+                    repository_state: cx
+                        .spawn(async move |_, _| Ok(RepositoryState::Local(state.await?)))
+                        .shared(),
+                    initial_graph_data: HashMap::default(),
+                    commit_data_handler: CommitDataHandlerState::Closed,
+                    commit_data: HashMap::default(),
+                }
+            })
+        });
+
+        (repository, temp_dir)
+    }
+
+    #[gpui::test]
+    async fn test_commit_can_skip_pre_commit_hook(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        {
+            let (repository, _temp_dir) = test_repository_with_failing_pre_commit_hook(cx);
+            let result = repository.update(cx, |repository, cx| {
+                repository.commit(
+                    "Commit".into(),
+                    None,
+                    test_commit_options(false),
+                    AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            assert!(result.await.unwrap().is_err());
+        }
+
+        {
+            let (repository, _temp_dir) = test_repository_with_failing_pre_commit_hook(cx);
+            let result = repository.update(cx, |repository, cx| {
+                repository.commit(
+                    "Commit".into(),
+                    None,
+                    test_commit_options(true),
+                    AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+            result.await.unwrap().unwrap();
+        }
     }
 
     #[gpui::test]

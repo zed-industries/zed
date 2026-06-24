@@ -36,7 +36,10 @@ use git::repository::{
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
-use git::{Amend, Commit, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
+use git::{
+    Amend, Commit, Signoff, SkipPreCommitHook, ToggleStaged, repository::RepoPath,
+    status::FileStatus,
+};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
     StashAll, StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
@@ -923,6 +926,7 @@ pub struct GitPanel {
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
     signoff_enabled: bool,
+    skip_pre_commit_hook_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -1224,6 +1228,7 @@ impl GitPanel {
                 original_commit_message,
                 pending_commit_message_restores,
                 signoff_enabled,
+                skip_pre_commit_hook_enabled: false,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
                 single_tracked_entry: None,
@@ -2778,6 +2783,7 @@ impl GitPanel {
                 CommitOptions {
                     amend: self.amend_pending,
                     signoff: self.signoff_enabled,
+                    skip_pre_commit_hook: self.skip_pre_commit_hook_enabled,
                     allow_empty: false,
                 },
                 window,
@@ -2986,6 +2992,7 @@ impl GitPanel {
                             this.original_commit_message = None;
                             this.serialize(cx);
                         }
+                        this.set_skip_pre_commit_hook_enabled(false, cx);
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }
@@ -5353,6 +5360,7 @@ impl GitPanel {
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
+                let skip_pre_commit_hook = self.skip_pre_commit_hook_enabled;
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -5384,6 +5392,15 @@ impl GitPanel {
                                 IconPosition::Start,
                                 Some(Box::new(Signoff)),
                                 move |window, cx| window.dispatch_action(Box::new(Signoff), cx),
+                            )
+                            .toggleable_entry(
+                                "Skip Pre-commit Hook (--no-verify)",
+                                skip_pre_commit_hook,
+                                IconPosition::Start,
+                                Some(Box::new(SkipPreCommitHook)),
+                                move |window, cx| {
+                                    window.dispatch_action(Box::new(SkipPreCommitHook), cx)
+                                },
                             )
                     }))
                 }
@@ -5823,6 +5840,7 @@ impl GitPanel {
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
         let amend = self.amend_pending();
         let signoff = self.signoff_enabled;
+        let skip_pre_commit_hook = self.skip_pre_commit_hook_enabled;
 
         let label_color = if self.pending_commit.is_some() {
             Color::Disabled
@@ -5858,6 +5876,7 @@ impl GitPanel {
                                         CommitOptions {
                                             amend,
                                             signoff,
+                                            skip_pre_commit_hook,
                                             allow_empty: false,
                                         },
                                         window,
@@ -5875,9 +5894,14 @@ impl GitPanel {
                                     tooltip,
                                     Some(&git::Commit),
                                     format!(
-                                        "git commit{}{}",
+                                        "git commit{}{}{}",
                                         if amend { " --amend" } else { "" },
-                                        if signoff { " --signoff" } else { "" }
+                                        if signoff { " --signoff" } else { "" },
+                                        if skip_pre_commit_hook {
+                                            " --no-verify"
+                                        } else {
+                                            ""
+                                        }
                                     ),
                                     &handle.clone(),
                                     cx,
@@ -7737,6 +7761,24 @@ impl GitPanel {
         self.set_signoff_enabled(!self.signoff_enabled, cx);
     }
 
+    pub fn skip_pre_commit_hook_enabled(&self) -> bool {
+        self.skip_pre_commit_hook_enabled
+    }
+
+    pub fn set_skip_pre_commit_hook_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.skip_pre_commit_hook_enabled = value;
+        cx.notify();
+    }
+
+    pub fn toggle_skip_pre_commit_hook_enabled(
+        &mut self,
+        _: &SkipPreCommitHook,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_skip_pre_commit_hook_enabled(!self.skip_pre_commit_hook_enabled, cx);
+    }
+
     pub async fn load(
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
@@ -7925,6 +7967,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(GitPanel::on_commit))
                     .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
+                    .on_action(cx.listener(GitPanel::toggle_skip_pre_commit_hook_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
                     .on_action(cx.listener(Self::stage_selected))

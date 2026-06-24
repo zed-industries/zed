@@ -457,6 +457,7 @@ impl Upstream {
 pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
+    pub skip_pre_commit_hook: bool,
     pub allow_empty: bool,
 }
 
