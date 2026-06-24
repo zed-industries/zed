@@ -2836,8 +2836,12 @@ fn render_wrap_code_block_button(
     } else {
         (IconName::TextWrap, "Wrap Content")
     };
+    let button_id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("wrap-code-block", markdown.entity_id()))),
+        id.to_string().into(),
+    );
 
-    IconButton::new(("wrap-code-block", id), icon)
+    IconButton::new(button_id, icon)
         .icon_size(IconSize::Small)
         .icon_color(Color::Muted)
         .tooltip(Tooltip::text(tooltip))
@@ -2854,7 +2858,13 @@ fn render_copy_code_block_button(
     code: String,
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
-    let id = ElementId::named_usize("copy-markdown-code", id);
+    let id = ElementId::NamedChild(
+        Arc::new(ElementId::from((
+            "copy-markdown-code",
+            markdown.entity_id(),
+        ))),
+        id.to_string().into(),
+    );
 
     CopyButton::new(id.clone(), code.clone()).custom_on_click({
         let markdown = markdown;
@@ -3931,6 +3941,52 @@ mod tests {
             if !cx.has_global::<theme::GlobalTheme>() {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
+        });
+    }
+
+    #[gpui::test]
+    fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        struct TestMarkdowns {
+            first_markdown: Entity<Markdown>,
+            second_markdown: Entity<Markdown>,
+        }
+
+        impl Render for TestMarkdowns {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .child(MarkdownElement::new(
+                        self.first_markdown.clone(),
+                        MarkdownStyle::default(),
+                    ))
+                    .child(MarkdownElement::new(
+                        self.second_markdown.clone(),
+                        MarkdownStyle::default(),
+                    ))
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = "```sh\necho hello\n```";
+        let first_markdown = cx.new(|cx| Markdown::new(markdown.into(), None, None, cx));
+        let second_markdown = cx.new(|cx| Markdown::new(markdown.into(), None, None, cx));
+        cx.run_until_parked();
+
+        cx.draw(Default::default(), size(px(600.0), px(600.0)), |_, cx| {
+            cx.new(|_| TestMarkdowns {
+                first_markdown: first_markdown.clone(),
+                second_markdown: second_markdown.clone(),
+            })
+            .into_any_element()
         });
     }
 

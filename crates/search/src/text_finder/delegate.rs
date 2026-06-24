@@ -612,7 +612,7 @@ impl PickerDelegate for Delegate {
             ),
             picker::PickerAction::separator(),
             picker::PickerAction::button("Open File", menu::Confirm.boxed_clone()),
-            picker::PickerAction::button("To project search", super::ToProjectSearch.boxed_clone()),
+            picker::PickerAction::button("Open as Tab", super::ToProjectSearch.boxed_clone()),
         ]
     }
 
