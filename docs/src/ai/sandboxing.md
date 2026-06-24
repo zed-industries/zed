@@ -37,13 +37,13 @@ Other built-in tools, including `fetch`, are still governed by [Tool Permissions
 
 By default, sandboxed Zed Agent tool actions have these restrictions:
 
-| Access type         | Default behavior                                                                                                                                                      |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Filesystem reads    | Terminal commands can read most of the filesystem. Protected Git metadata file contents are hidden on macOS; on Linux and Windows/WSL they remain readable.           |
-| Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.                                                                       |
-| Git metadata        | `.git` directories and linked worktree Git metadata are protected unless you approve Git metadata access. Protection details differ by platform, described below.     |
-| Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                      |
-| Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                               |
+| Access type         | Default behavior                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filesystem reads    | Terminal commands can read most of the filesystem. Protected Git metadata file contents are hidden on macOS; on Linux and Windows/WSL they remain readable.         |
+| Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.                                                                     |
+| Git metadata        | `.git` directories and linked worktree Git metadata are protected unless you approve Git metadata access. Protection details differ by platform, described below.   |
+| Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                    |
+| Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                             |
 | Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform. |
 
 ## Approval Prompts {#approval-prompts}
