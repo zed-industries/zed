@@ -480,6 +480,38 @@ pub enum ReasoningEffort {
     XHigh,
 }
 
+impl ReasoningEffort {
+    pub const OPENAI_COMPATIBLE_SELECTABLE: [Self; 5] = [
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::XHigh => "Extra High",
+        }
+    }
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

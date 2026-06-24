@@ -83,6 +83,42 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Sandbox escalations the user approved "for the rest of this thread".
+    /// Persisted so reopening a thread keeps its grants. See
+    /// [`crate::sandboxing::ThreadSandboxGrants`].
+    #[serde(default)]
+    pub sandbox_grants: DbSandboxGrants,
+}
+
+/// Serialized form of the sandbox permissions the user granted "for the rest of
+/// this thread" (the "Allow for this thread" prompt option). Stored inside the
+/// thread blob; round-trips with [`crate::sandboxing::ThreadSandboxGrants`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DbSandboxGrants {
+    /// Canonicalized paths granted write access; each covers its whole subtree.
+    #[serde(default)]
+    pub write_paths: Vec<PathBuf>,
+    /// Host patterns granted network access, in canonical string form (e.g.
+    /// `github.com`, `*.npmjs.org`). Parsed back into patterns on load.
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether arbitrary-host network access was granted.
+    #[serde(default)]
+    pub network_any_host: bool,
+    /// Whether unrestricted filesystem writes (the broad escape hatch) were
+    /// granted.
+    #[serde(default)]
+    pub allow_fs_write_all: bool,
+    /// Whether access to protected Git directories (`.git`) was granted.
+    #[serde(default)]
+    pub allow_git_access: bool,
+    /// Whether the model-requested fully-unsandboxed escape was granted.
+    #[serde(default)]
+    pub unsandboxed: bool,
+    /// Whether running commands unsandboxed was allowed because the OS sandbox
+    /// could not be created (the fallback prompt's "for this thread" option).
+    #[serde(default)]
+    pub sandbox_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -133,6 +169,7 @@ impl SharedThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         }
     }
 
@@ -317,6 +354,7 @@ impl DbThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         })
     }
 }
@@ -768,6 +806,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         }
     }
 
@@ -885,6 +924,55 @@ mod tests {
             db_thread.sandboxed_terminal_temp_dir.is_none(),
             "Legacy threads without sandboxed_terminal_temp_dir should default to None"
         );
+    }
+
+    #[test]
+    fn test_sandbox_grants_default_when_absent() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert_eq!(
+            db_thread.sandbox_grants,
+            DbSandboxGrants::default(),
+            "Legacy threads without sandbox_grants should default to empty grants"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_grants_roundtrip_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("sandbox-grants-thread");
+        let mut thread = make_thread(
+            "Sandbox Grants Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let grants = DbSandboxGrants {
+            write_paths: vec![PathBuf::from("/tmp/build")],
+            network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
+            network_any_host: false,
+            allow_git_access: true,
+            allow_fs_write_all: false,
+            unsandboxed: true,
+            sandbox_fallback: true,
+        };
+        thread.sandbox_grants = grants.clone();
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.sandbox_grants, grants);
     }
 
     #[gpui::test]

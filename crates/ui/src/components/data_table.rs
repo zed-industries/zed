@@ -108,6 +108,20 @@ impl ResizableColumnsState {
         self.widths[col_idx] = self.initial_widths[col_idx];
     }
 
+    pub fn pinned_width(&self, pinned_cols: usize, rem_size: Pixels) -> Pixels {
+        self.widths[..pinned_cols]
+            .iter()
+            .map(|w| w.to_pixels(rem_size))
+            .fold(px(0.), |acc, x| acc + x)
+    }
+
+    pub fn scrollable_width(&self, pinned_cols: usize, rem_size: Pixels) -> Pixels {
+        self.widths[pinned_cols..]
+            .iter()
+            .map(|w| w.to_pixels(rem_size))
+            .fold(px(0.), |acc, x| acc + x)
+    }
+
     fn apply_min_size(
         &self,
         width: Pixels,
@@ -916,10 +930,9 @@ fn render_resize_handles_resizable(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (widths, resize_behavior) = {
-        let state = columns_state.read(cx);
-        (state.widths.clone(), state.resize_behavior.clone())
-    };
+    let state = columns_state.read(cx);
+    let widths = state.widths.clone();
+    let resize_behavior = state.resize_behavior().clone();
 
     let rem_size = window.rem_size();
     let n_cols = widths.cols();
@@ -945,14 +958,8 @@ fn render_resize_handles_resizable(
             .into_any_element();
     }
 
-    let pinned_width: Pixels = widths[..pinned_cols]
-        .iter()
-        .map(|w| w.to_pixels(rem_size))
-        .fold(px(0.), |acc, x| acc + x);
-    let total_scrollable_width: Pixels = widths[pinned_cols..]
-        .iter()
-        .map(|w| w.to_pixels(rem_size))
-        .fold(px(0.), |acc, x| acc + x);
+    let pinned_width = state.pinned_width(pinned_cols, rem_size);
+    let total_scrollable_width = state.scrollable_width(pinned_cols, rem_size);
 
     // Non-interactive: pinned columns don't visually shift with scroll, so resizing them would
     // need separate drag-math from the scrollable columns. Header double-click reset still works.
@@ -1023,9 +1030,12 @@ impl RenderOnce for Table {
             .interaction_state
             .clone()
             .and_then(|state| state.upgrade());
-        let pinned_cols = self.pinned_cols;
-        let uses_pinned_layout = is_pinned_layout(pinned_cols, self.cols);
-        let resize_handle_pinned_cols = if uses_pinned_layout { pinned_cols } else { 0 };
+        let uses_pinned_layout = is_pinned_layout(self.pinned_cols, self.cols);
+        let pinned_cols = if uses_pinned_layout {
+            self.pinned_cols
+        } else {
+            0
+        };
 
         // Shared by every row's scrollable section so they scroll in lockstep, and read by
         // on_drag_move to compensate drag_x for the horizontal scroll offset.
@@ -1089,7 +1099,7 @@ impl RenderOnce for Table {
                         Some(entity.clone()),
                         Some(render_resize_handles_resizable(
                             entity,
-                            resize_handle_pinned_cols,
+                            pinned_cols,
                             h_scroll_handle.as_ref(),
                             window,
                             cx,
@@ -1265,12 +1275,30 @@ impl RenderOnce for Table {
 
             // Works for both modes since they share horizontal_scroll_handle.
             if is_resizable {
-                content = content.custom_scrollbars(
-                    Scrollbars::new(ScrollAxes::Horizontal)
-                        .tracked_scroll_handle(&state.read(cx).horizontal_scroll_handle),
-                    window,
-                    cx,
-                );
+                if let ColumnWidthConfig::Resizable(rc_state) = self.column_width_config {
+                    let pinned_width = rc_state
+                        .read(cx)
+                        .pinned_width(pinned_cols, window.rem_size());
+                    // With pinned columns the scrollbar should only span the scrollable area.
+                    // An absolute overlay inset on all sides then overriding left to pinned_width
+                    // gives the correct bounds (full height via top+bottom, correct width via
+                    // right+left) without needing to hardcode the scrollbar thickness.
+                    let h_scrollbar = div().absolute().inset_0().left(pinned_width);
+                    let h_scrollbar = h_scrollbar.custom_scrollbars(
+                        Scrollbars::new(ScrollAxes::Horizontal)
+                            .tracked_scroll_handle(&state.read(cx).horizontal_scroll_handle),
+                        window,
+                        cx,
+                    );
+                    content = content.child(h_scrollbar);
+                } else {
+                    content = content.custom_scrollbars(
+                        Scrollbars::new(ScrollAxes::Horizontal)
+                            .tracked_scroll_handle(&state.read(cx).horizontal_scroll_handle),
+                        window,
+                        cx,
+                    );
+                }
             }
             content.style().restrict_scroll_to_axis = Some(true);
 
