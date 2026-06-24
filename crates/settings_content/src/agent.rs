@@ -617,6 +617,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "copilot_chat",
                         "deepseek",
                         "google",
+                        "hyper",
                         "lmstudio",
                         "mistral",
                         "ollama",

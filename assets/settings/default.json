@@ -2421,6 +2421,9 @@
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1",
     },
+    "hyper": {
+      "api_url": "https://hyper.charm.land/v1",
+    },
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0",
     },

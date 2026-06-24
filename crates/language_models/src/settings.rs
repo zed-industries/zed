@@ -8,7 +8,8 @@ use crate::provider::{
     bedrock, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
     google::GoogleSettings, lmstudio::LmStudioSettings, mistral, mistral::MistralSettings,
     ollama::OllamaSettings, open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
-    open_router, open_router::OpenRouterSettings, opencode, opencode::OpenCodeSettings,
+    open_router, open_router::OpenRouterSettings,     hyper::HyperSettings,
+    opencode, opencode::OpenCodeSettings,
     resolve_custom_headers, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
@@ -20,6 +21,7 @@ pub struct AllLanguageModelSettings {
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
+    pub hyper: HyperSettings,
     pub mistral: MistralSettings,
     pub ollama: OllamaSettings,
     pub opencode: OpenCodeSettings,
@@ -52,6 +54,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let bedrock = language_models.bedrock.unwrap();
         let deepseek = language_models.deepseek.unwrap();
         let google = language_models.google.unwrap();
+        let hyper = language_models.hyper.unwrap();
         let lmstudio = language_models.lmstudio.unwrap();
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
@@ -71,6 +74,11 @@ impl settings::Settings for AllLanguageModelSettings {
                     anthropic.custom_headers,
                     anthropic::RESERVED_HEADER_NAMES,
                 ),
+            },
+            hyper: HyperSettings {
+                api_url: hyper.api_url.unwrap(),
+                available_models: hyper.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("Hyper", hyper.custom_headers, &[]),
             },
             anthropic_compatible: anthropic_compatible
                 .into_iter()
