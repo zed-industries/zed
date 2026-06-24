@@ -22,7 +22,6 @@ use util::maybe;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::iter;
 use std::mem;
 use std::ops::Range;
 use std::path::Path;
@@ -1342,14 +1341,14 @@ impl MarkdownElement {
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
-
         let image_element = div().min_w_0().child(
             img(source)
                 .id(("markdown-image", range.start))
                 .min_w_0()
                 .max_w_full()
                 .rounded_md()
+                .mr_1()
+                .mb_1()
                 .when_some(height, |this, height| this.h(height))
                 .when_some(width, |this, width| this.w(width))
                 .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
@@ -2647,14 +2646,12 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => {
-                    if self.style.soft_break_as_hard_break {
-                        builder.push_text("\n", range.clone())
-                    } else {
-                        builder.push_text(" ", range.clone())
-                    }
+                MarkdownEvent::SoftBreak if !self.style.soft_break_as_hard_break => {
+                    builder.push_soft_break(range.clone());
                 }
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                    builder.push_line_break(range.clone());
+                }
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
                 }
@@ -3013,7 +3010,7 @@ struct MetadataCellStyle {
 }
 
 struct MarkdownElementBuilder {
-    div_stack: Vec<AnyDiv>,
+    div_stack: Vec<DivStackEntry>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
@@ -3028,6 +3025,26 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+}
+
+struct DivStackEntry {
+    div: AnyDiv,
+    line_break_mode: LineBreakMode,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LineBreakMode {
+    TextLayout,
+    FlexWrap,
+}
+
+impl DivStackEntry {
+    fn new(div: impl Into<AnyDiv>) -> Self {
+        Self {
+            div: div.into(),
+            line_break_mode: LineBreakMode::TextLayout,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -3051,7 +3068,7 @@ impl MarkdownElementBuilder {
             div_stack: vec![{
                 let mut base_div = div();
                 base_div.style().refine(container_style);
-                base_div.debug_selector(|| "inner".into()).into()
+                DivStackEntry::new(base_div.debug_selector(|| "inner".into()))
             }],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
@@ -3115,7 +3132,7 @@ impl MarkdownElementBuilder {
             });
         }
 
-        self.div_stack.push(div);
+        self.div_stack.push(DivStackEntry::new(div));
     }
 
     fn push_root_block(&mut self, range: &Range<usize>, markdown_end: usize) {
@@ -3128,17 +3145,43 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        self.flush_text();
+        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
+        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.append_child(child.into_any_element());
+    }
+
+    fn push_line_break(&mut self, source_range: Range<usize>) {
+        if self.uses_flex_line_breaks() {
+            self.modify_current_div(|el| el.child(div().w_full().h_0()));
+        } else {
+            self.push_text("\n", source_range);
+        }
+    }
+
+    fn push_soft_break(&mut self, source_range: Range<usize>) {
+        // A soft break right after an item in flex wrap container would otherwise
+        // render as a stray leading space before the next wrapped item.
+        if self.uses_flex_line_breaks() && self.pending_line.text.is_empty() {
+            return;
+        }
+        self.push_text(" ", source_range);
+    }
+
+    fn append_child(&mut self, child: AnyElement) {
+        self.div_stack.last_mut().unwrap().div.extend([child]);
+    }
+
+    fn uses_flex_line_breaks(&self) -> bool {
         self.div_stack
-            .last_mut()
-            .unwrap()
-            .extend([child.into_any_element()]);
+            .last()
+            .is_some_and(|entry| entry.line_break_mode == LineBreakMode::FlexWrap)
     }
 
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
         self.flush_text();
-        if let Some(div) = self.div_stack.pop() {
-            self.div_stack.push(f(div));
+        if let Some(mut entry) = self.div_stack.pop() {
+            entry.div = f(entry.div);
+            self.div_stack.push(entry);
         }
     }
 
@@ -3173,20 +3216,20 @@ impl MarkdownElementBuilder {
 
     fn pop_div(&mut self) {
         self.flush_text();
-        let div = self.div_stack.pop().unwrap().into_any_element();
-        self.div_stack.last_mut().unwrap().extend(iter::once(div));
+        let div = self.div_stack.pop().unwrap().div.into_any_element();
+        self.append_child(div);
     }
 
     fn push_sourced_element(&mut self, source_range: Range<usize>, element: impl Into<AnyElement>) {
         self.flush_text();
         let anchor = self.render_source_anchor(source_range);
-        self.div_stack.last_mut().unwrap().extend([{
+        self.append_child(
             div()
                 .relative()
                 .child(anchor)
                 .child(element.into())
-                .into_any_element()
-        }]);
+                .into_any_element(),
+        );
     }
 
     fn push_list(&mut self, bullet_index: Option<u64>) {
@@ -3328,10 +3371,7 @@ impl MarkdownElementBuilder {
             TextAlign::Right => checkbox_container.justify_end(),
         };
 
-        self.div_stack
-            .last_mut()
-            .unwrap()
-            .extend([checkbox_container.child(checkbox).into_any_element()]);
+        self.append_child(checkbox_container.child(checkbox).into_any_element());
     }
 
     fn source_range_for_rendered(&self, rendered: &Range<usize>) -> Option<Range<usize>> {
@@ -3377,14 +3417,14 @@ impl MarkdownElementBuilder {
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
         });
-        self.div_stack.last_mut().unwrap().extend([text.into_any()]);
+        self.append_child(text.into_any());
     }
 
     fn build(mut self) -> RenderedMarkdown {
         debug_assert_eq!(self.div_stack.len(), 1);
         self.flush_text();
         RenderedMarkdown {
-            element: self.div_stack.pop().unwrap().into_any_element(),
+            element: self.div_stack.pop().unwrap().div.into_any_element(),
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
@@ -3926,12 +3966,20 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, size};
+    use gpui::{RenderImage, TestAppContext, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    struct TestWindow;
+
+    impl Render for TestWindow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -4123,14 +4171,6 @@ mod tests {
         callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
-        struct TestWindow;
-
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
@@ -4166,14 +4206,6 @@ mod tests {
         options: MarkdownOptions,
         cx: &mut TestAppContext,
     ) -> RenderedText {
-        struct TestWindow;
-
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
@@ -4201,6 +4233,192 @@ mod tests {
             },
         );
         rendered.text
+    }
+
+    fn render_markdown_with_image_resolver(
+        markdown: &str,
+        options: MarkdownOptions,
+        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(markdown.to_string().into(), None, None, options, cx)
+        });
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .image_resolver(resolver)
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        );
+        rendered.text
+    }
+
+    fn test_image(cx: &mut TestAppContext) -> Arc<RenderImage> {
+        cx.update(|cx| {
+            cx.svg_renderer()
+                .render_single_frame(
+                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
+                    1.0,
+                )
+                .expect("test svg should render")
+        })
+    }
+
+    #[gpui::test]
+    fn test_soft_break_keeps_space_in_paragraph_with_image(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "Here is an image ![alt](https://example.com/a.png) and more text\nthat continues",
+            MarkdownOptions::default(),
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(
+            text.contains("more text that continues"),
+            "soft break in an image paragraph should still separate words with a space; got: {text:?}"
+        );
+        assert!(
+            !text.contains("textthat"),
+            "soft break between words must not be dropped; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_soft_break_after_image_does_not_insert_leading_space(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "![alt](https://example.com/a.png)\ncaption",
+            MarkdownOptions::default(),
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert_eq!(
+            text, "caption",
+            "a soft break after an image should not insert leading whitespace before caption text; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_break_between_images_does_not_inject_leading_space(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "![Image 3](https://example.com/3.png)\n<br>\n![Image 4](https://example.com/4.png)",
+            MarkdownOptions {
+                parse_html: true,
+                ..Default::default()
+            },
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let stray_whitespace_line = rendered.lines.iter().find_map(|line| {
+            let text = line.layout.wrapped_text();
+            (!text.is_empty() && text.trim().is_empty()).then_some(text)
+        });
+        assert!(
+            stray_whitespace_line.is_none(),
+            "soft break after a <br> between images must not render a stray space \
+             before the wrapped image; got whitespace-only line: {stray_whitespace_line:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_break_in_tight_list_item_after_image_item_is_newline(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "- ![alt](https://example.com/a.png)\n- first<br>second",
+            MarkdownOptions {
+                parse_html: true,
+                ..Default::default()
+            },
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(
+            text.contains("first\nsecond"),
+            "break in a text-only tight list item should render as a newline; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_hard_style_soft_break_after_image_moves_caption_to_next_row(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        let image = test_image(cx);
+        let markdown_source = "![alt](https://example.com/a.png)\ncaption";
+        let caption_range = markdown_source.len() - "caption".len()..markdown_source.len();
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                markdown_source.to_string().into(),
+                None,
+                None,
+                MarkdownOptions::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let mut caption_top = |soft_break_as_hard_break: bool| {
+            let mut style = MarkdownStyle::default();
+            style.soft_break_as_hard_break = soft_break_as_hard_break;
+            let image = image.clone();
+            let (rendered, _) = cx.draw(
+                Default::default(),
+                size(px(600.0), px(600.0)),
+                |_window, _cx| {
+                    MarkdownElement::new(markdown.clone(), style)
+                        .image_resolver(move |_| Some(ImageSource::Render(image.clone())))
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::Hidden,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        })
+                },
+            );
+            rendered
+                .text
+                .bounds_for_source_range(caption_range.clone())
+                .into_iter()
+                .next()
+                .expect("caption should have text bounds")
+                .top()
+        };
+
+        let caption_top_with_break = caption_top(true);
+        let caption_top_without_break = caption_top(false);
+
+        assert!(
+            caption_top_with_break > caption_top_without_break,
+            "caption should render below the image for hard-style soft breaks; \
+             top with break: {caption_top_with_break:?}, top without break: {caption_top_without_break:?}"
+        );
     }
 
     #[gpui::test]
@@ -4754,6 +4972,56 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_inline_br_renders_as_line_break(cx: &mut TestAppContext) {
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+
+        for br in ["<br>", "<br/>", "<br />"] {
+            let md = format!("first{br}second");
+            let rendered = render_markdown_with_options(&md, None, options, cx);
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect();
+            assert!(
+                !text.contains(br),
+                "{br} should not appear as literal text; got: {text:?}"
+            );
+            assert!(
+                text.contains("first\nsecond"),
+                "{br} should produce a newline between 'first' and 'second'; got: {text:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_hard_break_in_text_paragraph_after_paragraph(cx: &mut TestAppContext) {
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+        let rendered =
+            render_markdown_with_options("para one\n\nfirst<br>second", None, options, cx);
+        let all_text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            all_text.contains("first") && all_text.contains("second"),
+            "both sides of <br> should be present; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("<br>"),
+            "<br> should not appear as literal text; got: {all_text:?}"
+        );
+    }
+
     #[test]
     fn test_escape_prevents_code_block() {
         let diagnostic = "    | { a: string }";
@@ -4858,13 +5126,6 @@ mod tests {
 
     #[gpui::test]
     fn test_context_menu_link_initial_state(cx: &mut TestAppContext) {
-        struct TestWindow;
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown =
@@ -4878,13 +5139,6 @@ mod tests {
 
     #[gpui::test]
     fn test_capture_for_context_menu(cx: &mut TestAppContext) {
-        struct TestWindow;
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new("text".into(), None, None, cx));
