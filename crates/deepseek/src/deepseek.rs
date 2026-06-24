@@ -11,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
 
-pub use language_model_core::ReasoningEffort;
-
 pub const DEEPSEEK_API_URL: &str = "https://api.deepseek.com/v1";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -147,6 +145,13 @@ pub struct Thinking {
 pub enum ThinkingType {
     Enabled,
     Disabled,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    High,
+    Max,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
