@@ -2523,7 +2523,8 @@ impl ProjectPanel {
 
                 let mut changes = Vec::new();
 
-                for (entry_id, worktree_id, _) in file_paths {
+                let mut failed: Vec<String> = Vec::new();
+                for (entry_id, worktree_id, path) in file_paths {
                     // Delete entry independently, single fail will not abort the batch.
                     let Some(task) = panel.update(cx, |panel, cx| {
                         panel
@@ -2534,15 +2535,21 @@ impl ProjectPanel {
                         continue;
                     };
 
-                    let Ok(trashed_entry) = task.await else {
-                        continue;
-                    };
-
-                    // Keep track of trashed change so that we can then record
-                    // all of the changes at once, such that undoing and redoing
-                    // restores or trashes all files in batch.
-                    if trash && let Some(trashed_entry) = trashed_entry {
-                        changes.push(Change::Trashed(worktree_id, trashed_entry));
+                    match task.await {
+                        Ok(Some(trashed_entry)) if trash => {
+                            // Keep track of trashed change so that we can then record
+                            // all of the changes at once, such that undoing and redoing
+                            // restores or trashes all files in batch.
+                            changes.push(Change::Trashed(worktree_id, trashed_entry));
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            log::error!(
+                                "Failed to {} {path:?}: {err:#}",
+                                if trash { "trash" } else { "delete" }
+                            );
+                            failed.push(path);
+                        }
                     }
                 }
                 panel.update_in(cx, |panel, window, cx| {
