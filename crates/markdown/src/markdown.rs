@@ -99,6 +99,10 @@ pub struct MarkdownStyle {
     pub code_block: StyleRefinement,
     pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
+    /// When set, inline code spans render as bordered inline "chip" elements
+    /// (with this border color) instead of as a text background highlight. The
+    /// chip's background and text styling come from [`Self::inline_code`].
+    pub inline_code_border_color: Option<Hsla>,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub link_callback: Option<LinkStyleCallback>,
@@ -124,6 +128,7 @@ impl Default for MarkdownStyle {
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
+            inline_code_border_color: None,
             block_quote: Default::default(),
             link: Default::default(),
             link_callback: None,
@@ -261,9 +266,16 @@ impl MarkdownStyle {
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
-                background_color: Some(colors.editor_foreground.opacity(0.08)),
+                background_color: Some(if matches!(font, MarkdownFont::Agent) {
+                    // Inline code renders as a bordered chip in the agent panel,
+                    // so give it a solid surface to match the editor.
+                    colors.editor_background
+                } else {
+                    colors.editor_foreground.opacity(0.08)
+                }),
                 ..Default::default()
             },
+            inline_code_border_color: matches!(font, MarkdownFont::Agent).then_some(colors.border),
             link: TextStyleRefinement {
                 background_color: Some(colors.editor_foreground.opacity(0.025)),
                 color: Some(colors.text_accent),
@@ -1185,7 +1197,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1244,7 +1256,7 @@ impl MarkdownElement {
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Box::new(handler));
+        self.on_url_click = Some(Rc::new(handler));
         self
     }
 
@@ -1308,6 +1320,17 @@ impl MarkdownElement {
             None
         };
 
+        // Render inline code as a discrete bordered "chip" element when the style
+        // opts in, but only for plain inline code (not code nested inside a
+        // Markdown link, which keeps its link styling and text selection).
+        if let Some(border_color) = self.style.inline_code_border_color
+            && builder.link_depth == 0
+            && builder.code_block_stack.is_empty()
+        {
+            self.push_inline_code_chip(builder, text, range, link_url, border_color);
+            return;
+        }
+
         if let Some(url) = link_url {
             builder.push_link(url.clone(), range.clone());
             let link_style = self
@@ -1330,6 +1353,54 @@ impl MarkdownElement {
             builder.push_text(text, range);
             builder.pop_text_style();
         }
+    }
+
+    fn push_inline_code_chip(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        text: &str,
+        range: Range<usize>,
+        link_url: Option<SharedString>,
+        border_color: Hsla,
+    ) {
+        // Lay the surrounding paragraph out as wrapping inline content so the
+        // chip flows with the text instead of forcing a line break.
+        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_center());
+
+        let mut text_style = builder.base_text_style.clone();
+        text_style.refine(&self.style.inline_code);
+        // Keep the chip compact regardless of the surrounding line height.
+        text_style.line_height = DefiniteLength::Absolute(text_style.font_size);
+        let background = self.style.inline_code.background_color;
+
+        let label =
+            StyledText::new(text.to_string()).with_runs(vec![text_style.to_run(text.len())]);
+
+        let chip = div()
+            .px_1()
+            .border_1()
+            .border_color(border_color)
+            .rounded_sm()
+            .when_some(background, |this, background| this.bg(background))
+            .child(label);
+
+        let chip = if let Some(url) = link_url.filter(|_| !self.style.prevent_mouse_interaction) {
+            let on_url_click = self.on_url_click.clone();
+            chip.id(("markdown-inline-code", range.start))
+                .cursor_pointer()
+                .on_click(move |_event, window, cx| {
+                    if let Some(on_url_click) = on_url_click.as_ref() {
+                        on_url_click(url.clone(), window, cx);
+                    } else {
+                        cx.open_url(&url);
+                    }
+                })
+                .into_any_element()
+        } else {
+            chip.into_any_element()
+        };
+
+        builder.push_inline_child(chip);
     }
 
     fn push_markdown_image(
@@ -1355,7 +1426,7 @@ impl MarkdownElement {
                 .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
         );
 
-        builder.push_image_child(image_element);
+        builder.push_inline_child(image_element);
     }
 
     fn push_markdown_paragraph(
@@ -1707,7 +1778,7 @@ impl MarkdownElement {
             window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
-        let on_open_url = self.on_url_click.take();
+        let on_open_url = self.on_url_click.clone();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -3127,7 +3198,7 @@ impl MarkdownElementBuilder {
         self.push_div(div().pl_4(), range, markdown_end);
     }
 
-    fn push_image_child(&mut self, child: impl IntoElement) {
+    fn push_inline_child(&mut self, child: impl IntoElement) {
         self.flush_text();
         self.div_stack
             .last_mut()
