@@ -1770,6 +1770,12 @@ impl SettingsWindow {
         })
         .detach();
 
+        let language_model_registry = language_model::LanguageModelRegistry::global(cx);
+        cx.subscribe(&language_model_registry, |_, _, _event, cx| {
+            cx.notify();
+        })
+        .detach();
+
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()

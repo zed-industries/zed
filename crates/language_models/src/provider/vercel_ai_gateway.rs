@@ -269,23 +269,29 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
     ) -> ProviderConfigurationView {
         let state = self.state.clone();
         ProviderConfigurationView::Inline {
-            view: cx.new(|cx| {
-                crate::ApiKeyEditor::new(
-                    state,
-                    "vck_…",
-                    |state, _cx| crate::api_key_status(&state.api_key_state),
-                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
-                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                    window,
-                    cx,
-                )
-            })
-            .into(),
-            description: Some(InlineDescription::ApiKeyUrl(
-                "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway"
-                    .into(),
-            )),
+            view: cx
+                .new(|cx| {
+                    crate::ApiKeyEditor::new(
+                        state,
+                        "vck_…",
+                        |state, _cx| crate::api_key_status(&state.api_key_state),
+                        |state, key, cx| {
+                            state.update(cx, |state, cx| state.set_api_key(Some(key), cx))
+                        },
+                        |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                        window,
+                        cx,
+                    )
+                })
+                .into(),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::ApiKeyUrl(
+            "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway"
+                .into(),
+        ))
     }
 }
 

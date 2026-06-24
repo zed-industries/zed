@@ -276,8 +276,11 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
                     compact: true,
                 })
                 .into(),
-            description: Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into())),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

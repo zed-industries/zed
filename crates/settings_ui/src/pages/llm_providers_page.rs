@@ -47,7 +47,6 @@ fn render_provider_row(
 ) -> AnyElement {
     let provider_id = provider.id();
     let provider_name = provider.name().0;
-    let is_authenticated = provider.is_authenticated(cx);
 
     let icon = match provider.icon() {
         IconOrSvg::Svg(path) => Icon::from_external_svg(path),
@@ -56,16 +55,15 @@ fn render_provider_row(
     .size(IconSize::Small)
     .color(Color::Muted);
 
-    let (control, description) =
+    let description = provider.inline_description(cx);
+
+    let control =
         match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
         {
-            ProviderConfigurationView::Inline { view, description } => {
-                let control = view.into_any_element();
-                (control, description)
-            }
+            ProviderConfigurationView::Inline { view } => view.into_any_element(),
             ProviderConfigurationView::SubPage(_) => {
                 let provider_id = provider_id.clone();
-                let control = Button::new(format!("configure-{}", provider_id.0), "Configure")
+                Button::new(format!("configure-{}", provider_id.0), "Configure")
                     .style(ButtonStyle::OutlinedGhost)
                     .size(ButtonSize::Medium)
                     .end_icon(
@@ -77,8 +75,7 @@ fn render_provider_row(
                     .on_click(cx.listener(move |this, _, window, cx| {
                         open_provider_configuration(this, provider_id.clone(), window, cx);
                     }))
-                    .into_any_element();
-                (control, None)
+                    .into_any_element()
             }
         };
 

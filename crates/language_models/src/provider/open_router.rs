@@ -297,10 +297,13 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                     )
                 })
                 .into(),
-            description: Some(InlineDescription::ApiKeyUrl(
-                "https://openrouter.ai/keys".into(),
-            )),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::ApiKeyUrl(
+            "https://openrouter.ai/keys".into(),
+        ))
     }
 }
 

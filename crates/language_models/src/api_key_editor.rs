@@ -3,7 +3,7 @@ use std::rc::Rc;
 use anyhow::Result;
 use gpui::{App, Context, Entity, Subscription, Task, Window};
 use language_model::ApiKeyState;
-use ui::{Chip, prelude::*};
+use ui::prelude::*;
 use ui_input::InputField;
 
 /// The current credential state of a single-API-key provider, as reported by the

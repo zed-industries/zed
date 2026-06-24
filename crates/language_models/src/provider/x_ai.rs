@@ -232,10 +232,13 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
                     )
                 })
                 .into(),
-            description: Some(InlineDescription::ApiKeyUrl(
-                "https://console.x.ai/team/default/api-keys".into(),
-            )),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::ApiKeyUrl(
+            "https://console.x.ai/team/default/api-keys".into(),
+        ))
     }
 }
 

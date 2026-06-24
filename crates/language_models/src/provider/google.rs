@@ -260,10 +260,13 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     )
                 })
                 .into(),
-            description: Some(InlineDescription::ApiKeyUrl(
-                "https://aistudio.google.com/app/apikey".into(),
-            )),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::ApiKeyUrl(
+            "https://aistudio.google.com/app/apikey".into(),
+        ))
     }
 }
 

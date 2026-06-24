@@ -235,10 +235,13 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
                     )
                 })
                 .into(),
-            description: Some(InlineDescription::ApiKeyUrl(
-                "https://platform.deepseek.com/api_keys".into(),
-            )),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::ApiKeyUrl(
+            "https://platform.deepseek.com/api_keys".into(),
+        ))
     }
 }
 

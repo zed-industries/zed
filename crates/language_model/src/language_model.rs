@@ -371,6 +371,14 @@ pub trait LanguageModelProvider: 'static {
         ProviderConfigurationView::SubPage(self.configuration_view(target_agent, window, cx))
     }
 
+    /// Optional descriptive line rendered beneath the provider name on the left
+    /// of an inline configuration row. Computed live on each render, so it may
+    /// depend on mutable provider state (e.g. the current plan). Only meaningful
+    /// for providers presented via [`ProviderConfigurationView::Inline`].
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        None
+    }
+
     /// Copy shown the first time a user enables fast mode for a model from
     /// this provider. Returning `None` skips the confirmation prompt and lets
     /// the toggle apply silently.
@@ -384,12 +392,7 @@ pub trait LanguageModelProvider: 'static {
 pub enum ProviderConfigurationView {
     /// A compact control suitable for rendering inline in a list row, such as a
     /// single API-key field or a sign-in button.
-    Inline {
-        view: AnyView,
-        /// Optional descriptive line rendered beneath the provider name on the
-        /// left of the row. `None` for inline controls that need no subtitle.
-        description: Option<InlineDescription>,
-    },
+    Inline { view: AnyView },
     /// A richer view that should be shown on its own dedicated sub-page.
     SubPage(AnyView),
 }

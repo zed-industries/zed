@@ -260,10 +260,13 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
                     )
                 })
                 .into(),
-            description: Some(InlineDescription::ApiKeyUrl(
-                "https://console.mistral.ai/api-keys".into(),
-            )),
         }
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::ApiKeyUrl(
+            "https://console.mistral.ai/api-keys".into(),
+        ))
     }
 }
 
