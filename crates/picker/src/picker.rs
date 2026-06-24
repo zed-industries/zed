@@ -1264,6 +1264,7 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         };
         preview.layout = layout;
+        persistence::store_last_layout(D::name(), Some(layout), cx);
         // Restore the size the user last left this layout at, or fall back to the
         // layout's default (simple when hidden, larger when a preview is shown).
         self.shape = persistence::try_load_shape(D::name(), layout, cx)
