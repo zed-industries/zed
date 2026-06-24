@@ -783,7 +783,11 @@ fn assemble_patch_from_edits(
 
         let diff = udiff::unified_diff_with_context(old_text, &new_text, start_row, start_row, 3);
         if !diff.is_empty() {
-            let path_str = path.to_string_lossy();
+            let path_str = path
+                .iter()
+                .map(|component| component.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             diff_output.push_str(&format!("--- a/{path_str}\n+++ b/{path_str}\n"));
             diff_output.push_str(&diff);
             if !diff_output.ends_with('\n') {

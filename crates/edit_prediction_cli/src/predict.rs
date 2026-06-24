@@ -299,8 +299,8 @@ pub async fn run_prediction(
             })
             .await?;
 
-        let actual_patch = prediction.and_then(|prediction| {
-            let prediction = prediction.prediction;
+        let actual_patch = prediction.and_then(|result| {
+            let prediction = result.prediction;
             prediction
                 .edit_preview
                 .as_unified_diff(prediction.snapshot.file(), &prediction.edits)

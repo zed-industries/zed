@@ -16,6 +16,7 @@ pub(crate) struct CapturedPredictionContext {
     pub(crate) revision: Option<String>,
     pub(crate) uncommitted_diff: Option<String>,
     pub(crate) buffer_diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
+    pub(crate) editable_context: Vec<zeta_prompt::RelatedFile>,
 }
 
 pub(crate) fn capture_prediction_context(
@@ -25,6 +26,7 @@ pub(crate) fn capture_prediction_context(
     stored_events: Vec<StoredEvent>,
     repository_url: Option<String>,
     revision: Option<String>,
+    editable_context_task: Task<Result<Vec<zeta_prompt::RelatedFile>>>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Option<Task<Result<CapturedPredictionContext>>> {
     let snapshot = buffer.read(cx).snapshot();
@@ -74,12 +76,20 @@ pub(crate) fn capture_prediction_context(
             cursor_anchor.to_point(&snapshot).row,
             100,
         );
+        let editable_context = match editable_context_task.await {
+            Ok(editable_context) => editable_context,
+            Err(error) => {
+                log::debug!("failed to capture editable context: {error:?}");
+                Vec::new()
+            }
+        };
 
         Ok(CapturedPredictionContext {
             repository_url,
             revision,
             uncommitted_diff,
             buffer_diagnostics,
+            editable_context,
         })
     }))
 }

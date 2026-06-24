@@ -943,8 +943,12 @@ fn format_hash_region_related_files_within_budget(
     let file_headers: Vec<String> = related_files
         .iter()
         .map(|file| {
-            let path = hashed_regions::related_file_patch_path(&input.cursor_path, &file.path);
-            format!("{}{}\n", seed_coder::FILE_MARKER, path.to_string_lossy())
+            let path = hashed_regions::related_file_patch_path(&input.cursor_path, &file.path)
+                .iter()
+                .map(|component| component.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            format!("{}{path}\n", seed_coder::FILE_MARKER)
         })
         .collect();
 
