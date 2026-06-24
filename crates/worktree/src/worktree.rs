@@ -2299,7 +2299,10 @@ impl RemoteWorktree {
         let response = self.client.request(proto::DeleteProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
-            use_trash: false, // deprecated
+            // The `use_trash` field is being deprecated but it's still required
+            // in the message, hence the `#[allow(deprecated)]` attribute.
+            #[allow(deprecated)]
+            use_trash: false,
         });
 
         cx.spawn(async move |this, cx| {
