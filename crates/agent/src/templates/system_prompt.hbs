@@ -207,6 +207,8 @@ The user will be prompted to approve before the command runs, and can grant a sa
 
 These sandbox settings are guaranteed to remain in effect for the entire duration of this thread. If they ever change, you will be told.
 
+The `fetch` tool is also sandboxed: it may prompt the user to approve network access to the URL's host, and it cannot reach `localhost` or IP-literal URLs.
+
 {{/if}}
 {{#if model_name}}
 ## Model Information
