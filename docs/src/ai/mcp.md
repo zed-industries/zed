@@ -35,7 +35,7 @@ Many MCP servers are available as extensions. Find them via:
 
 1. [the Zed website](https://zed.dev/extensions?filter=context-servers)
 2. in the app, open the Command Palette and run the {#action zed::Extensions} action
-3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
+3. in the app, go to the Agent Panel's top-right menu and look for the "Install New Servers…" menu item under the "MCP Servers" section
 
 Popular servers available as an extension include:
 
@@ -51,7 +51,7 @@ Popular servers available as an extension include:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)), like so:
+You can connect both local and remote MCP servers easily utilizing the MCP server modal, which you can open by invoking the {#action agent::AddContextServer} action. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
 
 ```json [settings]
 {
@@ -62,7 +62,7 @@ You can connect them by adding their commands directly to your settings file ([h
       "env": {}
     },
     "remote-mcp-server": {
-      "url": "custom",
+      "url": "https://example.com/mcp",
       "headers": { "Authorization": "Bearer <token>" }
     },
     "remote-mcp-server-with-oauth": {
@@ -72,8 +72,7 @@ You can connect them by adding their commands directly to your settings file ([h
 }
 ```
 
-Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the {#action agent::OpenSettings} action).
-From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
+Alternatively, you can also open the modal by accessing the Agent Panel's Settings view (also accessible via the {#action agent::OpenSettings} action) and clicking the "Add Custom Server" button there.
 
 > Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
@@ -110,7 +109,6 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
       "name": "Container Use",
       "tools": {
         "fetch": true,
-        "thinking": true,
         "copy_path": false,
         "find_path": false,
         "delete_path": false,

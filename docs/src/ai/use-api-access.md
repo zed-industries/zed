@@ -27,6 +27,7 @@ Zed supports these first-class API providers for model-backed Zed AI features:
   - [Custom xAI Models](#xai-custom-models)
 - [OpenCode API](#opencode)
   - [Custom OpenCode Models](#opencode-custom-models)
+- [Anthropic-compatible endpoints](#anthropic-compatible)
 - [OpenAI-compatible endpoints](#openai-compatible)
 
 ## What API Access Applies To {#support}
@@ -281,7 +282,7 @@ limits, or a custom endpoint.
 {
   "language_models": {
     "deepseek": {
-      "api_url": "https://api.deepseek.com",
+      "api_url": "https://api.deepseek.com/v1",
       "available_models": [
         {
           "name": "deepseek-v4-flash",
@@ -413,6 +414,56 @@ The available configuration options for custom OpenCode models are:
 
 Custom OpenCode models are listed in the model dropdown in the Agent Panel.
 
+### Anthropic-Compatible Endpoints {#anthropic-compatible}
+
+Use an Anthropic-compatible endpoint when a service implements Anthropic's [Messages API](https://docs.anthropic.com/en/api/messages) (`/v1/messages`) and gives you a custom base URL, model ID, and API key.
+
+You can add a custom Anthropic-compatible provider from Agent Settings with {#action agent::OpenSettings}. Look for `Add Provider` in the LLM Providers section, choose `Anthropic`, and fill in the provider name, API URL, model ID, and context window.
+
+You can also configure the provider in your settings file:
+
+```json [settings]
+{
+  "language_models": {
+    "anthropic_compatible": {
+      "Some Provider": {
+        "api_url": "https://api.someprovider.com",
+        "custom_headers": {
+          "X-Some-Header": "some-value"
+        },
+        "available_models": [
+          {
+            "name": "some-model",
+            "display_name": "Some Model",
+            "max_tokens": 200000,
+            "max_output_tokens": 32000,
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "prompt_caching": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+By default, Anthropic-compatible models inherit these capabilities:
+
+- `tools`: `true`
+- `images`: `false`
+- `prompt_caching`: `false`
+
+Enable `prompt_caching` to send explicit `cache_control` breakpoints for [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching); leave it disabled if the provider rejects requests containing them.
+
+The optional `custom_headers` map adds extra headers to every request, which some providers require. Headers managed by Zed (such as `X-Api-Key` and `Anthropic-Version`) cannot be overridden.
+
+Models also support the optional `default_temperature`, `extra_beta_headers` (sent as `anthropic-beta` headers), `mode`, and `tool_override` fields, which behave the same as in [Custom Anthropic Models](#anthropic-custom-models).
+
+Enter the API key in the provider settings UI or set the generated environment variable (`<PROVIDER_NAME>_API_KEY`; in the example above, `SOME_PROVIDER_API_KEY`). Do not put API keys in `settings.json`.
+
 ### OpenAI-Compatible Endpoints {#openai-compatible}
 
 Use an OpenAI-compatible endpoint when you have a custom base URL, model ID, and API key.
@@ -448,7 +499,73 @@ By default, OpenAI-compatible models inherit these capabilities:
 - `prompt_cache_key`: `false`
 - `chat_completions`: `true`
 - `interleaved_reasoning`: `false`
+- `max_tokens_parameter`: `false`
 
 If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
+
+For reasoning models (e.g. GPT-5), set `reasoning_effort` to the non-`none` effort level your endpoint supports. This enables thinking in the agent panel and tells Zed which effort to send when thinking is enabled. The provider settings UI can configure this when adding an OpenAI-compatible provider. Zed sends OpenAI-style `reasoning_effort` on chat-completions requests. For endpoints that document a maximum effort named `"max"` but also accept or map `"xhigh"` (such as OpenRouter and Z.AI), configure `"xhigh"` in Zed.
+
+If the model requires the Responses API for reasoning state, set `capabilities.chat_completions` to `false`:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "my-provider": {
+        "api_url": "https://example.com/v1",
+        "available_models": [
+          {
+            "name": "gpt-5",
+            "max_tokens": 272000,
+            "reasoning_effort": "high",
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": false,
+              "interleaved_reasoning": false,
+              "max_tokens_parameter": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Valid settings values are `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"`. Use `"none"` in `settings.json` when you need to force reasoning off for an endpoint; the provider setup UI exposes the non-`none` values for thinking-capable models. For chat-completions endpoints that should receive prior thinking back in a dedicated `reasoning_content` field, also set `capabilities.interleaved_reasoning` to `true`. If the endpoint expects the output-token limit as `max_tokens` instead of `max_completion_tokens`, set `capabilities.max_tokens_parameter` to `true`.
+
+For example, a chat-completions endpoint with the maximum OpenAI-style reasoning effort, streamed thinking, and `max_tokens` output limits can be configured as:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "my-reasoning-provider": {
+        "api_url": "https://example.com/v1",
+        "available_models": [
+          {
+            "name": "reasoning-model",
+            "max_tokens": 1000000,
+            "max_output_tokens": 128000,
+            "reasoning_effort": "xhigh",
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": true,
+              "interleaved_reasoning": true,
+              "max_tokens_parameter": true
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
 
 Enter the API key in the provider settings UI or set the generated environment variable. Do not put API keys in `settings.json`.

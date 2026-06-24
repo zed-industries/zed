@@ -453,7 +453,7 @@ impl ProjectPath {
     pub fn root_path(worktree_id: WorktreeId) -> Self {
         Self {
             worktree_id,
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         }
     }
 
@@ -557,6 +557,9 @@ pub struct Completion {
     pub source: CompletionSource,
     /// A path to an icon for this completion that is shown in the menu.
     pub icon_path: Option<SharedString>,
+    /// An optional color to tint this completion's icon with in the menu.
+    /// When `None`, the menu's default muted color is used.
+    pub icon_color: Option<Hsla>,
     /// Text starting here and ending at the cursor will be used as the query for filtering this completion.
     ///
     /// If None, the start of the surrounding word is used.
@@ -1630,6 +1633,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
@@ -3214,6 +3218,19 @@ impl Project {
         }
         self.git_store
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_staged_diff(buffer, cx))
     }
 
     #[ztracing::instrument(skip_all)]
@@ -5286,6 +5303,42 @@ impl Project {
         })
     }
 
+    async fn handle_telemetry_event(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TelemetryEvent>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let payload = envelope.payload;
+        this.update(&mut cx, |this, cx| {
+            // The remote connection type, OS, version, and architecture are all
+            // already known from connection setup, so they don't need to be sent
+            // with each event.
+            let Some((connection_type, platform, os_version)) =
+                this.remote_client.as_ref().map(|client| {
+                    let client = client.read(cx);
+                    (
+                        client.connection_type(),
+                        client.remote_platform(),
+                        client.remote_os_version(),
+                    )
+                })
+            else {
+                return;
+            };
+            this.client()
+                .telemetry()
+                .report_remote_event(
+                    &payload.event_json,
+                    connection_type,
+                    platform.os.display_name().to_string(),
+                    os_version,
+                    platform.arch.as_str().to_string(),
+                )
+                .log_err();
+        });
+        Ok(())
+    }
+
     async fn handle_language_server_prompt_request(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
@@ -6369,7 +6422,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
         } else {
-            RelPath::empty().into()
+            RelPath::empty_arc()
         }
     }
 
@@ -6444,7 +6497,7 @@ impl<'a> fuzzy_nucleo::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
         } else {
-            RelPath::empty().into()
+            RelPath::empty_arc()
         }
     }
     fn root_is_file(&self) -> bool {
