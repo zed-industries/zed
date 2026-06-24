@@ -58,6 +58,65 @@ const BWRAP_UNUSABLE_EXIT_CODE: i32 = 42;
 /// of any stdout noise printed by the login shell's profile scripts.
 const PROBE_RESULT_PREFIX: &str = "zed-wsl-probe:";
 
+/// Prefix of the helper-provisioning script's single result line (the absolute
+/// in-WSL path of the Linux `zed` to run as the sandbox helper), picked out of
+/// login-shell stdout noise just like [`PROBE_RESULT_PREFIX`].
+const HELPER_RESULT_PREFIX: &str = "zed-wsl-helper:";
+
+/// Ensures a Linux `zed` is available inside WSL to act as the sandbox helper
+/// (`--wsl-sandbox-helper`), and prints its absolute path on a
+/// [`HELPER_RESULT_PREFIX`] line. `$1` is the release channel, `$2` the version
+/// (`latest` for dev builds); they're passed as argv, never interpolated, so a
+/// version/channel string can't inject shell.
+///
+/// Order:
+/// 1. If `zed` is already on the login-shell PATH, use it as-is (we trust the
+///    user's PATH; an attacker who can rewrite it has already won).
+/// 2. Else, if a previously-installed managed copy of the *exact* requested
+///    channel+version is present (tracked by a marker file), reuse it.
+/// 3. Else, run the standard Linux install script
+///    (`https://zed.dev/install.sh`) pinned to that channel+version, record the
+///    marker, and use the installed binary.
+///
+/// We ship no `zed` (nor `bwrap`) into WSL ourselves; this downloads `zed` on
+/// demand. A missing `curl`/`wget` (or a failed download) is a hard error the
+/// caller surfaces to the user, exactly like a missing `bwrap`.
+const HELPER_PROVISION_SCRIPT: &str = r#"
+set -eu
+if zed_on_path=$(command -v zed 2>/dev/null); then
+    printf 'zed-wsl-helper: %s\n' "$zed_on_path"
+    exit 0
+fi
+channel="$1"
+version="$2"
+suffix=""
+if [ "$channel" != "stable" ]; then suffix="-$channel"; fi
+managed="$HOME/.local/zed$suffix.app/bin/zed"
+marker="$HOME/.cache/zed/wsl-sandbox-helper-version"
+want="$channel $version"
+if [ -x "$managed" ] && [ "$(cat "$marker" 2>/dev/null)" = "$want" ]; then
+    printf 'zed-wsl-helper: %s\n' "$managed"
+    exit 0
+fi
+if command -v curl >/dev/null 2>&1; then
+    installer=$(curl -fL https://zed.dev/install.sh)
+elif command -v wget >/dev/null 2>&1; then
+    installer=$(wget -O- https://zed.dev/install.sh)
+else
+    echo 'neither curl nor wget is available in WSL to download zed' >&2
+    exit 1
+fi
+printf '%s' "$installer" | ZED_CHANNEL="$channel" ZED_VERSION="$version" sh >&2 || exit 1
+mkdir -p "$(dirname "$marker")"
+printf '%s' "$want" > "$marker"
+if [ -x "$managed" ]; then
+    printf 'zed-wsl-helper: %s\n' "$managed"
+    exit 0
+fi
+echo "the zed install script did not produce $managed" >&2
+exit 1
+"#;
+
 /// Marks a failure of the Windows WSL sandboxing *environment*: WSL is missing
 /// or won't start, there's no usable `bwrap`, or the probe / path-resolution
 /// stdout protocol broke down. Returned as the root of the `anyhow::Error` so
@@ -173,6 +232,13 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
     env: HashMap<String, String, S>,
+    // `(release channel, version)` of the Linux `zed` to provision inside WSL as
+    // the `--wsl-sandbox-helper` (the version is `latest` for dev builds). When
+    // `None`, no helper is used and bwrap is exec'd directly — the legacy path,
+    // which binds writable paths by string and so carries the bind-source TOCTOU
+    // the helper closes. Callers that can determine the running release should
+    // always pass `Some`.
+    wsl_zed_release: Option<(String, String)>,
 ) -> Result<(String, Vec<String>)> {
     // Mapping failures are bad requests (a path that doesn't exist or has a
     // shape WSL can't address), not environment problems, so no
@@ -230,20 +296,49 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     if let Some(cwd) = &cwd {
         wsl_args.extend(["--cd".to_string(), cwd.clone()]);
     }
-    // Use the absolute path the probe validated: `wsl --exec` searches only
-    // the default WSL PATH, which may not include a profile-managed location
-    // where the probe's login shell found `bwrap`.
-    wsl_args.extend(["--exec".to_string(), environment.bwrap_path.clone()]);
-    wsl_args.extend(build_bwrap_args(
+
+    // The bwrap *options* (everything before the trailing `-- cmd`): root bind,
+    // `/tmp` tmpfs, writable binds, interop blocking, `--setenv`s, `--chdir`,
+    // namespace flags. Identical whether or not we route through the helper.
+    let bwrap_options = build_bwrap_args(
         &writable_paths,
         permissions,
         cwd.as_deref(),
         environment.mask_interop_dir,
         &env,
-    ));
-    wsl_args.push("--".to_string());
-    wsl_args.push(program);
-    wsl_args.extend(args);
+    );
+
+    match wsl_zed_release {
+        // Preferred path: run the in-WSL `zed` as the sandbox helper, which
+        // captures the writable binds' inodes WSL-side and validates them after
+        // bwrap's mounts (the same in-sandbox check native Linux performs).
+        Some((channel, version)) => {
+            let helper =
+                ensure_wsl_zed_helper(&wsl_exe, distro.as_deref(), &channel, &version).await?;
+            wsl_args.extend(["--exec".to_string(), helper]);
+            // Protocol (decoded by `linux_bubblewrap::decode_wsl_helper_args`):
+            //   <flag> <bwrap_path> <n_base> <base...> <n_writable> <writable...> -- <prog> <args>
+            wsl_args.push(crate::WSL_SANDBOX_HELPER_FLAG.to_string());
+            wsl_args.push(environment.bwrap_path.clone());
+            wsl_args.push(bwrap_options.len().to_string());
+            wsl_args.extend(bwrap_options);
+            wsl_args.push(writable_paths.len().to_string());
+            wsl_args.extend(writable_paths.iter().cloned());
+            wsl_args.push("--".to_string());
+            wsl_args.push(program);
+            wsl_args.extend(args);
+        }
+        // Legacy path: exec bwrap directly (no in-sandbox bind validation). Use
+        // the absolute path the probe validated, since `wsl --exec` searches
+        // only the default WSL PATH.
+        None => {
+            wsl_args.extend(["--exec".to_string(), environment.bwrap_path.clone()]);
+            wsl_args.extend(bwrap_options);
+            wsl_args.push("--".to_string());
+            wsl_args.push(program);
+            wsl_args.extend(args);
+        }
+    }
 
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
 }
@@ -418,6 +513,94 @@ fn parse_probe_output(stdout: &str) -> Result<EnvironmentProbe> {
         mask_interop_dir,
         bwrap_path: bwrap_path.to_string(),
     })
+}
+
+/// Ensure a Linux `zed` of the given release `channel`/`version` is available
+/// inside WSL and return its absolute in-WSL path, to be `--exec`'d as the
+/// `--wsl-sandbox-helper`. Runs [`HELPER_PROVISION_SCRIPT`] (which may download
+/// `zed` via the install script on first use).
+///
+/// Successful resolutions are cached per `(distro, channel, version)` for the
+/// life of the process — once provisioned, the path won't change. Failures are
+/// not cached, so a user who installs `curl`/`zed` (or fixes networking) after
+/// an error can retry without restarting Zed.
+async fn ensure_wsl_zed_helper(
+    wsl_exe: &Path,
+    distro: Option<&str>,
+    channel: &str,
+    version: &str,
+) -> Result<String> {
+    type HelperCache = HashMap<(Option<String>, String, String), String>;
+    static CACHE: OnceLock<Mutex<HelperCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let key = (
+        distro.map(str::to_string),
+        channel.to_string(),
+        version.to_string(),
+    );
+    if let Some(path) = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+    {
+        return Ok(path.clone());
+    }
+
+    // A login shell (`-lc`) is used so a profile-managed PATH (where `zed` or
+    // `curl` may live) is honored. `channel`/`version` are passed as positional
+    // args (`$1`/`$2`), never interpolated into the script body.
+    let output = run_wsl_command(
+        wsl_exe,
+        distro,
+        [
+            "--exec",
+            "sh",
+            "-lc",
+            HELPER_PROVISION_SCRIPT,
+            "zed-wsl-sandbox-helper",
+            channel,
+            version,
+        ],
+        "provision the Linux `zed` sandbox helper",
+    )
+    .await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        return Err(unavailable(format!(
+            "failed to provision a Linux `zed` sandbox helper in {}{}",
+            wsl_distro_label(distro),
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let path = stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(HELPER_RESULT_PREFIX))
+        .map(|path| path.trim().to_string())
+        .with_context(|| {
+            unavailable(format!(
+                "no helper result line in sandbox-helper provisioning output from {}: {stdout:?}",
+                wsl_distro_label(distro)
+            ))
+        })?;
+    ensure!(
+        path.starts_with('/'),
+        "the WSL `zed` sandbox helper resolved to {path:?} rather than an absolute path"
+    );
+
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key, path.clone());
+    Ok(path)
 }
 
 /// Shell script that resolves and existence-checks paths in a single WSL
@@ -987,6 +1170,7 @@ mod tests {
             SandboxPermissions::default(),
             None,
             HashMap::<String, String>::new(),
+            None,
         ));
     }
 

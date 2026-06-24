@@ -159,6 +159,15 @@ impl HostFilesystemLocation {
         use std::os::fd::AsFd as _;
         self.fd.as_fd().try_clone_to_owned()
     }
+
+    /// Windows: the requested path, to be mapped into WSL and handed to the
+    /// in-WSL helper. Windows captures no identity itself (it holds no Linux
+    /// fds); the real capture-at-validation happens WSL-side in the helper, so
+    /// here the requested path *is* the location.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn windows_path(&self) -> &Path {
+        &self.untrusted_path_for_display
+    }
 }
 
 impl fmt::Debug for HostFilesystemLocation {
@@ -570,6 +579,13 @@ pub struct Sandbox {
     /// with writable binds); a `Sandbox` normally wraps a single command.
     #[cfg(target_os = "linux")]
     validation_fd_sender: Option<linux_bubblewrap::ValidationFdSender>,
+    /// Windows only: `(release channel, version)` of the Linux `zed` to
+    /// provision inside WSL as the `--wsl-sandbox-helper` (version `latest` for
+    /// dev builds). Set by the caller (which has the running release info);
+    /// `None` falls back to exec'ing bwrap directly without in-sandbox bind
+    /// validation.
+    #[cfg(target_os = "windows")]
+    wsl_zed_release: Option<(String, String)>,
     #[cfg(target_os = "macos")]
     seatbelt_config: Option<macos_seatbelt::SeatbeltConfigFile>,
 }
@@ -608,9 +624,22 @@ impl Sandbox {
             proxy: None,
             #[cfg(target_os = "linux")]
             validation_fd_sender: None,
+            #[cfg(target_os = "windows")]
+            wsl_zed_release: None,
             #[cfg(target_os = "macos")]
             seatbelt_config: None,
         })
+    }
+
+    /// Windows only: record the `(release channel, version)` of the Linux `zed`
+    /// to provision inside WSL as the sandbox helper (version `latest` for dev
+    /// builds). The caller resolves these from the running app's release info
+    /// (which this low-level crate can't read) and sets them before `wrap`. When
+    /// unset, the WSL backend falls back to exec'ing bwrap directly without
+    /// in-sandbox bind validation.
+    #[cfg(target_os = "windows")]
+    pub fn set_wsl_zed_release(&mut self, channel: String, version: String) {
+        self.wsl_zed_release = Some((channel, version));
     }
 
     /// Check whether the platform sandbox can be created on this host without
@@ -938,13 +967,23 @@ impl Sandbox {
             allow_network: matches!(self.network, NetSetup::Unrestricted),
             allow_fs_write: self.fs.allow_fs_write,
         };
+        // On Windows the location carries only the requested path; the in-WSL
+        // helper performs the real capture-at-validation. These are mapped into
+        // WSL by `wrap_invocation`.
+        let writable_paths: Vec<PathBuf> = self
+            .fs
+            .writable_paths
+            .iter()
+            .map(|location| location.windows_path().to_path_buf())
+            .collect();
         let (program, args) = windows_wsl::wrap_invocation(
             command.program.clone(),
             command.args.clone(),
-            self.fs.writable_paths.clone(),
+            writable_paths,
             permissions,
             command.cwd.clone(),
             command.env.clone(),
+            self.wsl_zed_release.clone(),
         )
         .await
         .map_err(map_anyhow_error)?;
@@ -971,15 +1010,28 @@ impl Drop for Sandbox {
     }
 }
 
-/// Handle a possible re-exec of this binary as an in-sandbox helper.
+/// Argv flag that marks the WSL-side sandbox-helper re-exec. Shared so the
+/// Windows side (`windows_wsl`, which builds the `wsl.exe` invocation) and the
+/// Linux side (`linux_bubblewrap`, which parses it inside WSL) can't drift.
+pub(crate) const WSL_SANDBOX_HELPER_FLAG: &str = "--wsl-sandbox-helper";
+
+/// Handle a possible re-exec of this binary as a sandbox helper.
 ///
-/// Linux restricted-network runs launch this binary in bridge mode inside the
-/// sandbox network namespace before spawning the real command. Call this at the
-/// top of `main`, before normal argument parsing.
+/// Two Linux re-exec modes funnel through here, neither of which returns if it
+/// matches:
+/// - the in-sandbox launcher (bind validator + restricted-network bridge), run
+///   by bwrap before the real command; and
+/// - the WSL-side helper, run inside WSL to capture fds + drive bwrap (the moral
+///   equivalent of `Sandbox::wrap` on native Linux).
+///
+/// Call this at the top of `main`, before normal argument parsing.
 #[doc(hidden)]
 pub fn run_sandbox_launcher_if_invoked() {
     #[cfg(target_os = "linux")]
-    linux_bubblewrap::run_launcher_if_invoked();
+    {
+        linux_bubblewrap::run_launcher_if_invoked();
+        linux_bubblewrap::run_wsl_helper_if_invoked();
+    }
 }
 
 // The createability probe only needs to know whether a sandbox *can* be built
