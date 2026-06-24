@@ -269,6 +269,24 @@ pub struct TyLspAdapter {
     fs: Arc<dyn Fs>,
 }
 
+fn build_asset_name_with_prefix(
+    prefix: &str,
+    arch_server_name: &str,
+) -> Result<(String, String)> {
+    let arch = match consts::ARCH {
+        "x86" => "i686",
+        _ => consts::ARCH,
+    };
+    let os = arch_server_name;
+    let suffix = match consts::OS {
+        "windows" => "zip",
+        _ => "tar.gz",
+    };
+    let asset_name = format!("{prefix}-{arch}-{os}.{suffix}");
+    let asset_stem = format!("{prefix}-{arch}-{os}");
+    Ok((asset_stem, asset_name))
+}
+
 #[cfg(target_os = "macos")]
 impl TyLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -301,18 +319,7 @@ impl TyLspAdapter {
     }
 
     fn build_asset_name() -> Result<(String, String)> {
-        let arch = match consts::ARCH {
-            "x86" => "i686",
-            _ => consts::ARCH,
-        };
-        let os = Self::ARCH_SERVER_NAME;
-        let suffix = match consts::OS {
-            "windows" => "zip",
-            _ => "tar.gz",
-        };
-        let asset_name = format!("ty-{arch}-{os}.{suffix}");
-        let asset_stem = format!("ty-{arch}-{os}");
-        Ok((asset_stem, asset_name))
+        build_asset_name_with_prefix("ty", Self::ARCH_SERVER_NAME)
     }
 }
 
@@ -2464,18 +2471,7 @@ impl RuffLspAdapter {
     }
 
     fn build_asset_name() -> Result<(String, String)> {
-        let arch = match consts::ARCH {
-            "x86" => "i686",
-            _ => consts::ARCH,
-        };
-        let os = Self::ARCH_SERVER_NAME;
-        let suffix = match consts::OS {
-            "windows" => "zip",
-            _ => "tar.gz",
-        };
-        let asset_name = format!("ruff-{arch}-{os}.{suffix}");
-        let asset_stem = format!("ruff-{arch}-{os}");
-        Ok((asset_stem, asset_name))
+        build_asset_name_with_prefix("ruff", Self::ARCH_SERVER_NAME)
     }
 }
 
