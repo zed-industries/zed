@@ -15,6 +15,7 @@ use crate::sandboxing::{
     SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
     sandboxing_enabled_for_project,
 };
+use crate::tools::{SandboxGitPathCandidates, sandbox_git_paths};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
@@ -70,6 +71,29 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SandboxStatusKey {
+    pub settings_sandbox: ThreadSandbox,
+    pub thread_sandbox: ThreadSandbox,
+    pub baseline_writable_paths: Vec<PathBuf>,
+    pub git_paths: Vec<PathBuf>,
+    pub repository_paths: Vec<(PathBuf, PathBuf, PathBuf, PathBuf)>,
+    pub settings_allow_git_access: bool,
+    pub thread_allow_git_access: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedSandboxStatus {
+    pub settings_sandbox: ThreadSandbox,
+    pub thread_sandbox: ThreadSandbox,
+    pub baseline_writable_paths: Vec<PathBuf>,
+}
+
+pub enum SandboxStatusRefresh {
+    Ready(VerifiedSandboxStatus),
+    Pending(Task<VerifiedSandboxStatus>),
+}
 
 /// Auto-compaction is only available for models whose context window is at least
 /// this large. For smaller models there isn't enough headroom for a compaction
@@ -1749,20 +1773,14 @@ impl Thread {
         }
     }
 
-    /// The sandbox that currently applies to agent terminal commands in this
-    /// thread, as two layers: the user's persistent settings and this thread's
-    /// overrides (see [`ThreadSandbox`]). Returns `None` when sandboxing isn't
-    /// applicable to the project at all, so the UI shows no indicator.
-    ///
-    /// The layers are returned pre-merge so the UI can show their provenance
-    /// separately; [`ThreadSandbox::merge`] combines them into what is enforced.
+    /// The sandbox grants configured for this thread, using unverified Git path
+    /// candidates. Use [`Self::refresh_verified_sandbox_status`] for UI or other
+    /// surfaces that need to match terminal enforcement.
     pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
         if !self.sandboxing_available(cx) {
             return None;
         }
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
-        // The project's `.git` locations are the same for both layers; whether
-        // they're writable differs (settings grant vs. thread grant).
         let git_dirs = crate::sandboxing::sandbox_git_dirs(self.project.read(cx), cx);
         let grants = self.sandbox_grants.borrow();
         let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
@@ -1771,6 +1789,83 @@ impl Thread {
             .thread_sandbox()
             .with_git(grants.git_access_granted(), git_dirs);
         Some((settings, thread))
+    }
+
+    pub fn refresh_verified_sandbox_status(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<(SandboxStatusKey, SandboxStatusRefresh)> {
+        if !self.sandboxing_available(cx) {
+            return None;
+        }
+
+        let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
+        let settings_sandbox = crate::sandboxing::settings_thread_sandbox(&persistent);
+        let grants = self.sandbox_grants.borrow();
+        let thread_sandbox = grants.thread_sandbox();
+        let thread_allow_git_access = grants.git_access_granted();
+        drop(grants);
+
+        let (sandbox_path_candidates, fs) = {
+            let project = self.project.read(cx);
+            (
+                SandboxGitPathCandidates::from_project(project, cx),
+                project.fs().clone(),
+            )
+        };
+        let baseline_writable_paths = sandbox_path_candidates.writable_paths.clone();
+        let git_paths = sandbox_path_candidates.git_paths.clone();
+        let repository_paths = sandbox_path_candidates.cache_key_repositories();
+
+        let key = SandboxStatusKey {
+            settings_sandbox: settings_sandbox.clone(),
+            thread_sandbox: thread_sandbox.clone(),
+            baseline_writable_paths: baseline_writable_paths.clone(),
+            git_paths: git_paths.clone(),
+            repository_paths,
+            settings_allow_git_access: persistent.allow_git_access,
+            thread_allow_git_access,
+        };
+
+        if settings_sandbox.is_unsandboxed() || thread_sandbox.is_unsandboxed() {
+            return Some((
+                key,
+                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
+                    settings_sandbox,
+                    thread_sandbox,
+                    baseline_writable_paths,
+                }),
+            ));
+        }
+
+        let git_access_requested = persistent.allow_git_access || thread_allow_git_access;
+        if !git_access_requested {
+            return Some((
+                key,
+                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
+                    settings_sandbox: settings_sandbox.with_git(false, git_paths.clone()),
+                    thread_sandbox: thread_sandbox.with_git(false, git_paths),
+                    baseline_writable_paths,
+                }),
+            ));
+        }
+
+        let task = cx.spawn(async move |_this, _cx| {
+            let sandbox_paths = sandbox_git_paths(sandbox_path_candidates, fs.as_ref(), true).await;
+            VerifiedSandboxStatus {
+                settings_sandbox: settings_sandbox.with_git(
+                    persistent.allow_git_access && sandbox_paths.allow_git_access,
+                    sandbox_paths.git_dirs.clone(),
+                ),
+                thread_sandbox: thread_sandbox.with_git(
+                    thread_allow_git_access && sandbox_paths.allow_git_access,
+                    sandbox_paths.git_dirs,
+                ),
+                baseline_writable_paths,
+            }
+        });
+
+        Some((key, SandboxStatusRefresh::Pending(task)))
     }
 
     /// Whether agent terminal commands are sandboxed for this thread's project,

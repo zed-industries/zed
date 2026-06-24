@@ -17,6 +17,9 @@ use std::{
 use crate::SandboxFallbackDecision;
 use crate::sandboxing::{NetworkRequest, sandboxing_enabled_for_project};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use sandbox_git_paths::{SandboxGitPathCandidates, sandbox_git_paths};
+
+pub(crate) mod sandbox_git_paths;
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -572,6 +575,7 @@ async fn run_terminal_tool(
         allow(unused_mut)
     )]
     let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
+    let mut git_access_downgrade_note = None;
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         if unsandboxed_floor {
             // Every command in this thread runs unsandboxed because the user
@@ -588,18 +592,32 @@ async fn run_terminal_tool(
                         .to_string(),
                 );
             }
-            let (writable_paths, git_dirs) = cx.update(|cx| {
-                let project = project.read(cx);
+            let (fs, sandbox_path_candidates) = cx.update(|cx| {
                 (
-                    crate::sandboxing::sandbox_worktree_writable_paths(project, cx),
-                    crate::sandboxing::sandbox_git_dirs(project, cx),
+                    project.read(cx).fs().clone(),
+                    SandboxGitPathCandidates::from_project(project.read(cx), cx),
                 )
             });
+            let sandbox_paths = sandbox_git_paths(
+                sandbox_path_candidates,
+                fs.as_ref(),
+                effective.allow_git_access,
+            )
+            .await;
+            if effective.allow_git_access && !sandbox_paths.allow_git_access {
+                log::warn!(
+                    "Downgrading requested agent terminal Git metadata access because one or more external Git metadata paths could not be verified"
+                );
+                git_access_downgrade_note = Some(
+                    "Note: Git metadata access was requested or already allowed, but Zed could not verify one or more external Git metadata paths for this project. The command ran with Git metadata protected, so Git operations that read or write `.git` may fail with sandbox permission errors."
+                        .to_string(),
+                );
+            }
             let wrap = acp_thread::SandboxWrap {
-                writable_paths,
+                writable_paths: sandbox_paths.writable_paths,
                 extra_write_paths: effective.write_paths,
-                git_dirs,
-                allow_git_access: effective.allow_git_access,
+                git_dirs: sandbox_paths.git_dirs,
+                allow_git_access: sandbox_paths.allow_git_access,
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
@@ -884,9 +902,17 @@ async fn run_terminal_tool(
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
     let result = process_content(output, &input.command, timed_out, user_stopped, selection);
-    Ok(match sandbox_note {
-        Some(note) => format!("{note}\n\n{result}"),
-        None => result,
+    let git_access_downgrade_note = (sandbox_wrap.is_some() && sandbox_not_applied.is_none())
+        .then_some(git_access_downgrade_note)
+        .flatten();
+    let notes = sandbox_note
+        .into_iter()
+        .chain(git_access_downgrade_note)
+        .collect::<Vec<_>>();
+    Ok(if notes.is_empty() {
+        result
+    } else {
+        format!("{}\n\n{result}", notes.join("\n\n"))
     })
 }
 

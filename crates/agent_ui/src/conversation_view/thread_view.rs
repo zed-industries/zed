@@ -12,7 +12,10 @@ use acp_thread::{
     ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
     SandboxNotAppliedReason,
 };
-use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated, ThreadSandbox};
+use agent::{
+    SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
+    SkillLoadingIssuesUpdated, ThreadSandbox, VerifiedSandboxStatus,
+};
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
@@ -601,6 +604,7 @@ pub struct ThreadView {
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
+    _sandbox_status_refresh_task: Option<Task<()>>,
     pub skip_queue_processing_count: usize,
     pub user_interrupted_generation: bool,
     pub can_fast_track_queue: bool,
@@ -618,6 +622,9 @@ pub struct ThreadView {
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
+    sandbox_status: Option<VerifiedSandboxStatus>,
+    sandbox_status_key: Option<SandboxStatusKey>,
+    pending_sandbox_status_key: Option<SandboxStatusKey>,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
     pub skill_loading_issues: Vec<SkillLoadingIssue>,
@@ -994,6 +1001,7 @@ impl ThreadView {
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
+            _sandbox_status_refresh_task: None,
             skip_queue_processing_count: 0,
             user_interrupted_generation: false,
             can_fast_track_queue: false,
@@ -1007,6 +1015,9 @@ impl ThreadView {
             code_span_resolver,
             show_external_source_prompt_warning,
             show_codex_windows_warning,
+            sandbox_status: None,
+            sandbox_status_key: None,
+            pending_sandbox_status_key: None,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
             skill_loading_issues: Vec::new(),
@@ -4567,17 +4578,56 @@ impl ThreadView {
             .unwrap_or(false)
     }
 
+    fn refresh_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<VerifiedSandboxStatus> {
+        let thread = self.as_native_thread(cx)?;
+        let (key, refresh) =
+            thread.update(cx, |thread, cx| thread.refresh_verified_sandbox_status(cx))?;
+
+        if self.sandbox_status_key.as_ref() == Some(&key) {
+            return self.sandbox_status.clone();
+        }
+
+        match refresh {
+            SandboxStatusRefresh::Ready(status) => {
+                self.sandbox_status = Some(status.clone());
+                self.sandbox_status_key = Some(key);
+                self.pending_sandbox_status_key = None;
+                Some(status)
+            }
+            SandboxStatusRefresh::Pending(task) => {
+                if self.pending_sandbox_status_key.as_ref() != Some(&key) {
+                    self.sandbox_status = None;
+                    self.sandbox_status_key = None;
+                    self.pending_sandbox_status_key = Some(key.clone());
+                    self._sandbox_status_refresh_task = Some(cx.spawn(async move |this, cx| {
+                        let status = task.await;
+                        this.update(cx, |this, cx| {
+                            if this.pending_sandbox_status_key.as_ref() == Some(&key) {
+                                this.sandbox_status = Some(status);
+                                this.sandbox_status_key = Some(key);
+                                this.pending_sandbox_status_key = None;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }));
+                }
+                None
+            }
+        }
+    }
+
     /// A small lock icon summarizing the sandbox state. Hovering shows the
     /// write-access paths and network-access domains from the user's settings
     /// and the per-thread overrides. The lock is struck through when sandboxing
     /// is turned off (in settings, or for this thread). Shown whenever
     /// sandboxing is *applicable* to the project, even when disabled, so the
     /// user can always see and change the state. Clicking opens the settings.
-    fn render_sandbox_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let thread = self.as_native_thread(cx)?;
-        let thread = thread.read(cx);
-        let (settings_sandbox, thread_sandbox) = thread.sandbox_status(cx)?;
-        let baseline = thread.sandbox_baseline_writable_paths(cx);
+    fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let status = self.refresh_sandbox_status(cx)?;
+        let settings_sandbox = status.settings_sandbox.clone();
+        let thread_sandbox = status.thread_sandbox.clone();
+        let baseline = status.baseline_writable_paths;
 
         // The lock is struck only when the *merged* result is unsandboxed (the
         // agent runs with ambient permissions). A layer that is merely wide open
