@@ -1,4 +1,5 @@
 pub mod excerpt_ranges;
+pub mod hashed_regions;
 pub mod multi_region;
 pub mod udiff;
 
@@ -120,6 +121,11 @@ pub enum ZetaFormat {
     V0420Diagnostics,
     /// V0318-style multi-region format using Qwen FIM tokens and PSM ordering.
     V0608QwenMultiRegions,
+
+    /// V0318-style marker-span output, but with content-hashed marker tags over rendered
+    /// related-file context so the model can target jump edits. There is no cursor-centered
+    /// editable region for this format.
+    V0615HashRegions,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -266,6 +272,7 @@ pub enum ContextSource {
     GitLog,
     Bm25,
     OracleFile,
+    OracleSnippet,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
@@ -296,6 +303,7 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0608QwenMultiRegions => 4096,
+        ZetaFormat::V0615HashRegions => 8000,
         ZetaFormat::V0420Diagnostics => 8192,
         ZetaFormat::V0327SingleFile => 16384,
     };
@@ -365,6 +373,18 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
             ];
             TOKENS
         }
+        ZetaFormat::V0615HashRegions => {
+            static TOKENS: &[&str] = &[
+                seed_coder::FIM_SUFFIX,
+                seed_coder::FIM_PREFIX,
+                seed_coder::FIM_MIDDLE,
+                seed_coder::FILE_MARKER,
+                hashed_regions::V0615_END_MARKER,
+                CURSOR_MARKER,
+                hashed_regions::MARKER_TAG_PREFIX,
+            ];
+            TOKENS
+        }
         ZetaFormat::V0327SingleFile => {
             static TOKENS: &[&str] = &[
                 seed_coder::FIM_SUFFIX,
@@ -413,6 +433,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0327SingleFile
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
+        ZetaFormat::V0615HashRegions => (8000, 0),
 
         ZetaFormat::V0304VariableEdit => (1024, 0),
     }
@@ -439,6 +460,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         ZetaFormat::V0608QwenMultiRegions => &[qwen::END_MARKER],
         ZetaFormat::V0317SeedMultiRegions => &[multi_region::V0317_END_MARKER],
         ZetaFormat::V0327SingleFile => &[multi_region::V0327_END_MARKER],
+        ZetaFormat::V0615HashRegions => &[hashed_regions::V0615_END_MARKER],
     }
 }
 
@@ -468,7 +490,8 @@ pub fn training_delimiters_for_format(format: ZetaFormat) -> TrainingDelimiters 
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0327SingleFile
-        | ZetaFormat::V0420Diagnostics => TrainingDelimiters {
+        | ZetaFormat::V0420Diagnostics
+        | ZetaFormat::V0615HashRegions => TrainingDelimiters {
             instruction_part: seed_coder::FIM_SUFFIX,
             response_part: seed_coder::FIM_MIDDLE,
         },
@@ -537,6 +560,16 @@ pub fn excerpt_ranges_for_format(
                 // shouldn't be used, only for compat with old data/clients
                 ranges.editable_350_context_150.clone(),
             ),
+        ),
+        ZetaFormat::V0615HashRegions => (
+            ranges
+                .context_8192
+                .clone()
+                .unwrap_or_else(|| ranges.editable_350_context_150.clone()),
+            ranges
+                .context_8192
+                .clone()
+                .unwrap_or_else(|| ranges.editable_350_context_150.clone()),
         ),
 
         ZetaFormat::V0304VariableEdit => {
@@ -661,6 +694,14 @@ pub fn write_cursor_excerpt_section_for_format(
                 seed_coder::FILE_MARKER,
             ));
         }
+        ZetaFormat::V0615HashRegions => {
+            prompt.push_str(&build_v0615_cursor_prefix(
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            ));
+        }
     }
 }
 
@@ -748,6 +789,34 @@ fn build_v0318_cursor_prefix(
     section
 }
 
+fn build_v0615_cursor_prefix(
+    path: &Path,
+    context: &str,
+    editable_range: &Range<usize>,
+    cursor_offset: usize,
+) -> String {
+    let mut section = String::new();
+    let path_str = path.to_string_lossy();
+    write!(section, "{}{}\n", seed_coder::FILE_MARKER, path_str).ok();
+
+    section.push_str(&context[..editable_range.start]);
+
+    let editable_text = &context[editable_range.clone()];
+    let cursor_in_editable = cursor_offset - editable_range.start;
+    let markers = hashed_regions::markers_for_text(editable_text);
+    hashed_regions::write_snippet_with_markers(
+        &mut section,
+        editable_text,
+        &markers,
+        Some((cursor_in_editable, CURSOR_MARKER)),
+    );
+
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
+    section
+}
+
 fn build_v0317_cursor_prefix(
     path: &Path,
     context: &str,
@@ -818,6 +887,172 @@ fn assemble_single_file_fim_prompt(
     prompt
 }
 
+fn format_hash_region_related_files_within_budget(
+    input: &ZetaPromptInput,
+    marker_table: &[hashed_regions::SnippetMarkers],
+    cursor: &hashed_regions::RelatedFileCursor,
+    max_tokens: usize,
+) -> Option<String> {
+    let related_files = input.related_files.as_deref()?;
+
+    struct RenderedExcerpt {
+        file_ix: usize,
+        excerpt_ix: usize,
+        order: usize,
+        rendered: String,
+    }
+
+    let mut candidates = Vec::new();
+    let mut required_candidate_ix = None;
+    for (file_ix, file) in related_files.iter().enumerate() {
+        for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
+            let markers =
+                hashed_regions::marker_table_for_excerpt(marker_table, file_ix, excerpt_ix);
+            let mut rendered = String::new();
+            if let Some(markers) = markers {
+                let cursor_in_excerpt = (file_ix == cursor.file_ix
+                    && excerpt_ix == cursor.excerpt_ix)
+                    .then_some((cursor.offset_in_excerpt, CURSOR_MARKER));
+                hashed_regions::write_snippet_with_markers(
+                    &mut rendered,
+                    &excerpt.text,
+                    markers,
+                    cursor_in_excerpt,
+                );
+            } else {
+                rendered.push_str(&excerpt.text);
+            }
+            if !rendered.ends_with('\n') {
+                rendered.push('\n');
+            }
+
+            if file_ix == cursor.file_ix && excerpt_ix == cursor.excerpt_ix {
+                required_candidate_ix = Some(candidates.len());
+            }
+
+            candidates.push(RenderedExcerpt {
+                file_ix,
+                excerpt_ix,
+                order: excerpt.order,
+                rendered,
+            });
+        }
+    }
+
+    let required_candidate_ix = required_candidate_ix?;
+    let file_headers: Vec<String> = related_files
+        .iter()
+        .map(|file| {
+            let path = hashed_regions::related_file_patch_path(&input.cursor_path, &file.path)
+                .iter()
+                .map(|component| component.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            format!("{}{path}\n", seed_coder::FILE_MARKER)
+        })
+        .collect();
+
+    let mut total_tokens = 0;
+    let mut included = vec![false; candidates.len()];
+    let mut file_included = vec![false; related_files.len()];
+
+    let required = &candidates[required_candidate_ix];
+    let required_cost =
+        estimate_tokens(file_headers[required.file_ix].len() + required.rendered.len());
+    if required_cost > max_tokens {
+        return None;
+    }
+    total_tokens += required_cost;
+    included[required_candidate_ix] = true;
+    file_included[required.file_ix] = true;
+
+    let mut selection_order: Vec<usize> = (0..candidates.len()).collect();
+    selection_order.sort_by_key(|&candidate_ix| {
+        let candidate = &candidates[candidate_ix];
+        (candidate.order, candidate.file_ix, candidate.excerpt_ix)
+    });
+
+    for candidate_ix in selection_order {
+        if included[candidate_ix] {
+            continue;
+        }
+        let candidate = &candidates[candidate_ix];
+        let header_cost = if file_included[candidate.file_ix] {
+            0
+        } else {
+            estimate_tokens(file_headers[candidate.file_ix].len())
+        };
+        let excerpt_cost = estimate_tokens(candidate.rendered.len());
+        if total_tokens + header_cost + excerpt_cost > max_tokens {
+            continue;
+        }
+        total_tokens += header_cost + excerpt_cost;
+        included[candidate_ix] = true;
+        file_included[candidate.file_ix] = true;
+    }
+
+    let mut result = String::new();
+    let mut last_file_ix = None;
+    for (candidate_ix, candidate) in candidates.iter().enumerate() {
+        if !included[candidate_ix] {
+            continue;
+        }
+        if last_file_ix != Some(candidate.file_ix) {
+            result.push_str(&file_headers[candidate.file_ix]);
+            last_file_ix = Some(candidate.file_ix);
+        }
+        result.push_str(&candidate.rendered);
+
+        let file = &related_files[candidate.file_ix];
+        let excerpt = &file.excerpts[candidate.excerpt_ix];
+        let next_excerpt_start = candidates
+            .iter()
+            .enumerate()
+            .skip(candidate_ix + 1)
+            .find(|(next_ix, next)| included[*next_ix] && next.file_ix == candidate.file_ix)
+            .map(|(_, next)| file.excerpts[next.excerpt_ix].row_range.start);
+        if rows_omitted_after_excerpt(excerpt, next_excerpt_start, file.max_row) {
+            result.push_str("...\n");
+        }
+    }
+
+    Some(result)
+}
+
+fn format_hash_regions_prompt_with_budget(
+    input: &ZetaPromptInput,
+    max_tokens: usize,
+) -> Option<String> {
+    let marker_table = hashed_regions::build_marker_table(input);
+    let cursor = hashed_regions::locate_cursor_in_related_files(input)?;
+    hashed_regions::marker_table_for_excerpt(&marker_table, cursor.file_ix, cursor.excerpt_ix)?;
+
+    let fixed_tokens = estimate_tokens(
+        seed_coder::FIM_SUFFIX.len()
+            + "\n".len()
+            + seed_coder::FIM_PREFIX.len()
+            + seed_coder::FIM_MIDDLE.len(),
+    );
+    let related_files_budget = max_tokens.saturating_sub(fixed_tokens);
+    let related_files_section = format_hash_region_related_files_within_budget(
+        input,
+        &marker_table,
+        &cursor,
+        related_files_budget,
+    )?;
+
+    let mut prompt = String::new();
+    prompt.push_str(seed_coder::FIM_SUFFIX);
+    prompt.push('\n');
+    prompt.push_str(seed_coder::FIM_PREFIX);
+    prompt.push_str(&related_files_section);
+    if !prompt.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push_str(seed_coder::FIM_MIDDLE);
+    Some(prompt)
+}
+
 pub fn format_prompt_with_budget_for_format(
     input: &ZetaPromptInput,
     format: ZetaFormat,
@@ -829,7 +1064,9 @@ pub fn format_prompt_with_budget_for_format(
 
     let empty_files = Vec::new();
     let input_related_files = input.related_files.as_deref().unwrap_or(&empty_files);
-    let filtered_related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
+    let filtered_related_files = if format == ZetaFormat::V0615HashRegions {
+        input_related_files.to_vec()
+    } else if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
         let relative_row_range =
             offset_range_to_row_range(&input.cursor_excerpt, context_range.clone());
         let row_range = relative_row_range.start + cursor_excerpt_start_row
@@ -845,6 +1082,9 @@ pub fn format_prompt_with_budget_for_format(
     let related_files = filtered_related_files.as_slice();
 
     let prompt = match format {
+        ZetaFormat::V0615HashRegions => {
+            format_hash_regions_prompt_with_budget(input, apply_prompt_budget_margin(max_tokens))?
+        }
         ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0304SeedNoEdits
@@ -1079,7 +1319,8 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
         | ZetaFormat::V0608QwenMultiRegions
-        | ZetaFormat::V0327SingleFile => 6,
+        | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0615HashRegions => 6,
     }
 }
 
@@ -1106,7 +1347,8 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
         | ZetaFormat::V0608QwenMultiRegions
-        | ZetaFormat::V0327SingleFile => String::new(),
+        | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0615HashRegions => String::new(),
     }
 }
 
@@ -1125,6 +1367,7 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0608QwenMultiRegions => Some(qwen::END_MARKER),
         ZetaFormat::V0317SeedMultiRegions => Some(multi_region::V0317_END_MARKER),
         ZetaFormat::V0327SingleFile => Some(multi_region::V0327_END_MARKER),
+        ZetaFormat::V0615HashRegions => Some(hashed_regions::V0615_END_MARKER),
 
         ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
@@ -1225,6 +1468,7 @@ pub fn encode_patch_as_output_for_format(
                 Ok(None)
             }
         }
+        ZetaFormat::V0615HashRegions => Ok(None),
         _ => Ok(None),
     }
 }
@@ -1237,6 +1481,10 @@ pub fn format_expected_output(
     patch: &str,
     cursor_offset: Option<usize>,
 ) -> Result<String> {
+    if format == ZetaFormat::V0615HashRegions {
+        return hashed_regions::encode_patch_as_output(input, patch, cursor_offset, CURSOR_MARKER);
+    }
+
     let (context, editable_range, _, _) = resolve_cursor_region(input, format);
     let mut old_editable = context[editable_range].to_string();
     if !old_editable.is_empty() && !old_editable.ends_with('\n') {
@@ -1329,7 +1577,8 @@ pub fn format_expected_output(
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0331SeedCoderModelPy
-        | ZetaFormat::V0306SeedMultiRegions => {
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0615HashRegions => {
             let (mut result, first_hunk_offset) = if empty_patch {
                 (old_editable.clone(), None)
             } else {
@@ -1471,6 +1720,11 @@ pub fn parse_zeta2_model_output(
             editable_range_in_context,
             multi_region::apply_marker_span_v0318(old_editable_region, output)?,
         ),
+        ZetaFormat::V0615HashRegions => {
+            anyhow::bail!(
+                "V0615HashRegions output addresses related-file context; use parse_zeta2_model_output_as_patch"
+            )
+        }
         _ => (editable_range_in_context, output.to_string()),
     };
 
@@ -1485,6 +1739,10 @@ pub fn parse_zeta2_model_output_as_patch(
     format: ZetaFormat,
     prompt_inputs: &ZetaPromptInput,
 ) -> Result<String> {
+    if format == ZetaFormat::V0615HashRegions {
+        return hashed_regions::parse_output_as_patch(prompt_inputs, output, CURSOR_MARKER);
+    }
+
     let parsed = parse_zeta2_model_output(output, format, prompt_inputs)?;
     parsed_output_to_patch(prompt_inputs, parsed)
 }
@@ -1620,7 +1878,7 @@ pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
     get_prefill_for_format(format, context, &editable_range)
 }
 
-fn format_edit_history_within_budget(
+pub fn format_edit_history_within_budget(
     events: &[Arc<Event>],
     file_marker: &str,
     edit_history_name: &str,
@@ -1735,7 +1993,7 @@ pub fn format_related_files_within_budget(
     // Render all of the files that fit within the token budget, in the original order.
     let mut result = String::new();
     let mut last_file_ix = None;
-    for candidate in &excerpt_candidates {
+    for (candidate_ix, candidate) in excerpt_candidates.iter().enumerate() {
         if last_file_ix != Some(candidate.file_ix) {
             if last_file_ix.is_some() {
                 result.push_str(file_suffix);
@@ -1749,12 +2007,30 @@ pub fn format_related_files_within_budget(
         if !result.ends_with('\n') {
             result.push('\n');
         }
-        if excerpt.row_range.end < file.max_row {
+        let next_excerpt_start = excerpt_candidates
+            .get(candidate_ix + 1)
+            .filter(|next| next.file_ix == candidate.file_ix)
+            .map(|next| file.excerpts[next.excerpt_ix].row_range.start);
+        if rows_omitted_after_excerpt(excerpt, next_excerpt_start, file.max_row) {
             result.push_str("...\n");
         }
     }
 
     result
+}
+
+/// Whether rows are omitted between this excerpt and the next rendered
+/// excerpt of the same file (or the end of the file), in which case an
+/// ellipsis line should be rendered.
+pub fn rows_omitted_after_excerpt(
+    excerpt: &RelatedExcerpt,
+    next_excerpt_start: Option<u32>,
+    file_max_row: u32,
+) -> bool {
+    match next_excerpt_start {
+        Some(next_start) => excerpt.row_range.end < next_start,
+        None => excerpt.row_range.end < file_max_row,
+    }
 }
 
 pub fn write_related_files(
@@ -1766,12 +2042,16 @@ pub fn write_related_files(
         let start = prompt.len();
         let path_str = file.path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
-        for excerpt in &file.excerpts {
+        for (excerpt_ix, excerpt) in file.excerpts.iter().enumerate() {
             prompt.push_str(&excerpt.text);
             if !prompt.ends_with('\n') {
                 prompt.push('\n');
             }
-            if excerpt.row_range.end < file.max_row {
+            let next_excerpt_start = file
+                .excerpts
+                .get(excerpt_ix + 1)
+                .map(|next| next.row_range.start);
+            if rows_omitted_after_excerpt(excerpt, next_excerpt_start, file.max_row) {
                 prompt.push_str("...\n");
             }
         }
@@ -5217,13 +5497,13 @@ mod tests {
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 10..20,
+                        row_range: 11..20,
                         text: "second excerpt\n".into(),
                         order: 0,
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 20..30,
+                        row_range: 21..30,
                         text: "third excerpt\n".into(),
                         order: 0,
                         context_source: ContextSource::Lsp,
@@ -5256,6 +5536,55 @@ mod tests {
             indoc! {r#"
                 <|file_sep|>big.rs
                 first excerpt
+                ...
+                <|file_sep|>test.rs
+                <|fim_prefix|>
+                <|fim_middle|>current
+                <|user_cursor|>x
+                <|fim_suffix|>
+                <|fim_middle|>updated
+            "#}
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn test_contiguous_excerpts_render_without_ellipsis() {
+        // Excerpts whose row ranges touch (end == next start) are contiguous
+        // segments of the same region and must render seamlessly, without an
+        // ellipsis line between them.
+        let input = make_input(
+            "x",
+            0..1,
+            0,
+            vec![],
+            vec![RelatedFile {
+                path: Path::new("big.rs").into(),
+                max_row: 30,
+                in_open_source_repo: false,
+                excerpts: vec![
+                    RelatedExcerpt {
+                        row_range: 0..10,
+                        text: "first segment\n".into(),
+                        order: 1,
+                        context_source: ContextSource::GitLog,
+                    },
+                    RelatedExcerpt {
+                        row_range: 10..20,
+                        text: "second segment\n".into(),
+                        order: 0,
+                        context_source: ContextSource::OracleSnippet,
+                    },
+                ],
+            }],
+        );
+
+        assert_eq!(
+            format_with_budget(&input, 10000).unwrap(),
+            indoc! {r#"
+                <|file_sep|>big.rs
+                first segment
+                second segment
                 ...
                 <|file_sep|>test.rs
                 <|fim_prefix|>
@@ -5365,13 +5694,13 @@ mod tests {
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 5..15,
+                        row_range: 6..15,
                         text: "important fn\n".into(),
                         order: 1,
                         context_source: ContextSource::Lsp,
                     },
                     RelatedExcerpt {
-                        row_range: 15..30,
+                        row_range: 16..30,
                         text: "less important fn\n".into(),
                         order: 3,
                         context_source: ContextSource::Lsp,
@@ -5721,6 +6050,208 @@ mod tests {
         assert!(editable_range.start < adjusted_cursor);
         assert!(editable_range.end > adjusted_cursor);
         assert!(editable_range.end < excerpt.len());
+    }
+
+    #[test]
+    fn test_v0615_formats_hashed_markers_for_rendered_related_context() {
+        let current_text = "fn main() {\n    let value = 1;\n}\n";
+        let cursor_offset = current_text.find("let value").unwrap();
+        let input = ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: current_text.into(),
+            cursor_offset_in_excerpt: cursor_offset,
+            excerpt_start_row: Some(0),
+            events: Vec::new(),
+            related_files: Some(vec![
+                RelatedFile {
+                    path: Path::new("test.rs").into(),
+                    max_row: 3,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..3,
+                        text: current_text.into(),
+                        order: 0,
+                        context_source: ContextSource::CurrentFile,
+                    }],
+                    in_open_source_repo: false,
+                },
+                RelatedFile {
+                    path: Path::new("helper.rs").into(),
+                    max_row: 3,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 10..13,
+                        text: "fn helper() {\n    one();\n}\n".into(),
+                        order: 1,
+                        context_source: ContextSource::EditHistory,
+                    }],
+                    in_open_source_repo: false,
+                },
+                RelatedFile {
+                    path: Path::new("readonly.rs").into(),
+                    max_row: 1,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..1,
+                        text: "pub fn readonly() {}\n".into(),
+                        order: 2,
+                        context_source: ContextSource::Lsp,
+                    }],
+                    in_open_source_repo: false,
+                },
+            ]),
+            active_buffer_diagnostics: vec![],
+            excerpt_ranges: ExcerptRanges::default(),
+            syntax_ranges: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        };
+
+        let prompt = format_zeta_prompt(&input, ZetaFormat::V0615HashRegions).unwrap();
+        let marker_table = hashed_regions::build_marker_table(&input);
+        let marker_count: usize = marker_table
+            .iter()
+            .map(|snippet| snippet.markers.len())
+            .sum();
+
+        assert!(prompt.starts_with("<[fim-suffix]>\n<[fim-prefix]><filename>test.rs\n"));
+        assert!(prompt.ends_with("<[fim-middle]>"));
+        assert!(prompt.contains(CURSOR_MARKER));
+        assert!(prompt.contains("<filename>helper.rs\n"));
+        assert!(prompt.contains("<filename>readonly.rs\n"));
+        assert!(prompt.contains("<filename>readonly.rs\n<|marker_"));
+        assert!(prompt.contains("pub fn readonly() {}"));
+        assert_eq!(
+            prompt.matches(hashed_regions::MARKER_TAG_PREFIX).count(),
+            marker_count
+        );
+        assert!(!prompt.contains(seed_coder::START_MARKER));
+    }
+
+    #[test]
+    fn test_v0615_parse_related_file_jump_as_patch() {
+        let current_text = "fn main() {\n    helper();\n}\n";
+        let helper_text = "fn helper() {\n    one();\n}\n";
+        let input = ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: current_text.into(),
+            cursor_offset_in_excerpt: current_text.find("helper").unwrap(),
+            excerpt_start_row: Some(0),
+            events: Vec::new(),
+            related_files: Some(vec![
+                RelatedFile {
+                    path: Path::new("test.rs").into(),
+                    max_row: 3,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..3,
+                        text: current_text.into(),
+                        order: 0,
+                        context_source: ContextSource::CurrentFile,
+                    }],
+                    in_open_source_repo: false,
+                },
+                RelatedFile {
+                    path: Path::new("helper.rs").into(),
+                    max_row: 13,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 10..13,
+                        text: helper_text.into(),
+                        order: 1,
+                        context_source: ContextSource::EditHistory,
+                    }],
+                    in_open_source_repo: false,
+                },
+            ]),
+            active_buffer_diagnostics: vec![],
+            excerpt_ranges: ExcerptRanges::default(),
+            syntax_ranges: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        };
+        let marker_table = hashed_regions::build_marker_table(&input);
+        let helper_markers = &marker_table[1].markers;
+        let start_tag = hashed_regions::marker_tag(&helper_markers[0].0);
+        let end_tag = hashed_regions::marker_tag(&helper_markers[helper_markers.len() - 1].0);
+        let output = format!(
+            "{start_tag}\nfn helper() {{\n    two();\n}}\n{end_tag}{}",
+            hashed_regions::V0615_END_MARKER
+        );
+
+        let patch =
+            parse_zeta2_model_output_as_patch(&output, ZetaFormat::V0615HashRegions, &input)
+                .unwrap();
+
+        assert!(patch.contains("--- a/helper.rs"), "patch: {patch}");
+        assert!(patch.contains("@@ -11,"), "patch: {patch}");
+        assert!(patch.contains("-    one();"), "patch: {patch}");
+        assert!(patch.contains("+    two();"), "patch: {patch}");
+    }
+
+    #[test]
+    fn test_v0615_expected_output_round_trips_to_patch() {
+        let current_text = "fn main() {\n    helper();\n}\n";
+        let helper_text = "fn helper() {\n    one();\n}\n";
+        let input = ZetaPromptInput {
+            cursor_path: Path::new("test.rs").into(),
+            cursor_excerpt: current_text.into(),
+            cursor_offset_in_excerpt: current_text.find("helper").unwrap(),
+            excerpt_start_row: Some(0),
+            events: Vec::new(),
+            related_files: Some(vec![
+                RelatedFile {
+                    path: Path::new("test.rs").into(),
+                    max_row: 3,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 0..3,
+                        text: current_text.into(),
+                        order: 0,
+                        context_source: ContextSource::CurrentFile,
+                    }],
+                    in_open_source_repo: false,
+                },
+                RelatedFile {
+                    path: Path::new("helper.rs").into(),
+                    max_row: 13,
+                    excerpts: vec![RelatedExcerpt {
+                        row_range: 10..13,
+                        text: helper_text.into(),
+                        order: 1,
+                        context_source: ContextSource::EditHistory,
+                    }],
+                    in_open_source_repo: false,
+                },
+            ]),
+            active_buffer_diagnostics: vec![],
+            excerpt_ranges: ExcerptRanges::default(),
+            syntax_ranges: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        };
+        let patch = indoc! {"
+            --- a/helper.rs
+            +++ b/helper.rs
+            @@ -11,3 +11,3 @@
+             fn helper() {
+            -    one();
+            +    two();
+             }
+        "};
+
+        let output =
+            format_expected_output(&input, ZetaFormat::V0615HashRegions, patch, None).unwrap();
+        let parsed_patch =
+            parse_zeta2_model_output_as_patch(&output, ZetaFormat::V0615HashRegions, &input)
+                .unwrap();
+
+        assert!(output.contains(hashed_regions::MARKER_TAG_PREFIX));
+        assert!(
+            parsed_patch.contains("-    one();"),
+            "patch: {parsed_patch}"
+        );
+        assert!(
+            parsed_patch.contains("+    two();"),
+            "patch: {parsed_patch}"
+        );
     }
 
     #[test]
