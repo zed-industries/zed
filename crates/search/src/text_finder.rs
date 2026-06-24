@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::atomic::Ordering};
 
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -11,7 +12,9 @@ use picker::Picker;
 use project::ProjectPath;
 use text::Anchor;
 use ui::Window;
-use workspace::{DismissDecision, ModalView, Workspace, searchable::SearchableItemHandle};
+use workspace::{
+    DismissDecision, ModalView, Workspace, WorkspaceId, searchable::SearchableItemHandle,
+};
 
 mod delegate;
 mod render;
@@ -26,6 +29,36 @@ pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
     _subscription: Subscription,
+}
+
+const TEXT_FINDER_NAMESPACE: &str = "text_finder";
+
+/// Persist the query of the just-closed Text Finder, scoped to the workspace so the query is
+/// restored only for the project it was run in (mirrors JetBrains' per-project find history).
+/// Persists across restarts. Falls back to a shared key for workspaces without a database id.
+fn last_query_key(workspace_id: Option<WorkspaceId>) -> String {
+    match workspace_id {
+        Some(workspace_id) => format!("last_query/{workspace_id:?}"),
+        None => "last_query".to_string(),
+    }
+}
+
+fn store_last_query(workspace_id: Option<WorkspaceId>, query: String, cx: &App) {
+    let kvp = KeyValueStore::global(cx);
+    db::write_and_log(cx, async move || {
+        kvp.scoped(TEXT_FINDER_NAMESPACE)
+            .write(last_query_key(workspace_id), query)
+            .await
+    });
+}
+
+fn load_last_query(workspace_id: Option<WorkspaceId>, cx: &App) -> Option<String> {
+    KeyValueStore::global(cx)
+        .scoped(TEXT_FINDER_NAMESPACE)
+        .read(&last_query_key(workspace_id))
+        .log_err()
+        .flatten()
+        .filter(|query| !query.is_empty())
 }
 
 pub fn init(cx: &mut App) {
@@ -210,29 +243,36 @@ impl TextFinder {
     /// item in priority order, mirroring how project search seeds itself: an
     /// active project search's query, then a focused buffer search bar's query,
     /// then the word under the cursor (honoring `seed_search_query_from_cursor`).
+    /// Finally falls back to the last query searched in this workspace, so
+    /// reopening the text finder resumes the previous search (JetBrains-style).
     fn seed_query(
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<String> {
-        let item = workspace.active_item(cx)?;
+        if let Some(item) = workspace.active_item(cx) {
+            if let Some(project_search) = item.downcast::<ProjectSearchView>() {
+                let query = project_search.read(cx).search_query_text(cx);
+                if !query.is_empty() {
+                    return Some(query);
+                }
+            }
 
-        if let Some(project_search) = item.downcast::<ProjectSearchView>() {
-            let query = project_search.read(cx).search_query_text(cx);
-            if !query.is_empty() {
+            if let Some(query) =
+                crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
+            {
                 return Some(query);
+            }
+
+            if let Some(editor) = item.act_as::<Editor>(cx) {
+                let query = editor.query_suggestion(None, window, cx);
+                if !query.is_empty() {
+                    return Some(query);
+                }
             }
         }
 
-        if let Some(query) =
-            crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
-        {
-            return Some(query);
-        }
-
-        let editor = item.act_as::<Editor>(cx)?;
-        let query = editor.query_suggestion(None, window, cx);
-        (!query.is_empty()).then_some(query)
+        load_last_query(workspace.database_id(), cx)
     }
 
     pub fn open(
@@ -309,8 +349,16 @@ impl ModalView for TextFinder {
     fn on_before_dismiss(
         &mut self,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> DismissDecision {
+        let query = self.picker.read(cx).query(cx);
+        if !query.is_empty() {
+            let workspace_id = self
+                .weak_workspace(cx)
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).database_id());
+            store_last_query(workspace_id, query, cx);
+        }
         DismissDecision::Dismiss(true)
     }
 }
