@@ -49,6 +49,7 @@ impl From<settings::WslConnection> for WslConnectionOptions {
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
     platform: RemotePlatform,
+    os_version: Option<String>,
     shell: String,
     shell_kind: ShellKind,
     default_system_shell: String,
@@ -77,6 +78,7 @@ impl WslRemoteConnection {
                 os: RemoteOs::Linux,
                 arch: RemoteArch::X86_64,
             },
+            os_version: None,
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
@@ -103,6 +105,8 @@ impl WslRemoteConnection {
             .await
             .context("failed detecting platform")?;
         log::info!("Remote platform discovered: {:?}", this.platform);
+        this.os_version = this.detect_os_version().await;
+        log::info!("Remote OS version discovered: {:?}", this.os_version);
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await
@@ -117,6 +121,20 @@ impl WslRemoteConnection {
         let program = self.shell_kind.prepend_command_prefix("uname");
         let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
         parse_platform(&output)
+    }
+
+    /// Best-effort detection of the remote OS version for telemetry. Failures
+    /// result in `None` rather than failing the connection.
+    async fn detect_os_version(&self) -> Option<String> {
+        let (program, args) = super::os_version_command(self.platform.os);
+        let program = self.shell_kind.prepend_command_prefix(program);
+        match self.run_wsl_command_with_output(&program, args).await {
+            Ok(output) => super::parse_os_version(self.platform.os, &output),
+            Err(error) => {
+                log::warn!("Failed to determine remote OS version: {error:#}");
+                None
+            }
+        }
     }
 
     async fn detect_shell(&self) -> Result<String> {
@@ -519,6 +537,14 @@ impl RemoteConnection for WslRemoteConnection {
 
     fn path_style(&self) -> PathStyle {
         PathStyle::Posix
+    }
+
+    fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
     }
 
     fn shell(&self) -> String {

@@ -481,6 +481,7 @@ pub struct OAuthClientSettings {
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
     pub path: PathBuf,
+    #[serde(default)]
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
     /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
@@ -846,4 +847,28 @@ pub enum GitHostingProviderKind {
     Gitea,
     Forgejo,
     SourceHut,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stdio_context_server_without_args() {
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo" }"#)
+                .expect("stdio context server without `args` should parse");
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.path, PathBuf::from("echo"));
+        assert!(command.args.is_empty());
+
+        let settings: ContextServerSettingsContent =
+            serde_json::from_str(r#"{ "command": "echo", "args": ["hello"] }"#).unwrap();
+        let ContextServerSettingsContent::Stdio { command, .. } = settings else {
+            panic!("expected Stdio variant, got {settings:?}");
+        };
+        assert_eq!(command.args, vec!["hello".to_string()]);
+    }
 }

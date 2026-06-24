@@ -604,7 +604,6 @@ pub fn add_wsl_distro(
 
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
-    rem_width: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -633,6 +632,7 @@ impl RecentProjects {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
+                .initial_width(rems(rem_width))
                 .show_scrollbar(true)
         });
 
@@ -677,7 +677,6 @@ impl RecentProjects {
         .detach();
         Self {
             picker,
-            rem_width,
             _subscriptions: subscriptions,
         }
     }
@@ -852,7 +851,6 @@ impl Render for RecentProjects {
             .on_action(cx.listener(Self::handle_toggle_open_menu))
             .on_action(cx.listener(Self::handle_remove_selected))
             .on_action(cx.listener(Self::handle_add_to_workspace))
-            .w(rems(self.rem_width))
             .child(self.picker.clone())
     }
 }
@@ -931,6 +929,10 @@ impl RecentProjectsDelegate {
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "recent projects"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()
@@ -1579,7 +1581,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
+                            IconButton::new("add_to_workspace", IconName::FolderInclude)
                                 .icon_size(IconSize::Small)
                                 .tooltip({
                                     let focus_handle = self.focus_handle.clone();
@@ -2569,7 +2571,7 @@ mod tests {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .max_height(Some(px(240.).into()))
+                .max_height(Rems::from_pixels(px(240.0), window))
         });
         draw(cx);
         (picker, cx)
