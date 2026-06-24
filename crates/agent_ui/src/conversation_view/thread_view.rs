@@ -9542,7 +9542,7 @@ impl ThreadView {
                         window,
                         cx,
                     )
-                } else if let Some(image) = content.image() {
+                } else if let Some((image, _)) = content.image() {
                     let location = tool_call.locations.first().cloned();
                     self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
                 } else {
