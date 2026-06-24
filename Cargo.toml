@@ -129,6 +129,7 @@ members = [
     "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
+    "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
     "crates/mermaid_render",
@@ -389,6 +390,7 @@ livekit_client = { path = "crates/livekit_client" }
 llama_cpp = { path = "crates/llama_cpp" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 mermaid_render = { path = "crates/mermaid_render" }
