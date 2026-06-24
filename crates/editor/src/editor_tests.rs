@@ -26967,6 +26967,81 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_goto_definition_falls_back_to_css_class(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_html(cx).await;
+
+    // Add a stylesheet next to the HTML file created by new_html.
+    let fs =
+        cx.update_workspace(|workspace, _window, cx| workspace.project().read(cx).fs().clone());
+    fs.as_fake()
+        .insert_file(
+            "/root/dir/styles.scss",
+            b".not-found { color: red; }".to_vec(),
+        )
+        .await;
+    cx.run_until_parked();
+
+    cx.set_state(r#"<div class="notˇ-found">"#);
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .unwrap();
+
+    assert_eq!(navigated, Navigated::Yes, "should navigate to CSS class");
+
+    let active_path = cx.update_workspace(|workspace, _window, cx| {
+        workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map(|editor| {
+                editor.read_with(cx, |editor, cx| {
+                    Arc::clone(
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .as_singleton()
+                            .unwrap()
+                            .read(cx)
+                            .file()
+                            .unwrap()
+                            .path(),
+                    )
+                })
+            })
+    });
+
+    assert_eq!(
+        active_path,
+        Some(Arc::from(
+            util::rel_path::RelPath::unix("dir/styles.scss").unwrap()
+        )),
+        "should open the stylesheet"
+    );
+}
+
+#[gpui::test]
+async fn test_goto_definition_no_css_class_fallback(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_html(cx).await;
+    cx.set_state(r#"<div class="missingˇ-class">"#);
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        navigated,
+        Navigated::No,
+        "should not navigate when no selector matches"
+    );
+}
+
+#[gpui::test]
 async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(

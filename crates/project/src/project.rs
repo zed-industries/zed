@@ -5,6 +5,7 @@ pub mod buffer_store;
 pub mod color_extractor;
 pub mod connection_manager;
 pub mod context_server_store;
+pub mod css_class_definition;
 pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
@@ -4195,13 +4196,24 @@ impl Project {
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         let guard = self.retain_remotely_created_models(cx);
-        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+        let lsp_task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
         });
+        let fallback_task = self.css_class_definition(buffer, position, cx);
+
         cx.background_spawn(async move {
-            let result = task.await;
+            let lsp_result = lsp_task.await?;
+            if lsp_result.as_ref().is_some_and(|defs| !defs.is_empty()) {
+                drop(guard);
+                return Ok(lsp_result);
+            }
+
+            if let Some(fallback_defs) = fallback_task.await? {
+                return Ok(Some(fallback_defs));
+            }
+
             drop(guard);
-            result
+            Ok(lsp_result)
         })
     }
 
