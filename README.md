@@ -46,3 +46,12 @@ Zed is developed by **Zed Industries, Inc.**, a for-profit company.
 If you’d like to financially support the project, you can do so via GitHub Sponsors.
 Sponsorships go directly to Zed Industries and are used as general company revenue.
 There are no perks or entitlements associated with sponsorship.
+
+
+
+- me: do a nixos integration test (using KVM)
+- agent: i need to turn off the sandbox
+- me: "allow for this thread"
+- agent: runs the tests unsandboxed
+- me: use the terminal to ls this directory
+- agent: runs `ls` *sandboxed*

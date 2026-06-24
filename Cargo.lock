@@ -524,6 +524,7 @@ dependencies = [
  "remote_server",
  "reqwest_client",
  "rope",
+ "sandbox",
  "schemars 1.0.4",
  "search",
  "semver",
@@ -15933,8 +15934,12 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.32",
+ "http_proxy",
  "libc",
  "log",
+ "serde",
+ "serde_json",
  "smol",
  "tempfile",
 ]
