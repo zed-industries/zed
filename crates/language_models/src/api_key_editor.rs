@@ -3,7 +3,7 @@ use std::rc::Rc;
 use anyhow::Result;
 use gpui::{App, Context, Entity, Subscription, Task, Window};
 use language_model::ApiKeyState;
-use ui::{Tooltip, prelude::*};
+use ui::prelude::*;
 use ui_input::InputField;
 
 /// The current credential state of a single-API-key provider, as reported by the
@@ -38,7 +38,6 @@ pub fn api_key_status(state: &ApiKeyState) -> ApiKeyStatus {
 /// state, so all credential knowledge stays in the provider.
 pub struct ApiKeyEditor {
     input: Entity<InputField>,
-    api_key_url: SharedString,
     status: Rc<dyn Fn(&App) -> ApiKeyStatus>,
     set_key: Rc<dyn Fn(String, &mut App) -> Task<Result<()>>>,
     reset_key: Rc<dyn Fn(&mut App) -> Task<Result<()>>>,
@@ -48,7 +47,6 @@ pub struct ApiKeyEditor {
 impl ApiKeyEditor {
     pub fn new<S: 'static>(
         state: Entity<S>,
-        api_key_url: impl Into<SharedString>,
         placeholder: &str,
         status: impl Fn(&S, &App) -> ApiKeyStatus + 'static,
         set_key: impl Fn(&Entity<S>, String, &mut App) -> Task<Result<()>> + 'static,
@@ -67,7 +65,6 @@ impl ApiKeyEditor {
         let set_state = state.clone();
         Self {
             input,
-            api_key_url: api_key_url.into(),
             status: Rc::new(move |cx| status(status_state.read(cx), cx)),
             set_key: Rc::new(move |key, cx| set_key(&set_state, key, cx)),
             reset_key: Rc::new(move |cx| reset_key(&state, cx)),
@@ -87,27 +84,6 @@ impl ApiKeyEditor {
 
     fn reset(&mut self, cx: &mut Context<Self>) {
         (self.reset_key.clone())(cx).detach_and_log_err(cx);
-    }
-
-    fn render_where_to_find_key(&self) -> impl IntoElement {
-        let url = self.api_key_url.clone();
-        let click_url = url.to_string();
-        h_flex()
-            .id("where-to-find-key")
-            .gap_0p5()
-            .cursor_pointer()
-            .child(
-                Icon::new(IconName::Info)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .child(
-                Label::new("Where to find key")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .tooltip(Tooltip::text(format!("Create an API key at {url}")))
-            .on_click(move |_, _window, cx| cx.open_url(&click_url))
     }
 }
 
@@ -139,16 +115,11 @@ impl Render for ApiKeyEditor {
                         .on_click(cx.listener(|this, _, _window, cx| this.reset(cx))),
                 )
                 .into_any_element(),
-            ApiKeyStatus::Unset => v_flex()
+            ApiKeyStatus::Unset => div()
                 .w_full()
-                .gap_1()
-                .child(self.render_where_to_find_key())
-                .child(
-                    div()
-                        .w_full()
-                        .on_action(cx.listener(Self::save))
-                        .child(self.input.clone()),
-                )
+                .max_w(rems_from_px(220.))
+                .on_action(cx.listener(Self::save))
+                .child(self.input.clone())
                 .into_any_element(),
         }
     }

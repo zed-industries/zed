@@ -215,21 +215,24 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
         cx: &mut App,
     ) -> ProviderConfigurationView {
         let state = self.state.clone();
-        ProviderConfigurationView::Inline(
-            cx.new(|cx| {
-                crate::ApiKeyEditor::new(
-                    state,
-                    "https://console.x.ai/team/default/api-keys",
-                    "xai-...",
-                    |state, _cx| crate::api_key_status(&state.api_key_state),
-                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
-                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                    window,
-                    cx,
-                )
-            })
-            .into(),
-        )
+        ProviderConfigurationView::Inline {
+            view: cx
+                .new(|cx| {
+                    crate::ApiKeyEditor::new(
+                        state,
+                        "xai-…",
+                        |state, _cx| crate::api_key_status(&state.api_key_state),
+                        |state, key, cx| {
+                            state.update(cx, |state, cx| state.set_api_key(Some(key), cx))
+                        },
+                        |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                        window,
+                        cx,
+                    )
+                })
+                .into(),
+            api_key_url: Some("https://console.x.ai/team/default/api-keys".into()),
+        }
     }
 }
 

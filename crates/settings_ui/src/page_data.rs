@@ -7836,8 +7836,12 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 3] {
-        [
+    fn general_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+        let mut items = vec![
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Disable AI",
@@ -7867,17 +7871,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
-    }
-
-    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
-        use feature_flags::FeatureFlagAppExt as _;
-
-        // The LLM provider and MCP server pages are gated behind a feature flag
-        // while their configuration is being moved out of the agent panel.
-        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
-
-        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
+        ];
 
         if agent_settings_ui_enabled {
             items.push(SettingsPageItem::SubPageLink(SubPageLink {
@@ -7889,7 +7883,25 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
                 render: render_llm_providers_page,
             }));
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "External Agents".into(),
+                r#type: Default::default(),
+                json_path: Some("agent_servers"),
+                description: Some(
+                    "View, add, and remove agents connected through the Agent Client Protocol."
+                        .into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_external_agents_page,
+            }));
         }
+
+        items.into_boxed_slice()
+    }
+
+    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
 
         items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -7922,35 +7934,6 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
-        ]);
-
-        if agent_settings_ui_enabled {
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "MCP Servers".into(),
-                r#type: Default::default(),
-                json_path: Some("context_servers"),
-                description: Some(
-                    "View, add, configure, and remove Model Context Protocol servers.".into(),
-                ),
-                in_json: false,
-                files: USER,
-                render: render_mcp_servers_page,
-            }));
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "External Agents".into(),
-                r#type: Default::default(),
-                json_path: Some("agent_servers"),
-                description: Some(
-                    "View, add, and remove agents connected through the Agent Client Protocol."
-                        .into(),
-                ),
-                in_json: false,
-                files: USER,
-                render: render_external_agents_page,
-            }));
-        }
-
-        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
@@ -8306,26 +8289,45 @@ fn ai_page(cx: &App) -> SettingsPage {
         items.into_boxed_slice()
     }
 
-    fn context_servers_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SectionHeader("Context Servers"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Context Server Timeout",
-                description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("context_server_timeout"),
-                    pick: |settings_content| {
-                        settings_content.project.context_server_timeout.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.project.context_server_timeout = value;
-                    },
-                }),
-                metadata: None,
-                files: USER | PROJECT,
+    fn context_servers_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+        let mut items = vec![SettingsPageItem::SectionHeader("Model Context Protocol")];
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
+            }));
+        }
+
+        items.push(SettingsPageItem::SettingItem(SettingItem {
+            title: "Context Server Timeout",
+            description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                json_path: Some("context_server_timeout"),
+                pick: |settings_content| {
+                    settings_content.project.context_server_timeout.as_ref()
+                },
+                write: |settings_content, value, _| {
+                    settings_content.project.context_server_timeout = value;
+                },
             }),
-        ]
+            metadata: None,
+            files: USER | PROJECT,
+        }));
+
+        items.into_boxed_slice()
     }
 
     fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
@@ -8361,9 +8363,9 @@ fn ai_page(cx: &App) -> SettingsPage {
     SettingsPage {
         title: "AI",
         items: concat_sections![
-            general_section(),
+            general_section(cx),
             agent_configuration_section(cx),
-            context_servers_section(),
+            context_servers_section(cx),
             edit_prediction_language_settings_section(),
             edit_prediction_display_sub_section()
         ],

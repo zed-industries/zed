@@ -205,7 +205,10 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     ) -> ProviderConfigurationView {
         // GitHub Copilot's control is just a sign-in button, so render it inline
         // rather than behind a sub-page.
-        ProviderConfigurationView::Inline(self.configuration_view(target_agent, window, cx))
+        ProviderConfigurationView::Inline {
+            view: self.configuration_view(target_agent, window, cx),
+            api_key_url: None,
+        }
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {

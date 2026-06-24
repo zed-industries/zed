@@ -378,7 +378,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         // The Zed sign-in/plan control is small enough that sending users to a
         // dedicated sub-page just to reach it would be annoying, so render it
         // inline even though it isn't an API-key field.
-        ProviderConfigurationView::Inline(self.configuration_view(target_agent, window, cx))
+        ProviderConfigurationView::Inline {
+            view: self.configuration_view(target_agent, window, cx),
+            api_key_url: None,
+        }
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {

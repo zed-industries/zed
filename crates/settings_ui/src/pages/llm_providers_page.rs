@@ -5,7 +5,7 @@ use language_model::{
     ConfigurationViewTargetAgent, IconOrSvg, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, ProviderConfigurationView,
 };
-use ui::{Divider, DividerColor, prelude::*};
+use ui::{ButtonLink, Divider, Tooltip, prelude::*};
 
 use crate::SettingsWindow;
 
@@ -28,7 +28,12 @@ pub(crate) fn render_llm_providers_page(
         .children(
             providers
                 .iter()
-                .map(|provider| render_provider_row(settings_window, provider, window, cx))
+                .enumerate()
+                .map(|(index, provider)| {
+                    v_flex()
+                        .when(index > 0, |this| this.child(Divider::horizontal()))
+                        .child(render_provider_row(settings_window, provider, window, cx))
+                })
                 .collect::<Vec<_>>(),
         )
         .into_any_element()
@@ -51,71 +56,68 @@ fn render_provider_row(
     .size(IconSize::Small)
     .color(Color::Muted);
 
-    let left = h_flex()
-        .flex_none()
-        .gap_1p5()
-        .child(icon)
-        .child(Label::new(provider_name))
-        .when(is_authenticated, |this| {
-            this.child(
-                Icon::new(IconName::Check)
-                    .size(IconSize::Small)
-                    .color(Color::Success),
-            )
-        });
-
-    // The provider tells us how it wants to be presented: a compact inline
-    // control, or a richer view that belongs on its own sub-page.
-    let control =
+    let (control, api_key_url) =
         match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
         {
-            ProviderConfigurationView::Inline(view) => v_flex()
-                .min_w_0()
-                .w_full()
-                .max_w(rems(24.))
-                .child(view)
-                .into_any_element(),
-            ProviderConfigurationView::SubPage(_) => render_configure_button(&provider_id, cx),
+            ProviderConfigurationView::Inline { view, api_key_url } => {
+                let control = view.into_any_element();
+                (control, api_key_url)
+            }
+            ProviderConfigurationView::SubPage(_) => {
+                let provider_id = provider_id.clone();
+                let control = Button::new(format!("configure-{}", provider_id.0), "Configure")
+                    .style(ButtonStyle::OutlinedGhost)
+                    .size(ButtonSize::Medium)
+                    .end_icon(
+                        Icon::new(IconName::ChevronRight)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .tab_index(0isize)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        open_provider_configuration(this, provider_id.clone(), window, cx);
+                    }))
+                    .into_any_element();
+                (control, None)
+            }
         };
 
-    v_flex()
-        .min_w_0()
-        .w_full()
-        .child(
-            div()
-                .px_2()
-                .child(Divider::horizontal().color(DividerColor::BorderFaded)),
-        )
+    let left = v_flex()
+        .flex_none()
+        .gap_0p5()
         .child(
             h_flex()
-                .w_full()
-                .py_2()
-                .px_2()
-                .gap_6()
-                .justify_between()
-                .items_start()
-                .child(left)
-                .child(control),
+                .gap_1p5()
+                .child(icon)
+                .child(Label::new(&provider_name)),
         )
+        .when_some(api_key_url, |this, url| {
+            this.child(render_where_to_find_key(provider_name, url))
+        });
+
+    h_flex()
+        .min_w_0()
+        .w_full()
+        .py_4()
+        .gap_4()
+        .justify_between()
+        .child(left)
+        .child(control)
         .into_any_element()
 }
 
-fn render_configure_button(
-    provider_id: &LanguageModelProviderId,
-    cx: &mut Context<SettingsWindow>,
-) -> AnyElement {
-    let provider_id = provider_id.clone();
-    Button::new(
-        SharedString::from(format!("configure-{}", provider_id.0)),
-        "Configure",
-    )
-    .style(ButtonStyle::Outlined)
-    .label_size(LabelSize::Small)
-    .tab_index(0isize)
-    .on_click(cx.listener(move |this, _, window, cx| {
-        open_provider_configuration(this, provider_id.clone(), window, cx);
-    }))
-    .into_any_element()
+fn render_where_to_find_key(provider_name: SharedString, url: SharedString) -> impl IntoElement {
+    h_flex()
+        .gap_0p5()
+        .child(
+            Label::new(format!("To find an API key, visit the"))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(
+            ButtonLink::new(format!("{provider_name} dashboard."), url)
+                .label_size(LabelSize::Small),
+        )
 }
 
 fn open_provider_configuration(
@@ -164,7 +166,8 @@ fn render_provider_config_sub_page(
         window,
         cx,
     ) {
-        ProviderConfigurationView::Inline(view) | ProviderConfigurationView::SubPage(view) => view,
+        ProviderConfigurationView::Inline { view, .. }
+        | ProviderConfigurationView::SubPage(view) => view,
     };
 
     v_flex()

@@ -384,7 +384,14 @@ pub trait LanguageModelProvider: 'static {
 pub enum ProviderConfigurationView {
     /// A compact control suitable for rendering inline in a list row, such as a
     /// single API-key field.
-    Inline(AnyView),
+    Inline {
+        view: AnyView,
+        /// Optional URL where the user can create/find an API key. When set, the
+        /// settings UI renders a "Where to find key" link beneath the provider
+        /// name. `None` for inline controls that aren't API-key based (e.g. a
+        /// sign-in button).
+        api_key_url: Option<SharedString>,
+    },
     /// A richer view that should be shown on its own dedicated sub-page.
     SubPage(AnyView),
 }

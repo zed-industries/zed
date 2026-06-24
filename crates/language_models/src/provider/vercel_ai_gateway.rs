@@ -268,11 +268,10 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
         cx: &mut App,
     ) -> ProviderConfigurationView {
         let state = self.state.clone();
-        ProviderConfigurationView::Inline(
-            cx.new(|cx| {
+        ProviderConfigurationView::Inline {
+            view: cx.new(|cx| {
                 crate::ApiKeyEditor::new(
                     state,
-                    "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway",
                     "Paste your Vercel AI Gateway API key",
                     |state, _cx| crate::api_key_status(&state.api_key_state),
                     |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
@@ -282,7 +281,11 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
                 )
             })
             .into(),
-        )
+            api_key_url: Some(
+                "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway"
+                    .into(),
+            ),
+        }
     }
 }
 

@@ -297,21 +297,24 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         cx: &mut App,
     ) -> ProviderConfigurationView {
         let state = self.state.clone();
-        ProviderConfigurationView::Inline(
-            cx.new(|cx| {
-                crate::ApiKeyEditor::new(
-                    state,
-                    "https://console.anthropic.com/settings/keys",
-                    "sk-ant-...",
-                    |state, _cx| crate::api_key_status(&state.api_key_state),
-                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
-                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                    window,
-                    cx,
-                )
-            })
-            .into(),
-        )
+        ProviderConfigurationView::Inline {
+            view: cx
+                .new(|cx| {
+                    crate::ApiKeyEditor::new(
+                        state,
+                        "sk-ant-…",
+                        |state, _cx| crate::api_key_status(&state.api_key_state),
+                        |state, key, cx| {
+                            state.update(cx, |state, cx| state.set_api_key(Some(key), cx))
+                        },
+                        |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
+                        window,
+                        cx,
+                    )
+                })
+                .into(),
+            api_key_url: Some("https://console.anthropic.com/settings/keys".into()),
+        }
     }
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
