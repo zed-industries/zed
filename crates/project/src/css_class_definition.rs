@@ -2,7 +2,9 @@ use anyhow::Result;
 use gpui::{AppContext, Context, Entity, Task};
 use language::{Buffer, BufferSnapshot, Language, Location, Point, PointUtf16};
 use regex::Regex;
+use std::ops::Range;
 use std::sync::LazyLock;
+use text::Anchor;
 use util::paths::{PathMatcher, PathStyle};
 
 use crate::{LocationLink, Project, SearchQuery, SearchResult, SearchResults};
@@ -19,7 +21,7 @@ struct DefinitionFallback {
     languages: &'static [&'static str],
     target_globs: &'static [&'static str],
     exclude_globs: &'static [&'static str],
-    extract_token: fn(&BufferSnapshot, PointUtf16) -> Option<String>,
+    extract_token: fn(&BufferSnapshot, PointUtf16) -> Option<(String, Range<Anchor>)>,
     selector_pattern: fn(&str) -> String,
 }
 
@@ -65,7 +67,7 @@ impl Project {
         }
 
         let snapshot = buffer.read(cx).snapshot();
-        let Some(token) = (fallback.extract_token)(&snapshot, position) else {
+        let Some((token, token_range)) = (fallback.extract_token)(&snapshot, position) else {
             return Task::ready(Ok(None));
         };
 
@@ -106,7 +108,7 @@ impl Project {
                         links.push(LocationLink {
                             origin: Some(Location {
                                 buffer: source_buffer.clone(),
-                                range: range.clone(),
+                                range: token_range.clone(),
                             }),
                             target: Location {
                                 buffer: buffer.clone(),
@@ -132,7 +134,10 @@ fn css_selector_pattern(token: &str) -> String {
     format!(r"\.{token}\b", token = regex::escape(token))
 }
 
-fn class_name_at_position(snapshot: &BufferSnapshot, position: PointUtf16) -> Option<String> {
+fn class_name_at_position(
+    snapshot: &BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
     let row = position.row;
     let line_start = Point::new(row, 0);
     let line_end = Point::new(row + 1, 0);
@@ -159,7 +164,15 @@ fn class_name_at_position(snapshot: &BufferSnapshot, position: PointUtf16) -> Op
             .map_or(value.len(), |idx| rel + idx);
         let token = value[start..end].to_string();
 
-        return (!token.is_empty()).then_some(token);
+        if token.is_empty() {
+            return None;
+        }
+
+        let token_start = PointUtf16::new(row, (value_range.start + start) as u32);
+        let token_end = PointUtf16::new(row, (value_range.start + end) as u32);
+        let token_range = snapshot.anchor_before(token_start)..snapshot.anchor_after(token_end);
+
+        return Some((token, token_range));
     }
 
     None
