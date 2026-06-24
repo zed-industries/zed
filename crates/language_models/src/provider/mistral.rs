@@ -249,7 +249,7 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
                 .new(|cx| {
                     crate::ApiKeyEditor::new(
                         state,
-                        "Paste your Mistral API key",
+                        "your_mistral_api_key",
                         |state, _cx| crate::api_key_status(&state.api_key_state),
                         |state, key, cx| {
                             state.update(cx, |state, cx| state.set_api_key(Some(key), cx))

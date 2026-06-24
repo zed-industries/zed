@@ -272,7 +272,7 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
             view: cx.new(|cx| {
                 crate::ApiKeyEditor::new(
                     state,
-                    "Paste your Vercel AI Gateway API key",
+                    "vck_…",
                     |state, _cx| crate::api_key_status(&state.api_key_state),
                     |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
                     |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),

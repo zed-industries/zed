@@ -224,7 +224,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
                 .new(|cx| {
                     crate::ApiKeyEditor::new(
                         state,
-                        "Paste your DeepSeek API key",
+                        "sk-…",
                         |state, _cx| crate::api_key_status(&state.api_key_state),
                         |state, key, cx| {
                             state.update(cx, |state, cx| state.set_api_key(Some(key), cx))

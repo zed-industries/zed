@@ -3,7 +3,7 @@ use std::rc::Rc;
 use anyhow::Result;
 use gpui::{App, Context, Entity, Subscription, Task, Window};
 use language_model::ApiKeyState;
-use ui::prelude::*;
+use ui::{Chip, prelude::*};
 use ui_input::InputField;
 
 /// The current credential state of a single-API-key provider, as reported by the
@@ -95,29 +95,32 @@ impl Render for ApiKeyEditor {
                 .color(Color::Muted)
                 .into_any_element(),
             ApiKeyStatus::Configured => h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Success),
-                )
-                .child(
-                    Label::new("Configured")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
+                .gap_1p5()
                 .child(
                     Button::new("reset-api-key", "Reset")
-                        .style(ButtonStyle::Outlined)
-                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::OutlinedGhost)
+                        .size(ButtonSize::Medium)
                         .tab_index(0isize)
                         .on_click(cx.listener(|this, _, _window, cx| this.reset(cx))),
+                )
+                .child(
+                    h_flex()
+                        .size_7()
+                        .justify_center()
+                        .rounded_sm()
+                        .bg(cx.theme().status().success_background)
+                        .border_1()
+                        .border_color(cx.theme().status().success.opacity(0.2))
+                        .child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        ),
                 )
                 .into_any_element(),
             ApiKeyStatus::Unset => div()
                 .w_full()
-                .max_w(rems_from_px(220.))
+                .max_w(rems_from_px(240.))
                 .on_action(cx.listener(Self::save))
                 .child(self.input.clone())
                 .into_any_element(),
