@@ -95,20 +95,34 @@ pub(super) async fn sandbox_git_paths(
         verified_git_paths.sort();
         verified_git_paths.dedup();
 
-        let mut unverified_git_paths = Vec::new();
+        // A Git path inside a writable worktree root is already writable, so
+        // granting it can never escalate access beyond the project. A non-repo
+        // `.git` placeholder there (a plain folder opened alongside a repo, or a
+        // not-yet-initialized repo) would never appear in `verified_git_paths`,
+        // so requiring it to verify would wrongly deny the whole grant. Only
+        // paths that fall *outside* every writable root can leak access to
+        // unrelated metadata, so those are the only ones that must verify.
+        let mut all_external_git_paths_verified = true;
         for path in &git_dirs {
+            if path_is_within_any(path, &writable_paths) {
+                continue;
+            }
             let normalized_path = normalize_sandbox_git_path(path, fs)
                 .await
                 .unwrap_or_else(|| path.clone());
             if verified_git_paths.binary_search(&normalized_path).is_err() {
-                unverified_git_paths.push(path.clone());
+                all_external_git_paths_verified = false;
+                break;
             }
         }
 
         // The current sandbox policy can make one Git directory set either all
-        // writable or all protected. Only grant Git access when every candidate
-        // still verifies; otherwise keep protecting the original candidate set.
-        if unverified_git_paths.is_empty() {
+        // writable or all protected. Only grant Git access when every external
+        // candidate still verifies; otherwise keep protecting the original
+        // candidate set. The granted set is the verified paths only, so even
+        // when the grant proceeds, unverified `.git` metadata never becomes
+        // writable.
+        if all_external_git_paths_verified {
             git_dirs = verified_git_paths;
             allow_verified_git_access = true;
         }
@@ -423,6 +437,12 @@ fn parse_git_config_path_value(value: &str) -> Option<String> {
     Some(parsed)
 }
 
+fn path_is_within_any(path: &Path, roots: &[PathBuf]) -> bool {
+    // `Path::starts_with` matches whole components, so `/projectX` is not
+    // treated as being within `/project`.
+    roots.iter().any(|root| path.starts_with(root))
+}
+
 async fn normalize_sandbox_git_path(path: impl AsRef<Path>, fs: &dyn Fs) -> Option<PathBuf> {
     if let Ok(path) = fs.canonicalize(path.as_ref()).await {
         Some(path)
@@ -522,6 +542,46 @@ mod tests {
             paths_with_git_access
                 .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_paths_grant_git_access_when_non_git_folder_is_present(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        // A plain folder opened alongside the repo. Its `<root>/.git` placeholder
+        // never corresponds to a repository, so it must not block the grant for
+        // the real repo.
+        fs.insert_tree("/notes", serde_json::json!({ "todo.txt": "hi" }))
+            .await;
+
+        let project =
+            project::Project::test(fs.clone(), [Path::new("/repo"), Path::new("/notes")], cx).await;
+        let candidates =
+            cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
+        let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
+
+        assert!(paths_with_git_access.allow_git_access);
+        assert!(
+            paths_with_git_access
+                .git_dirs
+                .contains(&PathBuf::from("/repo/.git"))
+        );
+        assert!(
+            paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/notes"))
         );
     }
 
