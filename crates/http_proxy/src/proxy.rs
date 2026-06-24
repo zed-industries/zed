@@ -292,6 +292,8 @@ impl Drop for ProxyHandle {
         if let Some(path) = &self.socket_path {
             #[cfg(unix)]
             let _ = UnixStream::connect(path);
+            #[cfg(not(unix))]
+            let _ = path;
         } else {
             let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
         }
@@ -357,6 +359,7 @@ impl Drop for ConnectionSlot {
     }
 }
 
+#[cfg(unix)]
 fn reserve_loopback_port() -> Result<u16> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .context("failed to reserve proxy bridge port")?;

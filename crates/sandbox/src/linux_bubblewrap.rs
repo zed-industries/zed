@@ -2,7 +2,7 @@
 //! network confinement.
 //!
 //! We can use `--bind` and `--ro-bind` (read-only) to bind host filesystem
-//! paths to paths in the sandbox. If netowrking is restricted, we also set
+//! paths to paths in the sandbox. If networking is restricted, we also set
 //! `--unshare-net` to disable *all* network access.
 //!
 //! When restricting network access, we:

@@ -4,7 +4,7 @@
 //! Where the Linux helper is the sandboxed process itself (it re-execs under
 //! the launcher), here the sandboxed process is a *Linux* program inside WSL
 //! while this helper runs on Windows. So instead of a status channel and a
-//! launcher, the helper drives the real [`sandbox::prepare_sandboxed_command`],
+//! launcher, the helper drives the real [`sandbox::Sandbox`] (`new` + `wrap`),
 //! spawns the command line it produces, and inspects exit codes and
 //! host-side filesystem effects to confirm every grant the sandbox makes and
 //! every restriction it imposes actually holds — including the Windows-specific
@@ -48,8 +48,27 @@ mod imp {
 
     use anyhow::{Context as _, Result, bail, ensure};
     use sandbox::{
-        CommandAndArgs, NetworkAccess, SandboxConfiguration, SandboxError, SandboxPermissions,
+        CommandAndArgs, GitSandboxPolicy, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy,
+        SandboxPolicy,
     };
+
+    /// Network access for a helper run, translated into a `SandboxNetPolicy` in
+    /// `drive_sandbox`. Only the all-or-nothing cases the helper exercises are
+    /// represented.
+    #[derive(Clone, Copy, Default)]
+    enum NetworkAccess {
+        #[default]
+        None,
+        All,
+    }
+
+    /// The per-run permission knobs the helper varies, translated into a
+    /// `SandboxPolicy` in `drive_sandbox`.
+    #[derive(Clone, Copy, Default)]
+    struct SandboxPermissions {
+        network: NetworkAccess,
+        allow_fs_write: bool,
+    }
 
     /// Tag prefixed to every result line, matching `bwrap_test_helper` so both
     /// helpers' output reads the same.
@@ -489,19 +508,28 @@ mod imp {
         permissions: SandboxPermissions,
         env: &HashMap<String, String>,
     ) -> Result<Outcome> {
-        let sandbox = SandboxConfiguration {
-            writable_paths: writable_paths.to_vec(),
-            permissions,
-        };
-        let prepared = smol::block_on(sandbox::prepare_sandboxed_command(
-            &sandbox,
-            &CommandAndArgs {
-                program: program.to_string(),
-                args: args.iter().map(|arg| arg.to_string()).collect(),
-                env: env.clone(),
-                cwd: None,
+        let policy = SandboxPolicy {
+            fs: if permissions.allow_fs_write {
+                SandboxFsPolicy::Unrestricted
+            } else {
+                SandboxFsPolicy::Restricted {
+                    writable_paths: writable_paths.to_vec(),
+                }
             },
-        ));
+            network: match permissions.network {
+                NetworkAccess::None => SandboxNetPolicy::Blocked,
+                NetworkAccess::All => SandboxNetPolicy::Unrestricted,
+            },
+            git: GitSandboxPolicy::default(),
+        };
+        let command = CommandAndArgs {
+            program: program.to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            env: env.clone(),
+            cwd: None,
+        };
+        let prepared =
+            Sandbox::new(policy).and_then(|mut sandbox| smol::block_on(sandbox.wrap(&command)));
 
         let prepared = match prepared {
             Ok(prepared) => prepared,

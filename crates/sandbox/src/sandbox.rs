@@ -13,9 +13,9 @@ use std::{
     process::Output,
 };
 
-use http_proxy::{Allowlist, ProxyHandle};
+use http_proxy::ProxyHandle;
 #[cfg(not(target_os = "windows"))]
-use http_proxy::{HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
+use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
 
 #[cfg(target_os = "linux")]
 mod linux_bubblewrap;
@@ -294,7 +294,12 @@ struct FsSetup {
 enum NetSetup {
     Unrestricted,
     Blocked,
-    Restricted { allowlist: Allowlist },
+    // Restricted networking is rejected up front on Windows, so this variant is
+    // never constructed there.
+    #[cfg(not(target_os = "windows"))]
+    Restricted {
+        allowlist: Allowlist,
+    },
 }
 
 /// A live sandbox: it owns the per-policy resources (the network proxy, and on

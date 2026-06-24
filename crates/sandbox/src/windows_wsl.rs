@@ -77,6 +77,7 @@ impl WslSandboxUnavailable {
     }
 
     /// The reason, without the leading [`WSL_SANDBOX_UNAVAILABLE_PREFIX`].
+    #[cfg(test)]
     pub fn message(&self) -> &str {
         &self.0
     }
