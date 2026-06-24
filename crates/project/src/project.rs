@@ -5053,41 +5053,34 @@ impl Project {
                 }
             }
         } else {
-            // First pass: for each worktree, try two interpretations of the path and
-            // return whichever finds an existing entry first:
-            //   (a) Strip the worktree root name as a prefix.
-            //   (b) Treat the path as a literal worktree-relative path.
+            // First pass: if the path begins with a worktree's root name, bind it
+            // to that worktree regardless of whether the entry exists, so
+            // resolution stays stable as files are created and deleted. When
+            // visible worktrees share a root name, the first wins; the others are
+            // reachable by absolute path.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path())
                     && let Ok(rel_path) = RelPath::new(relative_path, path_style)
-                    && let Some(entry) = worktree.entry_for_path(&rel_path)
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.id(),
-                        path: entry.path.clone(),
+                        path: rel_path.into_arc(),
                     });
                 }
+            }
+
+            // Second pass: the path didn't start with a root name, so treat it as
+            // a literal worktree-relative path and return the first worktree that
+            // contains it.
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
                 if let Ok(rel_path) = RelPath::new(path, path_style)
                     && let Some(entry) = worktree.entry_for_path(&rel_path)
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.id(),
                         path: entry.path.clone(),
-                    });
-                }
-            }
-
-            // Second pass: strip the worktree root name prefix without requiring the
-            // entry to exist, to allow resolving paths that don't exist yet.
-            for worktree in worktree_store.visible_worktrees(cx) {
-                let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
-                    && let Ok(path) = RelPath::new(relative_path, path_style)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path: path.into_arc(),
                     });
                 }
             }
@@ -6765,4 +6758,76 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+#[cfg(test)]
+mod find_project_path_tests {
+    use crate::Project;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    /// When visible worktrees share a root name, resolving by that name binds to
+    /// the first worktree regardless of where the file exists, and the others
+    /// stay reachable by absolute path.
+    #[gpui::test]
+    async fn test_find_project_path_is_stable_across_same_named_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(Path::new("/a/project1"), json!({ "shared.txt": "from a" }))
+            .await;
+        fs.insert_tree(
+            Path::new("/b/project1"),
+            json!({ "only_in_b.txt": "from b" }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/a/project1"), Path::new("/b/project1")],
+            cx,
+        )
+        .await;
+
+        project.read_with(cx, |project, cx| {
+            let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+            assert_eq!(worktrees.len(), 2, "expected two same-named worktrees");
+            let first_id = worktrees[0].read(cx).id();
+
+            // A file present only in the second worktree, a new file, and a file
+            // present in the first all resolve to the first worktree by bare name.
+            let only_in_b = project
+                .find_project_path("project1/only_in_b.txt", cx)
+                .expect("bare path resolves");
+            let new_file = project
+                .find_project_path("project1/new_file.txt", cx)
+                .expect("bare path resolves");
+            let existing = project
+                .find_project_path("project1/shared.txt", cx)
+                .expect("bare path resolves");
+
+            assert_eq!(only_in_b.worktree_id, first_id);
+            assert_eq!(new_file.worktree_id, first_id);
+            assert_eq!(existing.worktree_id, first_id);
+
+            // The shadowed second worktree is still reachable by absolute path.
+            let absolute = project
+                .find_project_path(Path::new("/b/project1/only_in_b.txt"), cx)
+                .expect("absolute path resolves");
+            assert_ne!(
+                absolute.worktree_id, first_id,
+                "absolute path should reach the second worktree"
+            );
+        });
+    }
 }
