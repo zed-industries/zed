@@ -37,12 +37,19 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatCompletionMaxTokensParameter {
+    MaxCompletionTokens,
+    MaxTokens,
+}
+
 pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
+    max_tokens_parameter: ChatCompletionMaxTokensParameter,
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
 ) -> crate::Request {
@@ -156,7 +163,14 @@ pub fn into_open_ai(
         },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
-        max_completion_tokens: max_output_tokens,
+        max_completion_tokens: match max_tokens_parameter {
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens => max_output_tokens,
+            ChatCompletionMaxTokensParameter::MaxTokens => None,
+        },
+        max_tokens: match max_tokens_parameter {
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens => None,
+            ChatCompletionMaxTokensParameter::MaxTokens => max_output_tokens,
+        },
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             Some(supports_parallel_tool_calls)
         } else {
@@ -608,13 +622,11 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning) = delta.reasoning.clone() {
+                push_thinking_event(reasoning, &mut events);
+            }
             if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                if !reasoning_content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                        text: reasoning_content,
-                        signature: None,
-                    }));
-                }
+                push_thinking_event(reasoning_content, &mut events);
             }
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
@@ -700,6 +712,18 @@ impl OpenAiEventMapper {
         }
 
         events
+    }
+}
+
+fn push_thinking_event(
+    text: String,
+    events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+) {
+    if !text.is_empty() {
+        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+            text,
+            signature: None,
+        }));
     }
 }
 
@@ -1799,7 +1823,16 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let chat = into_open_ai(request, "gpt-5.4", true, true, None, None, false);
+            let chat = into_open_ai(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            );
 
             let serialized = serde_json::to_value(&chat)?;
             assert_eq!(
@@ -1810,6 +1843,45 @@ mod tests {
                 "speed = {speed:?} should produce service_tier = {expected:?}",
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn into_open_ai_can_send_max_tokens_parameter() -> Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let chat = into_open_ai(
+            request,
+            "compatible-model",
+            false,
+            false,
+            Some(4096),
+            ChatCompletionMaxTokensParameter::MaxTokens,
+            None,
+            false,
+        );
+
+        let serialized = serde_json::to_value(&chat)?;
+        assert_eq!(serialized.get("max_completion_tokens"), None);
+        assert_eq!(serialized["max_tokens"], json!(4096));
         Ok(())
     }
 
@@ -3160,7 +3232,16 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let result = into_open_ai(request.clone(), "model", false, false, None, None, true);
+        let result = into_open_ai(
+            request.clone(),
+            "model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            true,
+        );
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3175,7 +3256,16 @@ mod tests {
             ])
         );
 
-        let result = into_open_ai(request, "model", false, false, None, None, false);
+        let result = into_open_ai(
+            request,
+            "model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            false,
+        );
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3194,6 +3284,32 @@ mod tests {
     }
 
     #[test]
+    fn stream_maps_reasoning() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: Some("thinking".into()),
+                    tool_calls: None,
+                    reasoning_content: None,
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![LanguageModelCompletionEvent::Thinking {
+                text: "thinking".into(),
+                signature: None,
+            }]
+        );
+    }
+
+    #[test]
     fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
         // DashScope sends id="" and name="" in subsequent tool_calls delta
         // chunks after the first chunk. OpenAiEventMapper must not overwrite
@@ -3207,6 +3323,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("call_dashscope_test".into()),
@@ -3228,6 +3345,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("".into()),
@@ -3248,6 +3366,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("".into()),
