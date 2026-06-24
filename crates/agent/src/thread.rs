@@ -2044,10 +2044,7 @@ impl Thread {
             self.action_log.clone(),
             language_registry,
         ));
-        self.add_tool(FetchTool::new(
-            self.project.clone(),
-            self.project.read(cx).client().http_client(),
-        ));
+        self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));

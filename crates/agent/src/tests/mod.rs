@@ -7127,12 +7127,10 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7170,8 +7168,6 @@ async fn test_fetch_tool_deny_rule_checks_raw_url(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7182,7 +7178,7 @@ async fn test_fetch_tool_deny_rule_checks_raw_url(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7217,8 +7213,6 @@ async fn test_fetch_tool_confirm_rule_checks_raw_url(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7229,7 +7223,7 @@ async fn test_fetch_tool_confirm_rule_checks_raw_url(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7265,12 +7259,10 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let http_client = FakeHttpClient::create(|_| async move { Ok(fetch_text_response("ok")) });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7285,10 +7277,11 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
     );
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[gpui::test]
 async fn test_fetch_tool_redirect_target_denied_by_fetch_rule(cx: &mut TestAppContext) {
     init_test(cx);
-    disable_sandboxing(cx);
+    enable_sandboxing(cx);
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -7308,8 +7301,6 @@ async fn test_fetch_tool_redirect_target_denied_by_fetch_rule(cx: &mut TestAppCo
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7328,12 +7319,16 @@ async fn test_fetch_tool_redirect_target_denied_by_fetch_rule(cx: &mut TestAppCo
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://docs.rs/start"})).unwrap();
     let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+    let authorization = rx.expect_authorization().await;
+    assert_fetch_sandbox_authorization(&authorization, &["docs.rs"]);
+    allow_fetch_sandbox_once(authorization);
 
     let result = task.await;
     assert!(result.is_err());
@@ -7344,14 +7339,13 @@ async fn test_fetch_tool_redirect_target_denied_by_fetch_rule(cx: &mut TestAppCo
     );
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[gpui::test]
 async fn test_fetch_tool_follows_only_supported_redirect_statuses(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
-    disable_sandboxing(cx);
+    enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7368,12 +7362,16 @@ async fn test_fetch_tool_follows_only_supported_redirect_statuses(cx: &mut TestA
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://docs.rs/start"})).unwrap();
     let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+    let authorization = rx.expect_authorization().await;
+    assert_fetch_sandbox_authorization(&authorization, &["docs.rs"]);
+    allow_fetch_sandbox_once(authorization);
 
     assert_eq!(task.await.unwrap(), "not redirected");
     assert_eq!(
@@ -7382,14 +7380,13 @@ async fn test_fetch_tool_follows_only_supported_redirect_statuses(cx: &mut TestA
     );
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[gpui::test]
 async fn test_fetch_tool_errors_after_too_many_redirects(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
-    disable_sandboxing(cx);
+    enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7400,12 +7397,16 @@ async fn test_fetch_tool_errors_after_too_many_redirects(cx: &mut TestAppContext
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://docs.rs/loop"})).unwrap();
     let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+    let authorization = rx.expect_authorization().await;
+    assert_fetch_sandbox_authorization(&authorization, &["docs.rs"]);
+    allow_fetch_sandbox_once(authorization);
 
     let result = task.await;
     assert!(result.is_err());
@@ -7413,14 +7414,13 @@ async fn test_fetch_tool_errors_after_too_many_redirects(cx: &mut TestAppContext
     assert_eq!(requests.lock().unwrap().len(), 21);
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[gpui::test]
 async fn test_fetch_tool_rejects_redirect_to_unsupported_scheme(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
-    disable_sandboxing(cx);
+    enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7431,12 +7431,16 @@ async fn test_fetch_tool_rejects_redirect_to_unsupported_scheme(cx: &mut TestApp
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
         serde_json::from_value(json!({"url": "https://docs.rs/start"})).unwrap();
     let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+    let authorization = rx.expect_authorization().await;
+    assert_fetch_sandbox_authorization(&authorization, &["docs.rs"]);
+    allow_fetch_sandbox_once(authorization);
 
     let result = task.await;
     assert!(result.is_err());
@@ -7454,8 +7458,6 @@ async fn test_fetch_tool_prompts_for_sandbox_network_access(cx: &mut TestAppCont
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7466,7 +7468,7 @@ async fn test_fetch_tool_prompts_for_sandbox_network_access(cx: &mut TestAppCont
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7500,8 +7502,6 @@ async fn test_fetch_tool_sandbox_deny_blocks_request(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7512,7 +7512,7 @@ async fn test_fetch_tool_sandbox_deny_blocks_request(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7538,12 +7538,10 @@ async fn test_fetch_tool_sandbox_network_hosts_setting_skips_prompt(cx: &mut Tes
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let http_client = FakeHttpClient::create(|_| async move { Ok(fetch_text_response("ok")) });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7565,8 +7563,6 @@ async fn test_fetch_tool_prompts_for_redirect_host(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let http_client = FakeHttpClient::create(|request| async move {
         match request.uri().to_string().as_str() {
             "https://docs.rs/start" => Ok(fetch_redirect_response("https://static.docs.rs/file")),
@@ -7576,7 +7572,7 @@ async fn test_fetch_tool_prompts_for_redirect_host(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7601,8 +7597,6 @@ async fn test_fetch_tool_sandbox_deny_blocks_redirect_request(cx: &mut TestAppCo
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7621,7 +7615,7 @@ async fn test_fetch_tool_sandbox_deny_blocks_redirect_request(cx: &mut TestAppCo
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7650,8 +7644,6 @@ async fn test_fetch_tool_same_host_redirect_reuses_allow_once(cx: &mut TestAppCo
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7669,7 +7661,7 @@ async fn test_fetch_tool_same_host_redirect_reuses_allow_once(cx: &mut TestAppCo
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7702,8 +7694,6 @@ async fn test_fetch_tool_handles_relative_redirect(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7721,7 +7711,7 @@ async fn test_fetch_tool_handles_relative_redirect(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let input: crate::FetchToolInput =
@@ -7749,8 +7739,6 @@ async fn test_fetch_tool_rejects_localhost_and_ip_urls_under_sandboxing(cx: &mut
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let http_client = FakeHttpClient::create({
         let requests = requests.clone();
@@ -7761,7 +7749,7 @@ async fn test_fetch_tool_rejects_localhost_and_ip_urls_under_sandboxing(cx: &mut
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
 
     for url in ["http://localhost", "http://127.0.0.1", "http://[::1]"] {
         let (event_stream, mut rx) = crate::ToolCallEventStream::test();
@@ -7784,6 +7772,50 @@ async fn test_fetch_tool_rejects_localhost_and_ip_urls_under_sandboxing(cx: &mut
     assert!(requests.lock().unwrap().is_empty());
 }
 
+/// The localhost / IP-literal block is a hard rule under the sandbox: even the
+/// broadest persistent grant (`allow_all_hosts`) must not let fetch reach a
+/// loopback address.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+#[gpui::test]
+async fn test_fetch_tool_allow_all_hosts_does_not_bypass_localhost_block(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+    enable_sandboxing(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.sandbox_permissions.allow_all_hosts = true;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let http_client = FakeHttpClient::create({
+        let requests = requests.clone();
+        move |request| {
+            requests.lock().unwrap().push(request.uri().to_string());
+            async move { Ok(fetch_text_response("unexpected")) }
+        }
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::FetchToolInput =
+        serde_json::from_value(json!({"url": "http://localhost"})).unwrap();
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+    let result = task.await;
+    assert!(result.is_err(), "expected localhost to be rejected");
+    assert!(result.unwrap_err().contains("localhost or IP literal"));
+    let event = rx.try_recv();
+    assert!(
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
+        "allow_all_hosts must not let fetch reach localhost"
+    );
+    assert!(requests.lock().unwrap().is_empty());
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[gpui::test]
 async fn test_fetch_tool_sandbox_allow_once_does_not_cover_later_fetch(cx: &mut TestAppContext) {
@@ -7791,12 +7823,10 @@ async fn test_fetch_tool_sandbox_allow_once_does_not_cover_later_fetch(cx: &mut 
     always_allow_tools(cx);
     enable_sandboxing(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
     let http_client = FakeHttpClient::create(|_| async move { Ok(fetch_text_response("ok")) });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::FetchTool::new(project, http_client));
+    let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let first_input: crate::FetchToolInput =

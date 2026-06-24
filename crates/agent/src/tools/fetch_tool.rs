@@ -6,11 +6,10 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::SandboxPermissions;
 use anyhow::{Context as _, Result, bail};
 use futures::{AsyncReadExt as _, FutureExt as _};
-use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
+use gpui::{App, AppContext as _, AsyncApp, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, Host, HttpClientWithUrl, Url, http};
 use http_proxy::{HostPattern, HostPatternError};
-use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
@@ -51,6 +50,13 @@ enum FetchStep {
     Done(String),
 }
 
+/// Network-host approvals collected during a single fetch (including its
+/// redirect chain). This is intentionally *not* the thread-wide
+/// [`crate::sandboxing::ThreadSandboxGrants`]: a fetch's "allow once" approval
+/// applies only to the rest of that fetch and is never shared with later
+/// fetches or with terminal commands. Persistent "allow always" grants from
+/// settings are still honored on top of these (see
+/// [`Self::covers_with_persistent`]).
 #[derive(Default)]
 struct FetchNetworkGrants {
     any_host: bool,
@@ -111,7 +117,7 @@ impl FetchNetworkGrants {
 }
 
 impl FetchTool {
-    pub fn new(_project: Entity<Project>, http_client: Arc<HttpClientWithUrl>) -> Self {
+    pub fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
         Self { http_client }
     }
 
@@ -159,13 +165,42 @@ impl FetchTool {
         permission_inputs
     }
 
+    /// Fetches `initial_url` and returns the page contents as Markdown.
+    ///
+    /// The sandboxing feature flag selects between two behaviors:
+    ///
+    /// * Off (the default today): the requested URL is authorized once and the
+    ///   HTTP client follows redirects transparently — exactly how the fetch
+    ///   tool has always behaved. None of the network-host gating below applies.
+    /// * On: redirects are followed manually so every hop is re-authorized
+    ///   against the fetch tool-permission rules *and* the sandbox network-host
+    ///   allowlist before the request goes out, and localhost / IP-literal URLs
+    ///   are rejected (see [`Self::authorize_network_for_url`]). Network grants
+    ///   are scoped to this single fetch (including its redirect chain); they
+    ///   are deliberately never recorded as thread-scoped or persistent grants.
     async fn build_message(
         http_client: Arc<HttpClientWithUrl>,
         event_stream: ToolCallEventStream,
         initial_url: Url,
         initial_permission_inputs: Vec<String>,
+        sandboxing: bool,
         cx: &mut AsyncApp,
     ) -> Result<String> {
+        if !sandboxing {
+            Self::authorize_fetch_for_url(
+                &event_stream,
+                &initial_url,
+                initial_permission_inputs,
+                cx,
+            )
+            .await?;
+            return cx
+                .background_spawn(async move {
+                    Self::fetch_following_redirects(http_client, initial_url).await
+                })
+                .await;
+        }
+
         let mut network_grants = FetchNetworkGrants::default();
         let mut url = initial_url;
         let mut permission_inputs = initial_permission_inputs;
@@ -203,6 +238,37 @@ impl FetchTool {
         unreachable!("redirect loop exits by returning a response or bailing")
     }
 
+    /// Fetches `url`, letting the HTTP client follow redirects transparently.
+    /// Used when the sandboxing feature is off, preserving the fetch tool's
+    /// original behavior; under the sandbox, redirects are instead followed
+    /// manually via [`Self::fetch_once`] so each hop can be authorized.
+    async fn fetch_following_redirects(
+        http_client: Arc<HttpClientWithUrl>,
+        url: Url,
+    ) -> Result<String> {
+        let mut response = http_client
+            .get(url.as_str(), AsyncBody::default(), true)
+            .await?;
+        let status = response.status();
+        let headers = response.headers().clone();
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .with_context(|| format!("error reading response body from {url}"))?;
+
+        Self::message_from_response(
+            &url,
+            FetchResponse {
+                status,
+                headers,
+                body,
+            },
+        )
+    }
+
     async fn authorize_fetch_for_url(
         event_stream: &ToolCallEventStream,
         url: &Url,
@@ -230,17 +296,22 @@ impl FetchTool {
         .await
     }
 
+    /// Gates the outbound request to `url`'s host on the sandbox network
+    /// allowlist. Only reached when the sandboxing feature is enabled (see
+    /// [`Self::build_message`]).
+    ///
+    /// localhost and IP-literal hosts are rejected outright and cannot be
+    /// granted — not even via the persistent `allow_all_hosts` setting — because
+    /// the host-pattern model can't express them and they're the classic SSRF
+    /// target. A grant approved here lasts only for the current fetch (its
+    /// `fetch_grants`); persistent settings grants are honored, but thread
+    /// grants are intentionally neither consulted nor created.
     async fn authorize_network_for_url(
         event_stream: &ToolCallEventStream,
         url: &Url,
         fetch_grants: &mut FetchNetworkGrants,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let sandboxing = cx.update(|cx| Self::fetch_network_sandboxing_enabled(cx));
-        if !sandboxing {
-            return Ok(());
-        }
-
         let network = Self::network_request_for_url(url)?;
         let persistent = cx.update(|cx| {
             agent_settings::AgentSettings::get_global(cx)
@@ -490,7 +561,16 @@ impl AgentTool for FetchTool {
             let input: FetchToolInput = input.recv().await.map_err(|e| e.to_string())?;
             let raw_url = input.url.trim().to_string();
             let url = Self::normalize_url(&input.url).map_err(|e| e.to_string())?;
-            let permission_inputs = Self::permission_inputs_for_url(&url, [raw_url]);
+            let sandboxing = cx.update(|cx| Self::fetch_network_sandboxing_enabled(cx));
+            // Without the sandbox, the fetch permission rules are evaluated
+            // against the model's raw URL only — exactly as before this feature.
+            // Under the sandbox we additionally match the normalized URL so
+            // per-host rules also apply to redirect hops and schemeless inputs.
+            let permission_inputs = if sandboxing {
+                Self::permission_inputs_for_url(&url, [raw_url])
+            } else {
+                vec![raw_url]
+            };
 
             let event_stream_for_fetch = event_stream.clone();
             let fetch = async move {
@@ -499,6 +579,7 @@ impl AgentTool for FetchTool {
                     event_stream_for_fetch,
                     url,
                     permission_inputs,
+                    sandboxing,
                     cx,
                 )
                 .await
