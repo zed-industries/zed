@@ -3773,6 +3773,10 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        self.filter_editor.focus_handle(cx)
+    }
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
@@ -3845,8 +3849,8 @@ impl Panel for CollabPanel {
 }
 
 impl Focusable for CollabPanel {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.filter_editor.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 

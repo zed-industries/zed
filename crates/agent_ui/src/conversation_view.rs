@@ -663,7 +663,7 @@ impl ConversationView {
 
         connected.navigate_to_thread(session_id);
         if let Some(view) = self.active_thread() {
-            view.focus_handle(cx).focus(window, cx);
+            view.read(cx).activation_focus_handle(cx).focus(window, cx);
         }
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
