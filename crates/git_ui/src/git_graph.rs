@@ -2255,7 +2255,7 @@ impl GitGraph {
             }
             _ => {
                 debug_panic!(
-                    "fetch_commit_data(_, true, _) failed to return either Loaded(data) or Loading(receiver)"
+                    "Fetched commit data asynchronously, but was not given a listener or cached commit data."
                 );
             }
         };
@@ -3817,44 +3817,35 @@ impl GitGraph {
             return Empty.into_any_element();
         };
 
-        let message_lines = message.read_with(cx, |m, _| m.source().lines().count());
         let message_style = editor::hover_markdown_style(window, cx);
         let rem_size = window.rem_size();
         let line_height = message_style
             .base_text_style
             .line_height_in_pixels(rem_size);
-        // TODO: How to handle commit messages that have fewer than 12 lines, but the
-        // lines are very long, i.e. how to account for reflow.
-        let expanded_height = line_height * 12.min(message_lines);
 
-        v_flex()
+        div()
+            // Using grid over flexbox because the structure of this side
+            // panel prvents taffy from calculating a concrete width correctly,
+            // which causes problems with text reflow when using flexbox.
+            // grid, on the other hand, doesn't appear to give taffy the same
+            // problems.
+            .grid()
             .py_2()
             .pl_2()
             .w_full()
             .gap_1()
+            .grid_cols(1)
+            // Value of 12 taken from ./commit_view.rs:725
+            .max_h(line_height * 12.)
             .child(
-                h_flex().w_full().child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        // using a calculated `h` here rather than `max_h`
-                        // because `max_h` prevents Taffy from correctly calculating
-                        // the width of the container and so the markdown element
-                        // will render at its full width, overflowing. `h` appears
-                        // to provide enough info to Taffy that it can correctly
-                        // calculate the width.
-                        .h(expanded_height)
-                        .child(
-                            div()
-                                .id("commit-message")
-                                .text_sm()
-                                .size_full()
-                                .overflow_y_scroll()
-                                .track_scroll(scroll_handle)
-                                .child(MarkdownElement::new(message.clone(), message_style)),
-                        )
-                        .vertical_scrollbar_for(scroll_handle, window, cx),
-                ),
+                div()
+                    .id("commit-message")
+                    .text_sm()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(scroll_handle)
+                    .child(MarkdownElement::new(message.clone(), message_style))
+                    .vertical_scrollbar_for(scroll_handle, window, cx),
             )
             .into_any_element()
     }
