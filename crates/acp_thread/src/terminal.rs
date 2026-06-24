@@ -177,9 +177,12 @@ impl SandboxWrap {
 /// grow their own failure cases later without a migration.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SandboxNotAppliedReason {
-    /// The user allowed unsandboxed execution for the rest of this thread after
-    /// an earlier sandbox failure. There is always a preceding tool call whose
-    /// reason is [`SandboxNotAppliedReason::ErrorLinuxWsl`].
+    /// The user disabled the sandbox for the rest of this thread, so the command
+    /// ran without one. This happens either when the user approved a
+    /// model-requested `unsandboxed: true` escape "for this thread", or when
+    /// they chose to run unsandboxed for the thread after a sandbox-creation
+    /// failure (in which case a preceding tool call's reason is
+    /// [`SandboxNotAppliedReason::ErrorLinuxWsl`]).
     DisabledForThisThread,
     /// The Linux/WSL (Bubblewrap) sandbox could not be created for this command.
     ErrorLinuxWsl(LinuxWslSandboxError),
@@ -277,6 +280,19 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) -> Self {
         let command_task = terminal.read(cx).wait_for_completed_task(cx);
+        // Tear the sandbox down on a GPUI background thread when this entity is
+        // released, rather than relying on `Sandbox`'s `Drop` (which would spawn
+        // a throwaway thread) on whatever thread releases us. `on_release` hands
+        // us an `App`, so we can drive the teardown through the background
+        // executor with `drop_on_current_thread`.
+        cx.on_release(|this, cx| {
+            if let Some(sandbox) = this._sandbox.take() {
+                cx.background_executor()
+                    .spawn(async move { sandbox.drop_on_current_thread() })
+                    .detach();
+            }
+        })
+        .detach();
         Self {
             id,
             _sandbox: sandbox,
@@ -309,10 +325,16 @@ impl Terminal {
                             original_content_len,
                             content_line_count,
                         });
-                        // Dropping the sandbox tears down the network proxy
-                        // (whose drop joins a listener thread) on a background
-                        // thread, so this won't stall the foreground thread.
-                        this._sandbox = None;
+                        // Free the sandbox (and its network proxy) as soon as
+                        // the command finishes, rather than holding it until
+                        // this entity is released. The proxy's teardown joins a
+                        // listener thread, so run it on the background executor
+                        // to keep it off the foreground thread.
+                        if let Some(sandbox) = this._sandbox.take() {
+                            cx.background_executor()
+                                .spawn(async move { sandbox.drop_on_current_thread() })
+                                .detach();
+                        }
                         cx.notify();
                     })
                     .ok();

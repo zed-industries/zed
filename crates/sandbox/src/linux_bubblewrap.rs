@@ -219,10 +219,19 @@ fn build_bwrap_args_with_proxy_socket_sandbox_path(
         args.push("/tmp".to_string());
 
         for directory in writable_directories {
-            let Some(existing) = nearest_existing_ancestor(directory) else {
+            // Bind each writable directory at its *exact* path. We must never
+            // fall back to an existing ancestor: that would grant write access
+            // to a broader tree than was requested and approved (e.g. binding
+            // `$HOME` for a not-yet-created `~/.cache/...`, or re-binding the
+            // host `/tmp` over the tmpfs established above). `wrap_invocation`
+            // creates the requested directories before launch so they exist
+            // here; any that still don't are skipped rather than widened.
+            if !directory.exists() {
                 continue;
-            };
-            let canonical = existing.canonicalize().unwrap_or(existing);
+            }
+            let canonical = directory
+                .canonicalize()
+                .unwrap_or_else(|_| directory.to_path_buf());
             let path = canonical.to_string_lossy().into_owned();
             push_bind(&mut args, "--bind", &path, &path);
         }
@@ -283,17 +292,6 @@ fn push_bind(args: &mut Vec<String>, flag: &str, source: &str, destination: &str
     args.push(destination.to_string());
 }
 
-fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
-    let mut candidate = Some(path);
-    while let Some(current) = candidate {
-        if current.exists() {
-            return Some(current.to_path_buf());
-        }
-        candidate = current.parent();
-    }
-    None
-}
-
 fn resolve_bwrap() -> std::result::Result<PathBuf, LauncherStatus> {
     match locate_bwrap() {
         BwrapLocation::Found(path) => Ok(path),
@@ -345,6 +343,23 @@ pub fn wrap_invocation(
     if matches!(permissions.network, NetworkAccess::LocalhostPort(_)) && proxy_socket_path.is_none()
     {
         bail!("restricted Linux network access requires a proxy Unix socket path");
+    }
+
+    // Create the requested writable directories up front, with the agent's
+    // ambient permissions, so each can be bind-mounted at its exact path (see
+    // `build_bwrap_args`). Without this a not-yet-existing writable path could
+    // not be bound, and the command could not create it either (its parent is
+    // read-only inside the sandbox). Best-effort: a directory we can't create is
+    // left unbound rather than widening the sandbox to an existing ancestor.
+    if !permissions.allow_fs_write {
+        for directory in writable_dirs {
+            if let Err(error) = std::fs::create_dir_all(directory) {
+                log::warn!(
+                    "[sandbox] could not create writable directory {}: {error}",
+                    directory.display()
+                );
+            }
+        }
     }
 
     let bwrap = resolve_bwrap().map_err(|status| anyhow!(status.describe()))?;
@@ -597,18 +612,30 @@ mod tests {
     }
 
     #[test]
-    fn test_nearest_existing_ancestor() {
+    fn test_build_bwrap_args_binds_exact_path_never_widens_to_ancestor() {
+        // A requested writable path that doesn't exist must NOT be bound, and in
+        // particular must never cause an existing ancestor (here the tempdir) to
+        // be bound read-write — that was a sandbox-escape (scope widening).
         let dir = tempfile::tempdir().unwrap();
-        let existing = dir.path();
-        let missing = existing.join("a").join("b").join("c.txt");
+        let existing = dir.path().canonicalize().unwrap();
+        let missing = existing.join("does-not-exist").join("nested");
 
-        assert_eq!(
-            nearest_existing_ancestor(&missing).unwrap(),
-            existing.to_path_buf()
+        let args = build_bwrap_args(
+            &[missing.as_path()],
+            SandboxPermissions::default(),
+            None,
+            None,
         );
-        assert_eq!(
-            nearest_existing_ancestor(existing).unwrap(),
-            existing.to_path_buf()
+
+        let existing_str = existing.to_string_lossy().into_owned();
+        assert!(
+            !windows_contains(&args, &["--bind", &existing_str, &existing_str]),
+            "a missing writable path must not widen the bind to an existing ancestor: {args:?}"
+        );
+        let missing_str = missing.to_string_lossy().into_owned();
+        assert!(
+            !windows_contains(&args, &["--bind", &missing_str, &missing_str]),
+            "a missing writable path must not be bound: {args:?}"
         );
     }
 

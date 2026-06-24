@@ -12,9 +12,7 @@ use acp_thread::{
     ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
     SandboxNotAppliedReason,
 };
-use agent::{
-    SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated, settings_sandbox_policy,
-};
+use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated, ThreadSandbox};
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
@@ -4569,49 +4567,66 @@ impl ThreadView {
     }
 
     /// A small lock icon summarizing the sandbox state. Hovering shows the
-    /// write-access paths and network-access domains, split into what comes
-    /// from the user's persistent settings and what was overridden for this
-    /// thread. Only shown when sandboxing is active for the thread's project.
+    /// write-access paths and network-access domains from the user's settings
+    /// and the per-thread overrides. The lock is struck through when sandboxing
+    /// is turned off (in settings, or for this thread). Shown whenever
+    /// sandboxing is *applicable* to the project, even when disabled, so the
+    /// user can always see and change the state. Clicking opens the settings.
     fn render_sandbox_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?;
         let thread = thread.read(cx);
-        if !thread.sandboxing_enabled(cx) {
-            return None;
-        }
+        let (settings_sandbox, thread_sandbox) = thread.sandbox_status(cx)?;
+        let baseline = thread.sandbox_baseline_writable_paths(cx);
 
-        let thread_policy = thread.thread_sandbox_policy();
+        // The lock is struck only when the *merged* result is unsandboxed (the
+        // agent runs with ambient permissions). A layer that is merely wide open
+        // but still sandboxed keeps the closed lock.
+        let icon = if settings_sandbox
+            .clone()
+            .merge(thread_sandbox.clone())
+            .is_unsandboxed()
+        {
+            IconName::LockOutlinedOff
+        } else {
+            IconName::LockOutlined
+        };
 
-        let mut settings_policy =
-            settings_sandbox_policy(&AgentSettings::get_global(cx).sandbox_permissions);
-        // The project's own worktree roots are always writable in the sandbox,
-        // independent of the persistent settings (see the terminal tool's
-        // `SandboxWrap::writable_paths`), so surface them here too.
-        if let SandboxFsPolicy::Restricted { writable_paths } = &mut settings_policy.fs {
-            let project = self.thread.read(cx).project().clone();
-            let mut merged: Vec<PathBuf> = project
-                .read(cx)
-                .worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect();
-            for path in writable_paths.drain(..) {
-                if !merged.contains(&path) {
-                    merged.push(path);
+        let state = match (settings_sandbox, thread_sandbox) {
+            // No sandbox at all because the user turned it off in settings: the
+            // per-thread layer is moot, so don't show it.
+            (ThreadSandbox::Unsandboxed, _) => SandboxTooltipState::DisabledInSettings,
+            // Sandboxed by settings, but disabled for this thread: show the
+            // settings scope (greyed) for context above the disabled status.
+            (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
+                SandboxTooltipState::DisabledForThread {
+                    settings: augment_settings_sandbox_policy(settings_policy, baseline),
                 }
             }
-            // In restricted mode the sandbox always overlays an ephemeral,
-            // host-isolated tmpfs at /tmp, so surface it as a writable location.
-            // (Display-only label, not a real host path.)
-            merged.push(PathBuf::from("/tmp (isolated)"));
-            *writable_paths = merged;
-        }
+            (
+                ThreadSandbox::Sandboxed(settings_policy),
+                ThreadSandbox::Sandboxed(thread_policy),
+            ) => SandboxTooltipState::Enabled {
+                settings: augment_settings_sandbox_policy(settings_policy, baseline),
+                thread: thread_policy,
+            },
+        };
 
         Some(
-            IconButton::new("sandbox-status", IconName::LockOutlined)
+            IconButton::new("sandbox-status", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .tooltip(Tooltip::element(move |_window, cx| {
-                    render_sandbox_status_tooltip(&settings_policy, &thread_policy, cx)
+                    render_sandbox_status_tooltip(&state, cx)
                 }))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::OpenSettingsAt {
+                            path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                            target: None,
+                        }),
+                        cx,
+                    );
+                })
                 .into_any_element(),
         )
     }
@@ -5528,38 +5543,67 @@ impl Render for TokenUsageTooltip {
     }
 }
 
-/// Build the hover tooltip for the sandbox status icon: two sections ("From
-/// your settings" and "Overridden in this thread"), each listing the paths with
-/// write access and the domains with network access for that [`SandboxPolicy`].
-///
-/// The "from your settings" section is always shown (empty groups render as
-/// "None") so the baseline is always visible. The per-thread overrides are only
-/// shown when they actually grant something. The visual language mirrors the
-/// inline sandbox-authorization card (muted "Write access" / "Network access"
-/// headers with a count, then icon + monospace rows).
+/// Which sandbox state the status tooltip describes.
+#[derive(Clone)]
+enum SandboxTooltipState {
+    /// Sandboxing is on: show the settings policy and the per-thread overrides.
+    Enabled {
+        settings: SandboxPolicy,
+        thread: SandboxPolicy,
+    },
+    /// Turned off via the persistent `allow_unsandboxed` setting.
+    DisabledInSettings,
+    /// Turned off for this thread (the "run without sandbox for this thread"
+    /// fallback). The settings policy is still shown, greyed out, for context.
+    DisabledForThread { settings: SandboxPolicy },
+}
+
+/// Build the hover tooltip for the sandbox status icon. Always opens with a
+/// "Sandboxing settings" title, then describes the active state.
 ///
 /// Returns the raw content only: `Tooltip::element` wraps it in the tooltip
 /// container, so wrapping it again here would double the background.
-fn render_sandbox_status_tooltip(
-    settings_policy: &SandboxPolicy,
-    thread_policy: &SandboxPolicy,
-    cx: &App,
-) -> AnyElement {
-    let settings_section =
-        render_sandbox_policy_section("From your settings", settings_policy, true, cx);
-    let thread_section =
-        render_sandbox_policy_section("Allowed in this thread", thread_policy, false, cx);
-
-    v_flex()
+fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyElement {
+    let mut body = v_flex()
         .min_w(rems(15.))
         .gap_2()
         .child(Label::new("Sandboxing settings"))
-        .child(Divider::horizontal())
-        .children(settings_section)
-        .when_some(thread_section, |this, section| {
-            this.child(Divider::horizontal()).child(section)
-        })
-        .into_any_element()
+        .child(Divider::horizontal());
+
+    match state {
+        SandboxTooltipState::DisabledInSettings => {
+            body = body.child(
+                Label::new("Sandboxing is disabled in settings")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+        }
+        SandboxTooltipState::DisabledForThread { settings } => {
+            // The settings policy is moot while disabled, so show it greyed out
+            // for context above the active "disabled for this thread" status.
+            let settings_section =
+                render_sandbox_policy_section("From your settings", settings, true, cx);
+            body = body
+                .children(
+                    settings_section
+                        .map(|section| div().opacity(0.5).child(section).into_any_element()),
+                )
+                .child(Divider::horizontal())
+                .child(Label::new("Sandboxing is disabled for this thread").size(LabelSize::Small));
+        }
+        SandboxTooltipState::Enabled { settings, thread } => {
+            let settings_section =
+                render_sandbox_policy_section("From your settings", settings, true, cx);
+            let thread_section =
+                render_sandbox_policy_section("Allowed in this thread", thread, false, cx);
+            body = body.children(settings_section);
+            if let Some(section) = thread_section {
+                body = body.child(Divider::horizontal()).child(section);
+            }
+        }
+    }
+
+    body.into_any_element()
 }
 
 /// Render one section of the sandbox status tooltip.
@@ -5567,53 +5611,53 @@ fn render_sandbox_status_tooltip(
 /// When `show_empty` is true the section is always rendered, and groups that
 /// grant nothing show "None". When false, empty groups are omitted and the
 /// whole section is dropped (`None`) if it grants nothing at all.
+/// Fold the always-granted baseline writable paths (the project's worktree
+/// roots, derived from the same source the terminal tool uses) and, on Linux,
+/// the host-isolated `/tmp` overlay into a settings policy for display. These
+/// are part of what the sandbox grants whenever it's active but aren't
+/// persistent-settings entries, so they're shown in the "from your settings"
+/// section rather than stored. A no-op when the fs is unrestricted (rendered as
+/// "All paths"), since there's nothing to scope.
+fn augment_settings_sandbox_policy(
+    mut policy: SandboxPolicy,
+    baseline: Vec<PathBuf>,
+) -> SandboxPolicy {
+    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
+        let mut merged = baseline;
+        for path in writable_paths.drain(..) {
+            if !merged.contains(&path) {
+                merged.push(path);
+            }
+        }
+        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
+        // host path, so it can't come from the path source above.
+        #[cfg(target_os = "linux")]
+        merged.push(PathBuf::from("/tmp (isolated)"));
+        *writable_paths = merged;
+    }
+    policy
+}
+
 fn render_sandbox_policy_section(
     title: &str,
     policy: &SandboxPolicy,
     show_empty: bool,
     cx: &App,
 ) -> Option<AnyElement> {
-    let (write_summary, write_rows, write_empty): (SharedString, Vec<AnyElement>, bool) =
-        match &policy.fs {
-            SandboxFsPolicy::Unrestricted => ("All paths".into(), Vec::new(), false),
-            SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
-                ("None".into(), Vec::new(), true)
-            }
-            SandboxFsPolicy::Restricted { writable_paths } => (
-                count_summary(writable_paths.len(), "path", "paths"),
-                writable_paths
-                    .iter()
-                    .map(|path| sandbox_path_row(path, cx))
-                    .collect(),
-                false,
-            ),
-        };
-
-    let (network_summary, network_rows, network_empty): (SharedString, Vec<AnyElement>, bool) =
-        match &policy.network {
-            SandboxNetPolicy::Unrestricted => ("All domains".into(), Vec::new(), false),
-            SandboxNetPolicy::Blocked => ("None".into(), Vec::new(), true),
-            SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
-                ("None".into(), Vec::new(), true)
-            }
-            SandboxNetPolicy::Restricted { allowed_domains } => (
-                count_summary(allowed_domains.len(), "domain", "domains"),
-                allowed_domains
-                    .iter()
-                    .map(|domain| sandbox_domain_row(domain, cx))
-                    .collect(),
-                false,
-            ),
-        };
+    let write_rows = sandbox_fs_rows(&policy.fs, cx);
+    let network_rows = sandbox_network_rows(&policy.network, cx);
+    let write_empty = fs_grants_nothing(&policy.fs);
+    let network_empty = network_grants_nothing(&policy.network);
 
     if !show_empty && write_empty && network_empty {
         return None;
     }
 
-    let write_group = (show_empty || !write_empty)
-        .then(|| sandbox_status_group("Write access", write_summary, write_rows));
+    let write_group =
+        (show_empty || !write_empty).then(|| sandbox_status_group("Write access", write_rows));
     let network_group = (show_empty || !network_empty)
-        .then(|| sandbox_status_group("Network access", network_summary, network_rows));
+        .then(|| sandbox_status_group("Network access", network_rows));
 
     Some(
         v_flex()
@@ -5625,39 +5669,68 @@ fn render_sandbox_policy_section(
     )
 }
 
-fn count_summary(count: usize, singular: &str, plural: &str) -> SharedString {
-    format!("{count} {}", if count == 1 { singular } else { plural }).into()
+fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
+    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
 }
 
-/// A "Write access" / "Network access" group: a muted header with a count, then
-/// the indented icon rows. Matches the inline sandbox-authorization card.
-fn sandbox_status_group(
-    heading: &str,
-    summary: SharedString,
-    rows: Vec<AnyElement>,
-) -> impl IntoElement {
+fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
+    match network {
+        SandboxNetPolicy::Blocked => true,
+        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains.is_empty(),
+        SandboxNetPolicy::Unrestricted => false,
+    }
+}
+
+/// Rows for the write-access group: a message for the "all"/"none" cases, or one
+/// row per granted path.
+fn sandbox_fs_rows(fs: &SandboxFsPolicy, cx: &App) -> Vec<AnyElement> {
+    match fs {
+        SandboxFsPolicy::Unrestricted => vec![sandbox_message_row("All paths (unrestricted)")],
+        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
+            vec![sandbox_message_row("None")]
+        }
+        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+            .iter()
+            .map(|path| sandbox_path_row(path, cx))
+            .collect(),
+    }
+}
+
+/// Rows for the network-access group: a message for the "all"/"none" cases, or
+/// one row per allowed domain.
+fn sandbox_network_rows(network: &SandboxNetPolicy, cx: &App) -> Vec<AnyElement> {
+    match network {
+        SandboxNetPolicy::Unrestricted => vec![sandbox_message_row("All domains (unrestricted)")],
+        SandboxNetPolicy::Blocked => vec![sandbox_message_row("None")],
+        SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
+            vec![sandbox_message_row("None")]
+        }
+        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains
+            .iter()
+            .map(|domain| sandbox_domain_row(domain, cx))
+            .collect(),
+    }
+}
+
+/// A "Write access" / "Network access" group: a muted header, then the indented
+/// rows.
+fn sandbox_status_group(heading: &str, rows: Vec<AnyElement>) -> impl IntoElement {
     v_flex()
         .gap_0p5()
         .child(
-            h_flex()
-                .gap_1()
-                .child(
-                    Label::new(heading.to_string())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new("\u{2022}")
-                        .size(LabelSize::XSmall)
-                        .color(Color::Disabled),
-                )
-                .child(
-                    Label::new(summary)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+            Label::new(heading.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted),
         )
-        .children((!rows.is_empty()).then(|| v_flex().pl_3().gap_0p5().children(rows)))
+        .child(v_flex().pl_3().gap_0p5().children(rows))
+}
+
+/// A non-path row (e.g. "All paths (unrestricted)", "None") in a status group.
+fn sandbox_message_row(message: &str) -> AnyElement {
+    Label::new(message.to_string())
+        .size(LabelSize::XSmall)
+        .color(Color::Muted)
+        .into_any_element()
 }
 
 fn sandbox_path_row(path: &Path, cx: &App) -> AnyElement {
@@ -7165,6 +7238,12 @@ impl ThreadView {
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
+        // Soft-wrap the command instead of horizontally scrolling it: the card is
+        // narrow, and in scroll mode a long command wraps anyway but its wrapped
+        // lines don't pick up the code block's left padding. Wrap mode lays the
+        // text out as a normal block inside the padded content box, so every
+        // line (wrapped or not) is padded consistently.
+        style.code_block_overflow_x_scroll = false;
 
         let header_bg = self.tool_card_header_bg(cx);
         let run_command_label = if is_preview {

@@ -491,9 +491,13 @@ fn plan_route(host: &str, port: u16, state: &RuntimeState) -> Result<Route, Rout
 /// already blocks them for direct connections from the sandbox; the proxy
 /// (which runs outside the sandbox) must not reopen them.
 fn is_forbidden_ip(ip: IpAddr) -> bool {
-    // Test-only escape hatch: the sandbox integration tests run against echo
-    // servers on a private VM network, which this filter would otherwise reject.
-    // Never set this in production — it disables DNS-rebinding protection.
+    // Escape hatch for the NixOS sandbox integration tests only: their echo
+    // servers live on the VM's private network, which this filter would
+    // otherwise reject. It is compiled in ONLY under the
+    // `nixos-integration-tests` feature (enabled via `sandbox/nixos-test` when
+    // building `bwrap_test_helper`), so in a real Zed build the env var has no
+    // effect and cannot disable DNS-rebinding/SSRF protection.
+    #[cfg(feature = "nixos-integration-tests")]
     if std::env::var_os("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS").is_some() {
         return false;
     }

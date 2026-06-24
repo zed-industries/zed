@@ -142,8 +142,10 @@ mod imp {
     fn run_checks() -> Result<()> {
         // The restricted-network proxy runs in *this* process and the echo
         // servers live on the VM's private network, which the proxy's
-        // DNS-rebinding protection would otherwise reject. This hook is
-        // test-only (see `http_proxy`).
+        // DNS-rebinding protection would otherwise reject. The proxy only honors
+        // this var when built with `http_proxy/nixos-integration-tests` (pulled
+        // in by `sandbox/nixos-test`, which this binary requires), so it has no
+        // effect in a real Zed build.
         // SAFETY: single-threaded at this point.
         unsafe {
             std::env::set_var("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS", "1");

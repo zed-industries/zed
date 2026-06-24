@@ -15,8 +15,13 @@ path = "src/sandbox.rs"
 # Builds `bwrap_test_helper`, the behavior helper driven by the NixOS sandbox
 # VM tests in `nix/tests/sandboxing`. Off by default so normal builds don't
 # produce the test binary. Pulls in serde only when enabled (the helper parses
-# its check list as JSON).
-nixos-test = ["dep:serde", "dep:serde_json"]
+# its check list as JSON), and enables the matching `http_proxy` escape hatch so
+# the in-process proxy can reach the VM's private-network echo servers.
+nixos-test = [
+    "dep:serde",
+    "dep:serde_json",
+    "http_proxy/nixos-integration-tests",
+]
 
 # Builds `wsl_sandbox_test_helper`, the Windows analog of `bwrap_test_helper`.
 # It drives the real WSL/Bubblewrap sandbox end-to-end (see

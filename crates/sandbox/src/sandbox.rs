@@ -60,6 +60,69 @@ pub enum SandboxNetPolicy {
     Restricted { allowed_domains: Vec<String> },
 }
 
+impl SandboxPolicy {
+    /// Combine two policies into the least-restrictive policy that satisfies
+    /// both (a set union per dimension). Used to layer the user's persistent
+    /// settings, this thread's grants, and a command's request into the single
+    /// policy that is actually enforced.
+    pub fn merge(self, other: SandboxPolicy) -> SandboxPolicy {
+        SandboxPolicy {
+            fs: self.fs.merge(other.fs),
+            network: self.network.merge(other.network),
+        }
+    }
+}
+
+impl SandboxFsPolicy {
+    /// Unrestricted access dominates; otherwise the writable subtrees union.
+    pub fn merge(self, other: SandboxFsPolicy) -> SandboxFsPolicy {
+        match (self, other) {
+            (SandboxFsPolicy::Unrestricted, _) | (_, SandboxFsPolicy::Unrestricted) => {
+                SandboxFsPolicy::Unrestricted
+            }
+            (
+                SandboxFsPolicy::Restricted {
+                    writable_paths: mut a,
+                },
+                SandboxFsPolicy::Restricted { writable_paths: b },
+            ) => {
+                for path in b {
+                    if !a.contains(&path) {
+                        a.push(path);
+                    }
+                }
+                SandboxFsPolicy::Restricted { writable_paths: a }
+            }
+        }
+    }
+}
+
+impl SandboxNetPolicy {
+    /// Unrestricted access dominates and `Blocked` is the identity; otherwise the
+    /// allowed domains union.
+    pub fn merge(self, other: SandboxNetPolicy) -> SandboxNetPolicy {
+        match (self, other) {
+            (SandboxNetPolicy::Unrestricted, _) | (_, SandboxNetPolicy::Unrestricted) => {
+                SandboxNetPolicy::Unrestricted
+            }
+            (SandboxNetPolicy::Blocked, other) | (other, SandboxNetPolicy::Blocked) => other,
+            (
+                SandboxNetPolicy::Restricted {
+                    allowed_domains: mut a,
+                },
+                SandboxNetPolicy::Restricted { allowed_domains: b },
+            ) => {
+                for domain in b {
+                    if !a.contains(&domain) {
+                        a.push(domain);
+                    }
+                }
+                SandboxNetPolicy::Restricted { allowed_domains: a }
+            }
+        }
+    }
+}
+
 /// A command and its execution environment, before sandbox wrapping.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CommandAndArgs {
@@ -284,6 +347,22 @@ impl Sandbox {
             .map_err(|error| SandboxError::Io(error.to_string()))
     }
 
+    /// Drop this sandbox on the *current* thread, tearing down the network proxy
+    /// inline (its `Drop` joins a listener thread after a loopback wakeup
+    /// connect).
+    ///
+    /// The blanket [`Drop`] impl instead offloads that join to a fresh thread,
+    /// so an accidental drop on a latency-sensitive thread (e.g. the UI thread)
+    /// can never block. Call this only when you are *already* on a background
+    /// thread or executor and want the teardown to finish before the surrounding
+    /// task completes — it avoids spawning a throwaway thread to do work the
+    /// current one can do.
+    pub fn drop_on_current_thread(mut self) {
+        // Drop the proxy here, synchronously, so the `Drop` impl below sees
+        // `None` and doesn't spawn a thread to repeat the work.
+        drop(self.proxy.take());
+    }
+
     /// Spawn the restricted-network proxy if it isn't running yet, point the
     /// command env at it, and return its `(port, host socket path)`. Returns
     /// `None` for non-restricted network policies.
@@ -453,7 +532,9 @@ impl Drop for Sandbox {
     fn drop(&mut self) {
         // Dropping a `ProxyHandle` joins its listener thread after a loopback
         // wakeup connect; do that off whatever (possibly UI) thread is dropping
-        // the sandbox so a slow shutdown can't stall it.
+        // the sandbox so a slow shutdown can't stall it. Callers already on a
+        // background executor should prefer `drop_on_current_thread` to avoid
+        // this throwaway thread.
         if let Some(proxy) = self.proxy.take() {
             std::thread::spawn(move || drop(proxy));
         }
@@ -648,6 +729,63 @@ fn map_anyhow_error(error: anyhow::Error) -> SandboxError {
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fs_merge_unrestricted_dominates_else_unions_paths() {
+        let a = SandboxFsPolicy::Restricted {
+            writable_paths: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        };
+        let b = SandboxFsPolicy::Restricted {
+            writable_paths: vec![PathBuf::from("/b"), PathBuf::from("/c")],
+        };
+        assert_eq!(
+            a.clone().merge(b),
+            SandboxFsPolicy::Restricted {
+                writable_paths: vec![
+                    PathBuf::from("/a"),
+                    PathBuf::from("/b"),
+                    PathBuf::from("/c")
+                ],
+            }
+        );
+        assert_eq!(
+            a.merge(SandboxFsPolicy::Unrestricted),
+            SandboxFsPolicy::Unrestricted
+        );
+        assert_eq!(
+            SandboxFsPolicy::Unrestricted.merge(SandboxFsPolicy::Restricted {
+                writable_paths: vec![PathBuf::from("/a")],
+            }),
+            SandboxFsPolicy::Unrestricted
+        );
+    }
+
+    #[test]
+    fn net_merge_unrestricted_dominates_blocked_is_identity_else_unions() {
+        let hosts = |list: &[&str]| SandboxNetPolicy::Restricted {
+            allowed_domains: list.iter().map(|s| s.to_string()).collect(),
+        };
+        assert_eq!(
+            hosts(&["a.com", "b.com"]).merge(hosts(&["b.com", "c.com"])),
+            hosts(&["a.com", "b.com", "c.com"])
+        );
+        assert_eq!(
+            SandboxNetPolicy::Blocked.merge(hosts(&["a.com"])),
+            hosts(&["a.com"])
+        );
+        assert_eq!(
+            hosts(&["a.com"]).merge(SandboxNetPolicy::Blocked),
+            hosts(&["a.com"])
+        );
+        assert_eq!(
+            SandboxNetPolicy::Blocked.merge(SandboxNetPolicy::Blocked),
+            SandboxNetPolicy::Blocked
+        );
+        assert_eq!(
+            hosts(&["a.com"]).merge(SandboxNetPolicy::Unrestricted),
+            SandboxNetPolicy::Unrestricted
+        );
+    }
 
     #[test]
     fn upstream_proxy_from_env_uses_precedence_and_no_proxy() {

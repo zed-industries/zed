@@ -202,6 +202,28 @@ in
         succeeds = false;
       }
 
+      # A writable path that doesn't exist yet must be bound at its exact
+      # location (created up front), never widened to an existing ancestor. If it
+      # widened to `/sandbox-test`, this write to a read-only file under that
+      # ancestor would succeed — the scope-widening sandbox escape this guards
+      # against. It must be denied.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/not-yet-created/deep" ];
+        networkAccess = "blocked";
+        write = "/sandbox-test/readable/host.txt";
+        succeeds = false;
+      }
+
+      # ...and the not-yet-existing path itself is created and writable.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/not-yet-created/deep" ];
+        networkAccess = "blocked";
+        write = "/sandbox-test/not-yet-created/deep/ok.txt";
+        succeeds = true;
+      }
+
       # The fs escape hatch lets a command write anywhere.
       {
         fs = "unrestricted";

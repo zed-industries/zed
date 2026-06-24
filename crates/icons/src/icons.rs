@@ -184,6 +184,7 @@ pub enum IconName {
     LoadCircle,
     LocationEdit,
     LockOutlined,
+    LockOutlinedOff,
     MagnifyingGlass,
     Maximize,
     MaximizeAlt,

@@ -11,7 +11,10 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
-use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled_for_project};
+use crate::sandboxing::{
+    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
+    sandboxing_enabled_for_project,
+};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
@@ -1746,17 +1749,42 @@ impl Thread {
         }
     }
 
-    /// The sandbox permissions the user approved "for the rest of this thread",
-    /// as a [`sandbox::SandboxPolicy`] for display alongside the persistent
-    /// "from your settings" policy (see [`crate::settings_sandbox_policy`]).
-    pub fn thread_sandbox_policy(&self) -> sandbox::SandboxPolicy {
-        self.sandbox_grants.borrow().to_policy()
+    /// The sandbox that currently applies to agent terminal commands in this
+    /// thread, as two layers: the user's persistent settings and this thread's
+    /// overrides (see [`ThreadSandbox`]). Returns `None` when sandboxing isn't
+    /// applicable to the project at all, so the UI shows no indicator.
+    ///
+    /// The layers are returned pre-merge so the UI can show their provenance
+    /// separately; [`ThreadSandbox::merge`] combines them into what is enforced.
+    pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
+        if !self.sandboxing_available(cx) {
+            return None;
+        }
+        let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
+        let settings = crate::sandboxing::settings_thread_sandbox(&persistent);
+        let thread = self.sandbox_grants.borrow().thread_sandbox();
+        Some((settings, thread))
     }
 
     /// Whether agent terminal commands are sandboxed for this thread's project,
     /// so the UI can decide whether to surface the sandbox status at all.
     pub fn sandboxing_enabled(&self, cx: &App) -> bool {
         sandboxing_enabled_for_project(self.project.read(cx), cx)
+    }
+
+    /// Whether sandboxing is *applicable* for this thread's project (feature on,
+    /// local project, supported platform), regardless of whether it's been
+    /// turned off in settings. The UI shows the sandbox indicator whenever this
+    /// is true, drawing it struck-out when sandboxing is disabled.
+    pub fn sandboxing_available(&self, cx: &App) -> bool {
+        sandboxing_available_for_project(self.project.read(cx), cx)
+    }
+
+    /// The directory subtrees the sandbox always grants write access to for this
+    /// thread's project (its worktree roots), derived from the same source the
+    /// terminal tool uses when it actually builds the sandbox.
+    pub fn sandbox_baseline_writable_paths(&self, cx: &App) -> Vec<PathBuf> {
+        crate::sandboxing::sandbox_worktree_writable_paths(self.project.read(cx), cx)
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
@@ -5119,9 +5147,7 @@ impl ToolCallEventStream {
     /// thread-scoped sandbox grants. This mirrors how a real [`Thread`] builds a
     /// distinct event stream per tool call while sharing one set of grants, so
     /// tests can exercise sequences of tool calls within the same conversation.
-    // Only the macOS-gated terminal sandbox regression test uses this, so match
-    // its `cfg` to avoid a dead-code error on other platforms.
-    #[cfg(all(test, target_os = "macos"))]
+    #[cfg(test)]
     pub(crate) fn test_with_grants(
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
     ) -> (Self, ToolCallEventStreamReceiver) {
@@ -5654,6 +5680,13 @@ impl ToolCallEventStream {
     /// the thread (distinct from the persistent `allow_unsandboxed` setting).
     pub(crate) fn sandbox_fallback_granted_for_thread(&self) -> bool {
         self.sandbox_grants.borrow().fallback_granted_for_thread()
+    }
+
+    /// Whether the user approved a model-requested `unsandboxed: true` escape
+    /// for the rest of this thread. Like the fallback grant, this makes every
+    /// command in the thread run without a sandbox.
+    pub(crate) fn unsandboxed_granted_for_thread(&self) -> bool {
+        self.sandbox_grants.borrow().unsandboxed_granted()
     }
 
     /// Ask the user how to proceed when the OS sandbox could not be created
