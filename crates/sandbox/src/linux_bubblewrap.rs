@@ -177,6 +177,7 @@ fn probe_bwrap(bwrap: &Path, bwrap_args: &[String]) -> bool {
 /// the sandbox where the bridge connects to it.
 pub fn build_bwrap_args(
     writable_directories: &[&Path],
+    protected_git_dirs: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
     proxy_socket_path: Option<&Path>,
@@ -186,6 +187,7 @@ pub fn build_bwrap_args(
         .map(|_| unique_proxy_socket_sandbox_path());
     build_bwrap_args_with_proxy_socket_sandbox_path(
         writable_directories,
+        protected_git_dirs,
         permissions,
         cwd,
         proxy_socket_path,
@@ -195,6 +197,7 @@ pub fn build_bwrap_args(
 
 fn build_bwrap_args_with_proxy_socket_sandbox_path(
     writable_directories: &[&Path],
+    protected_git_dirs: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
     proxy_socket_path: Option<&Path>,
@@ -234,6 +237,25 @@ fn build_bwrap_args_with_proxy_socket_sandbox_path(
                 .unwrap_or_else(|_| directory.to_path_buf());
             let path = canonical.to_string_lossy().into_owned();
             push_bind(&mut args, "--bind", &path, &path);
+        }
+
+        // Protect Git directories by re-binding them read-only *over* the rw
+        // worktree binds above (order matters: later binds win). Unlike
+        // Seatbelt, bwrap can't deny content reads while keeping metadata, so on
+        // Linux a protected `.git` is read-only — its contents stay readable but
+        // can't be written. A not-yet-existing `.git` can't be bound, so it's
+        // skipped (a documented gap vs. macOS, which denies it even before it
+        // exists). When Git access is granted these dirs are in
+        // `writable_directories` instead and this list is empty.
+        for git_dir in protected_git_dirs {
+            if !git_dir.exists() {
+                continue;
+            }
+            let canonical = git_dir
+                .canonicalize()
+                .unwrap_or_else(|_| git_dir.to_path_buf());
+            let path = canonical.to_string_lossy().into_owned();
+            push_bind(&mut args, "--ro-bind", &path, &path);
         }
     }
 
@@ -307,7 +329,9 @@ fn prepare_sandbox(
     proxy_socket_path: Option<&Path>,
 ) -> std::result::Result<(PathBuf, Vec<String>), LauncherStatus> {
     let bwrap = resolve_bwrap()?;
-    let bwrap_args = build_bwrap_args(writable_dirs, permissions, cwd, proxy_socket_path);
+    // The probe only checks whether a sandbox can be created at all, so Git
+    // protection (which doesn't affect createability) is irrelevant here.
+    let bwrap_args = build_bwrap_args(writable_dirs, &[], permissions, cwd, proxy_socket_path);
     if !probe_bwrap(&bwrap, &bwrap_args) {
         return Err(LauncherStatus::SandboxProbeFailed);
     }
@@ -335,6 +359,7 @@ pub fn wrap_invocation(
     bridge_program: &str,
     permissions: SandboxPermissions,
     writable_dirs: &[&Path],
+    protected_git_dirs: &[&Path],
     cwd: Option<&Path>,
     program: &str,
     args: &[String],
@@ -369,6 +394,7 @@ pub fn wrap_invocation(
     };
     let mut bwrap_args = build_bwrap_args_with_proxy_socket_sandbox_path(
         writable_dirs,
+        protected_git_dirs,
         permissions,
         cwd,
         proxy_socket_path,
@@ -622,6 +648,7 @@ mod tests {
 
         let args = build_bwrap_args(
             &[missing.as_path()],
+            &[],
             SandboxPermissions::default(),
             None,
             None,
@@ -644,6 +671,7 @@ mod tests {
         let writable = tempfile::tempdir().unwrap();
         let args = build_bwrap_args(
             &[writable.path()],
+            &[],
             SandboxPermissions::default(),
             Some(writable.path()),
             None,
@@ -663,10 +691,11 @@ mod tests {
 
     #[test]
     fn test_build_bwrap_args_network_namespace_follows_permission() {
-        let denied = build_bwrap_args(&[], SandboxPermissions::default(), None, None);
+        let denied = build_bwrap_args(&[], &[], SandboxPermissions::default(), None, None);
         assert!(denied.iter().any(|arg| arg == "--unshare-net"));
 
         let allowed = build_bwrap_args(
+            &[],
             &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
@@ -679,6 +708,7 @@ mod tests {
 
         let socket = PathBuf::from("/tmp/zed-proxy.sock");
         let restricted = build_bwrap_args(
+            &[],
             &[],
             SandboxPermissions {
                 network: NetworkAccess::LocalhostPort(8080),
@@ -699,7 +729,7 @@ mod tests {
             network: NetworkAccess::None,
             allow_fs_write: true,
         };
-        let args = build_bwrap_args(&[], permissions, None, None);
+        let args = build_bwrap_args(&[], &[], permissions, None, None);
         assert!(windows_contains(&args, &["--bind", "/", "/"]));
         assert!(!windows_contains(&args, &["--ro-bind", "/", "/"]));
         assert!(!windows_contains(&args, &["--tmpfs", "/tmp"]));
@@ -778,6 +808,7 @@ mod tests {
             NetworkAccess::None | NetworkAccess::All => None,
         };
         let mut bwrap_args = build_bwrap_args_with_proxy_socket_sandbox_path(
+            &[],
             &[],
             permissions,
             None,

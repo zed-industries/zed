@@ -46,6 +46,13 @@ pub struct SandboxWrap {
     pub extra_write_paths: Vec<PathBuf>,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
+    /// The project's `.git` directories (worktree `.git`, linked-worktree common
+    /// dirs, discovered repos). Protected by default; made writable when
+    /// `allow_git_access` is set. Computed by the agent because locating them
+    /// needs Git knowledge the sandbox layer can't derive itself.
+    pub git_dirs: Vec<PathBuf>,
+    /// Whether the user approved access to the protected `.git` directories.
+    pub allow_git_access: bool,
     /// Allow unrestricted filesystem writes (ignores all writable paths).
     pub allow_fs_write: bool,
     /// Whether the project (and therefore this terminal) is local. The
@@ -162,7 +169,13 @@ impl SandboxWrap {
                     .collect(),
             },
         };
-        sandbox::SandboxPolicy { fs, network }
+        let git_dirs = self.git_dirs.clone();
+        let git = if self.allow_git_access {
+            sandbox::GitSandboxPolicy::Allowed { git_dirs }
+        } else {
+            sandbox::GitSandboxPolicy::Denied { git_dirs }
+        };
+        sandbox::SandboxPolicy { fs, network, git }
     }
 }
 

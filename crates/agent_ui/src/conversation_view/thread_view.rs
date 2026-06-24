@@ -17,7 +17,7 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
+use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -5650,8 +5650,12 @@ fn render_sandbox_policy_section(
     let network_rows = sandbox_network_rows(&policy.network, cx);
     let write_empty = fs_grants_nothing(&policy.fs);
     let network_empty = network_grants_nothing(&policy.network);
+    // Git access is only ever surfaced when *granted* (the `.git` dirs become
+    // writable), so it never shows a "None" row — unlike write/network, it's
+    // omitted entirely when denied, regardless of `show_empty`.
+    let git_empty = git_grants_nothing(&policy.git);
 
-    if !show_empty && write_empty && network_empty {
+    if !show_empty && write_empty && network_empty && git_empty {
         return None;
     }
 
@@ -5659,6 +5663,8 @@ fn render_sandbox_policy_section(
         (show_empty || !write_empty).then(|| sandbox_status_group("Write access", write_rows));
     let network_group = (show_empty || !network_empty)
         .then(|| sandbox_status_group("Network access", network_rows));
+    let git_group = (!git_empty)
+        .then(|| sandbox_status_group("Git metadata access", sandbox_git_rows(&policy.git, cx)));
 
     Some(
         v_flex()
@@ -5666,8 +5672,46 @@ fn render_sandbox_policy_section(
             .child(Label::new(title.to_string()))
             .children(write_group)
             .children(network_group)
+            .children(git_group)
             .into_any_element(),
     )
+}
+
+/// Git access grants nothing to surface unless `.git` writes are allowed *and*
+/// at least one `.git` directory is known.
+fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
+    !git.allows_writes() || git.git_dirs().is_empty()
+}
+
+/// Rows for the Git-access group: one row per writable `.git` directory (these
+/// may live outside the project for a linked worktree).
+fn sandbox_git_rows(git: &GitSandboxPolicy, cx: &App) -> Vec<AnyElement> {
+    match git {
+        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
+            .iter()
+            .map(|path| sandbox_git_path_row(path, cx))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A `.git` directory row, tagged with a Git icon to distinguish it from plain
+/// writable paths.
+fn sandbox_git_path_row(path: &Path, cx: &App) -> AnyElement {
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(
+            Icon::new(IconName::GitBranch)
+                .color(Color::Muted)
+                .size(IconSize::Small),
+        )
+        .child(
+            Label::new(path.display().to_string())
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
 }
 
 fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
@@ -8257,7 +8301,12 @@ impl ThreadView {
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
         let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
-        if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
+        if !has_network
+            && !has_write
+            && !details.allow_git_access
+            && !details.unsandboxed
+            && details.reason.is_empty()
+        {
             return Empty.into_any_element();
         }
 
@@ -8477,6 +8526,23 @@ impl ThreadView {
                 )
         });
 
+        let git_access_section = details.allow_git_access.then(|| {
+            v_flex().px_2().py_1().gap_0p5().child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::GitBranch)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(
+                        Label::new("Git metadata access")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+        });
+
         let reason_section = (!details.reason.is_empty()).then(|| {
             v_flex()
                 .px_2()
@@ -8498,6 +8564,7 @@ impl ThreadView {
             .border_color(self.tool_card_border_color(cx))
             .children(network_section)
             .children(write_section)
+            .children(git_access_section)
             .children(unsandboxed_section)
             .children(reason_section)
             .into_any_element()

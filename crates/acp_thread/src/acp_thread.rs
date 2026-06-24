@@ -175,6 +175,9 @@ pub struct SandboxAuthorizationDetails {
     /// builds still render the network request.
     #[serde(default, alias = "network")]
     pub network_all_hosts: bool,
+    /// Whether the command requested access to protected `.git` directories.
+    #[serde(default)]
+    pub allow_git_access: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
     #[serde(default)]

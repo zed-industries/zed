@@ -1761,8 +1761,15 @@ impl Thread {
             return None;
         }
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
-        let settings = crate::sandboxing::settings_thread_sandbox(&persistent);
-        let thread = self.sandbox_grants.borrow().thread_sandbox();
+        // The project's `.git` locations are the same for both layers; whether
+        // they're writable differs (settings grant vs. thread grant).
+        let git_dirs = crate::sandboxing::sandbox_git_dirs(self.project.read(cx), cx);
+        let grants = self.sandbox_grants.borrow();
+        let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
+            .with_git(persistent.allow_git_access, git_dirs.clone());
+        let thread = grants
+            .thread_sandbox()
+            .with_git(grants.git_access_granted(), git_dirs);
         Some((settings, thread))
     }
 

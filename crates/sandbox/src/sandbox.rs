@@ -36,6 +36,7 @@ pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via 
 pub struct SandboxPolicy {
     pub fs: SandboxFsPolicy,
     pub network: SandboxNetPolicy,
+    pub git: GitSandboxPolicy,
 }
 
 /// Filesystem policy for a sandboxed command.
@@ -60,6 +61,70 @@ pub enum SandboxNetPolicy {
     Restricted { allowed_domains: Vec<String> },
 }
 
+/// Policy for the project's Git directories (`.git`). The agent computes the
+/// directory list because locating it requires Git knowledge the sandbox layer
+/// can't derive itself — a linked worktree's `.git` is a gitlink pointing at a
+/// common dir elsewhere, and discovered repositories can live outside the
+/// project. Both variants carry the same dirs; the variant selects how they're
+/// treated.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GitSandboxPolicy {
+    /// `.git` contents are protected: read-only on Linux; content reads and
+    /// writes denied on macOS (metadata stays visible either way).
+    Denied { git_dirs: Vec<PathBuf> },
+    /// `.git` contents are writable (these dirs are made writable).
+    Allowed { git_dirs: Vec<PathBuf> },
+}
+
+impl Default for GitSandboxPolicy {
+    /// Git directories protected, none known — the safe default.
+    fn default() -> Self {
+        GitSandboxPolicy::Denied {
+            git_dirs: Vec::new(),
+        }
+    }
+}
+
+impl GitSandboxPolicy {
+    /// The `.git` directories this policy governs, regardless of variant.
+    pub fn git_dirs(&self) -> &[PathBuf] {
+        match self {
+            GitSandboxPolicy::Denied { git_dirs } | GitSandboxPolicy::Allowed { git_dirs } => {
+                git_dirs
+            }
+        }
+    }
+
+    /// Whether `.git` contents are writable.
+    pub fn allows_writes(&self) -> bool {
+        matches!(self, GitSandboxPolicy::Allowed { .. })
+    }
+
+    /// Combine two layers: `Allowed` (more permissive) wins, and the governed
+    /// `.git` directories union.
+    pub fn merge(self, other: GitSandboxPolicy) -> GitSandboxPolicy {
+        let allowed = self.allows_writes() || other.allows_writes();
+        let (GitSandboxPolicy::Denied { mut git_dirs }
+        | GitSandboxPolicy::Allowed { mut git_dirs }) = self;
+        let (GitSandboxPolicy::Denied {
+            git_dirs: other_dirs,
+        }
+        | GitSandboxPolicy::Allowed {
+            git_dirs: other_dirs,
+        }) = other;
+        for path in other_dirs {
+            if !git_dirs.contains(&path) {
+                git_dirs.push(path);
+            }
+        }
+        if allowed {
+            GitSandboxPolicy::Allowed { git_dirs }
+        } else {
+            GitSandboxPolicy::Denied { git_dirs }
+        }
+    }
+}
+
 impl SandboxPolicy {
     /// Combine two policies into the least-restrictive policy that satisfies
     /// both (a set union per dimension). Used to layer the user's persistent
@@ -69,7 +134,16 @@ impl SandboxPolicy {
         SandboxPolicy {
             fs: self.fs.merge(other.fs),
             network: self.network.merge(other.network),
+            git: self.git.merge(other.git),
         }
+    }
+
+    /// Replace the Git policy, keeping the fs/network policy. The UI builds the
+    /// fs/network halves from settings/grants (which don't know the project's
+    /// `.git` locations) and then attaches the agent-computed Git policy here.
+    pub fn with_git(mut self, git: GitSandboxPolicy) -> Self {
+        self.git = git;
+        self
     }
 }
 
@@ -232,6 +306,9 @@ enum NetSetup {
 pub struct Sandbox {
     fs: FsSetup,
     network: NetSetup,
+    /// The project's `.git` directories and whether they're writable. Enforced
+    /// on macOS/Linux; ignored by the WSL sandbox for now.
+    git: GitSandboxPolicy,
     /// In-process network proxy for the restricted-network case, spawned on the
     /// first `wrap`. Dropped on a background thread (the join blocks).
     proxy: Option<ProxyHandle>,
@@ -269,6 +346,7 @@ impl Sandbox {
         Ok(Self {
             fs,
             network,
+            git: policy.git,
             proxy: None,
             #[cfg(target_os = "macos")]
             seatbelt_config: None,
@@ -403,6 +481,21 @@ impl Sandbox {
         Ok(Some((port, proxy.socket_path().map(PathBuf::from))))
     }
 
+    /// Split the policy's `.git` directories into (writable, protected) sets for
+    /// the enforcement layers. When the whole filesystem is writable the split
+    /// is empty (Git protection is moot); otherwise `Allowed` git dirs are
+    /// writable and `Denied` git dirs are protected.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn git_path_split(&self) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        if self.fs.allow_fs_write {
+            return (Vec::new(), Vec::new());
+        }
+        match &self.git {
+            GitSandboxPolicy::Allowed { git_dirs } => (git_dirs.clone(), Vec::new()),
+            GitSandboxPolicy::Denied { git_dirs } => (Vec::new(), git_dirs.clone()),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     fn wrap_linux(&mut self, command: &CommandAndArgs) -> Result<WrappedCommand, SandboxError> {
         let mut env = command.env.clone();
@@ -421,12 +514,15 @@ impl Sandbox {
             network,
             allow_fs_write: self.fs.allow_fs_write,
         };
-        let writable: Vec<&Path> = self
+        let (git_writable, git_protected) = self.git_path_split();
+        let mut writable: Vec<&Path> = self
             .fs
             .writable_paths
             .iter()
             .map(PathBuf::as_path)
             .collect();
+        writable.extend(git_writable.iter().map(PathBuf::as_path));
+        let protected_git_dirs: Vec<&Path> = git_protected.iter().map(PathBuf::as_path).collect();
 
         let bridge_program = std::env::current_exe()
             .map_err(|error| SandboxError::BridgeExecutableUnavailable(error.to_string()))?;
@@ -441,6 +537,7 @@ impl Sandbox {
             bridge_program,
             permissions,
             &writable,
+            &protected_git_dirs,
             command.cwd.as_deref(),
             &command.program,
             &command.args,
@@ -473,17 +570,24 @@ impl Sandbox {
             network,
             allow_fs_write: self.fs.allow_fs_write,
         };
-        let writable: Vec<&Path> = self
+        let (git_writable, git_protected) = self.git_path_split();
+        let mut writable: Vec<&Path> = self
             .fs
             .writable_paths
             .iter()
             .map(PathBuf::as_path)
             .collect();
+        writable.extend(git_writable.iter().map(PathBuf::as_path));
+        let protected: Vec<&Path> = git_protected.iter().map(PathBuf::as_path).collect();
 
+        // SSH-agent socket handling (commit signing) is deferred, so no unix
+        // sockets are allowed for now.
         let (program, args, config) = macos_seatbelt::wrap_invocation(
             &command.program,
             &command.args,
             &writable,
+            &protected,
+            &[],
             permissions,
         )
         .map_err(map_anyhow_error)?;
@@ -504,6 +608,9 @@ impl Sandbox {
         command: &CommandAndArgs,
     ) -> Result<WrappedCommand, SandboxError> {
         // Restricted host network access is rejected at `new` time on Windows.
+        // Git-dir protection isn't enforced for the WSL sandbox yet, so the
+        // policy's Git directories are intentionally ignored here.
+        let _ = self.git.git_dirs();
         let permissions = windows_wsl::SandboxPermissions {
             allow_network: matches!(self.network, NetSetup::Unrestricted),
             allow_fs_write: self.fs.allow_fs_write,
@@ -846,7 +953,11 @@ mod tests {
 /// existing parent and re-appending the final component keeps the child
 /// consistent with its parent. If neither the path nor its parent can be
 /// canonicalized, the path is returned unchanged.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+//
+// Only the macOS Seatbelt layer uses this (Linux skips not-yet-existing `.git`
+// dirs rather than emitting a rule for them), so it's gated to macOS to avoid a
+// dead-code warning elsewhere.
+#[cfg(target_os = "macos")]
 pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std::path::PathBuf {
     if let Ok(canonical) = path.canonicalize() {
         return canonical;
@@ -859,7 +970,7 @@ pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std:
     path.to_path_buf()
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::canonicalize_allowing_missing_leaf;
 

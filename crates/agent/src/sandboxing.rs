@@ -30,7 +30,7 @@ use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
 use project::Project;
-use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
+use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 use settings::Settings;
 use std::path::PathBuf;
 
@@ -44,6 +44,38 @@ pub fn sandbox_worktree_writable_paths(project: &Project, cx: &App) -> Vec<PathB
         .worktrees(cx)
         .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
         .collect()
+}
+
+/// The `.git` directories the sandbox protects (or, when Git access is granted,
+/// makes writable) for a project. Locating these requires Git knowledge the
+/// sandbox layer can't derive itself: a worktree's `.git`, a linked worktree's
+/// common dir (which lives outside the worktree), and every discovered
+/// repository's git/common dirs. Shared by the terminal tool (enforcement) and
+/// the status UI so the two can't drift.
+pub fn sandbox_git_dirs(project: &Project, cx: &App) -> Vec<PathBuf> {
+    let mut git_dirs = Vec::new();
+
+    for worktree in project.worktrees(cx) {
+        let worktree = worktree.read(cx);
+        let worktree_abs_path = worktree.abs_path();
+        // Protect `<worktree>/.git` even when it doesn't exist yet, so a command
+        // can't `git init` and then write to the freshly created metadata.
+        git_dirs.push(worktree_abs_path.join(".git"));
+        if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
+            git_dirs.push(root_repo_common_dir.to_path_buf());
+        }
+    }
+
+    for repository in project.git_store().read(cx).repositories().values() {
+        let repository = repository.read(cx);
+        git_dirs.push(repository.dot_git_abs_path.to_path_buf());
+        git_dirs.push(repository.repository_dir_abs_path.to_path_buf());
+        git_dirs.push(repository.common_dir_abs_path.to_path_buf());
+    }
+
+    git_dirs.sort();
+    git_dirs.dedup();
+    git_dirs
 }
 
 /// What sandbox a thread applies to agent terminal commands, as one value the
@@ -83,6 +115,24 @@ impl ThreadSandbox {
     pub fn is_unsandboxed(&self) -> bool {
         matches!(self, ThreadSandbox::Unsandboxed)
     }
+
+    /// Attach the project's Git policy to a sandboxed layer. The settings/grants
+    /// don't know the project's `.git` locations, so the caller computes them
+    /// (via [`sandbox_git_dirs`]) and passes whether this layer grants Git
+    /// access. A no-op for the `Unsandboxed` variant.
+    pub fn with_git(self, allowed: bool, git_dirs: Vec<PathBuf>) -> ThreadSandbox {
+        match self {
+            ThreadSandbox::Unsandboxed => ThreadSandbox::Unsandboxed,
+            ThreadSandbox::Sandboxed(policy) => {
+                let git = if allowed {
+                    GitSandboxPolicy::Allowed { git_dirs }
+                } else {
+                    GitSandboxPolicy::Denied { git_dirs }
+                };
+                ThreadSandbox::Sandboxed(policy.with_git(git))
+            }
+        }
+    }
 }
 
 /// The sandbox the user's persistent settings establish for every thread, as a
@@ -118,7 +168,13 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
             allowed_domains: persistent.network_hosts.clone(),
         }
     };
-    SandboxPolicy { fs, network }
+    // The persistent settings don't know the project's `.git` locations; the UI
+    // layer attaches the real Git policy via `SandboxPolicy::with_git`.
+    SandboxPolicy {
+        fs,
+        network,
+        git: GitSandboxPolicy::default(),
+    }
 }
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
@@ -341,6 +397,12 @@ impl ThreadSandboxGrants {
         self.unsandboxed
     }
 
+    /// Whether the user approved access to protected Git directories for the
+    /// rest of the thread.
+    pub fn git_access_granted(&self) -> bool {
+        self.allow_git_access
+    }
+
     /// Record that the user approved running commands unsandboxed for the rest
     /// of the thread when the sandbox can't be created. Only the Bubblewrap
     /// sandboxes (Linux directly, Windows via WSL) can fail to create a
@@ -389,7 +451,13 @@ impl ThreadSandboxGrants {
                     .collect(),
             }
         };
-        SandboxPolicy { fs, network }
+        // Grants don't carry the project's `.git` locations; the UI layer
+        // attaches the real Git policy via `SandboxPolicy::with_git`.
+        SandboxPolicy {
+            fs,
+            network,
+            git: GitSandboxPolicy::default(),
+        }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -404,6 +472,7 @@ impl ThreadSandboxGrants {
                 .map(|host| host.to_string())
                 .collect(),
             network_any_host: self.network_any_host,
+            allow_git_access: self.allow_git_access,
             allow_fs_write_all: self.allow_fs_write_all,
             unsandboxed: self.unsandboxed,
             sandbox_fallback: self.sandbox_fallback,
@@ -426,6 +495,7 @@ impl ThreadSandboxGrants {
         Self {
             network_any_host: db.network_any_host,
             network_hosts,
+            allow_git_access: db.allow_git_access,
             allow_fs_write_all: db.allow_fs_write_all,
             unsandboxed: db.unsandboxed,
             sandbox_fallback: db.sandbox_fallback,
@@ -583,6 +653,7 @@ mod tests {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
                 }
             },
+            git: GitSandboxPolicy::default(),
         };
 
         // Unsandboxed on either side wins — the agent runs with ambient access.

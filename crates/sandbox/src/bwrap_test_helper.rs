@@ -183,7 +183,11 @@ mod imp {
                 allowed_domains: check.allowed_domains.clone(),
             },
         };
-        SandboxPolicy { fs, network }
+        SandboxPolicy {
+            fs,
+            network,
+            git: sandbox::GitSandboxPolicy::default(),
+        }
     }
 
     fn describe(check: &Check) -> String {
