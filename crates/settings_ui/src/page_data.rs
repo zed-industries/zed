@@ -7836,11 +7836,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section(cx: &App) -> Box<[SettingsPageItem]> {
-        use feature_flags::FeatureFlagAppExt as _;
-
-        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
-
+    fn general_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7873,29 +7869,26 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ];
 
-        if agent_settings_ui_enabled {
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "LLM Providers".into(),
-                r#type: Default::default(),
-                json_path: Some("llm_providers"),
-                description: Some("Configure API keys and settings for LLM providers.".into()),
-                in_json: false,
-                files: USER,
-                render: render_llm_providers_page,
-            }));
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "External Agents".into(),
-                r#type: Default::default(),
-                json_path: Some("agent_servers"),
-                description: Some(
-                    "View, add, and remove agents connected through the Agent Client Protocol."
-                        .into(),
-                ),
-                in_json: false,
-                files: USER,
-                render: render_external_agents_page,
-            }));
-        }
+        items.push(SettingsPageItem::SubPageLink(SubPageLink {
+            title: "LLM Providers".into(),
+            r#type: Default::default(),
+            json_path: Some("llm_providers"),
+            description: Some("Configure API keys and settings for LLM providers.".into()),
+            in_json: false,
+            files: USER,
+            render: render_llm_providers_page,
+        }));
+        items.push(SettingsPageItem::SubPageLink(SubPageLink {
+            title: "External Agents".into(),
+            r#type: Default::default(),
+            json_path: Some("agent_servers"),
+            description: Some(
+                "View, add, and remove agents connected through the Agent Client Protocol.".into(),
+            ),
+            in_json: false,
+            files: USER,
+            render: render_external_agents_page,
+        }));
 
         items.into_boxed_slice()
     }
@@ -8289,26 +8282,20 @@ fn ai_page(cx: &App) -> SettingsPage {
         items.into_boxed_slice()
     }
 
-    fn context_servers_section(cx: &App) -> Box<[SettingsPageItem]> {
-        use feature_flags::FeatureFlagAppExt as _;
-
-        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
-
+    fn context_servers_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![SettingsPageItem::SectionHeader("Model Context Protocol")];
 
-        if agent_settings_ui_enabled {
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "MCP Servers".into(),
-                r#type: Default::default(),
-                json_path: Some("context_servers"),
-                description: Some(
-                    "View, add, configure, and remove Model Context Protocol servers.".into(),
-                ),
-                in_json: false,
-                files: USER,
-                render: render_mcp_servers_page,
-            }));
-        }
+        items.push(SettingsPageItem::SubPageLink(SubPageLink {
+            title: "MCP Servers".into(),
+            r#type: Default::default(),
+            json_path: Some("context_servers"),
+            description: Some(
+                "View, add, configure, and remove Model Context Protocol servers.".into(),
+            ),
+            in_json: false,
+            files: USER,
+            render: render_mcp_servers_page,
+        }));
 
         items.push(SettingsPageItem::SettingItem(SettingItem {
             title: "Context Server Timeout",
