@@ -9,28 +9,26 @@ You can restrict what operations the [Zed Agent](./zed-agent.md) can run in mult
 [Tool Permissions](./tool-permissions.md), but these are of limited use when the agent wants to do things like run a
 complicated script in a terminal.
 
-Sandboxing runs certain tool actions in an OS-level sandbox which limits filesystem access, network access, and access to protected Git metadata. This way, even if the agent wants to run an arbitrary script, that script will only be able to write to the files and folders you have allowed it to. You can similarly restrict network and Git metadata access in sandboxed tool actions.
+Sandboxing restricts what certain tool actions can do after they start. Terminal commands run in an OS-level sandbox which limits filesystem access, network access, and access to protected Git metadata. The `fetch` tool uses the same network approval model to restrict which hosts it can reach. This way, even if the agent wants to run an arbitrary script or fetch a URL, it can only access what you have allowed.
 
 [Tool Permissions](./tool-permissions.md) can be used in addition to sandboxing:
 
 - Tool permissions restrict the agent's ability to run certain tool actions in the first place
 - Once a tool action is actually running, sandboxing restricts what it can do
 
-Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language servers, extensions, tasks, your normal terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
+Sandboxing applies only to Zed Agent threads. It does not sandbox Zed itself, language servers, extensions, tasks, your normal terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
 
 ## Sandboxed Tools {#sandboxed-tools}
 
-Zed Agent sandboxing currently applies to the `terminal` tool.
+Sandboxing currently applies to `terminal` and `fetch`.
 
-| Tool       | What sandboxing limits                                                                              |
-| ---------- | --------------------------------------------------------------------------------------------------- |
-| `terminal` | Filesystem writes, protected Git metadata, and outbound network access for commands the agent runs. |
+When the agent runs a terminal command, the OS sandbox can restrict filesystem writes, protected Git metadata, and outbound network access. When the agent fetches a URL, sandboxing restricts which network hosts the fetch can reach.
 
-Other built-in tools, including `fetch`, are still governed by [Tool Permissions](./tool-permissions.md), [Agent Profiles](./agent-profiles.md), and project trust, but they are not currently run inside this OS sandbox.
+Other built-in tools are still governed by [Tool Permissions](./tool-permissions.md), [Agent Profiles](./agent-profiles.md), and project trust; they are not run inside the OS-level sandbox.
 
 ## Default Access {#default-access}
 
-By default, sandboxed Zed Agent tool actions have these restrictions:
+By default, sandboxed terminal tool actions have these restrictions:
 
 | Access type         | Default behavior                                                                                          |
 | ------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -41,26 +39,22 @@ By default, sandboxed Zed Agent tool actions have these restrictions:
 | Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.   |
 | Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request.     |
 
+By default, `fetch` cannot reach the network unless you approve access to the URL's host. If the response redirects to another host, Zed asks for access to that host before following the redirect. Fetch sandboxing does not allow `localhost` or IP-literal URLs.
+
 ## Approval Prompts {#approval-prompts}
 
-When the agent needs access outside the default sandbox, Zed shows a sandbox approval prompt before the tool action runs.
-Depending on what the tool requested, the prompt can ask you to allow:
+When the agent needs access outside the default sandbox, Zed shows a sandbox approval prompt before the command or fetch runs. The prompt explains what the tool is asking for, such as:
 
 - network access to specific hosts, such as `github.com` or `*.npmjs.org`
 - network access to any host
 - access to protected Git metadata, such as `.git` directories and linked worktree metadata
 - write access to specific filesystem paths
 - unrestricted filesystem writes
-- running a terminal command without the sandbox
+- running a command without the sandbox
 
-You can grant a sandbox request for:
+For terminal commands, you can approve a request once, for the rest of the current thread, or always. Thread approvals are remembered only for that thread. “Always” approvals are saved in `settings.json` under `agent.sandbox_permissions`.
 
-- one tool action
-- the rest of the current thread
-- always
-
-Approvals for the rest of the thread are remembered only for that thread.
-Approvals granted with “always” are saved in `settings.json` under `agent.sandbox_permissions`.
+For `fetch`, sandbox prompts are one-time approvals. Persistent network grants in `agent.sandbox_permissions` can still pre-approve common hosts.
 
 ## Persistent Sandbox Permissions {#persistent-sandbox-permissions}
 
@@ -80,86 +74,59 @@ If you want to pre-approve common sandbox requests, add persistent permissions t
 
 The available options are:
 
-| Setting              | Description                                                                                                       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `network_hosts`      | Hosts that sandboxed tools may reach without prompting. Entries can be exact hostnames or leading-`*.` wildcards. |
-| `allow_all_hosts`    | Allow sandboxed tools to reach any host without prompting.                                                        |
-| `allow_git_access`   | Allow sandboxed terminal commands to access protected Git metadata without prompting.                             |
-| `write_paths`        | Directory subtrees that sandboxed terminal commands may write to without prompting. Paths are absolute.           |
-| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere without prompting.                                            |
-| `allow_unsandboxed`  | Allow terminal commands to run outside the sandbox without prompting when the agent explicitly requests it.       |
+| Setting              | What it allows                                                                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `network_hosts`      | Network access to the listed hosts without prompting. This applies to terminal commands and `fetch`. Entries can be exact hostnames or leading-`*.` wildcards. |
+| `allow_all_hosts`    | Network access to any host without prompting. This applies to terminal commands and `fetch`.                                                                   |
+| `allow_git_access`   | Access to protected Git metadata without prompting.                                                                                                            |
+| `write_paths`        | Writes to the listed directory subtrees without prompting. Paths are absolute.                                                                                 |
+| `allow_fs_write_all` | Writes anywhere on the filesystem without prompting.                                                                                                           |
+| `allow_unsandboxed`  | Turns off sandboxing for terminal commands and disables `fetch` network sandbox prompts.                                                                       |
 
-Prefer narrow grants, such as a specific host, Git metadata access, or write path, over `allow_all_hosts`, `allow_fs_write_all`, or `allow_unsandboxed`.
+Prefer narrow grants, such as a specific host, Git metadata access, or write path, over `allow_all_hosts`, `allow_fs_write_all`, or `allow_unsandboxed`. Avoid `allow_all_hosts` for fetch unless you want the agent to fetch from any supported non-localhost hostname without prompting. Avoid `allow_unsandboxed` unless you want to turn off sandboxing for both terminal commands and fetch network access.
 
 ## Platform Support {#platform-support}
 
-Sandboxing uses different operating system mechanisms on each platform.
-The user-facing prompts are similar, but the enforcement details vary.
+Sandboxing uses different operating system mechanisms on each platform. The prompts are similar, but the enforcement details vary for terminal commands. Fetch network approval works the same way across platforms.
 
 ### macOS {#macos}
 
 On macOS, Zed uses Apple's Seatbelt sandbox through `sandbox-exec`.
 
-Sandboxed terminal commands:
+A sandboxed terminal command can write inside open project directories and to a per-thread temporary directory exposed through `$TMPDIR`, `$TMP`, and `$TEMP`. It cannot write elsewhere, read or write protected Git metadata, or reach the network unless you approve that access.
 
-- can read the filesystem
-- can write inside open project directories, except protected Git metadata
-- can write to a per-thread temporary directory exposed through `$TMPDIR`, `$TMP`, and `$TEMP`
-- cannot read or write protected Git metadata unless you approve Git metadata access
-- cannot write elsewhere unless you approve additional paths or broader write access
-- cannot reach the network unless you approve network access
+When you approve host-specific network access, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts. Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved. For networked terminal commands, prefer HTTPS URLs over SSH URLs when possible.
 
-When network access is approved on macOS, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts.
-Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved.
-For networked terminal commands, prefer HTTPS URLs over SSH URLs when possible.
-When Git metadata access is approved, Zed may also expose the inherited `SSH_AUTH_SOCK` Unix socket so workflows such as SSH commit signing can work without granting outbound network access.
+When you approve Git metadata access, Zed may also expose the inherited `SSH_AUTH_SOCK` Unix socket. This lets workflows such as SSH commit signing work without granting outbound network access.
 
 ### Linux {#linux}
 
 On Linux, Zed uses Bubblewrap (`bwrap`) for sandboxing.
 
-Zed only uses a non-setuid `bwrap` binary.
-Its sandbox is built entirely on unprivileged user namespaces, so a setuid-root `bwrap` provides no extra functionality, and running one would mean executing root-privileged setup with arguments partly derived from model-influenced input.
-If the only `bwrap` found on your `PATH` is setuid-root, Zed refuses to run it; install a non-setuid Bubblewrap to enable sandboxing.
+Zed only uses a non-setuid `bwrap` binary. The sandbox is built on unprivileged user namespaces, so a setuid-root `bwrap` provides no extra functionality, and running one would mean executing root-privileged setup with arguments partly derived from model-influenced input. If the only `bwrap` found on your `PATH` is setuid-root, Zed refuses to run it; install a non-setuid Bubblewrap to enable sandboxing.
 
-Sandboxed terminal commands:
+A sandboxed terminal command can write inside open project directories, except for protected Git metadata. It can also write to `/tmp`, which is backed by a fresh temporary filesystem and cleared between terminal tool calls. It cannot write elsewhere, read or write protected Git metadata, or reach the network unless you approve that access.
 
-- can read the filesystem
-- can write inside open project directories, except protected Git metadata
-- can write to `/tmp`, which is backed by a fresh temporary filesystem and is cleared between terminal tool calls
-- cannot read or write protected Git metadata unless you approve Git metadata access
-- cannot write elsewhere unless you approve additional paths or broader write access
-- cannot reach the network unless you approve network access
+Host-specific network access works through an HTTP/HTTPS proxy, like on macOS. Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved. If a command needs unrestricted network access, approve all-host network access instead.
 
-Linux network sandboxing can allow or block outbound networking as a whole, but cannot enforce a per-host allowlist.
-If you approve network access for one host on Linux, the sandbox must grant unrestricted outbound network access for that tool action.
-Zed still asks for the narrower request when that is what the agent asked for, but the platform enforcement is all-or-nothing.
-
-If Bubblewrap is unavailable or cannot create a sandbox in the current environment, Zed may run the command without the OS sandbox and show a warning in the tool output.
+If Bubblewrap is unavailable or cannot create a sandbox in the current environment, Zed asks whether to retry, run the command without the sandbox, or deny the command.
 
 ### Windows {#windows}
 
 On Windows, Zed Agent sandboxing is supported only when the agent action runs inside WSL.
 
-Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that Bubblewrap needs.
-Native Windows processes do not currently have the same sandbox integration in Zed, so a native Windows command cannot be confined by Zed Agent's OS sandbox in the same way.
+Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that Bubblewrap needs. When a command runs inside WSL, the filesystem and Git metadata behavior is similar to Linux, including the requirement that `bwrap` not be setuid-root. Terminal network access is all-or-nothing on Windows: Zed cannot restrict sandboxed terminal commands to specific hosts there.
 
-When running inside WSL, the Linux sandboxing behavior applies, including the requirement that `bwrap` not be setuid-root:
+Native Windows processes do not currently have the same sandbox integration in Zed. If WSL is not installed, or if you choose to run a command without the sandbox, Zed falls back to the standard terminal behavior of running in your native shell. It selects the shell using the usual preference order: Git Bash (or scoop's bash) when one is installed, otherwise PowerShell, and finally `cmd.exe`.
 
-- filesystem isolation is provided by Bubblewrap
-- protected Git metadata requires Git metadata access approval
-- `/tmp` is temporary for sandboxed terminal calls
-- network access is all-or-nothing rather than host-specific
-
-If WSL is not installed, or if you choose to run a command without the sandbox, Zed falls back to the standard terminal behavior of running in your native shell.
-It selects the shell using the usual preference order: Git Bash (or scoop's bash) when one is installed, otherwise PowerShell, and finally `cmd.exe`.
-Because the command then runs against native Windows paths instead of WSL's Linux filesystem, path conventions change accordingly (for example `C:\...` or `/c/...` rather than WSL's `/mnt/c/...`), so a command written for the sandboxed WSL shell may behave differently.
+Because the command then runs against native Windows paths instead of WSL's Linux filesystem, path conventions change accordingly. For example, a command may need `C:\...` or `/c/...` rather than WSL's `/mnt/c/...`, so a command written for the sandboxed WSL shell may behave differently.
 
 ## Choosing What to Approve {#choosing-what-to-approve}
 
 When reviewing a sandbox prompt, prefer the narrowest permission that lets the task proceed:
 
 - approve a specific host instead of all hosts when the destination is known
+- approve fetch access only for hosts you expect the agent to retrieve
 - approve Git metadata access when the command needs to run Git operations such as `git fetch`, `git commit`, or `git status`
 - approve a specific write path instead of unrestricted filesystem writes
 - approve unsandboxed execution only when the command cannot work inside the sandbox
