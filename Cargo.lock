@@ -14038,6 +14038,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "project_bookmarks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "futures 0.3.32",
+ "fuzzy",
+ "fuzzy_nucleo",
+ "gpui",
+ "language",
+ "lsp",
+ "ordered-float 2.10.1",
+ "picker",
+ "project",
+ "release_channel",
+ "semver",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
@@ -23033,6 +23060,7 @@ dependencies = [
  "pretty_assertions",
  "profiling",
  "project",
+ "project_bookmarks",
  "project_panel",
  "project_symbols",
  "prompt_store",
