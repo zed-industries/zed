@@ -17,6 +17,10 @@ pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
+pub use sandboxing::{
+    ThreadSandbox, sandbox_worktree_writable_paths, settings_sandbox_policy,
+    settings_thread_sandbox,
+};
 pub use shell_command_parser::extract_commands;
 pub use templates::*;
 pub use thread::*;

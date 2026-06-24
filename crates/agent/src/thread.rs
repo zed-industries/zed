@@ -11,7 +11,10 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
-use crate::sandboxing::{SandboxRequest, ThreadSandboxGrants, sandboxing_enabled_for_project};
+use crate::sandboxing::{
+    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
+    sandboxing_enabled_for_project,
+};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
@@ -1583,6 +1586,7 @@ impl Thread {
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
                 self.sandbox_grants.clone(),
+                Some(cx.weak_entity()),
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
@@ -1739,8 +1743,55 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
-            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
+                &db_thread.sandbox_grants,
+            ))),
         }
+    }
+
+    /// The sandbox that currently applies to agent terminal commands in this
+    /// thread, as two layers: the user's persistent settings and this thread's
+    /// overrides (see [`ThreadSandbox`]). Returns `None` when sandboxing isn't
+    /// applicable to the project at all, so the UI shows no indicator.
+    ///
+    /// The layers are returned pre-merge so the UI can show their provenance
+    /// separately; [`ThreadSandbox::merge`] combines them into what is enforced.
+    pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
+        if !self.sandboxing_available(cx) {
+            return None;
+        }
+        let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
+        // The project's `.git` locations are the same for both layers; whether
+        // they're writable differs (settings grant vs. thread grant).
+        let git_dirs = crate::sandboxing::sandbox_git_dirs(self.project.read(cx), cx);
+        let grants = self.sandbox_grants.borrow();
+        let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
+            .with_git(persistent.allow_git_access, git_dirs.clone());
+        let thread = grants
+            .thread_sandbox()
+            .with_git(grants.git_access_granted(), git_dirs);
+        Some((settings, thread))
+    }
+
+    /// Whether agent terminal commands are sandboxed for this thread's project,
+    /// so the UI can decide whether to surface the sandbox status at all.
+    pub fn sandboxing_enabled(&self, cx: &App) -> bool {
+        sandboxing_enabled_for_project(self.project.read(cx), cx)
+    }
+
+    /// Whether sandboxing is *applicable* for this thread's project (feature on,
+    /// local project, supported platform), regardless of whether it's been
+    /// turned off in settings. The UI shows the sandbox indicator whenever this
+    /// is true, drawing it struck-out when sandboxing is disabled.
+    pub fn sandboxing_available(&self, cx: &App) -> bool {
+        sandboxing_available_for_project(self.project.read(cx), cx)
+    }
+
+    /// The directory subtrees the sandbox always grants write access to for this
+    /// thread's project (its worktree roots), derived from the same source the
+    /// terminal tool uses when it actually builds the sandbox.
+    pub fn sandbox_baseline_writable_paths(&self, cx: &App) -> Vec<PathBuf> {
+        crate::sandboxing::sandbox_worktree_writable_paths(self.project.read(cx), cx)
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
@@ -1768,6 +1819,7 @@ impl Thread {
                 }
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
+            sandbox_grants: self.sandbox_grants.borrow().to_db(),
         };
 
         cx.background_spawn(async move {
@@ -3322,6 +3374,7 @@ impl Thread {
             Some(fs),
             cancellation_rx,
             self.sandbox_grants.clone(),
+            Some(cx.weak_entity()),
         );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
@@ -5084,6 +5137,10 @@ pub struct ToolCallEventStream {
     cancellation_rx: watch::Receiver<bool>,
     /// Shared, thread-scoped sandbox grants (see [`Thread::sandbox_grants`]).
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// The owning thread, used to trigger a save when a "for this thread"
+    /// sandbox grant is recorded so it survives reopening. `None` in tests and
+    /// for streams not tied to a live thread.
+    thread: Option<WeakEntity<Thread>>,
 }
 
 impl ToolCallEventStream {
@@ -5097,9 +5154,7 @@ impl ToolCallEventStream {
     /// thread-scoped sandbox grants. This mirrors how a real [`Thread`] builds a
     /// distinct event stream per tool call while sharing one set of grants, so
     /// tests can exercise sequences of tool calls within the same conversation.
-    // Only the macOS-gated terminal sandbox regression test uses this, so match
-    // its `cfg` to avoid a dead-code error on other platforms.
-    #[cfg(all(test, target_os = "macos"))]
+    #[cfg(test)]
     pub(crate) fn test_with_grants(
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
     ) -> (Self, ToolCallEventStreamReceiver) {
@@ -5112,6 +5167,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             sandbox_grants,
+            None,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -5128,6 +5184,7 @@ impl ToolCallEventStream {
             None,
             cancellation_rx,
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            None,
         );
 
         (
@@ -5149,6 +5206,7 @@ impl ToolCallEventStream {
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+        thread: Option<WeakEntity<Thread>>,
     ) -> Self {
         Self {
             tool_use_id,
@@ -5156,7 +5214,27 @@ impl ToolCallEventStream {
             fs,
             cancellation_rx,
             sandbox_grants,
+            thread,
         }
+    }
+
+    /// Whether the owning thread is a subagent, so prompts can say "for this
+    /// subagent" instead of "for this thread".
+    fn is_subagent(&self, cx: &App) -> bool {
+        self.thread
+            .as_ref()
+            .and_then(|thread| thread.upgrade())
+            .is_some_and(|thread| thread.read(cx).is_subagent())
+    }
+
+    /// Persist the thread so a freshly recorded "for this thread" sandbox grant
+    /// survives a reopen. Saving is driven by the agent's `observe` on the
+    /// thread entity, so a no-op `notify` is enough to schedule it.
+    fn persist_thread_grants(thread: &Option<WeakEntity<Thread>>, cx: &AsyncApp) {
+        let Some(thread) = thread else { return };
+        cx.update(|cx| {
+            thread.update(cx, |_thread, cx| cx.notify()).ok();
+        });
     }
 
     /// Returns a future that resolves when the user cancels the tool call.
@@ -5349,8 +5427,6 @@ impl ToolCallEventStream {
     /// settings-driven authorization flow for regular tools.
     pub(crate) fn authorize_sandbox(
         &self,
-        title: impl Into<String>,
-        command: Option<String>,
         request: SandboxRequest,
         reason: String,
         cx: &mut App,
@@ -5359,7 +5435,6 @@ impl ToolCallEventStream {
             return Task::ready(Ok(()));
         }
 
-        let title = title.into();
         let (network_hosts, network_all_hosts) = match &request.network {
             crate::sandboxing::NetworkRequest::None => (Vec::new(), false),
             crate::sandboxing::NetworkRequest::AnyHost => (Vec::new(), true),
@@ -5368,7 +5443,10 @@ impl ToolCallEventStream {
             }
         };
         let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
-            command,
+            // The command stays in the tool-call title (set by the terminal
+            // tool), so the approval card keeps showing it; the details only
+            // describe the requested access and the agent's reason.
+            command: None,
             network_hosts,
             network_all_hosts,
             allow_git_access: request.allow_git_access,
@@ -5376,6 +5454,11 @@ impl ToolCallEventStream {
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
             reason,
+        };
+        let allow_thread_label = if self.is_subagent(cx) {
+            "Allow for this subagent"
+        } else {
+            "Allow for this thread"
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
@@ -5385,7 +5468,7 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
-                "Allow for this thread",
+                allow_thread_label,
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
@@ -5404,6 +5487,7 @@ impl ToolCallEventStream {
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
+        let thread = self.thread.clone();
         let auto_allow_outcome = match auto_resolve_permission_outcome(&options, true) {
             Ok(outcome) => outcome,
             Err(error) => return Task::ready(Err(error)),
@@ -5416,7 +5500,9 @@ impl ToolCallEventStream {
                     ToolCallAuthorization {
                         tool_call: acp::ToolCallUpdate::new(
                             tool_use_id.to_string(),
-                            acp::ToolCallUpdateFields::new().title(title),
+                            // Leave the title untouched so the card keeps
+                            // showing the command (matching the fallback flow).
+                            acp::ToolCallUpdateFields::new(),
                         )
                         .meta(acp_thread::meta_with_sandbox_authorization(
                             sandbox_authorization_details,
@@ -5453,6 +5539,7 @@ impl ToolCallEventStream {
                             &outcome,
                             &request,
                             sandbox_grants.clone(),
+                            thread.clone(),
                             fs.clone(),
                             cx,
                         );
@@ -5491,6 +5578,7 @@ impl ToolCallEventStream {
         outcome: &acp_thread::SelectedPermissionOutcome,
         request: &SandboxRequest,
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+        thread: Option<WeakEntity<Thread>>,
         fs: Option<Arc<dyn Fs>>,
         cx: &AsyncApp,
     ) -> Result<()> {
@@ -5503,6 +5591,7 @@ impl ToolCallEventStream {
             Some(acp_thread::SandboxPermission::AllowOnce) => Ok(()),
             Some(acp_thread::SandboxPermission::AllowThread) => {
                 sandbox_grants.borrow_mut().record(request);
+                Self::persist_thread_grants(&thread, cx);
                 Ok(())
             }
             Some(acp_thread::SandboxPermission::AllowAlways) => {
@@ -5604,6 +5693,13 @@ impl ToolCallEventStream {
         self.sandbox_grants.borrow().fallback_granted_for_thread()
     }
 
+    /// Whether the user approved a model-requested `unsandboxed: true` escape
+    /// for the rest of this thread. Like the fallback grant, this makes every
+    /// command in the thread run without a sandbox.
+    pub(crate) fn unsandboxed_granted_for_thread(&self) -> bool {
+        self.sandbox_grants.borrow().unsandboxed_granted()
+    }
+
     /// Ask the user how to proceed when the OS sandbox could not be created
     /// for a command (for example, `bwrap` is missing or user namespaces are
     /// disabled).
@@ -5634,6 +5730,11 @@ impl ToolCallEventStream {
         } else {
             format!("Retry (attempt {retries})")
         };
+        let allow_thread_label = if self.is_subagent(cx) {
+            "Run without sandbox for this subagent"
+        } else {
+            "Run without sandbox for this thread"
+        };
         let options = acp_thread::PermissionOptions::Flat(vec![
             // Retry isn't an allow/deny choice; the UI renders it with its own
             // icon and we dispatch on the option id, so the kind here only
@@ -5652,7 +5753,7 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowThread.as_id()),
-                "Run without sandbox for this thread",
+                allow_thread_label,
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
@@ -5671,6 +5772,7 @@ impl ToolCallEventStream {
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         let sandbox_grants = self.sandbox_grants.clone();
+        let thread = self.thread.clone();
         cx.spawn(async move |cx| {
             let (response_tx, response_rx) = oneshot::channel();
             if let Err(error) = stream
@@ -5716,10 +5818,12 @@ impl ToolCallEventStream {
                 }
                 Some(acp_thread::SandboxPermission::AllowThread) => {
                     sandbox_grants.borrow_mut().record_fallback();
+                    Self::persist_thread_grants(&thread, cx);
                     Ok(SandboxFallbackDecision::RunUnsandboxed)
                 }
                 Some(acp_thread::SandboxPermission::AllowAlways) => {
                     sandbox_grants.borrow_mut().record_fallback();
+                    Self::persist_thread_grants(&thread, cx);
                     Self::persist_sandbox_unsandboxed_permission(fs, cx);
                     Ok(SandboxFallbackDecision::RunUnsandboxed)
                 }
@@ -7196,8 +7300,6 @@ mod tests {
 
         let authorize = cx.update(|cx| {
             event_stream.authorize_sandbox(
-                "Allow write access?",
-                None,
                 request.clone(),
                 "needs to write build artifacts".to_string(),
                 cx,

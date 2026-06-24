@@ -19,8 +19,8 @@ struct SandboxGitRepositoryPaths {
 
 pub(super) struct SandboxGitPaths {
     pub(super) writable_paths: Vec<PathBuf>,
-    pub(super) protected_paths: Vec<PathBuf>,
-    pub(super) git_access_granted: bool,
+    pub(super) git_dirs: Vec<PathBuf>,
+    pub(super) allow_git_access: bool,
 }
 
 impl SandboxGitPathCandidates {
@@ -84,9 +84,9 @@ pub(super) async fn sandbox_git_paths(
     allow_git_access: bool,
 ) -> SandboxGitPaths {
     let mut writable_paths = candidates.writable_paths;
-    let mut protected_paths = candidates.git_paths;
+    let mut git_dirs = candidates.git_paths;
 
-    let mut git_access_granted = false;
+    let mut allow_verified_git_access = false;
     if allow_git_access {
         let mut verified_git_paths = Vec::new();
         for repository in candidates.repositories {
@@ -94,30 +94,35 @@ pub(super) async fn sandbox_git_paths(
         }
         verified_git_paths.sort();
         verified_git_paths.dedup();
-        git_access_granted = !verified_git_paths.is_empty();
 
-        let mut still_protected = Vec::new();
-        for path in protected_paths {
-            let normalized_path = normalize_sandbox_git_path(&path, fs)
+        let mut unverified_git_paths = Vec::new();
+        for path in &git_dirs {
+            let normalized_path = normalize_sandbox_git_path(path, fs)
                 .await
                 .unwrap_or_else(|| path.clone());
             if verified_git_paths.binary_search(&normalized_path).is_err() {
-                still_protected.push(path);
+                unverified_git_paths.push(path.clone());
             }
         }
-        protected_paths = still_protected;
-        writable_paths.extend(verified_git_paths);
+
+        // The current sandbox policy can make one Git directory set either all
+        // writable or all protected. Only grant Git access when every candidate
+        // still verifies; otherwise keep protecting the original candidate set.
+        if unverified_git_paths.is_empty() {
+            git_dirs = verified_git_paths;
+            allow_verified_git_access = true;
+        }
     }
 
-    protected_paths.sort();
-    protected_paths.dedup();
+    git_dirs.sort();
+    git_dirs.dedup();
     writable_paths.sort();
     writable_paths.dedup();
 
     SandboxGitPaths {
         writable_paths,
-        protected_paths,
-        git_access_granted,
+        git_dirs,
+        allow_git_access: allow_verified_git_access,
     }
 }
 
@@ -474,22 +479,22 @@ mod tests {
         );
         assert!(
             paths_without_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/linked_worktree/.git"))
         );
         assert!(
             !paths_without_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/linked_worktree/.gitignore"))
         );
         assert!(
             paths_without_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git"))
         );
         assert!(
             paths_without_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
         );
 
@@ -497,8 +502,7 @@ mod tests {
             cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(paths_with_git_access.git_access_granted);
-        assert!(paths_with_git_access.protected_paths.is_empty());
+        assert!(paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
                 .writable_paths
@@ -506,17 +510,17 @@ mod tests {
         );
         assert!(
             paths_with_git_access
-                .writable_paths
+                .git_dirs
                 .contains(&PathBuf::from("/linked_worktree/.git"))
         );
         assert!(
             paths_with_git_access
-                .writable_paths
+                .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git"))
         );
         assert!(
             paths_with_git_access
-                .writable_paths
+                .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
         );
     }
@@ -552,8 +556,7 @@ mod tests {
             cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(paths_with_git_access.git_access_granted);
-        assert!(paths_with_git_access.protected_paths.is_empty());
+        assert!(paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
                 .writable_paths
@@ -561,12 +564,12 @@ mod tests {
         );
         assert!(
             paths_with_git_access
-                .writable_paths
+                .git_dirs
                 .contains(&PathBuf::from("/super/sub/.git"))
         );
         assert!(
             paths_with_git_access
-                .writable_paths
+                .git_dirs
                 .contains(&PathBuf::from("/super/.git/modules/sub"))
         );
     }
@@ -602,15 +605,15 @@ mod tests {
             cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(!paths_with_git_access.git_access_granted);
+        assert!(!paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/super/sub/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/super/.git/modules/sub"))
         );
         assert!(
@@ -653,15 +656,15 @@ mod tests {
             cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(!paths_with_git_access.git_access_granted);
+        assert!(!paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/project/sub/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/other_repo/.git"))
         );
         assert!(
@@ -729,20 +732,20 @@ mod tests {
             cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(!paths_with_git_access.git_access_granted);
+        assert!(!paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/linked_worktree/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/main_repo/.git/worktrees/feature"))
         );
         assert!(
@@ -811,7 +814,7 @@ mod tests {
             cx.update(|cx| SandboxGitPathCandidates::from_project(project.read(cx), cx));
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(!paths_with_git_access.git_access_granted);
+        assert!(!paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
                 .writable_paths
@@ -829,17 +832,17 @@ mod tests {
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/linked_worktree/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/other_repo/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/other_repo/.git/worktrees/other"))
         );
     }
@@ -884,15 +887,15 @@ mod tests {
         };
         let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
 
-        assert!(!paths_with_git_access.git_access_granted);
+        assert!(!paths_with_git_access.allow_git_access);
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/project/.git"))
         );
         assert!(
             paths_with_git_access
-                .protected_paths
+                .git_dirs
                 .contains(&PathBuf::from("/other_repo/.git"))
         );
         assert!(

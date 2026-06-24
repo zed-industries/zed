@@ -12,11 +12,12 @@ use acp_thread::{
     ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
     SandboxNotAppliedReason,
 };
-use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
+use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated, ThreadSandbox};
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -662,6 +663,19 @@ enum ToolCallLayout {
     Standalone,
     Embedded,
     Floating,
+}
+
+impl ToolCallLayout {
+    /// Stable discriminant used to disambiguate element ids when the same tool
+    /// call is rendered in more than one layout at once (e.g. inline in the
+    /// list *and* in the floating awaiting-permission row).
+    fn id_str(self) -> &'static str {
+        match self {
+            ToolCallLayout::Standalone => "standalone",
+            ToolCallLayout::Embedded => "embedded",
+            ToolCallLayout::Floating => "floating",
+        }
+    }
 }
 
 fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Option<String> {
@@ -4150,6 +4164,7 @@ impl ThreadView {
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
+                                    .children(self.render_sandbox_status(cx))
                                     .children(self.render_fast_mode_control(cx))
                                     .children(self.render_thinking_control(cx)),
                             )
@@ -4550,6 +4565,71 @@ impl ThreadView {
             .and_then(|thread| thread.read(cx).model())
             .map(|model| model.supports_fast_mode())
             .unwrap_or(false)
+    }
+
+    /// A small lock icon summarizing the sandbox state. Hovering shows the
+    /// write-access paths and network-access domains from the user's settings
+    /// and the per-thread overrides. The lock is struck through when sandboxing
+    /// is turned off (in settings, or for this thread). Shown whenever
+    /// sandboxing is *applicable* to the project, even when disabled, so the
+    /// user can always see and change the state. Clicking opens the settings.
+    fn render_sandbox_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?;
+        let thread = thread.read(cx);
+        let (settings_sandbox, thread_sandbox) = thread.sandbox_status(cx)?;
+        let baseline = thread.sandbox_baseline_writable_paths(cx);
+
+        // The lock is struck only when the *merged* result is unsandboxed (the
+        // agent runs with ambient permissions). A layer that is merely wide open
+        // but still sandboxed keeps the closed lock.
+        let icon = if settings_sandbox
+            .clone()
+            .merge(thread_sandbox.clone())
+            .is_unsandboxed()
+        {
+            IconName::LockOutlinedOff
+        } else {
+            IconName::LockOutlined
+        };
+
+        let state = match (settings_sandbox, thread_sandbox) {
+            // No sandbox at all because the user turned it off in settings: the
+            // per-thread layer is moot, so don't show it.
+            (ThreadSandbox::Unsandboxed, _) => SandboxTooltipState::DisabledInSettings,
+            // Sandboxed by settings, but disabled for this thread: show the
+            // settings scope (greyed) for context above the disabled status.
+            (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
+                SandboxTooltipState::DisabledForThread {
+                    settings: augment_settings_sandbox_policy(settings_policy, baseline),
+                }
+            }
+            (
+                ThreadSandbox::Sandboxed(settings_policy),
+                ThreadSandbox::Sandboxed(thread_policy),
+            ) => SandboxTooltipState::Enabled {
+                settings: augment_settings_sandbox_policy(settings_policy, baseline),
+                thread: thread_policy,
+            },
+        };
+
+        Some(
+            IconButton::new("sandbox-status", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::element(move |_window, cx| {
+                    render_sandbox_status_tooltip(&state, cx)
+                }))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::OpenSettingsAt {
+                            path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                            target: None,
+                        }),
+                        cx,
+                    );
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_fast_mode_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -5462,6 +5542,279 @@ impl Render for TokenUsageTooltip {
                 )
         })
     }
+}
+
+/// Which sandbox state the status tooltip describes.
+#[derive(Clone)]
+enum SandboxTooltipState {
+    /// Sandboxing is on: show the settings policy and the per-thread overrides.
+    Enabled {
+        settings: SandboxPolicy,
+        thread: SandboxPolicy,
+    },
+    /// Turned off via the persistent `allow_unsandboxed` setting.
+    DisabledInSettings,
+    /// Turned off for this thread (the "run without sandbox for this thread"
+    /// fallback). The settings policy is still shown, greyed out, for context.
+    DisabledForThread { settings: SandboxPolicy },
+}
+
+/// Build the hover tooltip for the sandbox status icon. Always opens with a
+/// "Sandboxing settings" title, then describes the active state.
+///
+/// Returns the raw content only: `Tooltip::element` wraps it in the tooltip
+/// container, so wrapping it again here would double the background.
+fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyElement {
+    let mut body = v_flex()
+        .min_w(rems(15.))
+        .gap_2()
+        .child(Label::new("Sandboxing settings"))
+        .child(Divider::horizontal());
+
+    match state {
+        SandboxTooltipState::DisabledInSettings => {
+            body = body.child(
+                Label::new("Sandboxing is disabled in settings")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+        }
+        SandboxTooltipState::DisabledForThread { settings } => {
+            // The settings policy is moot while disabled, so show it greyed out
+            // for context above the active "disabled for this thread" status.
+            let settings_section =
+                render_sandbox_policy_section("From your settings", settings, true, cx);
+            body = body
+                .children(
+                    settings_section
+                        .map(|section| div().opacity(0.5).child(section).into_any_element()),
+                )
+                .child(Divider::horizontal())
+                .child(Label::new("Sandboxing is disabled for this thread").size(LabelSize::Small));
+        }
+        SandboxTooltipState::Enabled { settings, thread } => {
+            let settings_section =
+                render_sandbox_policy_section("From your settings", settings, true, cx);
+            let thread_section =
+                render_sandbox_policy_section("Allowed in this thread", thread, false, cx);
+            body = body.children(settings_section);
+            if let Some(section) = thread_section {
+                body = body.child(Divider::horizontal()).child(section);
+            }
+        }
+    }
+
+    body.into_any_element()
+}
+
+/// Render one section of the sandbox status tooltip.
+///
+/// When `show_empty` is true the section is always rendered, and groups that
+/// grant nothing show "None". When false, empty groups are omitted and the
+/// whole section is dropped (`None`) if it grants nothing at all.
+/// Fold the always-granted baseline writable paths (the project's worktree
+/// roots, derived from the same source the terminal tool uses) and, on Linux,
+/// the host-isolated `/tmp` overlay into a settings policy for display. These
+/// are part of what the sandbox grants whenever it's active but aren't
+/// persistent-settings entries, so they're shown in the "from your settings"
+/// section rather than stored. A no-op when the fs is unrestricted (rendered as
+/// "All paths"), since there's nothing to scope.
+fn augment_settings_sandbox_policy(
+    mut policy: SandboxPolicy,
+    baseline: Vec<PathBuf>,
+) -> SandboxPolicy {
+    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
+        let mut merged = baseline;
+        for path in writable_paths.drain(..) {
+            if !merged.contains(&path) {
+                merged.push(path);
+            }
+        }
+        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
+        // host path, so it can't come from the path source above.
+        #[cfg(target_os = "linux")]
+        merged.push(PathBuf::from("/tmp (isolated)"));
+        *writable_paths = merged;
+    }
+    policy
+}
+
+fn render_sandbox_policy_section(
+    title: &str,
+    policy: &SandboxPolicy,
+    show_empty: bool,
+    cx: &App,
+) -> Option<AnyElement> {
+    let write_rows = sandbox_fs_rows(&policy.fs, cx);
+    let network_rows = sandbox_network_rows(&policy.network, cx);
+    let write_empty = fs_grants_nothing(&policy.fs);
+    let network_empty = network_grants_nothing(&policy.network);
+    // Git access is only ever surfaced when *granted* (the `.git` dirs become
+    // writable), so it never shows a "None" row — unlike write/network, it's
+    // omitted entirely when denied, regardless of `show_empty`.
+    let git_empty = git_grants_nothing(&policy.git);
+
+    if !show_empty && write_empty && network_empty && git_empty {
+        return None;
+    }
+
+    let write_group =
+        (show_empty || !write_empty).then(|| sandbox_status_group("Write access", write_rows));
+    let network_group = (show_empty || !network_empty)
+        .then(|| sandbox_status_group("Network access", network_rows));
+    let git_group = (!git_empty)
+        .then(|| sandbox_status_group("Git metadata access", sandbox_git_rows(&policy.git, cx)));
+
+    Some(
+        v_flex()
+            .gap_1()
+            .child(Label::new(title.to_string()))
+            .children(write_group)
+            .children(network_group)
+            .children(git_group)
+            .into_any_element(),
+    )
+}
+
+/// Git access grants nothing to surface unless `.git` writes are allowed *and*
+/// at least one `.git` directory is known.
+fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
+    !git.allows_writes() || git.git_dirs().is_empty()
+}
+
+/// Rows for the Git-access group: one row per writable `.git` directory (these
+/// may live outside the project for a linked worktree).
+fn sandbox_git_rows(git: &GitSandboxPolicy, cx: &App) -> Vec<AnyElement> {
+    match git {
+        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
+            .iter()
+            .map(|path| sandbox_git_path_row(path, cx))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A `.git` directory row, tagged with a Git icon to distinguish it from plain
+/// writable paths.
+fn sandbox_git_path_row(path: &Path, cx: &App) -> AnyElement {
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(
+            Icon::new(IconName::GitBranch)
+                .color(Color::Muted)
+                .size(IconSize::Small),
+        )
+        .child(
+            Label::new(path.display().to_string())
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
+}
+
+fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
+    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
+}
+
+fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
+    match network {
+        SandboxNetPolicy::Blocked => true,
+        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains.is_empty(),
+        SandboxNetPolicy::Unrestricted => false,
+    }
+}
+
+/// Rows for the write-access group: a message for the "all"/"none" cases, or one
+/// row per granted path.
+fn sandbox_fs_rows(fs: &SandboxFsPolicy, cx: &App) -> Vec<AnyElement> {
+    match fs {
+        SandboxFsPolicy::Unrestricted => vec![sandbox_message_row("All paths (unrestricted)")],
+        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
+            vec![sandbox_message_row("None")]
+        }
+        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+            .iter()
+            .map(|path| sandbox_path_row(path, cx))
+            .collect(),
+    }
+}
+
+/// Rows for the network-access group: a message for the "all"/"none" cases, or
+/// one row per allowed domain.
+fn sandbox_network_rows(network: &SandboxNetPolicy, cx: &App) -> Vec<AnyElement> {
+    match network {
+        SandboxNetPolicy::Unrestricted => vec![sandbox_message_row("All domains (unrestricted)")],
+        SandboxNetPolicy::Blocked => vec![sandbox_message_row("None")],
+        SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
+            vec![sandbox_message_row("None")]
+        }
+        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains
+            .iter()
+            .map(|domain| sandbox_domain_row(domain, cx))
+            .collect(),
+    }
+}
+
+/// A "Write access" / "Network access" group: a muted header, then the indented
+/// rows.
+fn sandbox_status_group(heading: &str, rows: Vec<AnyElement>) -> impl IntoElement {
+    v_flex()
+        .gap_0p5()
+        .child(
+            Label::new(heading.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(v_flex().pl_3().gap_0p5().children(rows))
+}
+
+/// A non-path row (e.g. "All paths (unrestricted)", "None") in a status group.
+fn sandbox_message_row(message: &str) -> AnyElement {
+    Label::new(message.to_string())
+        .size(LabelSize::XSmall)
+        .color(Color::Muted)
+        .into_any_element()
+}
+
+fn sandbox_path_row(path: &Path, cx: &App) -> AnyElement {
+    let display_path = path.display().to_string();
+    let icon = FileIcons::get_icon(path, cx)
+        .map(Icon::from_path)
+        .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+        .unwrap_or_else(|| {
+            Icon::new(IconName::Folder)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        });
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(icon)
+        .child(
+            Label::new(display_path)
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
+}
+
+fn sandbox_domain_row(domain: &str, cx: &App) -> AnyElement {
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(
+            Icon::new(IconName::Public)
+                .color(Color::Muted)
+                .size(IconSize::Small),
+        )
+        .child(
+            Label::new(domain.to_string())
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
 }
 
 impl ThreadView {
@@ -6930,6 +7283,12 @@ impl ThreadView {
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
+        // Soft-wrap the command instead of horizontally scrolling it: the card is
+        // narrow, and in scroll mode a long command wraps anyway but its wrapped
+        // lines don't pick up the code block's left padding. Wrap mode lays the
+        // text out as a normal block inside the padded content box, so every
+        // line (wrapped or not) is padded consistently.
+        style.code_block_overflow_x_scroll = false;
 
         let header_bg = self.tool_card_header_bg(cx);
         let run_command_label = if is_preview {
@@ -6954,7 +7313,8 @@ impl ThreadView {
                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             });
-        let copy_button = CopyButton::new("copy-command", command_text)
+        let copy_button_id = SharedString::from(format!("{group}-copy-command"));
+        let copy_button = CopyButton::new(copy_button_id, command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
 
@@ -7366,10 +7726,22 @@ impl ThreadView {
         layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let has_terminals = tool_call.terminals().next().is_some();
 
-        div().w_full().map(|this| {
+        // Give every tool-call subtree a unique element-id prefix derived from
+        // the globally-unique tool call id and the layout. This single wrapper
+        // is what keeps all the `entry_ix`-keyed element ids inside the card
+        // collision-free, even when the same tool call is rendered in multiple
+        // places at once (inline list + floating awaiting-permission row) or
+        // when subagent entries are inlined into the parent view's element tree.
+        let container_id = ElementId::Name(SharedString::from(format!(
+            "tool-call-{}-{}",
+            tool_call.id.0,
+            layout.id_str()
+        )));
+
+        div().w_full().id(container_id).map(|this| {
             if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
@@ -7423,7 +7795,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
-        let card_header_id = SharedString::from("inner-tool-call-header");
+        let card_header_id = SharedString::from(format!("inner-tool-call-header-{entry_ix}"));
 
         let failed_or_canceled = match &tool_call.status {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
@@ -7928,15 +8300,11 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
-        let has_git_access = details.allow_git_access;
-        let command = details
-            .command
-            .as_deref()
-            .filter(|command| !command.is_empty());
-        if details.write_paths.is_empty()
-            && !has_network
-            && !has_git_access
-            && command.is_none()
+        let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
+        if !has_network
+            && !has_write
+            && !details.allow_git_access
+            && !details.unsandboxed
             && details.reason.is_empty()
         {
             return Empty.into_any_element();
@@ -7967,7 +8335,10 @@ impl ThreadView {
                 .child(
                     h_flex()
                         .id(("sandbox-network-details-header", entry_ix))
-                        .p_1()
+                        // Align text with the allow/deny button icons below,
+                        // which sit at p_1 (container) + Base04 (button) ≈ px_2.
+                        .px_2()
+                        .py_1()
                         .justify_between()
                         .when(has_host_list, |this| {
                             this.cursor_pointer()
@@ -8025,17 +8396,12 @@ impl ThreadView {
                             .children(hosts.iter().enumerate().map(|(host_ix, host)| {
                                 h_flex()
                                     .min_w_0()
-                                    .p_1p5()
-                                    .gap_2()
+                                    .px_2()
+                                    .py_1p5()
                                     .bg(cx.theme().colors().editor_background)
                                     .when(host_ix < hosts.len() - 1, |this| {
                                         this.border_b_1().border_color(cx.theme().colors().border)
                                     })
-                                    .child(
-                                        Icon::new(IconName::Public)
-                                            .color(Color::Muted)
-                                            .size(IconSize::Small),
-                                    )
                                     .child(
                                         Label::new(host.clone())
                                             .size(LabelSize::XSmall)
@@ -8046,121 +8412,54 @@ impl ThreadView {
                 })
         });
 
-        let git_access_section = has_git_access.then(|| {
+        let write_section = has_write.then(|| {
+            let summary = if details.allow_fs_write_all {
+                "unrestricted".to_string()
+            } else {
+                format!(
+                    "{} {}",
+                    details.write_paths.len(),
+                    if details.write_paths.len() == 1 {
+                        "path"
+                    } else {
+                        "paths"
+                    }
+                )
+            };
+            let has_path_list = !details.allow_fs_write_all && !details.write_paths.is_empty();
+            let is_open = !self
+                .collapsed_sandbox_authorization_details
+                .contains(tool_call_id);
+            let mut paths = details.write_paths.clone();
+            paths.sort();
+
             v_flex()
-                .p_1()
-                .gap_0p5()
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::GitBranch)
-                                .color(Color::Muted)
-                                .size(IconSize::Small),
-                        )
-                        .child(
-                            Label::new("Git metadata access")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-                .child(
-                    Label::new(
-                        "Allows reading and writing .git directories, which may include repositories outside this project, and exposes the inherited SSH agent for commit signing.",
-                    )
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-                )
-                .into_any_element()
-        });
-
-        if details.write_paths.is_empty() {
-            return v_flex()
-                .border_t_1()
-                .border_color(self.tool_card_border_color(cx))
-                .when_some(command, |this, command| {
-                    this.child(Self::render_sandbox_authorization_command(
-                        entry_ix, command, cx,
-                    ))
-                })
-                .children(network_section)
-                .children(git_access_section)
-                .into_any_element();
-        }
-
-        let is_open = !self
-            .collapsed_sandbox_authorization_details
-            .contains(tool_call_id);
-        let mut paths = details.write_paths.clone();
-        paths.sort();
-
-        v_flex()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .when_some(command, |this, command| {
-                this.child(Self::render_sandbox_authorization_command(
-                    entry_ix, command, cx,
-                ))
-            })
-            .children(network_section)
-            .children(git_access_section)
-            .child(
-                h_flex()
-                    .id(("sandbox-authorization-details-header", entry_ix))
-                    .p_1()
-                    .justify_between()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(cx.theme().colors().element_hover))
-                    .child(
-                        h_flex().gap_1().child(
-                            Label::new("Write access")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child(
-                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown),
-                    )
-                    .on_click(cx.listener({
-                        let tool_call_id = tool_call_id.clone();
-                        move |this, _event, _window, cx| {
-                            if this
-                                .collapsed_sandbox_authorization_details
-                                .remove(&tool_call_id)
-                            {
-                                cx.notify();
-                                return;
-                            }
-
-                            this.collapsed_sandbox_authorization_details
-                                .insert(tool_call_id.clone());
-                            cx.notify();
-                        }
-                    })),
-            )
-            .when(is_open && !paths.is_empty(), |this| {
-                this.child(
-                    v_flex()
-                        .gap_0p5()
-                        .child(
-                            Label::new("Reason from agent")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx),
-                        )
-                        .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
-                )
-            })
-            .when(!paths.is_empty(), |this| {
-                this.child(
                     h_flex()
                         .id(("sandbox-authorization-details-header", entry_ix))
-                        .p_1()
+                        .px_2()
+                        .py_1()
                         .justify_between()
-                        .cursor_pointer()
-                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .when(has_path_list, |this| {
+                            this.cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener({
+                                    let tool_call_id = tool_call_id.clone();
+                                    move |this, _event, _window, cx| {
+                                        if this
+                                            .collapsed_sandbox_authorization_details
+                                            .remove(&tool_call_id)
+                                        {
+                                            cx.notify();
+                                            return;
+                                        }
+
+                                        this.collapsed_sandbox_authorization_details
+                                            .insert(tool_call_id.clone());
+                                        cx.notify();
+                                    }
+                                }))
+                        })
                         .child(
                             h_flex()
                                 .gap_1()
@@ -8175,38 +8474,23 @@ impl ThreadView {
                                         .color(Color::Disabled),
                                 )
                                 .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        paths.len(),
-                                        if paths.len() == 1 { "path" } else { "paths" }
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    Label::new(summary)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
                                 ),
                         )
-                        .child(
-                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                        .when(has_path_list, |this| {
+                            this.child(
+                                Disclosure::new(
+                                    ("sandbox-authorization-details", entry_ix),
+                                    is_open,
+                                )
                                 .opened_icon(IconName::ChevronUp)
                                 .closed_icon(IconName::ChevronDown),
-                        )
-                        .on_click(cx.listener({
-                            let tool_call_id = tool_call_id.clone();
-                            move |this, _event, _window, cx| {
-                                if this
-                                    .collapsed_sandbox_authorization_details
-                                    .remove(&tool_call_id)
-                                {
-                                    cx.notify();
-                                    return;
-                                }
-
-                                this.collapsed_sandbox_authorization_details
-                                    .insert(tool_call_id.clone());
-                                cx.notify();
-                            }
-                        })),
+                            )
+                        }),
                 )
-                .when(is_open, |this| {
+                .when(has_path_list && is_open, |this| {
                     this.child(
                         v_flex()
                             .id(("sandbox-authorization-paths-list", entry_ix))
@@ -8223,7 +8507,66 @@ impl ThreadView {
                             })),
                     )
                 })
-            })
+        });
+
+        let unsandboxed_section = details.unsandboxed.then(|| {
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_1p5()
+                .child(
+                    Icon::new(IconName::Warning)
+                        .color(Color::Warning)
+                        .size(IconSize::Small),
+                )
+                .child(
+                    Label::new("Runs without the OS sandbox")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+        });
+
+        let git_access_section = details.allow_git_access.then(|| {
+            v_flex().px_2().py_1().gap_0p5().child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::GitBranch)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(
+                        Label::new("Git metadata access")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+        });
+
+        let reason_section = (!details.reason.is_empty()).then(|| {
+            v_flex()
+                .px_2()
+                .py_1()
+                .gap_0p5()
+                .child(
+                    Label::new("Reason from agent")
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
+                .child(Label::new(details.reason.clone()).size(LabelSize::Small))
+        });
+
+        // The command stays in the tool-call title above; here we show what the
+        // command is asking for (paths / domains) and the agent's reason.
+        v_flex()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .children(network_section)
+            .children(write_section)
+            .children(git_access_section)
+            .children(unsandboxed_section)
+            .children(reason_section)
             .into_any_element()
     }
 
@@ -8264,49 +8607,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    fn render_sandbox_authorization_command(entry_ix: usize, command: &str, cx: &App) -> Div {
-        let group = SharedString::from(format!("sandbox-authorization-command-{entry_ix}"));
-        let command = SharedString::from(command.to_string());
-
-        v_flex()
-            .group(group.clone())
-            .relative()
-            .p_1p5()
-            .gap_1()
-            .bg(cx.theme().colors().editor_background)
-            .child(
-                Label::new("Command")
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .child(
-                div()
-                    .id(("sandbox-authorization-command-scroll", entry_ix))
-                    .flex()
-                    .flex_1()
-                    .w_full()
-                    .min_w_0()
-                    .overflow_x_scroll()
-                    .whitespace_nowrap()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .p_1()
-                    .child(
-                        Label::new(command.clone())
-                            .buffer_font(cx)
-                            .size(LabelSize::XSmall),
-                    ),
-            )
-            .child(
-                div().absolute().top_1().right_1().child(
-                    CopyButton::new("copy-sandbox-authorization-command", command)
-                        .tooltip_label("Copy Command")
-                        .visible_on_hover(group),
-                ),
-            )
-    }
-
     fn render_sandbox_authorization_path_row(
         &self,
         entry_ix: usize,
@@ -8324,22 +8624,14 @@ impl ThreadView {
             let parent = parent.display().to_string();
             (!parent.is_empty()).then_some(parent)
         });
-        let path_icon = FileIcons::get_icon(path, cx)
-            .map(Icon::from_path)
-            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-            .unwrap_or_else(|| {
-                Icon::new(IconName::Folder)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-            });
 
         h_flex()
             .id(SharedString::from(format!(
                 "sandbox-authorization-path-{entry_ix}-{path_ix}"
             )))
             .min_w_0()
-            .p_1p5()
-            .gap_2()
+            .px_2()
+            .py_1p5()
             .bg(cx.theme().colors().editor_background)
             .when(show_border, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
@@ -8351,7 +8643,6 @@ impl ThreadView {
                     )))
                     .min_w_0()
                     .gap_0p5()
-                    .child(path_icon)
                     .child(
                         Label::new(file_name)
                             .size(LabelSize::XSmall)
@@ -9919,7 +10210,13 @@ impl ThreadView {
                 div()
                     .pb_1()
                     .min_h_0()
-                    .id(format!("subagent-entries-{}", session_id))
+                    // Include the tool call id so the same subagent session
+                    // rendered in multiple parent cards gets distinct element
+                    // ids for its inlined entries (avoids duplicate a11y ids).
+                    .id(format!(
+                        "subagent-entries-{}-{}",
+                        session_id, tool_call.id.0
+                    ))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
