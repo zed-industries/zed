@@ -1,0 +1,80 @@
+# Zed Guild Board (#74): cleanup, stale-nudge, shipped-weekly, and event-driven automation.
+
+name: Guild Board Automation
+
+on:
+  issues:
+    types: [labeled, assigned]
+  schedule:
+    - cron: "0 8 * * *"       # daily 08:00 UTC: cleanup + stale-nudge
+    - cron: "0 14 * * 5"      # friday 14:00 UTC (~9am ET): shipped-weekly only
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "cleanup | stale-nudge | shipped-weekly"
+        required: true
+        type: choice
+        options: [cleanup, stale-nudge, shipped-weekly]
+
+permissions:
+  contents: read
+  issues: write
+  discussions: write
+
+concurrency:
+  group: guild-board-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+        id: app-token
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          sparse-checkout: script/guild-board-automation.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Resolve mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            echo "mode=event" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 14 * * 5" ]; then
+            echo "mode=shipped-weekly" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=cleanup" >> "$GITHUB_OUTPUT"
+            echo "also_nudge=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: python script/guild-board-automation.py
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "74"
+          GUILD_TEAM_SLUG: "zed-guild"
+          DISCUSSION_CATEGORY_ID: ${{ secrets.GUILD_DISCUSSION_CATEGORY_ID }}
+          MODE: ${{ steps.mode.outputs.mode }}
+
+      - if: steps.mode.outputs.also_nudge == 'true'
+        run: python script/guild-board-automation.py
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "74"
+          GUILD_TEAM_SLUG: "zed-guild"
+          MODE: stale-nudge
