@@ -575,7 +575,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -593,6 +593,17 @@ impl WaylandClient {
                     }
                 }
             })
+            .unwrap();
+
+        handle
+            .insert_source(
+                wake_receiver,
+                |event, _, client: &mut WaylandClientStatePtr| {
+                    if let calloop::channel::Event::Msg(()) = event {
+                        client.get_client().borrow_mut().common.handle_system_wake();
+                    }
+                },
+            )
             .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
