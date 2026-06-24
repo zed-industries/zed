@@ -159,13 +159,19 @@ async fn verified_sandbox_git_paths(
         return Vec::new();
     };
 
-    if fs
+    let Some(dot_git_metadata) = fs
         .metadata(&repository.dot_git_abs_path)
         .await
         .ok()
         .flatten()
-        .is_some_and(|metadata| metadata.is_dir && !metadata.is_symlink)
-    {
+    else {
+        return Vec::new();
+    };
+    if dot_git_metadata.is_symlink {
+        return Vec::new();
+    }
+
+    if dot_git_metadata.is_dir {
         if dot_git_abs_path != repository_dir_abs_path {
             return Vec::new();
         }
@@ -188,6 +194,15 @@ async fn verified_sandbox_git_paths(
                 common_dir_abs_path,
             ];
         }
+        return Vec::new();
+    }
+
+    let Some(expected_dot_git_abs_path) =
+        normalize_sandbox_git_path(repository.work_directory_abs_path.join(".git"), fs).await
+    else {
+        return Vec::new();
+    };
+    if dot_git_abs_path != expected_dot_git_abs_path {
         return Vec::new();
     }
 
@@ -247,6 +262,15 @@ async fn read_gitfile_path(dot_git_abs_path: &Path, fs: &dyn Fs) -> Option<PathB
     } else {
         dot_git_abs_path.parent()?.join(gitdir)
     };
+    if fs
+        .metadata(&path)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|metadata| metadata.is_symlink)
+    {
+        return None;
+    }
     normalize_sandbox_git_path(path, fs).await
 }
 
@@ -957,6 +981,128 @@ mod tests {
             paths_with_git_access
                 .git_dirs
                 .contains(&PathBuf::from("/other_repo/.git"))
+        );
+        assert!(
+            !paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/other_repo/.git"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_paths_do_not_grant_symlinked_dot_git_file(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/other_repo",
+            serde_json::json!({
+                "gitfile": "gitdir: /other_repo/.git",
+                ".git": {
+                    "HEAD": "ref: refs/heads/main",
+                    "config": "[core]\n\trepositoryformatversion = 0\n\tworktree = /project\n"
+                }
+            }),
+        )
+        .await;
+        fs.insert_symlink(
+            Path::new("/project/.git"),
+            PathBuf::from("/other_repo/gitfile"),
+        )
+        .await;
+
+        let candidates = SandboxGitPathCandidates {
+            writable_paths: vec![PathBuf::from("/project")],
+            git_paths: vec![
+                PathBuf::from("/project/.git"),
+                PathBuf::from("/other_repo/.git"),
+            ],
+            repositories: vec![SandboxGitRepositoryPaths {
+                work_directory_abs_path: PathBuf::from("/project"),
+                dot_git_abs_path: PathBuf::from("/project/.git"),
+                repository_dir_abs_path: PathBuf::from("/other_repo/.git"),
+                common_dir_abs_path: PathBuf::from("/other_repo/.git"),
+            }],
+        };
+        let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
+
+        assert!(!paths_with_git_access.allow_git_access);
+        assert!(
+            paths_with_git_access
+                .git_dirs
+                .contains(&PathBuf::from("/project/.git"))
+        );
+        assert!(
+            paths_with_git_access
+                .git_dirs
+                .contains(&PathBuf::from("/other_repo/.git"))
+        );
+        assert!(
+            !paths_with_git_access
+                .writable_paths
+                .contains(&PathBuf::from("/other_repo/.git"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_paths_do_not_grant_gitfile_to_symlinked_gitdir(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": "gitdir: /other_repo/gitdir_link",
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/other_repo",
+            serde_json::json!({
+                ".git": {
+                    "HEAD": "ref: refs/heads/main",
+                    "config": "[core]\n\trepositoryformatversion = 0\n\tworktree = /project\n"
+                }
+            }),
+        )
+        .await;
+        fs.insert_symlink(
+            Path::new("/other_repo/gitdir_link"),
+            PathBuf::from("/other_repo/.git"),
+        )
+        .await;
+
+        let candidates = SandboxGitPathCandidates {
+            writable_paths: vec![PathBuf::from("/project")],
+            git_paths: vec![
+                PathBuf::from("/project/.git"),
+                PathBuf::from("/other_repo/gitdir_link"),
+                PathBuf::from("/other_repo/.git"),
+            ],
+            repositories: vec![SandboxGitRepositoryPaths {
+                work_directory_abs_path: PathBuf::from("/project"),
+                dot_git_abs_path: PathBuf::from("/project/.git"),
+                repository_dir_abs_path: PathBuf::from("/other_repo/gitdir_link"),
+                common_dir_abs_path: PathBuf::from("/other_repo/gitdir_link"),
+            }],
+        };
+        let paths_with_git_access = sandbox_git_paths(candidates, fs.as_ref(), true).await;
+
+        assert!(!paths_with_git_access.allow_git_access);
+        assert!(
+            paths_with_git_access
+                .git_dirs
+                .contains(&PathBuf::from("/other_repo/gitdir_link"))
         );
         assert!(
             !paths_with_git_access
