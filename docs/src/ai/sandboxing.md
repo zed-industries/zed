@@ -32,14 +32,14 @@ Other built-in tools, including `fetch`, are still governed by [Tool Permissions
 
 By default, sandboxed Zed Agent tool actions have these restrictions:
 
-| Access type         | Default behavior                                                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------------------- |
-| Filesystem reads    | Terminal commands can read the filesystem, except for protected Git metadata file contents.               |
-| Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.           |
-| Git metadata        | `.git` directories and linked worktree Git metadata are protected unless you approve Git metadata access. |
-| Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.          |
-| Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.   |
-| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request.     |
+| Access type         | Default behavior                                                                                                                                                      |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filesystem reads    | Terminal commands can read most of the filesystem. Protected Git metadata file contents are hidden on macOS; on Linux and Windows/WSL they remain readable.           |
+| Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.                                                                       |
+| Git metadata        | `.git` directories and linked worktree Git metadata are protected unless you approve Git metadata access. Protection details differ by platform, described below.     |
+| Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                      |
+| Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                               |
+| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform. |
 
 ## Approval Prompts {#approval-prompts}
 
@@ -109,10 +109,9 @@ Sandboxed terminal commands:
 - cannot write elsewhere unless you approve additional paths or broader write access
 - cannot reach the network unless you approve network access
 
-When network access is approved on macOS, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts.
+When host-specific network access is approved on macOS, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts.
 Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved.
 For networked terminal commands, prefer HTTPS URLs over SSH URLs when possible.
-When Git metadata access is approved, Zed may also expose the inherited `SSH_AUTH_SOCK` Unix socket so workflows such as SSH commit signing can work without granting outbound network access.
 
 ### Linux {#linux}
 
@@ -124,16 +123,15 @@ If the only `bwrap` found on your `PATH` is setuid-root, Zed refuses to run it; 
 
 Sandboxed terminal commands:
 
-- can read the filesystem
+- can read the filesystem, including protected Git metadata contents
 - can write inside open project directories, except protected Git metadata
 - can write to `/tmp`, which is backed by a fresh temporary filesystem and is cleared between terminal tool calls
-- cannot read or write protected Git metadata unless you approve Git metadata access
+- cannot write protected Git metadata unless you approve Git metadata access
 - cannot write elsewhere unless you approve additional paths or broader write access
 - cannot reach the network unless you approve network access
 
-Linux network sandboxing can allow or block outbound networking as a whole, but cannot enforce a per-host allowlist.
-If you approve network access for one host on Linux, the sandbox must grant unrestricted outbound network access for that tool action.
-Zed still asks for the narrower request when that is what the agent asked for, but the platform enforcement is all-or-nothing.
+When host-specific network access is approved on Linux, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts.
+Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved.
 
 If Bubblewrap is unavailable or cannot create a sandbox in the current environment, Zed may run the command without the OS sandbox and show a warning in the tool output.
 
@@ -147,7 +145,7 @@ Native Windows processes do not currently have the same sandbox integration in Z
 When running inside WSL, the Linux sandboxing behavior applies, including the requirement that `bwrap` not be setuid-root:
 
 - filesystem isolation is provided by Bubblewrap
-- protected Git metadata requires Git metadata access approval
+- protected Git metadata contents remain readable, but writes are blocked unless you approve Git metadata access
 - `/tmp` is temporary for sandboxed terminal calls
 - network access is all-or-nothing rather than host-specific
 
