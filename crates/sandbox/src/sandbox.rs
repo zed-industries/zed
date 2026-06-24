@@ -617,13 +617,12 @@ impl Sandbox {
             allow_network: matches!(self.network, NetSetup::Unrestricted),
             allow_fs_write: self.fs.allow_fs_write,
         };
-        let (git_writable, protected_git_paths) = self.git_path_split();
-        let mut writable_paths = self.fs.writable_paths.clone();
-        writable_paths.extend(git_writable);
+        let (writable_git_paths, protected_git_paths) = self.git_path_split();
         let (program, args) = windows_wsl::wrap_invocation(
             command.program.clone(),
             command.args.clone(),
-            writable_paths,
+            self.fs.writable_paths.clone(),
+            writable_git_paths,
             protected_git_paths,
             permissions,
             command.cwd.clone(),

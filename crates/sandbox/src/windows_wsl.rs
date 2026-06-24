@@ -141,10 +141,12 @@ impl PathMapping {
 /// into a Linux shell invocation (typically `/bin/sh -c ...`) before calling
 /// this function.
 ///
-/// All writable paths, protected Git paths, and the cwd must be paths that can
-/// be mapped into WSL. WSL UNC paths may specify a distro; native drive-letter
-/// paths are translated with `wslpath` inside either that distro or the default
-/// distro (falling back to `/mnt/<drive>/...` if translation fails).
+/// All writable paths, Git paths, and the cwd must be paths that can be mapped
+/// into WSL. The cwd and ordinary writable paths must exist; Git metadata paths
+/// may be missing because Bubblewrap cannot bind a missing source. WSL UNC paths
+/// may specify a distro; native drive-letter paths are translated with `wslpath`
+/// inside either that distro or the default distro (falling back to
+/// `/mnt/<drive>/...` if translation fails).
 ///
 /// `env` is forwarded into the sandboxed command via `bwrap --setenv` rather
 /// than being set on the `wsl.exe` process. Windows environment variables
@@ -170,6 +172,7 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     program: String,
     args: Vec<String>,
     writable_paths: Vec<PathBuf>,
+    writable_git_paths: Vec<PathBuf>,
     protected_git_paths: Vec<PathBuf>,
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
@@ -194,6 +197,17 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let writable_git_mappings = writable_git_paths
+        .iter()
+        .map(|path| {
+            path_to_wsl_allowing_missing(path).with_context(|| {
+                format!(
+                    "failed to map writable Git metadata path `{}` into WSL",
+                    path.display()
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let protected_git_mappings = protected_git_paths
         .iter()
         .map(|path| {
@@ -210,6 +224,7 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
         cwd_mapping.as_ref(),
         writable_mappings
             .iter()
+            .chain(writable_git_mappings.iter())
             .chain(protected_git_mappings.iter()),
     )?;
     let wsl_exe = wsl_exe_path();
@@ -223,12 +238,14 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
 
     // Resolve all paths (translating native drive-letter paths with `wslpath`
     // now that the distro is known) in a single WSL round-trip. The cwd and
-    // writable paths must exist; protected Git paths may be missing because, as
+    // ordinary writable paths must exist; Git paths may be missing because, as
     // with Linux bwrap, a not-yet-created `.git` placeholder can't be overlaid.
     let has_cwd = cwd_mapping.is_some();
     let writable_path_count = writable_mappings.len();
-    let mut mappings =
-        Vec::with_capacity(writable_mappings.len() + protected_git_mappings.len() + 1);
+    let writable_git_path_count = writable_git_mappings.len();
+    let mut mappings = Vec::with_capacity(
+        writable_mappings.len() + writable_git_mappings.len() + protected_git_mappings.len() + 1,
+    );
     if let Some(mapping) = cwd_mapping {
         mappings.push((mapping, "terminal cwd", true));
     }
@@ -238,33 +255,22 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             .map(|mapping| (mapping, "writable path", true)),
     );
     mappings.extend(
+        writable_git_mappings
+            .into_iter()
+            .map(|mapping| (mapping, "writable Git metadata path", false)),
+    );
+    mappings.extend(
         protected_git_mappings
             .into_iter()
             .map(|mapping| (mapping, "protected Git metadata path", false)),
     );
-    let mut resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings)
-        .await?
-        .into_iter();
-    let cwd = if has_cwd {
-        Some(
-            resolved
-                .next()
-                .context("bug: missing resolved terminal cwd")?
-                .context("bug: required terminal cwd resolved as missing")?,
-        )
-    } else {
-        None
-    };
-    let mut writable_paths = Vec::with_capacity(writable_path_count);
-    for _ in 0..writable_path_count {
-        writable_paths.push(
-            resolved
-                .next()
-                .context("bug: missing resolved writable path")?
-                .context("bug: required writable path resolved as missing")?,
-        );
-    }
-    let protected_git_paths: Vec<String> = resolved.flatten().collect();
+    let resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings).await?;
+    let (cwd, writable_paths, protected_git_paths) = split_resolved_paths(
+        has_cwd,
+        writable_path_count,
+        writable_git_path_count,
+        resolved,
+    )?;
 
     let mut wsl_args = Vec::new();
     if let Some(distro) = distro.as_deref() {
@@ -290,6 +296,45 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     wsl_args.extend(args);
 
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
+}
+
+fn split_resolved_paths(
+    has_cwd: bool,
+    writable_path_count: usize,
+    writable_git_path_count: usize,
+    resolved: Vec<Option<String>>,
+) -> Result<(Option<String>, Vec<String>, Vec<String>)> {
+    let mut resolved = resolved.into_iter();
+    let cwd = if has_cwd {
+        Some(
+            resolved
+                .next()
+                .context("bug: missing resolved terminal cwd")?
+                .context("bug: required terminal cwd resolved as missing")?,
+        )
+    } else {
+        None
+    };
+
+    let mut writable_paths = Vec::with_capacity(writable_path_count + writable_git_path_count);
+    for _ in 0..writable_path_count {
+        writable_paths.push(
+            resolved
+                .next()
+                .context("bug: missing resolved writable path")?
+                .context("bug: required writable path resolved as missing")?,
+        );
+    }
+    for _ in 0..writable_git_path_count {
+        if let Some(path) = resolved
+            .next()
+            .context("bug: missing resolved writable Git metadata path")?
+        {
+            writable_paths.push(path);
+        }
+    }
+
+    Ok((cwd, writable_paths, resolved.flatten().collect()))
 }
 
 fn select_distro<'a>(
@@ -1056,6 +1101,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             SandboxPermissions::default(),
             None,
             HashMap::<String, String>::new(),
@@ -1193,6 +1239,48 @@ mod tests {
         assert!(script.contains("setuid-root bwrap is not supported"));
         assert!(script.contains(&format!("exit {BWRAP_UNUSABLE_EXIT_CODE}; fi")));
         assert!(guard_index < smoke_test_index);
+    }
+
+    #[test]
+    fn split_resolved_paths_keeps_existing_writable_git_paths_and_skips_missing_ones() {
+        let (cwd, writable_paths, protected_git_paths) = split_resolved_paths(
+            true,
+            1,
+            2,
+            vec![
+                Some("/home/me/project".to_string()),
+                Some("/home/me/project".to_string()),
+                None,
+                Some("/home/me/project/.git".to_string()),
+                None,
+                Some("/mnt/c/external/.git".to_string()),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(cwd.as_deref(), Some("/home/me/project"));
+        assert_eq!(
+            writable_paths,
+            vec![
+                "/home/me/project".to_string(),
+                "/home/me/project/.git".to_string()
+            ]
+        );
+        assert_eq!(
+            protected_git_paths,
+            vec!["/mnt/c/external/.git".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_resolved_paths_rejects_missing_required_writable_paths() {
+        let error = split_resolved_paths(false, 1, 0, vec![None]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("required writable path resolved as missing"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]
