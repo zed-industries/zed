@@ -4627,7 +4627,7 @@ impl ThreadView {
         let status = self.refresh_sandbox_status(cx)?;
         let settings_sandbox = status.settings_sandbox.clone();
         let thread_sandbox = status.thread_sandbox.clone();
-        let baseline = status.baseline_writable_paths.clone();
+        let baseline = status.baseline_writable_paths;
 
         // The lock is struck only when the *merged* result is unsandboxed (the
         // agent runs with ambient permissions). A layer that is merely wide open
