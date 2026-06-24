@@ -183,14 +183,6 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
 {{/if}}
 - Network: outbound network access is blocked.
 
-{{#if is_linux}}
-The sandbox can only allow or block outbound network access as a whole — it cannot restrict access to specific hosts. There is no HTTP/HTTPS proxy, so once network access is granted SSH, FTP, and raw sockets work too.
-
-You can request elevated permissions on individual `terminal` calls:
-
-- `allow_all_hosts: true` — allow unrestricted outbound network access. On this platform this is the only way to grant network access.
-- `allow_hosts: ["github.com", ...]` — accepted, but on this platform listing hosts grants unrestricted outbound network access (identical to `allow_all_hosts`), because per-host restriction can't be enforced. Prefer `allow_all_hosts` so the request is explicit.
-{{else}}
 {{#if is_windows}}
 The sandbox can only allow or block outbound network access as a whole — it cannot restrict access to specific hosts. There is no HTTP/HTTPS proxy, so once network access is granted SSH, FTP, and raw sockets work too.
 
@@ -199,13 +191,12 @@ You can request elevated permissions on individual `terminal` calls:
 - `allow_all_hosts: true` — allow unrestricted outbound network access. On this platform this is the only way to grant network access.
 - `allow_hosts: ["github.com", ...]` — accepted, but on this platform listing hosts grants unrestricted outbound network access (identical to `allow_all_hosts`), because per-host restriction can't be enforced. Prefer `allow_all_hosts` so the request is explicit.
 {{else}}
-Network access works through an HTTP/HTTPS proxy (standard proxy environment variables are set for the command). Tools that don't honor proxy environment variables (SSH, FTP, raw sockets, etc.) can't reach the network even when access is granted, so use `https://` URLs instead of `git@`/`ssh://` when cloning or pushing.
+Host-scoped network access works through an HTTP/HTTPS proxy (standard proxy environment variables are set for the command). When access is scoped to specific hosts, tools that don't honor proxy environment variables (SSH, FTP, raw sockets, etc.) can't reach them, so use `https://` URLs instead of `git@`/`ssh://` when cloning or pushing.
 
 You can request elevated permissions on individual `terminal` calls:
 
 - `allow_hosts: ["github.com", "*.npmjs.org"]` — allow outbound HTTP/HTTPS to specific hosts (exact hostnames or leading-`*.` subdomain wildcards; no IP literals). Prefer this whenever you know which hosts the command needs.
-- `allow_all_hosts: true` — allow outbound HTTP/HTTPS to any host. Use only when the specific hosts can't be enumerated up front.
-{{/if}}
+- `allow_all_hosts: true` — lift the network restriction entirely: outbound access to any host over any protocol, so SSH, FTP, and raw sockets work too (unlike `allow_hosts`, which is HTTP/HTTPS-only). Use only when the specific hosts can't be enumerated up front.
 {{/if}}
 - `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write.
 - `allow_git_access: true` — lift the default block on Git metadata, allowing reads and writes of file contents under `.git` directories (including worktree metadata that may live outside the project directories). Any command that touches `.git` needs this, including ones that invoke Git only incidentally (e.g. build scripts calling `git describe`/`git rev-parse`, or commit hooks). When approved, the inherited SSH agent socket also becomes reachable for SSH-based Git commit signing (local Unix-socket IPC only — it does not allow packet-sending network access); GPG commit signing via gpg-agent is not available in the sandbox.
