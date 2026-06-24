@@ -170,7 +170,7 @@ enum DiffKind {
     SinceOid(Option<git::Oid>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub enum GitAccess {
     /// Either:
     /// - the user owns `.git`
