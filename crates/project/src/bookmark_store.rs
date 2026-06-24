@@ -16,6 +16,14 @@ pub struct Bookmark {
     pub label: String,
 }
 
+pub struct ProjectBookmark {
+    pub path: Arc<Path>,
+    pub label: String,
+    pub buffer: Entity<Buffer>,
+    pub anchor: text::Anchor,
+    pub offset: usize,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SerializedBookmark {
     pub row: u32,
@@ -358,6 +366,40 @@ impl BookmarkStore {
                 cx.notify();
             }
         }
+    }
+
+    pub async fn all_bookmarks<'a>(
+        this: &Entity<BookmarkStore>,
+        cx: &'a mut (impl AppContext + Clone),
+    ) -> Result<Vec<ProjectBookmark>> {
+        Self::resolve_all(this, cx).await?;
+
+        let bookmarks = cx.read_entity(this, |bookmark_store, cx| {
+            bookmark_store
+                .bookmarks
+                .iter()
+                .filter_map(|(path, value)| match value {
+                    BookmarkEntry::Loaded(buffer_bookmarks) => Some((path, buffer_bookmarks)),
+                    _ => None,
+                })
+                .flat_map(|(path, buffer_bookmarks)| {
+                    buffer_bookmarks
+                        .bookmarks
+                        .iter()
+                        .map(|bookmark| ProjectBookmark {
+                            path: path.clone(),
+                            label: bookmark.label.clone(),
+                            buffer: buffer_bookmarks.buffer.clone(),
+                            anchor: bookmark.anchor,
+                            offset: buffer_bookmarks
+                                .buffer
+                                .read(cx)
+                                .offset_for_anchor(&bookmark.anchor),
+                        })
+                })
+                .collect_vec()
+        });
+        Ok(bookmarks)
     }
 
     pub fn all_serialized_bookmarks(
