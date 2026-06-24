@@ -1875,6 +1875,27 @@ impl GitGraph {
             .into_any_element()
     }
 
+    fn render_ref_count_chip(
+        &self,
+        hidden_refs: &[SharedString],
+        accent_color: gpui::Hsla,
+        commit_idx: usize,
+    ) -> AnyElement {
+        let hidden_refs_text = hidden_refs.join("\n");
+        let chip_id = SharedString::from(format!("git-graph-ref-count-chip-{commit_idx}"));
+        div()
+            .id(chip_id)
+            .flex_none()
+            .child(
+                Chip::new(format!("+{}", hidden_refs.len()))
+                    .label_size(LabelSize::Small)
+                    .label_color(Color::Muted)
+                    .border_color(accent_color.opacity(0.25)),
+            )
+            .tooltip(move |_window, cx| Tooltip::simple(hidden_refs_text.clone(), cx))
+            .into_any_element()
+    }
+
     fn render_table_rows(
         &mut self,
         range: Range<usize>,
@@ -3767,10 +3788,36 @@ impl GitGraph {
             let accent_color = accent_colors.color_for_index(commit.color_idx as u32);
             let ref_names = commit.data.ref_names.clone();
 
-            let chips = ref_names.iter().map(|name| {
-                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                self.render_ref_chip(name, accent_color, is_head, absolute_idx, background, cx)
-            });
+            // When a commit carries multiple refs we only render a single badge
+            // (preferring the checked-out branch, falling back to the first ref)
+            // plus a "+N" counter, so the gutter stays legible instead of
+            // cramming several truncated chips together.
+            let primary_name = ref_names
+                .iter()
+                .find(|name| Self::is_head_ref(name.as_ref(), &head_branch_name))
+                .or_else(|| ref_names.first())
+                .cloned();
+            let Some(primary_name) = primary_name else {
+                continue;
+            };
+
+            let is_head = Self::is_head_ref(primary_name.as_ref(), &head_branch_name);
+            let primary_chip = self.render_ref_chip(
+                &primary_name,
+                accent_color,
+                is_head,
+                absolute_idx,
+                background,
+                cx,
+            );
+
+            let hidden_refs = ref_names
+                .iter()
+                .filter(|name| *name != &primary_name)
+                .cloned()
+                .collect::<Vec<_>>();
+            let count_chip = (!hidden_refs.is_empty())
+                .then(|| self.render_ref_count_chip(&hidden_refs, accent_color, absolute_idx));
 
             elements.push(
                 div()
@@ -3788,7 +3835,8 @@ impl GitGraph {
                             .justify_end()
                             .gap_1()
                             .px_1p5()
-                            .children(chips),
+                            .child(primary_chip)
+                            .children(count_chip),
                     )
                     .into_any_element(),
             );
