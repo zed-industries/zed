@@ -195,9 +195,8 @@ pub fn wrap_invocation(
 /// denied even when they would otherwise be readable or writable; file
 /// metadata remains readable. Unix domain socket paths in
 /// `allowed_unix_socket_paths` are reachable for local IPC even when IP
-/// network access is otherwise blocked; callers use this for trusted sockets
-/// inherited from the process environment, such as `SSH_AUTH_SOCK`. This does
-/// not permit sending packets to other machines.
+/// network access is otherwise blocked. This does not permit sending packets
+/// to other machines.
 ///
 /// Network access and unrestricted filesystem writes must be requested via
 /// [`SandboxPermissions`].
@@ -453,11 +452,11 @@ mod tests {
     #[test]
     fn test_generate_seatbelt_config_allows_unix_socket_paths_without_network() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
-        let ssh_auth_socket = PathBuf::from("/private/tmp/com.apple.launchd.test/Listeners");
+        let socket_path = PathBuf::from("/private/tmp/com.example.test/Listeners");
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             &[],
-            &[ssh_auth_socket.as_path()],
+            &[socket_path.as_path()],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -466,8 +465,8 @@ mod tests {
         assert!(config.contains("AF_UNIX"));
         assert!(config.contains("(allow network-outbound"));
         assert!(config.contains("remote unix-socket"));
-        assert!(config.contains("(literal \"/private/tmp/com.apple.launchd.test/Listeners\")"));
-        assert!(!config.contains("(subpath \"/private/tmp/com.apple.launchd.test/Listeners\")"));
+        assert!(config.contains("(literal \"/private/tmp/com.example.test/Listeners\")"));
+        assert!(!config.contains("(subpath \"/private/tmp/com.example.test/Listeners\")"));
         assert!(!config.contains("(allow network*)"));
     }
 
@@ -491,8 +490,6 @@ mod tests {
             .set_nonblocking(true)
             .expect("listener should switch to non-blocking");
 
-        // Allow both the path the command connects to and its canonical form,
-        // mirroring how the real caller resolves `SSH_AUTH_SOCK`.
         let canonical_socket_path = socket_path
             .canonicalize()
             .expect("bound socket path should canonicalize");
