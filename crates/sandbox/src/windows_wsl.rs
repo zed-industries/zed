@@ -32,7 +32,16 @@ use smol::process::{Command, Stdio};
 
 use anyhow::{Context as _, Result, bail, ensure};
 
-use crate::{SandboxPermissions, WSL_SANDBOX_UNAVAILABLE_PREFIX};
+use crate::WSL_SANDBOX_UNAVAILABLE_PREFIX;
+
+/// Per-command relaxations of the WSL/Bubblewrap sandbox. Windows can only
+/// toggle network access wholesale (no loopback-proxy confinement yet), so this
+/// is a plain bool rather than the richer cross-platform [`crate::SandboxNetPolicy`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SandboxPermissions {
+    pub(crate) allow_network: bool,
+    pub(crate) allow_fs_write: bool,
+}
 
 /// Exit code the environment probe script uses to signal that `bwrap` is not
 /// installed, distinguishing that from WSL itself failing to start a shell.
@@ -68,6 +77,7 @@ impl WslSandboxUnavailable {
     }
 
     /// The reason, without the leading [`WSL_SANDBOX_UNAVAILABLE_PREFIX`].
+    #[cfg(test)]
     pub fn message(&self) -> &str {
         &self.0
     }

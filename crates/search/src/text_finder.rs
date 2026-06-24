@@ -206,15 +206,31 @@ impl TextFinder {
             .update(cx, |p, _| p.delegate.in_progress_search.take_connected())
     }
 
-    /// The word under the cursor (or current selection) of the active editor,
-    /// used to pre-populate the text finder query. Honors the
-    /// `seed_search_query_from_cursor` setting, matching project search.
+    /// The query to pre-populate the text finder with, sourced from the active
+    /// item in priority order, mirroring how project search seeds itself: an
+    /// active project search's query, then a focused buffer search bar's query,
+    /// then the word under the cursor (honoring `seed_search_query_from_cursor`).
     fn seed_query(
-        workspace: &Workspace,
+        workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<String> {
-        let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+        let item = workspace.active_item(cx)?;
+
+        if let Some(project_search) = item.downcast::<ProjectSearchView>() {
+            let query = project_search.read(cx).search_query_text(cx);
+            if !query.is_empty() {
+                return Some(query);
+            }
+        }
+
+        if let Some(query) =
+            crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
+        {
+            return Some(query);
+        }
+
+        let editor = item.act_as::<Editor>(cx)?;
         let query = editor.query_suggestion(None, window, cx);
         (!query.is_empty()).then_some(query)
     }
