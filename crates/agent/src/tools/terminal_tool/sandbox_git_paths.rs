@@ -4,9 +4,9 @@ use project::Project;
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
-pub(super) struct SandboxGitPathCandidates {
-    writable_paths: Vec<PathBuf>,
-    git_paths: Vec<PathBuf>,
+pub(crate) struct SandboxGitPathCandidates {
+    pub(crate) writable_paths: Vec<PathBuf>,
+    pub(crate) git_paths: Vec<PathBuf>,
     repositories: Vec<SandboxGitRepositoryPaths>,
 }
 
@@ -17,14 +17,31 @@ struct SandboxGitRepositoryPaths {
     common_dir_abs_path: PathBuf,
 }
 
-pub(super) struct SandboxGitPaths {
-    pub(super) writable_paths: Vec<PathBuf>,
-    pub(super) git_dirs: Vec<PathBuf>,
-    pub(super) allow_git_access: bool,
+pub(crate) struct SandboxGitPaths {
+    pub(crate) writable_paths: Vec<PathBuf>,
+    pub(crate) git_dirs: Vec<PathBuf>,
+    pub(crate) allow_git_access: bool,
 }
 
 impl SandboxGitPathCandidates {
-    pub(super) fn from_project(project: &Project, cx: &App) -> Self {
+    pub(crate) fn cache_key_repositories(&self) -> Vec<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+        let mut repositories = self
+            .repositories
+            .iter()
+            .map(|repository| {
+                (
+                    repository.work_directory_abs_path.clone(),
+                    repository.dot_git_abs_path.clone(),
+                    repository.repository_dir_abs_path.clone(),
+                    repository.common_dir_abs_path.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        repositories.sort();
+        repositories
+    }
+
+    pub(crate) fn from_project(project: &Project, cx: &App) -> Self {
         let mut candidates = Self::default();
 
         for worktree in project.worktrees(cx) {
@@ -78,7 +95,7 @@ impl SandboxGitPathCandidates {
     }
 }
 
-pub(super) async fn sandbox_git_paths(
+pub(crate) async fn sandbox_git_paths(
     candidates: SandboxGitPathCandidates,
     fs: &dyn Fs,
     allow_git_access: bool,
@@ -107,10 +124,20 @@ pub(super) async fn sandbox_git_paths(
             if path_is_within_any(path, &writable_paths) {
                 continue;
             }
-            let normalized_path = normalize_sandbox_git_path(path, fs)
-                .await
-                .unwrap_or_else(|| path.clone());
+            let Some(normalized_path) = normalize_sandbox_git_path(path, fs).await else {
+                log::warn!(
+                    "Denying requested agent terminal Git metadata access because external Git metadata path `{}` could not be normalized",
+                    path.display()
+                );
+                all_external_git_paths_verified = false;
+                break;
+            };
             if verified_git_paths.binary_search(&normalized_path).is_err() {
+                log::warn!(
+                    "Denying requested agent terminal Git metadata access because external Git metadata path `{}` (normalized to `{}`) was not verified from project repository metadata",
+                    path.display(),
+                    normalized_path.display()
+                );
                 all_external_git_paths_verified = false;
                 break;
             }
@@ -144,36 +171,71 @@ async fn verified_sandbox_git_paths(
     repository: SandboxGitRepositoryPaths,
     fs: &dyn Fs,
 ) -> Vec<PathBuf> {
+    macro_rules! deny {
+        ($($arg:tt)*) => {{
+            log::debug!(
+                "Denying agent terminal Git metadata access for repository `{}` (dot_git: `{}`, repository_dir: `{}`, common_dir: `{}`): {}",
+                repository.work_directory_abs_path.display(),
+                repository.dot_git_abs_path.display(),
+                repository.repository_dir_abs_path.display(),
+                repository.common_dir_abs_path.display(),
+                format_args!($($arg)*)
+            );
+            return Vec::new();
+        }};
+    }
+
     let Some(dot_git_abs_path) = normalize_sandbox_git_path(&repository.dot_git_abs_path, fs).await
     else {
-        return Vec::new();
+        deny!(
+            "could not normalize .git path `{}`",
+            repository.dot_git_abs_path.display()
+        );
     };
     let Some(repository_dir_abs_path) =
         normalize_sandbox_git_path(&repository.repository_dir_abs_path, fs).await
     else {
-        return Vec::new();
+        deny!(
+            "could not normalize repository dir `{}`",
+            repository.repository_dir_abs_path.display()
+        );
     };
     let Some(common_dir_abs_path) =
         normalize_sandbox_git_path(&repository.common_dir_abs_path, fs).await
     else {
-        return Vec::new();
+        deny!(
+            "could not normalize common dir `{}`",
+            repository.common_dir_abs_path.display()
+        );
     };
 
-    let Some(dot_git_metadata) = fs
-        .metadata(&repository.dot_git_abs_path)
-        .await
-        .ok()
-        .flatten()
-    else {
-        return Vec::new();
+    let dot_git_metadata = match fs.metadata(&repository.dot_git_abs_path).await {
+        Ok(Some(metadata)) => metadata,
+        Ok(None) => deny!(
+            ".git path `{}` does not exist",
+            repository.dot_git_abs_path.display()
+        ),
+        Err(error) => deny!(
+            "failed to read metadata for .git path `{}`: {error}",
+            repository.dot_git_abs_path.display()
+        ),
     };
     if dot_git_metadata.is_symlink {
-        return Vec::new();
+        deny!(
+            ".git path `{}` is a symlink",
+            repository.dot_git_abs_path.display()
+        );
     }
 
     if dot_git_metadata.is_dir {
         if dot_git_abs_path != repository_dir_abs_path {
-            return Vec::new();
+            deny!(
+                "directory .git path `{}` normalized to `{}`, which does not match repository dir `{}` normalized to `{}`",
+                repository.dot_git_abs_path.display(),
+                dot_git_abs_path.display(),
+                repository.repository_dir_abs_path.display(),
+                repository_dir_abs_path.display()
+            );
         }
 
         if repository_dir_abs_path == common_dir_abs_path {
@@ -185,7 +247,11 @@ async fn verified_sandbox_git_paths(
         }
 
         let Some(common_dir) = read_commondir_path(&repository_dir_abs_path, fs).await else {
-            return Vec::new();
+            deny!(
+                "repository dir `{}` did not contain a readable commondir pointing at expected common dir `{}`",
+                repository_dir_abs_path.display(),
+                common_dir_abs_path.display()
+            );
         };
         if common_dir == common_dir_abs_path {
             return vec![
@@ -194,25 +260,46 @@ async fn verified_sandbox_git_paths(
                 common_dir_abs_path,
             ];
         }
-        return Vec::new();
+        deny!(
+            "repository dir `{}` commondir resolved to `{}`, expected `{}`",
+            repository_dir_abs_path.display(),
+            common_dir.display(),
+            common_dir_abs_path.display()
+        );
     }
 
     let Some(expected_dot_git_abs_path) =
         normalize_sandbox_git_path(repository.work_directory_abs_path.join(".git"), fs).await
     else {
-        return Vec::new();
+        deny!(
+            "could not normalize expected worktree .git path `{}`",
+            repository.work_directory_abs_path.join(".git").display()
+        );
     };
     if dot_git_abs_path != expected_dot_git_abs_path {
-        return Vec::new();
+        deny!(
+            ".git path `{}` normalized to `{}`, expected worktree .git path `{}`",
+            repository.dot_git_abs_path.display(),
+            dot_git_abs_path.display(),
+            expected_dot_git_abs_path.display()
+        );
     }
 
     let Some(stated_repository_dir) = read_gitfile_path(&repository.dot_git_abs_path, fs).await
     else {
-        return Vec::new();
+        deny!(
+            "gitfile `{}` did not resolve to a readable, non-symlink repository dir",
+            repository.dot_git_abs_path.display()
+        );
     };
 
     if stated_repository_dir != repository_dir_abs_path {
-        return Vec::new();
+        deny!(
+            "gitfile `{}` resolved to repository dir `{}`, expected `{}`",
+            repository.dot_git_abs_path.display(),
+            stated_repository_dir.display(),
+            repository_dir_abs_path.display()
+        );
     }
 
     let Some(common_dir) = read_commondir_path(&stated_repository_dir, fs).await else {
@@ -226,11 +313,20 @@ async fn verified_sandbox_git_paths(
         {
             return vec![dot_git_abs_path, repository_dir_abs_path];
         }
-        return Vec::new();
+        deny!(
+            "repository dir `{}` has no verified commondir and did not verify as a submodule gitdir for worktree `{}`",
+            repository_dir_abs_path.display(),
+            repository.work_directory_abs_path.display()
+        );
     };
 
     if common_dir != common_dir_abs_path {
-        return Vec::new();
+        deny!(
+            "repository dir `{}` commondir resolved to `{}`, expected `{}`",
+            stated_repository_dir.display(),
+            common_dir.display(),
+            common_dir_abs_path.display()
+        );
     }
 
     if repository_dir_abs_path != common_dir_abs_path
@@ -243,7 +339,13 @@ async fn verified_sandbox_git_paths(
         )
         .await
     {
-        return Vec::new();
+        deny!(
+            "linked worktree repository dir `{}` did not point back to .git path `{}` and worktree `{}` under common dir `{}`",
+            repository_dir_abs_path.display(),
+            dot_git_abs_path.display(),
+            repository.work_directory_abs_path.display(),
+            common_dir_abs_path.display()
+        );
     }
 
     vec![
@@ -254,38 +356,92 @@ async fn verified_sandbox_git_paths(
 }
 
 async fn read_gitfile_path(dot_git_abs_path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    let contents = fs.load(dot_git_abs_path).await.ok()?;
-    let gitdir = contents.strip_prefix("gitdir:")?.trim();
-    let gitdir = Path::new(gitdir);
+    let contents = match fs.load(dot_git_abs_path).await {
+        Ok(contents) => contents,
+        Err(error) => {
+            log::debug!(
+                "Could not verify Git metadata path: failed to read gitfile `{}`: {error}",
+                dot_git_abs_path.display()
+            );
+            return None;
+        }
+    };
+    let Some(gitdir) = contents.strip_prefix("gitdir:") else {
+        log::debug!(
+            "Could not verify Git metadata path: gitfile `{}` does not start with `gitdir:`",
+            dot_git_abs_path.display()
+        );
+        return None;
+    };
+    let gitdir = Path::new(gitdir.trim());
+    let Some(dot_git_parent) = dot_git_abs_path.parent() else {
+        log::debug!(
+            "Could not verify Git metadata path: gitfile `{}` has no parent directory",
+            dot_git_abs_path.display()
+        );
+        return None;
+    };
     let path = if gitdir.is_absolute() {
         gitdir.to_path_buf()
     } else {
-        dot_git_abs_path.parent()?.join(gitdir)
+        dot_git_parent.join(gitdir)
     };
-    if fs
-        .metadata(&path)
-        .await
-        .ok()
-        .flatten()
-        .is_some_and(|metadata| metadata.is_symlink)
-    {
-        return None;
+    match fs.metadata(&path).await {
+        Ok(Some(metadata)) if metadata.is_symlink => {
+            log::debug!(
+                "Could not verify Git metadata path: gitfile `{}` points to symlinked gitdir `{}`",
+                dot_git_abs_path.display(),
+                path.display()
+            );
+            return None;
+        }
+        Ok(_) => {}
+        Err(error) => {
+            log::debug!(
+                "Could not check whether gitfile `{}` points to a symlink at `{}`: {error}",
+                dot_git_abs_path.display(),
+                path.display()
+            );
+        }
     }
-    normalize_sandbox_git_path(path, fs).await
+    let normalized_path = normalize_sandbox_git_path(&path, fs).await;
+    if normalized_path.is_none() {
+        log::debug!(
+            "Could not verify Git metadata path: gitfile `{}` points to gitdir `{}` that could not be normalized",
+            dot_git_abs_path.display(),
+            path.display()
+        );
+    }
+    normalized_path
 }
 
 async fn read_commondir_path(repository_dir_abs_path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    let commondir_contents = fs
-        .load(&repository_dir_abs_path.join("commondir"))
-        .await
-        .ok()?;
+    let commondir_abs_path = repository_dir_abs_path.join("commondir");
+    let commondir_contents = match fs.load(&commondir_abs_path).await {
+        Ok(contents) => contents,
+        Err(error) => {
+            log::debug!(
+                "Could not verify Git metadata path: failed to read commondir file `{}`: {error}",
+                commondir_abs_path.display()
+            );
+            return None;
+        }
+    };
     let commondir_path = Path::new(commondir_contents.trim());
     let path = if commondir_path.is_absolute() {
         commondir_path.to_path_buf()
     } else {
         repository_dir_abs_path.join(commondir_path)
     };
-    normalize_sandbox_git_path(path, fs).await
+    let normalized_path = normalize_sandbox_git_path(&path, fs).await;
+    if normalized_path.is_none() {
+        log::debug!(
+            "Could not verify Git metadata path: commondir file `{}` points to `{}` which could not be normalized",
+            commondir_abs_path.display(),
+            path.display()
+        );
+    }
+    normalized_path
 }
 
 async fn linked_worktree_points_back(
@@ -297,43 +453,104 @@ async fn linked_worktree_points_back(
 ) -> bool {
     let expected_repository_parent = common_dir_abs_path.join("worktrees");
     if repository_dir_abs_path.parent() != Some(expected_repository_parent.as_path()) {
+        log::debug!(
+            "Could not verify linked worktree Git metadata: repository dir `{}` is not under expected worktrees dir `{}`",
+            repository_dir_abs_path.display(),
+            expected_repository_parent.display()
+        );
         return false;
     }
 
-    if !fs
-        .metadata(repository_dir_abs_path)
-        .await
-        .ok()
-        .flatten()
-        .is_some_and(|metadata| metadata.is_dir && !metadata.is_symlink)
-    {
-        return false;
+    match fs.metadata(repository_dir_abs_path).await {
+        Ok(Some(metadata)) if metadata.is_dir && !metadata.is_symlink => {}
+        Ok(Some(metadata)) => {
+            log::debug!(
+                "Could not verify linked worktree Git metadata: repository dir `{}` has invalid metadata (is_dir: {}, is_symlink: {})",
+                repository_dir_abs_path.display(),
+                metadata.is_dir,
+                metadata.is_symlink
+            );
+            return false;
+        }
+        Ok(None) => {
+            log::debug!(
+                "Could not verify linked worktree Git metadata: repository dir `{}` does not exist",
+                repository_dir_abs_path.display()
+            );
+            return false;
+        }
+        Err(error) => {
+            log::debug!(
+                "Could not verify linked worktree Git metadata: failed to read metadata for repository dir `{}`: {error}",
+                repository_dir_abs_path.display()
+            );
+            return false;
+        }
     }
 
     let expected_dot_git_abs_path = work_directory_abs_path.join(".git");
     let Some(expected_dot_git_abs_path) =
-        normalize_sandbox_git_path(expected_dot_git_abs_path, fs).await
+        normalize_sandbox_git_path(&expected_dot_git_abs_path, fs).await
     else {
+        log::debug!(
+            "Could not verify linked worktree Git metadata: expected .git path `{}` could not be normalized",
+            expected_dot_git_abs_path.display()
+        );
         return false;
     };
     if dot_git_abs_path != expected_dot_git_abs_path {
+        log::debug!(
+            "Could not verify linked worktree Git metadata: .git path `{}` does not match expected worktree .git path `{}`",
+            dot_git_abs_path.display(),
+            expected_dot_git_abs_path.display()
+        );
         return false;
     }
 
-    read_listed_worktree_gitdir(repository_dir_abs_path, fs)
-        .await
-        .is_some_and(|listed_dot_git_path| listed_dot_git_path == dot_git_abs_path)
+    let Some(listed_dot_git_path) = read_listed_worktree_gitdir(repository_dir_abs_path, fs).await
+    else {
+        return false;
+    };
+    if listed_dot_git_path != dot_git_abs_path {
+        log::debug!(
+            "Could not verify linked worktree Git metadata: repository dir `{}` lists .git path `{}`, expected `{}`",
+            repository_dir_abs_path.display(),
+            listed_dot_git_path.display(),
+            dot_git_abs_path.display()
+        );
+        return false;
+    }
+
+    true
 }
 
 async fn read_listed_worktree_gitdir(worktree_entry_dir: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    let gitdir_contents = fs.load(&worktree_entry_dir.join("gitdir")).await.ok()?;
+    let gitdir_abs_path = worktree_entry_dir.join("gitdir");
+    let gitdir_contents = match fs.load(&gitdir_abs_path).await {
+        Ok(contents) => contents,
+        Err(error) => {
+            log::debug!(
+                "Could not verify linked worktree Git metadata: failed to read worktree gitdir file `{}`: {error}",
+                gitdir_abs_path.display()
+            );
+            return None;
+        }
+    };
     let gitdir_path = Path::new(gitdir_contents.trim());
     let path = if gitdir_path.is_absolute() {
         gitdir_path.to_path_buf()
     } else {
         worktree_entry_dir.join(gitdir_path)
     };
-    normalize_sandbox_git_path(path, fs).await
+    let normalized_path = normalize_sandbox_git_path(&path, fs).await;
+    if normalized_path.is_none() {
+        log::debug!(
+            "Could not verify linked worktree Git metadata: worktree gitdir file `{}` points to `{}` which could not be normalized",
+            gitdir_abs_path.display(),
+            path.display()
+        );
+    }
+    normalized_path
 }
 
 async fn gitdir_belongs_to_submodule_worktree(
@@ -344,27 +561,64 @@ async fn gitdir_belongs_to_submodule_worktree(
     let Some(work_directory_abs_path) =
         normalize_sandbox_git_path(work_directory_abs_path, fs).await
     else {
+        log::debug!(
+            "Could not verify submodule Git metadata: worktree path `{}` could not be normalized",
+            work_directory_abs_path.display()
+        );
         return false;
     };
 
-    read_core_worktree(repository_dir_abs_path, fs)
-        .await
-        .is_some_and(|core_worktree| core_worktree == work_directory_abs_path)
+    let Some(core_worktree) = read_core_worktree(repository_dir_abs_path, fs).await else {
+        return false;
+    };
+    if core_worktree != work_directory_abs_path {
+        log::debug!(
+            "Could not verify submodule Git metadata: repository dir `{}` has core.worktree `{}`, expected `{}`",
+            repository_dir_abs_path.display(),
+            core_worktree.display(),
+            work_directory_abs_path.display()
+        );
+        return false;
+    }
+
+    true
 }
 
 async fn read_core_worktree(repository_dir_abs_path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    let config = fs
-        .load(&repository_dir_abs_path.join("config"))
-        .await
-        .ok()?;
-    let core_worktree = parse_core_worktree(&config)?;
+    let config_abs_path = repository_dir_abs_path.join("config");
+    let config = match fs.load(&config_abs_path).await {
+        Ok(config) => config,
+        Err(error) => {
+            log::debug!(
+                "Could not verify submodule Git metadata: failed to read config `{}`: {error}",
+                config_abs_path.display()
+            );
+            return None;
+        }
+    };
+    let Some(core_worktree) = parse_core_worktree(&config) else {
+        log::debug!(
+            "Could not verify submodule Git metadata: config `{}` did not contain exactly one supported core.worktree value",
+            config_abs_path.display()
+        );
+        return None;
+    };
     let path = Path::new(&core_worktree);
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
         repository_dir_abs_path.join(path)
     };
-    normalize_sandbox_git_path(path, fs).await
+    let normalized_path = normalize_sandbox_git_path(&path, fs).await;
+    if normalized_path.is_none() {
+        log::debug!(
+            "Could not verify submodule Git metadata: core.worktree value `{}` from config `{}` resolved to `{}` which could not be normalized",
+            core_worktree,
+            config_abs_path.display(),
+            path.display()
+        );
+    }
+    normalized_path
 }
 
 fn parse_core_worktree(config: &str) -> Option<String> {

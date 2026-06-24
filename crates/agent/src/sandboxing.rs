@@ -46,12 +46,14 @@ pub fn sandbox_worktree_writable_paths(project: &Project, cx: &App) -> Vec<PathB
         .collect()
 }
 
-/// The `.git` directories the sandbox protects (or, when Git access is granted,
-/// makes writable) for a project. Locating these requires Git knowledge the
-/// sandbox layer can't derive itself: a worktree's `.git`, a linked worktree's
-/// common dir (which lives outside the worktree), and every discovered
-/// repository's git/common dirs. Shared by the terminal tool (enforcement) and
-/// the status UI so the two can't drift.
+/// The candidate `.git` directories the sandbox protects for a project. Locating
+/// these requires Git knowledge the sandbox layer can't derive itself: a
+/// worktree's `.git`, a linked worktree's common dir (which lives outside the
+/// worktree), and every discovered repository's git/common dirs.
+///
+/// When Git metadata access is granted, terminal enforcement and the status UI
+/// both run these candidates through the verifier in `sandbox_git_paths` before
+/// treating external Git metadata as writable.
 pub fn sandbox_git_dirs(project: &Project, cx: &App) -> Vec<PathBuf> {
     let mut git_dirs = Vec::new();
 
