@@ -128,6 +128,7 @@ members = [
     "crates/livekit_client",
     "crates/lmstudio",
     "crates/lsp",
+    "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
     "crates/mermaid_render",
@@ -386,6 +387,7 @@ livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+lsp_locations = { path = "crates/lsp_locations" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 mermaid_render = { path = "crates/mermaid_render" }

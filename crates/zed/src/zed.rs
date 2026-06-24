@@ -5603,6 +5603,7 @@ mod tests {
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             search::init(cx);
+            lsp_locations::init(cx);
             cx.set_global(workspace::PaneSearchBarCallbacks {
                 setup_search_bar: |languages, toolbar, window, cx| {
                     let search_bar =

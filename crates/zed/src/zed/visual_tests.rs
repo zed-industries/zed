@@ -62,6 +62,7 @@ pub fn init_visual_test(cx: &mut VisualTestAppContext) -> Arc<AppState> {
         terminal_view::init(cx);
         image_viewer::init(cx);
         search::init(cx);
+        lsp_locations::init(cx);
         cx.set_global(workspace::PaneSearchBarCallbacks {
             setup_search_bar: |languages, toolbar, window, cx| {
                 let search_bar = cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
