@@ -112,7 +112,6 @@ Sandboxed terminal commands:
 When network access is approved on macOS, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts.
 Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved.
 For networked terminal commands, prefer HTTPS URLs over SSH URLs when possible.
-When Git metadata access is approved, Zed may also expose the inherited `SSH_AUTH_SOCK` Unix socket so workflows such as SSH commit signing can work without granting outbound network access.
 
 ### Linux {#linux}
 
