@@ -141,6 +141,7 @@ impl Mercury {
                 stream: false,
                 stream_options: None,
                 max_completion_tokens: None,
+                max_tokens: None,
                 stop: vec![],
                 temperature: None,
                 tool_choice: None,
