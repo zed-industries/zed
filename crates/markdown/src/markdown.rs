@@ -37,7 +37,7 @@ use gpui::{
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad,
+    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad, size,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -59,6 +59,43 @@ type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
+
+/// Whitespace inserted on the side(s) of an inline code chip that would
+/// otherwise sit flush against a non-whitespace neighbor, giving the chip's
+/// horizontal padding room to breathe. A three-per-em space is wide enough to
+/// read as a gap without looking like a full word space.
+const INLINE_CODE_SPACER: &str = "\u{2004}";
+
+/// Returns true when an inline code chip starting at `code_start` would sit
+/// directly against a non-whitespace character (e.g. `(`code`` or text run into
+/// it), so a spacer should be inserted before it.
+fn inline_code_needs_spacer_before(source: &str, code_start: usize) -> bool {
+    let bytes = source.as_bytes();
+    let mut idx = code_start;
+    while idx > 0 && bytes[idx - 1] == b'`' {
+        idx -= 1;
+    }
+    source[..idx]
+        .chars()
+        .next_back()
+        .is_some_and(|c| !c.is_whitespace())
+}
+
+/// Returns true when an inline code chip ending at `code_end` would sit directly
+/// against a non-whitespace character (e.g. ``code`,`` or ``code`)``), so a
+/// spacer should be inserted after it.
+fn inline_code_needs_spacer_after(source: &str, code_end: usize) -> bool {
+    let bytes = source.as_bytes();
+    let len = source.len();
+    let mut idx = code_end;
+    while idx < len && bytes[idx] == b'`' {
+        idx += 1;
+    }
+    source[idx..]
+        .chars()
+        .next()
+        .is_some_and(|c| !c.is_whitespace())
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -1197,7 +1234,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1256,7 +1293,7 @@ impl MarkdownElement {
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Rc::new(handler));
+        self.on_url_click = Some(Box::new(handler));
         self
     }
 
@@ -1305,6 +1342,7 @@ impl MarkdownElement {
     fn push_markdown_code_span(
         &self,
         builder: &mut MarkdownElementBuilder,
+        source: &str,
         text: &str,
         range: Range<usize>,
         cx: &App,
@@ -1320,16 +1358,31 @@ impl MarkdownElement {
             None
         };
 
-        // Render inline code as a discrete bordered "chip" element when the style
-        // opts in, but only for plain inline code (not code nested inside a
-        // Markdown link, which keeps its link styling and text selection).
-        if let Some(border_color) = self.style.inline_code_border_color
-            && builder.link_depth == 0
-            && builder.code_block_stack.is_empty()
-        {
-            self.push_inline_code_chip(builder, text, range, link_url, border_color);
-            return;
+        // When chip rendering is enabled, the inline code keeps flowing as normal
+        // text (so it wraps, selects, and links just like before) but its
+        // background is painted separately as a rounded, bordered, vertically
+        // inset "chip". Record the source range here and drop the flat run
+        // background so it isn't painted twice.
+        let chip_mode = self.style.inline_code_border_color.is_some();
+        if chip_mode {
+            // The chip background is horizontally padded, so where the code butts
+            // directly against a non-whitespace neighbor (e.g. `code`,) insert a
+            // little real whitespace so the padding has somewhere to go instead
+            // of overlapping that neighbor. Where prose already has a space, none
+            // is added. The code itself stays a clean 1:1 text run so selection
+            // and copy of the code remain accurate.
+            if inline_code_needs_spacer_before(source, range.start) {
+                let at = builder.current_source_index;
+                builder.push_text(INLINE_CODE_SPACER, at..at);
+            }
+            builder.inline_code_ranges.push(range.clone());
         }
+        let strip_background = |mut style: TextStyleRefinement| {
+            if chip_mode {
+                style.background_color = None;
+            }
+            style
+        };
 
         if let Some(url) = link_url {
             builder.push_link(url.clone(), range.clone());
@@ -1339,68 +1392,25 @@ impl MarkdownElement {
                 .as_ref()
                 .and_then(|callback| callback(url.as_ref(), cx))
                 .unwrap_or_else(|| self.style.link.clone());
-            builder.push_text_style(self.style.inline_code.clone());
-            builder.push_text_style(link_style);
-            builder.push_text(text, range);
+            builder.push_text_style(strip_background(self.style.inline_code.clone()));
+            builder.push_text_style(strip_background(link_style));
+            builder.push_text(text, range.clone());
             builder.pop_text_style();
             builder.pop_text_style();
         } else {
-            let mut code_style = self.style.inline_code.clone();
+            let mut code_style = strip_background(self.style.inline_code.clone());
             if builder.link_depth > 0 {
                 code_style.color = self.style.link.color.or(code_style.color);
             }
             builder.push_text_style(code_style);
-            builder.push_text(text, range);
+            builder.push_text(text, range.clone());
             builder.pop_text_style();
         }
-    }
 
-    fn push_inline_code_chip(
-        &self,
-        builder: &mut MarkdownElementBuilder,
-        text: &str,
-        range: Range<usize>,
-        link_url: Option<SharedString>,
-        border_color: Hsla,
-    ) {
-        // Lay the surrounding paragraph out as wrapping inline content so the
-        // chip flows with the text instead of forcing a line break.
-        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_center());
-
-        let mut text_style = builder.base_text_style.clone();
-        text_style.refine(&self.style.inline_code);
-        // Keep the chip compact regardless of the surrounding line height.
-        text_style.line_height = DefiniteLength::Absolute(text_style.font_size);
-        let background = self.style.inline_code.background_color;
-
-        let label =
-            StyledText::new(text.to_string()).with_runs(vec![text_style.to_run(text.len())]);
-
-        let chip = div()
-            .px_1()
-            .border_1()
-            .border_color(border_color)
-            .rounded_sm()
-            .when_some(background, |this, background| this.bg(background))
-            .child(label);
-
-        let chip = if let Some(url) = link_url.filter(|_| !self.style.prevent_mouse_interaction) {
-            let on_url_click = self.on_url_click.clone();
-            chip.id(("markdown-inline-code", range.start))
-                .cursor_pointer()
-                .on_click(move |_event, window, cx| {
-                    if let Some(on_url_click) = on_url_click.as_ref() {
-                        on_url_click(url.clone(), window, cx);
-                    } else {
-                        cx.open_url(&url);
-                    }
-                })
-                .into_any_element()
-        } else {
-            chip.into_any_element()
-        };
-
-        builder.push_inline_child(chip);
+        if chip_mode && inline_code_needs_spacer_after(source, range.end) {
+            let at = builder.current_source_index;
+            builder.push_text(INLINE_CODE_SPACER, at..at);
+        }
     }
 
     fn push_markdown_image(
@@ -1426,7 +1436,7 @@ impl MarkdownElement {
                 .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
         );
 
-        builder.push_inline_child(image_element);
+        builder.push_image_child(image_element);
     }
 
     fn push_markdown_paragraph(
@@ -1704,6 +1714,62 @@ impl MarkdownElement {
         }
     }
 
+    /// Paints a rounded, bordered "chip" background behind each inline code
+    /// span. Unlike a flat text-run background (full line height, no padding),
+    /// the chip is horizontally padded and vertically inset so adjacent lines of
+    /// inline code don't visually merge. This is painted before the text so the
+    /// (opaque) fill sits behind the glyphs.
+    fn paint_inline_code_backgrounds(
+        &self,
+        rendered_text: &RenderedText,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        let Some(border_color) = self.style.inline_code_border_color else {
+            return;
+        };
+        if rendered_text.inline_code_ranges.is_empty() {
+            return;
+        }
+        let Some(fill) = self.style.inline_code.background_color else {
+            return;
+        };
+
+        let font_size = self
+            .style
+            .inline_code
+            .font_size
+            .unwrap_or(self.style.base_text_style.font_size)
+            .to_pixels(window.rem_size());
+        let horizontal_padding = px(2.);
+        let vertical_padding = px(2.);
+        let chip_height = font_size + vertical_padding * 2.;
+
+        for range in rendered_text.inline_code_ranges.iter() {
+            for bounds in rendered_text.bounds_for_source_range(range.clone()) {
+                // Center the (shorter) chip within the taller line box.
+                let height = if chip_height < bounds.size.height {
+                    chip_height
+                } else {
+                    bounds.size.height
+                };
+                let origin_y = bounds.origin.y + (bounds.size.height - height) / 2.;
+                let chip_bounds = Bounds {
+                    origin: point(bounds.origin.x - horizontal_padding, origin_y),
+                    size: size(bounds.size.width + horizontal_padding * 2., height),
+                };
+                window.paint_quad(quad(
+                    chip_bounds,
+                    px(4.),
+                    fill,
+                    Edges::all(px(1.)),
+                    border_color,
+                    BorderStyle::Solid,
+                ));
+            }
+        }
+    }
+
     fn paint_selection(&self, rendered_text: &RenderedText, window: &mut Window, cx: &mut App) {
         let selection = self.markdown.read(cx).selection.clone();
         Self::paint_highlight_range(
@@ -1778,7 +1844,7 @@ impl MarkdownElement {
             window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
-        let on_open_url = self.on_url_click.clone();
+        let on_open_url = self.on_url_click.take();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -2663,6 +2729,7 @@ impl Element for MarkdownElement {
                 MarkdownEvent::Code => {
                     self.push_markdown_code_span(
                         &mut builder,
+                        &parsed_markdown.source,
                         &parsed_markdown.source[range.clone()],
                         range.clone(),
                         cx,
@@ -2691,6 +2758,7 @@ impl Element for MarkdownElement {
                         let code_start = range.start + "<code>".len();
                         self.push_markdown_code_span(
                             &mut builder,
+                            &parsed_markdown.source,
                             code,
                             code_start..code_start + code.len(),
                             cx,
@@ -2804,6 +2872,7 @@ impl Element for MarkdownElement {
         });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
+        self.paint_inline_code_backgrounds(&rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
         self.paint_search_highlights(&rendered_markdown.text, window, cx);
         self.paint_selection(&rendered_markdown.text, window, cx);
@@ -3088,6 +3157,7 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
+    inline_code_ranges: Vec<Range<usize>>,
     rendered_footnote_refs: Vec<RenderedFootnoteRef>,
     current_source_index: usize,
     html_comment: bool,
@@ -3127,6 +3197,7 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
+            inline_code_ranges: Vec::new(),
             rendered_footnote_refs: Vec::new(),
             current_source_index: 0,
             html_comment: false,
@@ -3198,7 +3269,7 @@ impl MarkdownElementBuilder {
         self.push_div(div().pl_4(), range, markdown_end);
     }
 
-    fn push_inline_child(&mut self, child: impl IntoElement) {
+    fn push_image_child(&mut self, child: impl IntoElement) {
         self.flush_text();
         self.div_stack
             .last_mut()
@@ -3459,6 +3530,7 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
+                inline_code_ranges: self.inline_code_ranges.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
             },
         }
@@ -3658,6 +3730,7 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
+    inline_code_ranges: Rc<[Range<usize>]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
 }
 
