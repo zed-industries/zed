@@ -207,6 +207,21 @@ fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
     start..end
 }
 
+fn is_br_tag(html: &str) -> bool {
+    let Some(inner) = html
+        .trim()
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+    else {
+        return false;
+    };
+    let inner = inner.strip_suffix('/').unwrap_or(inner);
+    inner
+        .split_ascii_whitespace()
+        .next()
+        .is_some_and(|name| name.eq_ignore_ascii_case("br"))
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
@@ -488,13 +503,13 @@ pub(crate) fn parse_markdown_with_options(
                     parsed,
                 }];
 
-                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _)))
-                    || (parse_html
-                        && matches!(
-                            parser.peek(),
-                            Some((pulldown_cmark::Event::InlineHtml(_), _))
-                        ))
-                {
+                while match parser.peek() {
+                    Some((pulldown_cmark::Event::Text(_), _)) => true,
+                    Some((pulldown_cmark::Event::InlineHtml(html), _)) => {
+                        parse_html && !is_br_tag(html)
+                    }
+                    _ => false,
+                } {
                     let Some((next_event, next_range)) = parser.next() else {
                         unreachable!()
                     };
@@ -616,8 +631,12 @@ pub(crate) fn parse_markdown_with_options(
                 state.push_event(content_range, MarkdownEvent::Code)
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
-            pulldown_cmark::Event::InlineHtml(_) => {
-                state.push_event(range, MarkdownEvent::InlineHtml)
+            pulldown_cmark::Event::InlineHtml(html) => {
+                if parse_html && is_br_tag(&html) {
+                    state.push_event(range, MarkdownEvent::HardBreak)
+                } else {
+                    state.push_event(range, MarkdownEvent::InlineHtml)
+                }
             }
             pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
                 range,
@@ -1663,5 +1682,93 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn test_br_tag_emits_hard_break() {
+        for input in [
+            "hello<br>world",
+            "hello<br/>world",
+            "hello<br />world",
+            "hello<br >world",
+            "hello<BR>world",
+            "hello<br class=\"x\">world",
+            "hello<br class=\"x\"/>world",
+        ] {
+            let parsed = parse_markdown_with_options(input, true, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            let has_empty_substituted_text = parsed.events.iter().any(|(_, event)| {
+                matches!(event, MarkdownEvent::SubstitutedText(text) if text.is_empty())
+            });
+            assert!(has_hard_break, "<br> in \"{input}\" should emit HardBreak");
+            assert!(
+                !has_empty_substituted_text,
+                "<br> in \"{input}\" should not produce empty SubstitutedText"
+            );
+        }
+    }
+
+    #[test]
+    fn test_br_tag_not_a_hard_break_without_parse_html() {
+        for input in ["hello<br>world", "hello<br/>world", "hello<br />world"] {
+            let parsed = parse_markdown_with_options(input, false, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            let has_inline_html = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::InlineHtml));
+            assert!(
+                !has_hard_break,
+                "<br> in \"{input}\" should not emit HardBreak when parse_html is disabled"
+            );
+            assert!(
+                has_inline_html,
+                "<br> in \"{input}\" should be preserved as InlineHtml when parse_html is disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn test_br_prefixed_tag_is_not_a_hard_break() {
+        for input in ["a<break>b", "a<brick>b", "a<b>bold</b>c"] {
+            let parsed = parse_markdown_with_options(input, true, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            assert!(
+                !has_hard_break,
+                "\"{input}\" should not be treated as a <br> hard break"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unrecognized_inline_html_preserved_as_inline_html() {
+        for input in ["a<span>b</span>c", "a<em>b</em>c", "a<strong>b</strong>c"] {
+            let parsed = parse_markdown_with_options(input, false, false, false);
+            let has_inline_html = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::InlineHtml));
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            assert!(
+                has_inline_html,
+                "unrecognized inline HTML \"{input}\" should emit InlineHtml"
+            );
+            assert!(
+                !has_hard_break,
+                "unrecognized inline HTML \"{input}\" should not emit HardBreak"
+            );
+        }
     }
 }
