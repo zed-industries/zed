@@ -207,7 +207,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         // rather than behind a sub-page.
         ProviderConfigurationView::Inline {
             view: self.configuration_view(target_agent, window, cx),
-            api_key_url: None,
+            description: None,
         }
     }
 

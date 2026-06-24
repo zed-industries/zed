@@ -5,12 +5,12 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderConfigurationView,
-    RateLimiter, env_var,
+    ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    ProviderConfigurationView, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -242,7 +242,9 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     )
                 })
                 .into(),
-            api_key_url: Some("https://platform.openai.com/api-keys".into()),
+            description: Some(InlineDescription::ApiKeyUrl(
+                "https://platform.openai.com/api-keys".into(),
+            )),
         }
     }
 

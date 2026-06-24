@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use gpui::{ScrollHandle, prelude::*};
 use language_model::{
-    ConfigurationViewTargetAgent, IconOrSvg, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry, ProviderConfigurationView,
+    ConfigurationViewTargetAgent, IconOrSvg, InlineDescription, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelRegistry, ProviderConfigurationView,
 };
-use ui::{ButtonLink, Divider, Tooltip, prelude::*};
+use ui::{ButtonLink, Divider, prelude::*};
 
 use crate::SettingsWindow;
 
@@ -56,12 +56,12 @@ fn render_provider_row(
     .size(IconSize::Small)
     .color(Color::Muted);
 
-    let (control, api_key_url) =
+    let (control, description) =
         match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
         {
-            ProviderConfigurationView::Inline { view, api_key_url } => {
+            ProviderConfigurationView::Inline { view, description } => {
                 let control = view.into_any_element();
-                (control, api_key_url)
+                (control, description)
             }
             ProviderConfigurationView::SubPage(_) => {
                 let provider_id = provider_id.clone();
@@ -83,7 +83,8 @@ fn render_provider_row(
         };
 
     let left = v_flex()
-        .flex_none()
+        .flex_1()
+        .min_w_0()
         .gap_0p5()
         .child(
             h_flex()
@@ -91,33 +92,43 @@ fn render_provider_row(
                 .child(icon)
                 .child(Label::new(&provider_name)),
         )
-        .when_some(api_key_url, |this, url| {
-            this.child(render_where_to_find_key(provider_name, url))
+        .when_some(description, |this, description| {
+            this.max_w_1_2()
+                .child(render_inline_description(provider_name, description))
         });
 
     h_flex()
-        .min_w_0()
         .w_full()
         .py_4()
         .gap_4()
         .justify_between()
         .child(left)
-        .child(control)
+        .child(h_flex().flex_none().child(control))
         .into_any_element()
 }
 
-fn render_where_to_find_key(provider_name: SharedString, url: SharedString) -> impl IntoElement {
-    h_flex()
-        .gap_0p5()
-        .child(
-            Label::new(format!("To find an API key, visit the"))
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
-        .child(
-            ButtonLink::new(format!("{provider_name} dashboard."), url)
-                .label_size(LabelSize::Small),
-        )
+fn render_inline_description(
+    provider_name: SharedString,
+    description: InlineDescription,
+) -> AnyElement {
+    match description {
+        InlineDescription::ApiKeyUrl(url) => h_flex()
+            .gap_0p5()
+            .child(
+                Label::new("To find an API key, visit the")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                ButtonLink::new(format!("{provider_name} dashboard."), url)
+                    .label_size(LabelSize::Small),
+            )
+            .into_any_element(),
+        InlineDescription::Text(text) => Label::new(text)
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+            .into_any_element(),
+    }
 }
 
 fn open_provider_configuration(

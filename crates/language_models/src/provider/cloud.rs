@@ -380,7 +380,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         // inline even though it isn't an API-key field.
         ProviderConfigurationView::Inline {
             view: self.configuration_view(target_agent, window, cx),
-            api_key_url: None,
+            description: None,
         }
     }
 

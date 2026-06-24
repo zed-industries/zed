@@ -119,8 +119,7 @@ impl Render for ApiKeyEditor {
                 )
                 .into_any_element(),
             ApiKeyStatus::Unset => div()
-                .w_full()
-                .max_w(rems_from_px(240.))
+                .w(rems_from_px(240.))
                 .on_action(cx.listener(Self::save))
                 .child(self.input.clone())
                 .into_any_element(),

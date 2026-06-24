@@ -9,9 +9,9 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
-    ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     ProviderConfigurationView, RateLimiter, env_var,
 };
@@ -313,7 +313,9 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     )
                 })
                 .into(),
-            api_key_url: Some("https://console.anthropic.com/settings/keys".into()),
+            description: Some(InlineDescription::ApiKeyUrl(
+                "https://console.anthropic.com/settings/keys".into(),
+            )),
         }
     }
 

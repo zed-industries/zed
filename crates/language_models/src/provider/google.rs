@@ -7,9 +7,9 @@ pub use google_ai::completion::{GoogleEventMapper, into_google};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    ProviderConfigurationView,
+    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, InlineDescription,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, ProviderConfigurationView,
 };
 use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
@@ -260,7 +260,9 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     )
                 })
                 .into(),
-            api_key_url: Some("https://aistudio.google.com/app/apikey".into()),
+            description: Some(InlineDescription::ApiKeyUrl(
+                "https://aistudio.google.com/app/apikey".into(),
+            )),
         }
     }
 }
