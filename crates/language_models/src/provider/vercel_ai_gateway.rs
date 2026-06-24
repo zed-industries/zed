@@ -482,6 +482,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             self.model.capabilities.parallel_tool_calls,
             self.model.capabilities.prompt_cache_key,
             self.max_output_tokens(),
+            crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             None,
             false,
         );
@@ -617,6 +618,7 @@ async fn list_models(
                 prompt_cache_key,
                 chat_completions: true,
                 interleaved_reasoning: false,
+                max_tokens_parameter: false,
             },
         });
     }

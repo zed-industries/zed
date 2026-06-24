@@ -111,9 +111,6 @@ impl CommitTagPicker {
         let picker = cx.new(|cx| {
             Picker::nonsearchable_uniform_list(delegate, window, cx)
                 .initial_width(COMMIT_TAG_LIST_WIDTH_IN_REMS)
-                .minimum_results_width(COMMIT_TAG_LIST_WIDTH_IN_REMS)
-                .height(rems(24.))
-                .no_vertical_padding()
         });
         Self { picker }
     }

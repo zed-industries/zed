@@ -38,6 +38,8 @@ This method should return the command to start up an MCP server, along with any 
 
 If you need to download the MCP server from an external source (GitHub Releases, npm, etc.), you can also do that in this function.
 
+> Note that this is only intended currently for servers published either as binaries or via NPM. Remote context servers should be added natively via the UI, see [the relevant section in the MCP documentation](../ai/mcp.md#as-custom-servers).
+
 ## Available Extensions
 
 See MCP servers published as extensions [on Zed's site](https://zed.dev/extensions?filter=context-servers).

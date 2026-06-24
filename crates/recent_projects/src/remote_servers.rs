@@ -132,7 +132,7 @@ impl AddWslDistro {
         use crate::wsl_picker::{WslDistroSelected, WslPickerDelegate, WslPickerDismissed};
 
         let delegate = WslPickerDelegate::new();
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         cx.subscribe_in(
             &picker,
@@ -398,12 +398,7 @@ impl ProjectPicker {
         let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx).show_hidden();
 
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding()
-                .modal(false);
+            let picker = Picker::uniform_list(delegate, window, cx).embedded();
             picker.set_query(&home_dir.to_string(), window, cx);
             picker
         });
@@ -1457,7 +1452,7 @@ impl RemoteServerProjects {
         if configs.len() > 1 {
             let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
             this.dev_container_picker =
-                Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
+                Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded()));
         } else if let Some(context) = dev_container_context {
             let config = configs.into_iter().next();
             this.open_dev_container(config, app_state, context, window, cx);
@@ -1506,10 +1501,7 @@ impl RemoteServerProjects {
                 true,
                 cx,
             );
-            Picker::list(delegate, window, cx)
-                .modal(false)
-                .initial_width(rems(34.))
-                .height(rems(24.))
+            Picker::list(delegate, window, cx).embedded()
         });
         let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
@@ -2217,7 +2209,7 @@ impl RemoteServerProjects {
         if configs.len() > 1 {
             let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
             self.dev_container_picker =
-                Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
+                Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded()));
 
             let state =
                 CreateRemoteDevContainer::new(DevContainerCreationProgress::SelectingConfig, cx);

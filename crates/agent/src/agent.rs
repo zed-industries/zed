@@ -314,6 +314,7 @@ impl LanguageModels {
             }),
             is_latest: model.is_latest(),
             cost: model.model_cost_info().map(|cost| cost.to_shared_string()),
+            disabled: model.is_disabled(),
         }
     }
 
@@ -5549,6 +5550,7 @@ mod internal_tests {
                         ui::IconName::ZedAssistant
                     )),
                     is_latest: false,
+                    disabled: None,
                     cost: None,
                 }]
             )])

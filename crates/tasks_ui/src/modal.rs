@@ -6,7 +6,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
     Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity,
-    Window, rems,
+    Window,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -148,11 +148,7 @@ impl TasksModal {
                 window,
                 cx,
             )
-            .modal(is_modal)
-            .initial_width(rems(34.))
-            .minimum_results_width(rems(34.))
-            .height(rems(24.))
-            .no_vertical_padding()
+            .when(!is_modal, |picker| picker.embedded())
         });
         let mut _subscriptions = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
