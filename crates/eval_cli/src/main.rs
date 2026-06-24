@@ -890,15 +890,24 @@ async fn run_agent(
     let cumulative_usage = if let Some(thread) = &thread {
         let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx));
         let db_thread = db_thread.await;
-        step_count = Some(db_thread.agent_turn_count() as u64);
-        let counts = db_thread.tool_use_counts();
-        tool_call_count = Some(counts.values().map(|count| *count as u64).sum());
-        tool_calls = Some(
-            counts
-                .into_iter()
-                .map(|(name, count)| (name, count as u64))
-                .collect(),
-        );
+        let mut counts = std::collections::BTreeMap::<String, u64>::new();
+        let mut agent_turn_count = 0;
+        for message in &db_thread.messages {
+            let Some(agent_message) = message.as_agent_message() else {
+                continue;
+            };
+            agent_turn_count += 1;
+            for request_message in agent_message.to_request() {
+                for content in request_message.content {
+                    if let language_model::MessageContent::ToolUse(tool_use) = content {
+                        *counts.entry(tool_use.name.to_string()).or_default() += 1;
+                    }
+                }
+            }
+        }
+        step_count = Some(agent_turn_count);
+        tool_call_count = Some(counts.values().sum());
+        tool_calls = Some(counts);
         let usage = db_thread.cumulative_token_usage;
         if usage.input_tokens > 0 || usage.output_tokens > 0 {
             Some(usage)
