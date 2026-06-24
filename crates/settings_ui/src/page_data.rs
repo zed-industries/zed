@@ -5776,7 +5776,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 16] {
+    fn git_panel_section() -> [SettingsPageItem; 17] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5987,6 +5987,29 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .diff_stats = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Primary Click Behavior",
+                description: "Default action when clicking a changed file in the Git panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.entry_primary_click_action"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .entry_primary_click_action
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .entry_primary_click_action = value;
                     },
                 }),
                 metadata: None,

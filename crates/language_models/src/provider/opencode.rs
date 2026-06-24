@@ -27,7 +27,8 @@ use util::ResultExt;
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    into_open_ai_response,
 };
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
@@ -693,6 +694,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     false,
                     false,
                     self.model.max_output_tokens(self.subscription),
+                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     reasoning_effort,
                     self.model.interleaved_reasoning(),
                 );

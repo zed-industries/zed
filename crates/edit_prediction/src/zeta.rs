@@ -1,15 +1,15 @@
 use crate::{
     CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, ZedUpdateRequiredError, buffer_path_with_id_fallback,
+    EditPredictionStore, PromptHistoryBoundary, ZedUpdateRequiredError,
+    buffer_path_with_id_fallback,
+    capture_prediction_context::CapturedPredictionContext,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
-    data_collection::UncommittedDiffResult,
     prediction::EditPredictionResult,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use cloud_llm_client::{AcceptEditPredictionBody, predict_edits_v3::RawCompletionRequest};
 use edit_prediction_types::PredictedCursorPosition;
-use futures::future::Shared;
 use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
@@ -33,7 +33,7 @@ use crate::open_ai_compatible::{
     load_open_ai_compatible_api_key_if_needed, send_custom_server_request,
 };
 
-pub fn request_prediction_with_zeta(
+pub(crate) fn request_prediction_with_zeta(
     store: &mut EditPredictionStore,
     EditPredictionModelInput {
         buffer,
@@ -41,7 +41,6 @@ pub fn request_prediction_with_zeta(
         position,
         related_files,
         events,
-        stored_events,
         debug_tx,
         mode,
         trigger,
@@ -51,7 +50,8 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_data: Option<Shared<Task<UncommittedDiffResult>>>,
+    context_task: Option<Task<Result<CapturedPredictionContext>>>,
+    prompt_history_boundary: Option<PromptHistoryBoundary>,
     repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
@@ -413,49 +413,7 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_data.and_then(|uncommitted_diffs| {
-                let (recently_opened_files, recently_viewed_files) = this
-                    .read_with(cx, |this, _| {
-                        (
-                            this.recently_opened_files_for_project(&project),
-                            this.recently_viewed_files_for_project(&project),
-                        )
-                    })
-                    .ok()?;
-                Some(cx.spawn({
-                    let project = project.clone();
-                    let edited_buffer = edited_buffer.clone();
-                    async move |cx| {
-                        let uncommitted_diffs = uncommitted_diffs
-                            .await
-                            .map_err(|error| anyhow::anyhow!("{error:?}"))
-                            .context("failed to capture uncommitted diff")?;
-                        let Some(task) = cx.update(|cx| {
-                            crate::capture_example::capture_example(
-                                project.clone(),
-                                edited_buffer.clone(),
-                                position,
-                                stored_events,
-                                recently_opened_files,
-                                recently_viewed_files,
-                                uncommitted_diffs,
-                                false,
-                                cx,
-                            )
-                        }) else {
-                            return Err(anyhow::anyhow!("failed to capture example"));
-                        };
-                        task.await
-                    }
-                }))
-            });
             cx.spawn(async move |cx| {
-                let example_spec = if let Some(task) = example_task {
-                    task.await.ok()
-                } else {
-                    None
-                };
-
                 weak_this
                     .update(cx, |this, cx| {
                         this.enqueue_settled_prediction(
@@ -465,7 +423,8 @@ pub fn request_prediction_with_zeta(
                             &edited_buffer_snapshot,
                             editable_range_in_buffer,
                             &edit_preview,
-                            example_spec,
+                            context_task,
+                            prompt_history_boundary,
                             model_version,
                             request_duration,
                             cx,
@@ -549,8 +508,8 @@ fn handle_api_response<T>(
 
 const ACTIVE_BUFFER_DIAGNOSTIC_ADDITIONAL_CONTEXT_TOKEN_COUNT: usize = 100;
 const MAX_ACTIVE_BUFFER_DIAGNOSTICS_TO_COLLECT: usize = 20;
-const MAX_ACTIVE_BUFFER_DIAGNOSTIC_MESSAGE_TOKENS_TO_COLLECT: usize = 512;
-const MAX_ACTIVE_BUFFER_DIAGNOSTIC_SNIPPET_TOKENS_TO_COLLECT: usize = 512;
+pub(crate) const MAX_ACTIVE_BUFFER_DIAGNOSTIC_MESSAGE_TOKENS_TO_COLLECT: usize = 512;
+pub(crate) const MAX_ACTIVE_BUFFER_DIAGNOSTIC_SNIPPET_TOKENS_TO_COLLECT: usize = 512;
 
 pub(crate) fn active_buffer_diagnostics(
     snapshot: &language::BufferSnapshot,

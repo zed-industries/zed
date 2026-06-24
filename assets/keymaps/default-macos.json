@@ -508,7 +508,7 @@
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex",
-      "cmd-alt-p": "project_search::OpenTextFinder",
+      "alt-cmd-f": "project_search::OpenTextFinder",
     },
   },
   {
@@ -542,7 +542,7 @@
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex",
-      "cmd-alt-p": "project_search::OpenTextFinder",
+      "alt-cmd-f": "project_search::OpenTextFinder",
     },
   },
   {
