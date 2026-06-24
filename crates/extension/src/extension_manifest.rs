@@ -365,7 +365,6 @@ pub struct SlashCommandManifestEntry {
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
-    #[serde(default)]
     pub schema_path: Option<RelPathBuf>,
 }
 
@@ -494,7 +493,6 @@ mod tests {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {
             schema_path: Some(rel_path_buf("foo/bar")),
-            ..Default::default()
         };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
