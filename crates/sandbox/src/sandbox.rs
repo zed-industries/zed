@@ -584,9 +584,6 @@ impl Sandbox {
             .collect();
         writable.extend(git_writable.iter().map(PathBuf::as_path));
         let protected: Vec<&Path> = git_protected.iter().map(PathBuf::as_path).collect();
-
-        // SSH-agent socket handling (commit signing) is deferred, so no unix
-        // sockets are allowed for now.
         let (program, args, config) = macos_seatbelt::wrap_invocation(
             &command.program,
             &command.args,

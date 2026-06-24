@@ -115,10 +115,9 @@ Sandboxed terminal commands:
 - cannot write elsewhere unless you approve additional paths or broader write access
 - cannot reach the network unless you approve network access
 
-When host-specific network access is approved on macOS, Zed uses an HTTP/HTTPS proxy so access can be limited to approved
-hosts. Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even
-after host-specific network access is approved. For networked terminal commands, prefer HTTPS URLs over SSH URLs when
-possible.
+When network access is approved on macOS, Zed uses an HTTP/HTTPS proxy so access can be limited to approved hosts.
+Tools that do not honor proxy environment variables, such as SSH, FTP, and raw socket clients, may not work even after host-specific network access is approved.
+For networked terminal commands, prefer HTTPS URLs over SSH URLs when possible.
 
 ### Linux {#linux}
 

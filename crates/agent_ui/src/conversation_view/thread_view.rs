@@ -9,7 +9,7 @@ use agent_client_protocol::schema::v1 as acp;
 use std::cell::RefCell;
 
 use acp_thread::{
-    ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
+    PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
     SandboxNotAppliedReason,
 };
 use agent::{
@@ -6179,15 +6179,7 @@ impl ThreadView {
                 if matches!(tool_call.status, ToolCallStatus::Canceled) {
                     let has_visible_content =
                         tool_call.content.iter().any(|content| match content {
-                            ToolCallContent::ContentBlock(block) => match block {
-                                ContentBlock::Empty => false,
-                                ContentBlock::Markdown { markdown } => {
-                                    !markdown.read(cx).source().trim().is_empty()
-                                }
-                                ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => {
-                                    true
-                                }
-                            },
+                            ToolCallContent::ContentBlock(block) => block.visible_content(cx),
                             ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => true,
                         });
                     if !has_visible_content {
@@ -9527,7 +9519,18 @@ impl ThreadView {
     ) -> AnyElement {
         match content {
             ToolCallContent::ContentBlock(content) => {
-                if let Some(resource_link) = content.resource_link() {
+                if let Some((resource, markdown)) = content.embedded_resource() {
+                    self.render_embedded_resource_output(
+                        resource,
+                        markdown.cloned(),
+                        entry_ix,
+                        context_ix,
+                        tool_call,
+                        card_layout,
+                        window,
+                        cx,
+                    )
+                } else if let Some(resource_link) = content.resource_link() {
                     self.render_resource_link(resource_link, cx)
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
@@ -9539,16 +9542,9 @@ impl ThreadView {
                         window,
                         cx,
                     )
-                } else if let Some((image, dimensions)) = content.image() {
+                } else if let Some((image, _)) = content.image() {
                     let location = tool_call.locations.first().cloned();
-                    self.render_image_output(
-                        entry_ix,
-                        image.clone(),
-                        dimensions,
-                        location,
-                        card_layout,
-                        cx,
-                    )
+                    self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
                 } else {
                     Empty.into_any_element()
                 }
@@ -9567,6 +9563,60 @@ impl ThreadView {
                 cx,
             ),
         }
+    }
+
+    fn render_embedded_resource_output(
+        &self,
+        resource: &acp::EmbeddedResource,
+        markdown: Option<Entity<Markdown>>,
+        entry_ix: usize,
+        context_ix: usize,
+        tool_call: &ToolCall,
+        card_layout: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        if let Some(markdown) = markdown {
+            return self.render_markdown_output(
+                markdown,
+                entry_ix,
+                context_ix,
+                tool_call,
+                card_layout,
+                window,
+                cx,
+            );
+        }
+
+        let uri = match &resource.resource {
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
+            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
+            _ => "",
+        };
+
+        v_flex()
+            .gap_1()
+            .map(|this| {
+                if card_layout {
+                    this.p_2().when(context_ix > 0, |this| {
+                        this.border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
+                    })
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                }
+            })
+            .when(!uri.is_empty(), |this| {
+                this.child(
+                    Label::new(uri.to_string())
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_resource_link(
@@ -9762,28 +9812,10 @@ impl ThreadView {
         &self,
         entry_ix: usize,
         image: Arc<gpui::Image>,
-        dimensions: Option<gpui::Size<u32>>,
         location: Option<acp::ToolCallLocation>,
         card_layout: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let format_name = match image.format() {
-            gpui::ImageFormat::Png => "PNG",
-            gpui::ImageFormat::Jpeg => "JPEG",
-            gpui::ImageFormat::Webp => "WebP",
-            gpui::ImageFormat::Gif => "GIF",
-            gpui::ImageFormat::Svg => "SVG",
-            gpui::ImageFormat::Bmp => "BMP",
-            gpui::ImageFormat::Tiff => "TIFF",
-            gpui::ImageFormat::Ico => "ICO",
-            gpui::ImageFormat::Pnm => "PNM",
-        };
-        let dimensions_label = if let Some(size) = dimensions {
-            format!("{}×{} {}", size.width, size.height, format_name)
-        } else {
-            format_name.into()
-        };
-
         v_flex()
             .gap_2()
             .map(|this| {
@@ -9796,27 +9828,17 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        Label::new(dimensions_label)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .when_some(location, |this, _loc| {
-                        this.child(
-                            Button::new(("go-to-file", entry_ix), "Go to File")
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_tool_call_location(entry_ix, 0, window, cx);
-                                })),
-                        )
-                    }),
-            )
+            .when_some(location, |this, _loc| {
+                this.child(
+                    h_flex().w_full().justify_end().child(
+                        Button::new(("go-to-file", entry_ix), "Go to File")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tool_call_location(entry_ix, 0, window, cx);
+                            })),
+                    ),
+                )
+            })
             .child(
                 img(image)
                     .max_w_96()
@@ -9906,8 +9928,8 @@ impl ThreadView {
 
         let is_cancelled = matches!(tool_call.status, ToolCallStatus::Canceled)
             || tool_call.content.iter().any(|c| match c {
-                ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                    markdown.read(cx).source() == "User canceled"
+                ToolCallContent::ContentBlock(block) => {
+                    block.text_content(cx) == Some("User canceled")
                 }
                 _ => false,
             });
@@ -10284,14 +10306,12 @@ impl ThreadView {
         if matches!(status, ToolCallStatus::Failed) {
             tool_call.content.iter().find_map(|content| {
                 if let ToolCallContent::ContentBlock(block) = content {
-                    if let acp_thread::ContentBlock::Markdown { markdown } = block {
-                        let source = markdown.read(cx).source().to_string();
-                        if !source.is_empty() {
-                            if source == "User canceled" {
-                                return None;
-                            } else {
-                                return Some(SharedString::from(source));
-                            }
+                    if let Some(source) = block.text_content(cx).filter(|source| !source.is_empty())
+                    {
+                        if source == "User canceled" {
+                            return None;
+                        } else {
+                            return Some(SharedString::from(source));
                         }
                     }
                 }
