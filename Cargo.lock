@@ -14041,7 +14041,6 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
- "command_palette_hooks",
  "criterion",
  "editor",
  "feature_flags",
