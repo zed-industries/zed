@@ -24,6 +24,7 @@ use wayland_protocols::{
     wp::fractional_scale::v1::client::wp_fractional_scale_v1,
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
@@ -81,6 +82,21 @@ impl rwh::HasDisplayHandle for RawWindow {
 }
 
 #[derive(Debug)]
+pub(crate) enum BlurSurface {
+    ExtBackgroundEffect(ExtBackgroundEffectSurfaceV1),
+    KdeBlur(org_kde_kwin_blur::OrgKdeKwinBlur),
+}
+
+impl BlurSurface {
+    fn destroy(&mut self) {
+        match self {
+            BlurSurface::ExtBackgroundEffect(surface) => surface.destroy(),
+            BlurSurface::KdeBlur(blur) => blur.release(),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct InProgressConfigure {
     size: Option<Size<Pixels>>,
     fullscreen: bool,
@@ -97,7 +113,7 @@ pub struct WaylandWindowState {
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
-    blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    pub blur: Option<BlurSurface>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -464,8 +480,8 @@ impl Drop for WaylandWindow {
         state.renderer.destroy();
 
         // Destroy blur first, this has no dependencies.
-        if let Some(blur) = &state.blur {
-            blur.release();
+        if let Some(mut blur) = state.blur.take() {
+            blur.destroy();
         }
 
         // Decorations must be destroyed before the xdg state.
@@ -696,6 +712,9 @@ impl WaylandWindowStatePtr {
                 state.acknowledged_first_configure = true;
                 drop(state);
                 self.frame();
+            } else {
+                drop(state);
+                update_window(self.state.borrow_mut());
             }
         }
     }
@@ -1633,19 +1652,54 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.surface.set_opaque_region(None);
     }
 
-    if let Some(ref blur_manager) = state.globals.blur_manager {
+    if let Some(ref blur_manager) = state.globals.ext_background_effect_manager {
+        if state.background_appearance == WindowBackgroundAppearance::Blurred {
+            if state.blur.is_none() {
+                let surface_effect =
+                    blur_manager.get_background_effect(&state.surface, &state.globals.qh, ());
+                state.blur = Some(BlurSurface::ExtBackgroundEffect(surface_effect));
+            }
+            // Set the blur region to cover the entire surface.
+            // The compositor clips this to the surface size.
+            let blur_region = state
+                .globals
+                .compositor
+                .create_region(&state.globals.qh, ());
+            let surface_width = f32::from(state.bounds.size.width) as i32;
+            let surface_height = f32::from(state.bounds.size.height) as i32;
+            blur_region.add(0, 0, surface_width, surface_height);
+            if let BlurSurface::ExtBackgroundEffect(surface) = state.blur.as_ref().unwrap() {
+                surface.set_blur_region(Some(&blur_region));
+            }
+            blur_region.destroy();
+        } else {
+            // Remove the blur effect by destroying the background effect surface.
+            if let Some(mut blur) = state.blur.take() {
+                blur.destroy();
+            }
+        }
+    } else if let Some(ref blur_manager) = state.globals.blur_manager {
+        // Fallback to the deprecated KDE blur protocol for older compositors
+        // (e.g. X11, pre-6.7 Plasma) where ext-background-effect is not available.
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.blur.is_none() {
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                state.blur = Some(blur);
+                state.blur = Some(BlurSurface::KdeBlur(blur));
             }
-            state.blur.as_ref().unwrap().commit();
+            if let BlurSurface::KdeBlur(blur) = state.blur.as_ref().unwrap() {
+                blur.commit();
+            }
         } else {
-            // It probably doesn't hurt to clear the blur for opaque windows
             blur_manager.unset(&state.surface);
-            if let Some(b) = state.blur.take() {
-                b.release()
+            if let Some(mut blur) = state.blur.take() {
+                blur.destroy();
             }
+        }
+    }
+
+    if state.background_appearance == WindowBackgroundAppearance::Blurred {
+        if state.blur.is_none() {
+            log::warn!("Background blur requested but no blur protocol is available");
         }
     }
 
