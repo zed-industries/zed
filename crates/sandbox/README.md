@@ -1,74 +1,62 @@
 # `sandbox`
 
-Cross-platform sandboxing for shell commands that the agent runs on the user's
-behalf. Callers describe **intent** (what a command may touch); the crate decides
-how to enforce it on each OS.
+Cross-platform sandboxing for shell commands.
 
-> Status: this document describes the **target state**. See
-> [Implementation status](#implementation-status) for what is actually wired up
-> today.
+## Overview
 
-## Contents
+This crate allows creating a `Sandbox` according to some `SandboxPolicy`. A
+`SandboxPolicy` expresses:
+- what filesystem operations are allowed
+- which kinds of networking operations are allowed
+- whether git metadata is protected
 
-- [What it does](#what-it-does)
-- [Public surface](#public-surface)
-- [Threat model](#threat-model)
-- [The core hazard: bind-source TOCTOU](#the-core-hazard-bind-source-toctou)
-- [Key types](#key-types)
-- [Capture-at-validation](#capture-at-validation)
-- [Per-platform design](#per-platform-design)
-  - [macOS (Seatbelt)](#macos-seatbelt)
-  - [Linux (Bubblewrap)](#linux-bubblewrap)
-  - [Windows (Bubblewrap in WSL)](#windows-bubblewrap-in-wsl)
-- [Implementation status](#implementation-status)
+Once you have a `Sandbox`, you can use it to run commands that are constrained
+by that policy.
 
-## What it does
+## Security model
 
-A [`SandboxPolicy`] expresses three independent dimensions of intent:
+All untrusted code is assumed to be maximally hostile. We do *not* assume that
+the untrusted code is written by a well-meaning-but-perhaps-marginally-unaligned
+AI agent.
 
-- **Filesystem** — either unrestricted writes, or reads-everywhere with writes
-  confined to a set of locations.
-- **Network** — blocked, unrestricted, or restricted to an allowlist of hosts
-  (enforced by an in-process HTTP/HTTPS proxy the crate owns).
-- **Git metadata** — the project's `.git` directories, either protected
-  (read-only / write-denied) or made writable.
+## Implementation
 
-`Sandbox::wrap` turns a `CommandAndArgs` into a `WrappedCommand` (plain
-`program` + `args` + `env` + `cwd`) that the caller spawns however it likes (a
-PTY, `std::process`, …). Resources that must outlive the spawned process (the
-network proxy, captured file descriptors, the macOS policy file) live in the
-`Sandbox`, which the caller keeps alive for the command's duration.
+The implementations are highly platform-specific:
+- Mac support comes from Seatbelt
+- Linux support comes from [bubblewrap], implemented via Linux [namespaces].
+- Windows:
+  - WSL: same as Linux
+  - non-WSL: not supported
 
-How each dimension is enforced — Seatbelt rules, Bubblewrap flags, a loopback
-proxy — is an implementation detail behind that intent-based surface.
+Note that WSL shells can be used on all Windows projects, regardless of whether
+the files are stored in the Linux filesystem or not.
 
-## Public surface
+## Architecture
 
-- `SandboxPolicy { fs, network, git }` and the per-dimension enums.
-- `HostFilesystemLocation` / `SandboxFilesystemLocation` — see
-  [Key types](#key-types). **All filesystem grants in the policy are
-  `HostFilesystemLocation`, never bare paths.**
-- `Sandbox::new`, `Sandbox::can_create`, `Sandbox::wrap`, `Sandbox::execute`.
-- `run_sandbox_launcher_if_invoked()` — call at the top of `main`; handles the
-  re-exec modes this crate uses inside the sandbox.
+Filesystem restrictions are different on all platforms. Network restrictions
+however largely follow a similar approach (details omitted):
+- Disable networking in the sandbox, except for one localhost port
+- Within the sandbox, set `HTTP_PROXY` and friends to tell programs to
+  communicate with that socket
+- On the Zed host side, there is a proxy that listens to that port that enforces
+  domain filtering
 
-## Threat model
+On Linux specifically, there is an intermediate socket that allows data to flow
+out of the sandbox. This is required because, unlike seatbelt, bubblewrap runs 
 
-The command being sandboxed is **assumed hostile** (it may be driven by a
-prompt-injected or otherwise malicious model). It may also have left a
-**concurrent process running** from an earlier tool call. Either can attempt to
-race the sandbox while it is being set up.
+### Linux
 
-The user has approved a specific, bounded set of capabilities (these writable
-paths, this network, this git access). The sandbox's job is to ensure the
-command gets **exactly** those capabilities and no more — in particular, that an
-approved grant cannot be redirected to an unapproved location.
+A naive implementation on Linux would work roughly like:
+- Figure out which paths are read-only and which are read/write
+- Run the sandboxed program through `bwrap` with `--ro-bind` for read-only and
+  `--bind` for read/write
 
-Out of scope: kernel/bwrap/Seatbelt vulnerabilities, and anything the invoking
-user could already do outside the sandbox (the sandbox never grants *more* than
-the user's own ambient authority).
+However, this fails because of a nasty TOCTOU.
 
-## The core hazard: bind-source TOCTOU
+#### The nasty TOCTOU
+
+
+
 
 Restricting the filesystem means making specific host locations available inside
 the sandbox. On Linux/WSL that is a **bind mount**; on macOS it is a Seatbelt
@@ -192,19 +180,24 @@ established, so what the validator stats is exactly what the command would
 access.
 
 ```mermaid
-flowchart TD
-    Zed["Zed: O_PATH fds, AF_UNIX socket (bind-mounted into sandbox)"]
-    PTY["portable_pty: fork + exec (stdio only)"]
-    Bwrap["bwrap: --bind by path (may bind the wrong inode), --proc, namespaces"]
-    Val["in-sandbox validator"]
-    Recv["recv fds via SCM_RIGHTS, fstat vs lstat per writable bind"]
-    Cmd["exec real command on the PTY"]
-    Die["abort: race detected"]
+sequenceDiagram
+    participant Zed as Zed host
+    participant Bwrap as bwrap
+    participant Launcher as in-sandbox launcher
+    participant Cmd as command
 
-    Zed --> PTY --> Bwrap --> Val --> Recv --> Cmp{"all binds match?"}
-    Zed -. SCM_RIGHTS .-> Recv
-    Cmp -->|yes| Cmd
-    Cmp -->|no| Die
+    Note over Zed: capture O_PATH fds, open AF_UNIX socket
+    Zed->>Bwrap: spawn via PTY, bind by path, socket bound in, re-exec launcher
+    Bwrap->>Bwrap: mount binds by path, may bind the wrong inode if swapped
+    Bwrap->>Launcher: exec
+    Launcher->>Zed: connect to validation socket
+    Zed-->>Launcher: O_PATH fds via SCM_RIGHTS
+    Launcher->>Launcher: per writable bind, compare fstat with lstat
+    alt all binds match
+        Launcher->>Cmd: exec real command
+    else mismatch, race detected
+        Note over Launcher: abort, command never runs
+    end
 ```
 
 Network (restricted) is handled by the same in-sandbox re-exec, which also runs
@@ -217,12 +210,15 @@ bwrap runs inside a WSL distro, launched via `wsl.exe --exec`. Two facts shape
 the design:
 
 - Zed is a Windows process: it has **no Linux file descriptors** and cannot see
-  WSL inode identity. So a `HostFilesystemLocation` captured on Windows is empty;
-  the real capture must happen **inside WSL**.
-- Validating on Windows and capturing in WSL would split check from capture
-  across the process/OS boundary, reopening the TOCTOU. Therefore **the WSL-side
-  helper must validate *and* capture atomically**, using only the candidate paths
-  from Windows as untrusted intent.
+  WSL inode identity. A `HostFilesystemLocation` captured on Windows therefore
+  holds no real identity — only the requested path, carried across as **untrusted
+  intent**; the real capture must happen **inside WSL**.
+- So everything security-relevant — pinning the inodes and detecting a redirected
+  bind — happens WSL-side. Splitting capture (in WSL) from validation (on
+  Windows) would drive a process/OS boundary through the middle of the check and
+  reopen the TOCTOU, so both stay inside WSL. The helper there reuses the exact
+  native-Linux mechanism: capture at startup, then **post-mount** `SCM_RIGHTS`
+  detection (not `--bind-fd`).
 
 The design runs the **same Linux host side** as native Linux, but inside WSL:
 `wsl.exe` execs a Linux `zed` in `--wsl-sandbox-helper` mode *instead of* bwrap,
@@ -234,15 +230,28 @@ mounts. So WSL uses the same `--bind` + post-mount `SCM_RIGHTS` detection as
 native Linux, not `--bind-fd`.
 
 ```mermaid
-flowchart TD
-    Win["Windows Zed: candidate paths only (no fds); resolves channel+version"]
-    Wsl["wsl.exe --exec zed --wsl-sandbox-helper bwrap-path base-args writable -- cmd"]
-    Helper["WSL helper (Linux zed): capture O_PATH fds, SCM_RIGHTS socket"]
-    Bwrap["bwrap: --bind by path, socket bind-mounted in"]
-    Val["in-sandbox --zed-linux-sandbox-launcher: fstat vs lstat, fail closed"]
-    Cmd["real command"]
+sequenceDiagram
+    participant Win as Windows Zed
+    participant Helper as WSL helper
+    participant Bwrap as bwrap
+    participant Launcher as in-sandbox launcher
+    participant Cmd as command
 
-    Win --> Wsl --> Helper --> Bwrap --> Val --> Cmd
+    Note over Win: resolve channel and version, candidate paths only, no fds
+    Win->>Win: provision matching Linux zed in WSL if missing, download release tarball
+    Win->>Helper: wsl.exe execs the helper in WSL, then the command
+    Note over Helper: capture O_PATH fds WSL-side, open AF_UNIX socket
+    Helper->>Bwrap: spawn, bind by path, socket bound in, re-exec launcher
+    Bwrap->>Bwrap: mount binds by path, may bind the wrong inode if swapped
+    Bwrap->>Launcher: exec
+    Launcher->>Helper: connect to validation socket
+    Helper-->>Launcher: O_PATH fds via SCM_RIGHTS
+    Launcher->>Launcher: per writable bind, compare fstat with lstat
+    alt all binds match
+        Launcher->>Cmd: exec real command
+    else mismatch, race detected
+        Note over Launcher: abort, command never runs
+    end
 ```
 
 Distribution: Zed ships no Linux binary into the distro; the Windows side
@@ -289,7 +298,14 @@ Implementation notes for the Linux validator:
   (in the `ValidationServer`), which also keeps the captured inodes pinned so
   they can't be recycled out from under the check.
 
-WSL note: when the helper can't be provisioned (no `Some` release info, or the
-install fails), the WSL path falls back to exec'ing bwrap directly — binding
-writable locations by path string, which carries the same bind-source TOCTOU as
-un-hardened Linux. The hardened path requires the helper above.
+WSL note: the WSL path only falls back to exec'ing bwrap directly when there is
+no release info to provision a helper from (`wsl_zed_release` is `None`, e.g. a
+caller that doesn't supply it). That legacy path binds writable locations by path
+string and carries the same bind-source TOCTOU as un-hardened Linux. When release
+info *is* present but provisioning fails (no `curl`/`wget`, a download error),
+that is surfaced to the user as a sandbox-creation failure — like a missing
+`bwrap` — rather than silently downgraded.
+
+
+[bubblewrap]: https://github.com/containers/bubblewrap
+[namespaces]: https://en.wikipedia.org/wiki/Linux_namespaces
