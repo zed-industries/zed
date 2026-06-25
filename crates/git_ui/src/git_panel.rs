@@ -327,20 +327,10 @@ fn git_panel_view_options_menu(
 // We only allow a single remote operation at a time to avoid concurrent
 // credential prompts and competing ref/working-tree updates.
 #[derive(Clone, Copy)]
-enum RemoteOperationKind {
+pub(crate) enum RemoteOperationKind {
     Fetch,
     Pull,
     Push,
-}
-
-impl RemoteOperationKind {
-    fn in_progress_tooltip(self) -> &'static str {
-        match self {
-            Self::Fetch => "Fetch in Progress…",
-            Self::Pull => "Pull in Progress…",
-            Self::Push => "Push in Progress…",
-        }
-    }
 }
 
 pub fn register(workspace: &mut Workspace) {
@@ -4982,8 +4972,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
-                        self.pending_remote_operation
-                            .map(RemoteOperationKind::in_progress_tooltip),
+                        self.pending_remote_operation,
                     ))
                 })
                 .into_any_element(),
@@ -9073,12 +9062,10 @@ mod tests {
             // The first remote operation starts and records its kind, which the
             // button uses to render an "in progress" tooltip.
             assert!(panel.start_remote_operation(RemoteOperationKind::Fetch, cx));
-            assert_eq!(
-                panel
-                    .pending_remote_operation
-                    .map(RemoteOperationKind::in_progress_tooltip),
-                Some("Fetch in Progress…")
-            );
+            assert!(matches!(
+                panel.pending_remote_operation,
+                Some(RemoteOperationKind::Fetch)
+            ));
 
             // A second remote operation is refused while one is pending, even a
             // different kind: we serialize all remote ops.
