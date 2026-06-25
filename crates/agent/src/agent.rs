@@ -30,7 +30,7 @@ pub use tools::*;
 
 use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, LocalUserMessageId, TokenUsageRatio,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
@@ -1818,7 +1818,7 @@ impl NativeAgent {
 
     fn send_mcp_prompt(
         &self,
-        local_user_message_id: LocalUserMessageId,
+        client_user_message_id: ClientUserMessageId,
         session_id: acp::SessionId,
         prompt_name: String,
         server_id: ContextServerId,
@@ -1852,7 +1852,7 @@ impl NativeAgent {
 
             thread.update(cx, |thread, cx| {
                 thread.push_acp_user_block(
-                    local_user_message_id,
+                    client_user_message_id,
                     original_content.into_iter().skip(1),
                     path_style,
                     cx,
@@ -1865,7 +1865,7 @@ impl NativeAgent {
 
                 match role {
                     context_server::types::Role::User => {
-                        let id = acp_thread::LocalUserMessageId::new();
+                        let id = acp_thread::ClientUserMessageId::new();
 
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_user_content_block_with_indent(
@@ -1925,7 +1925,7 @@ impl NativeAgent {
     /// `/compact` slash command.
     fn send_compact_command(
         &self,
-        local_user_message_id: LocalUserMessageId,
+        client_user_message_id: ClientUserMessageId,
         session_id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -1939,7 +1939,7 @@ impl NativeAgent {
             })??;
 
             let response_stream =
-                thread.update(cx, |thread, cx| thread.compact(local_user_message_id, cx))?;
+                thread.update(cx, |thread, cx| thread.compact(client_user_message_id, cx))?;
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.update_token_usage(None, cx);
             });
@@ -1967,7 +1967,7 @@ impl NativeAgent {
     /// instructions followed by the user's request.
     fn send_skill_invocation(
         &self,
-        local_user_message_id: LocalUserMessageId,
+        client_user_message_id: ClientUserMessageId,
         session_id: acp::SessionId,
         skill: Skill,
         original_content: Vec<acp::ContentBlock>,
@@ -2026,7 +2026,7 @@ impl NativeAgent {
             // the user can see what context was loaded for the skill. The
             // user's own typed message is already rendered by the normal
             // prompt flow, so we don't push it to the UI again here.
-            let injected_id = acp_thread::LocalUserMessageId::new();
+            let injected_id = acp_thread::ClientUserMessageId::new();
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
                     Some(injected_id),
@@ -2043,7 +2043,7 @@ impl NativeAgent {
             combined.extend(user_blocks);
 
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(local_user_message_id, combined, path_style, cx);
+                thread.push_acp_user_block(client_user_message_id, combined, path_style, cx);
             });
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
@@ -2619,12 +2619,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as Rc<dyn AgentModelSelector>)
     }
 
-    fn local_user_messages(
+    fn prompt_with_client_user_message_id(
         &self,
-        _session_id: &acp::SessionId,
         _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionLocalUserMessages>> {
-        Some(Rc::new(self.clone()) as Rc<dyn acp_thread::AgentSessionLocalUserMessages>)
+    ) -> Option<Rc<dyn acp_thread::AgentSessionPromptWithClientUserMessageId>> {
+        let prompt: Rc<dyn acp_thread::AgentSessionPromptWithClientUserMessageId> =
+            Rc::new(self.clone());
+        Some(prompt)
     }
 
     fn prompt(
@@ -2632,9 +2633,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
-        acp_thread::AgentSessionLocalUserMessages::prompt(
+        acp_thread::AgentSessionPromptWithClientUserMessageId::prompt(
             self,
-            acp_thread::LocalUserMessageId::new(),
+            acp_thread::ClientUserMessageId::new(),
             params,
             cx,
         )
@@ -2710,10 +2711,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
-impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
+impl acp_thread::AgentSessionPromptWithClientUserMessageId for NativeAgentConnection {
     fn prompt(
         &self,
-        local_id: acp_thread::LocalUserMessageId,
+        client_user_message_id: acp_thread::ClientUserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -2735,7 +2736,7 @@ impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
         if let Some(parsed_command) = Command::parse(&params.prompt) {
             if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
                 return self.0.update(cx, |agent, cx| {
-                    agent.send_compact_command(local_id, session_id, cx)
+                    agent.send_compact_command(client_user_message_id, session_id, cx)
                 });
             }
 
@@ -2753,7 +2754,7 @@ impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
                 let skill = skill.clone();
                 return self.0.update(cx, |agent, cx| {
                     agent.send_skill_invocation(
-                        local_id,
+                        client_user_message_id,
                         session_id.clone(),
                         skill,
                         params.prompt,
@@ -2793,7 +2794,7 @@ impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
 
                 return self.0.update(cx, |agent, cx| {
                     agent.send_mcp_prompt(
-                        local_id,
+                        client_user_message_id,
                         session_id.clone(),
                         prompt_name,
                         server_id,
@@ -2841,7 +2842,7 @@ impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
                     let skill = skill.clone();
                     return self.0.update(cx, |agent, cx| {
                         agent.send_skill_invocation(
-                            local_id,
+                            client_user_message_id,
                             session_id.clone(),
                             skill,
                             params.prompt,
@@ -2861,10 +2862,12 @@ impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
                 .map(|block| UserMessageContent::from_content_block(block, path_style))
                 .collect::<Vec<_>>();
             log::debug!("Converted prompt to message: {} chars", content.len());
-            log::debug!("Local message id: {:?}", local_id);
+            log::debug!("Client user message id: {:?}", client_user_message_id);
             log::debug!("Message content: {:?}", content);
 
-            thread.update(cx, |thread, cx| thread.send(local_id, content, cx))
+            thread.update(cx, |thread, cx| {
+                thread.send(client_user_message_id, content, cx)
+            })
         })
     }
 }
@@ -2970,11 +2973,11 @@ struct NativeAgentSessionTruncate {
 impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
     fn run(
         &self,
-        local_user_message_id: acp_thread::LocalUserMessageId,
+        client_user_message_id: acp_thread::ClientUserMessageId,
         cx: &mut App,
     ) -> Task<Result<()>> {
         match self.thread.update(cx, |thread, cx| {
-            thread.truncate(local_user_message_id.clone(), cx)?;
+            thread.truncate(client_user_message_id.clone(), cx)?;
             Ok(thread.latest_token_usage())
         }) {
             Ok(usage) => {
@@ -3814,7 +3817,7 @@ mod internal_tests {
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let old_message_id = LocalUserMessageId::new();
+        let old_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             let path_style = project.read(cx).path_style(cx);
@@ -3830,9 +3833,9 @@ mod internal_tests {
             });
         });
 
-        let compact_message_id = LocalUserMessageId::new();
+        let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
-            acp_thread::AgentSessionLocalUserMessages::prompt(
+            acp_thread::AgentSessionPromptWithClientUserMessageId::prompt(
                 connection.as_ref(),
                 compact_message_id,
                 acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
@@ -3889,7 +3892,7 @@ mod internal_tests {
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
                 thread.push_acp_user_block(
-                    LocalUserMessageId::new(),
+                    ClientUserMessageId::new(),
                     [acp::ContentBlock::from("hello from the user")],
                     path_style,
                     cx,

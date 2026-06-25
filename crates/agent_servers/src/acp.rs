@@ -1992,7 +1992,7 @@ pub mod test_support {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use acp_thread::{
-        AgentSessionConfigOptions, AgentSessionLocalUserMessages, AgentSessionModes,
+        AgentSessionConfigOptions, AgentSessionModes, AgentSessionPromptWithClientUserMessageId,
         AgentSessionRetry, AgentSessionSetTitle, AgentSessionTruncate, AgentTelemetry,
     };
 
@@ -2206,12 +2206,11 @@ pub mod test_support {
             self.inner.logout(cx)
         }
 
-        fn local_user_messages(
+        fn prompt_with_client_user_message_id(
             &self,
-            session_id: &acp::SessionId,
             cx: &App,
-        ) -> Option<Rc<dyn AgentSessionLocalUserMessages>> {
-            self.inner.local_user_messages(session_id, cx)
+        ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {
+            self.inner.prompt_with_client_user_message_id(cx)
         }
 
         fn prompt(

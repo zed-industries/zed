@@ -284,7 +284,7 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
 #[derive(Debug)]
 pub struct UserMessage {
     pub id: Option<acp::MessageId>,
-    pub rewind_id: Option<LocalUserMessageId>,
+    pub rewind_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
     pub content: ContentBlock,
     pub chunks: Vec<acp::ContentBlock>,
@@ -2265,7 +2265,7 @@ impl AcpThread {
 
     pub fn push_user_content_block(
         &mut self,
-        rewind_id: Option<LocalUserMessageId>,
+        rewind_id: Option<ClientUserMessageId>,
         chunk: acp::ContentBlock,
         cx: &mut Context<Self>,
     ) {
@@ -2274,7 +2274,7 @@ impl AcpThread {
 
     pub fn push_user_content_block_with_indent(
         &mut self,
-        rewind_id: Option<LocalUserMessageId>,
+        rewind_id: Option<ClientUserMessageId>,
         chunk: acp::ContentBlock,
         indented: bool,
         cx: &mut Context<Self>,
@@ -2300,7 +2300,7 @@ impl AcpThread {
 
     fn push_user_content_block_with_protocol_id(
         &mut self,
-        incoming_rewind_id: Option<LocalUserMessageId>,
+        incoming_rewind_id: Option<ClientUserMessageId>,
         is_optimistic: bool,
         id: Option<acp::MessageId>,
         chunk: acp::ContentBlock,
@@ -3176,11 +3176,11 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let local_prompt = self
+        let prompt_with_client_id = self
             .connection
-            .local_user_messages(&self.session_id, cx)
-            .map(|local_user_messages| (local_user_messages, LocalUserMessageId::new()));
-        let rewind_id = local_prompt
+            .prompt_with_client_user_message_id(cx)
+            .map(|prompt| (prompt, ClientUserMessageId::new()));
+        let rewind_id = prompt_with_client_id
             .as_ref()
             .map(|(_, rewind_id)| rewind_id.clone());
 
@@ -3219,8 +3219,8 @@ impl AcpThread {
             }
 
             this.update(cx, |this, cx| {
-                if let Some((local_user_messages, rewind_id)) = local_prompt {
-                    local_user_messages.prompt(rewind_id, request, cx)
+                if let Some((prompt, rewind_id)) = prompt_with_client_id {
+                    prompt.prompt(rewind_id, request, cx)
                 } else {
                     this.connection.prompt(request, cx)
                 }
@@ -3444,7 +3444,7 @@ impl AcpThread {
     /// Restores the git working tree to the state at the given checkpoint (if one exists)
     pub fn restore_checkpoint(
         &mut self,
-        rewind_id: LocalUserMessageId,
+        rewind_id: ClientUserMessageId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((_, message)) = self.user_message_mut(&rewind_id) else {
@@ -3479,7 +3479,7 @@ impl AcpThread {
     /// Unlike `restore_checkpoint`, this method does not restore from git.
     pub fn rewind(
         &mut self,
-        rewind_id: LocalUserMessageId,
+        rewind_id: ClientUserMessageId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
@@ -3652,7 +3652,7 @@ impl AcpThread {
 
     fn user_message_mut(
         &mut self,
-        rewind_id: &LocalUserMessageId,
+        rewind_id: &ClientUserMessageId,
     ) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
@@ -4238,19 +4238,19 @@ mod tests {
     }
 
     #[test]
-    fn local_user_message_id_serializes_as_string() {
+    fn client_user_message_id_serializes_as_string() {
         let serialized =
-            serde_json::to_value(LocalUserMessageId::new()).expect("serialize local message id");
+            serde_json::to_value(ClientUserMessageId::new()).expect("serialize client message id");
         assert!(
             serialized.is_string(),
             "expected string, got {serialized:?}"
         );
 
-        let deserialized: LocalUserMessageId =
-            serde_json::from_value(json!("local-id")).expect("deserialize local message id");
+        let deserialized: ClientUserMessageId =
+            serde_json::from_value(json!("client-id")).expect("deserialize client message id");
         assert_eq!(
-            serde_json::to_value(deserialized).expect("serialize local message id"),
-            json!("local-id")
+            serde_json::to_value(deserialized).expect("serialize client message id"),
+            json!("client-id")
         );
     }
 
@@ -4805,7 +4805,7 @@ mod tests {
         });
 
         // Test appending to existing user message
-        let message_1_id = LocalUserMessageId::new();
+        let message_1_id = ClientUserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(Some(message_1_id.clone()), "world!".into(), cx);
         });
@@ -4826,7 +4826,7 @@ mod tests {
             thread.push_assistant_content_block("Assistant response".into(), false, cx);
         });
 
-        let message_2_id = LocalUserMessageId::new();
+        let message_2_id = ClientUserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
                 Some(message_2_id.clone()),
@@ -6896,15 +6896,14 @@ mod tests {
             }
         }
 
-        fn local_user_messages(
+        fn prompt_with_client_user_message_id(
             &self,
-            _session_id: &acp::SessionId,
             _cx: &App,
-        ) -> Option<Rc<dyn AgentSessionLocalUserMessages>> {
+        ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {
             self.supports_truncate.then(|| {
-                Rc::new(FakeAgentSessionLocalUserMessages {
+                Rc::new(FakeAgentSessionPromptWithClientUserMessageId {
                     connection: self.clone(),
-                }) as Rc<dyn AgentSessionLocalUserMessages>
+                }) as Rc<dyn AgentSessionPromptWithClientUserMessageId>
             })
         }
 
@@ -6955,21 +6954,21 @@ mod tests {
     impl AgentSessionTruncate for FakeAgentSessionEditor {
         fn run(
             &self,
-            _local_user_message_id: LocalUserMessageId,
+            _client_user_message_id: ClientUserMessageId,
             _cx: &mut App,
         ) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }
 
-    struct FakeAgentSessionLocalUserMessages {
+    struct FakeAgentSessionPromptWithClientUserMessageId {
         connection: FakeAgentConnection,
     }
 
-    impl AgentSessionLocalUserMessages for FakeAgentSessionLocalUserMessages {
+    impl AgentSessionPromptWithClientUserMessageId for FakeAgentSessionPromptWithClientUserMessageId {
         fn prompt(
             &self,
-            _local_id: LocalUserMessageId,
+            _client_user_message_id: ClientUserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<Result<acp::PromptResponse>> {
@@ -7389,7 +7388,7 @@ mod tests {
             thread.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     id: None,
-                    rewind_id: Some(LocalUserMessageId::new()),
+                    rewind_id: Some(ClientUserMessageId::new()),
                     is_optimistic: true,
                     content: ContentBlock::Empty,
                     chunks: vec!["Injected message (no checkpoint)".into()],
@@ -7592,7 +7591,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_send_omits_message_id_without_local_id_support(cx: &mut TestAppContext) {
+    async fn test_send_omits_message_id_without_client_user_message_id_support(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());

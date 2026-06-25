@@ -2727,7 +2727,7 @@ impl ThreadView {
         .detach_and_log_err(cx);
     }
 
-    pub fn restore_checkpoint(&mut self, rewind_id: &LocalUserMessageId, cx: &mut Context<Self>) {
+    pub fn restore_checkpoint(&mut self, rewind_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
                 thread.restore_checkpoint(rewind_id.clone(), cx)
