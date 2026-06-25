@@ -64,11 +64,10 @@ impl Database {
                 return Ok(None);
             };
 
-            let user = user::Entity::find_by_id(thread.user_id).one(&*tx).await?;
-
-            let username = user
-                .map(|u| u.github_login)
-                .unwrap_or_else(|| "Unknown".to_string());
+            // We can no longer read the `github_login` from Collab.
+            //
+            // Opting to just use "Unknown" here, as the feature is staff-only and infrequently used.
+            let username = "Unknown".to_string();
 
             Ok(Some((thread, username)))
         })

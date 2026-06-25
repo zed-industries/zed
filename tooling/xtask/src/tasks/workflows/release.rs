@@ -2,10 +2,13 @@ use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx:
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
+    run_bundling::{build_static_bwrap, bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
-    steps::{self, FluentBuilder, NamedJob, TokenPermissions, dependant_job, named, release_job},
+    steps::{
+        self, DownloadArtifactStep, FluentBuilder, NamedJob, TokenPermissions, dependant_job,
+        named, release_job,
+    },
     vars::{self, JobOutput, StepOutput, assets},
 };
 
@@ -16,10 +19,10 @@ pub(crate) fn release() -> Workflow {
     let macos_tests = run_tests::run_platform_tests_no_filter(Platform::Mac);
     let linux_tests = run_tests::run_platform_tests_no_filter(Platform::Linux);
     let windows_tests = run_tests::run_platform_tests_no_filter(Platform::Windows);
-    let macos_clippy = run_tests::clippy(Platform::Mac, None);
-    let linux_clippy = run_tests::clippy(Platform::Linux, None);
-    let windows_clippy = run_tests::clippy(Platform::Windows, None);
-    let check_scripts = run_tests::check_scripts();
+    let macos_clippy = run_tests::clippy(Platform::Mac, None, false);
+    let linux_clippy = run_tests::clippy(Platform::Linux, None, false);
+    let windows_clippy = run_tests::clippy(Platform::Windows, None, false);
+    let check_scripts = run_tests::check_scripts(false);
 
     let create_draft_release = create_draft_release();
     let (non_blocking_compliance_run, job_output) = compliance_check();
@@ -33,6 +36,14 @@ pub(crate) fn release() -> Workflow {
         linux_x86_64: bundle_linux(
             Arch::X86_64,
             None,
+            &[&linux_tests, &linux_clippy, &check_scripts],
+        ),
+        bwrap_linux_aarch64: build_static_bwrap(
+            Arch::AARCH64,
+            &[&linux_tests, &linux_clippy, &check_scripts],
+        ),
+        bwrap_linux_x86_64: build_static_bwrap(
+            Arch::X86_64,
             &[&linux_tests, &linux_clippy, &check_scripts],
         ),
         mac_aarch64: bundle_mac(
@@ -120,6 +131,8 @@ pub(crate) fn release() -> Workflow {
 pub(crate) struct ReleaseBundleJobs {
     pub linux_aarch64: NamedJob,
     pub linux_x86_64: NamedJob,
+    pub bwrap_linux_aarch64: NamedJob,
+    pub bwrap_linux_x86_64: NamedJob,
     pub mac_aarch64: NamedJob,
     pub mac_x86_64: NamedJob,
     pub windows_aarch64: NamedJob,
@@ -131,6 +144,8 @@ impl ReleaseBundleJobs {
         vec![
             &self.linux_aarch64,
             &self.linux_x86_64,
+            &self.bwrap_linux_aarch64,
+            &self.bwrap_linux_x86_64,
             &self.mac_aarch64,
             &self.mac_x86_64,
             &self.windows_aarch64,
@@ -142,6 +157,8 @@ impl ReleaseBundleJobs {
         vec![
             self.linux_aarch64,
             self.linux_x86_64,
+            self.bwrap_linux_aarch64,
+            self.bwrap_linux_x86_64,
             self.mac_aarch64,
             self.mac_x86_64,
             self.windows_aarch64,
@@ -217,7 +234,7 @@ pub(crate) fn add_compliance_steps(
         .if_condition(Expression::new("always()"))
         .when(
             matches!(context, ComplianceContext::Release { .. }),
-            |step| step.add_with(("overwrite", true)),
+            |step| step.overwrite(true),
         );
 
     let (success_prefix, failure_prefix) = match context {
@@ -428,13 +445,8 @@ fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
     (job, release_published)
 }
 
-pub(crate) fn download_workflow_artifacts() -> Step<Use> {
-    named::uses(
-        "actions",
-        "download-artifact",
-        "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
-    )
-    .add_with(("path", "./artifacts/"))
+pub(crate) fn download_workflow_artifacts() -> DownloadArtifactStep {
+    steps::download_artifact().path("./artifacts/")
 }
 
 pub(crate) fn prep_release_artifacts() -> Step<Run> {

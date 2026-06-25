@@ -50,6 +50,7 @@ impl Mercury {
             events,
             related_files,
             debug_tx,
+            trigger,
             ..
         }: EditPredictionModelInput,
         credentials_provider: Arc<dyn CredentialsProvider>,
@@ -140,6 +141,7 @@ impl Mercury {
                 stream: false,
                 stream_options: None,
                 max_completion_tokens: None,
+                max_tokens: None,
                 stop: vec![],
                 temperature: None,
                 tool_choice: None,
@@ -147,6 +149,7 @@ impl Mercury {
                 tools: vec![],
                 prompt_cache_key: None,
                 reasoning_effort: None,
+                service_tier: None,
             };
 
             let buf = serde_json::to_vec(&request_body)?;
@@ -223,7 +226,9 @@ impl Mercury {
                 );
             }
 
-            anyhow::Ok((id, edits, snapshot, inputs))
+            let editable_range = snapshot.anchor_range_inside(editable_offset_range);
+
+            anyhow::Ok((id, edits, snapshot, inputs, editable_range))
         });
 
         cx.spawn(async move |ep_store, cx| {
@@ -241,7 +246,7 @@ impl Mercury {
                 cx.notify();
             })?;
 
-            let (id, edits, old_snapshot, inputs) = result?;
+            let (id, edits, old_snapshot, inputs, editable_range) = result?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -249,8 +254,10 @@ impl Mercury {
                     &old_snapshot,
                     edits.into(),
                     None,
+                    Some(editable_range),
                     inputs,
                     None,
+                    trigger,
                     cx.background_executor().now() - request_start,
                     cx,
                 )

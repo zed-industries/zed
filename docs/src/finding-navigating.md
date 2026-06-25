@@ -25,7 +25,7 @@ Open any file in your project with {#kb file_finder::Toggle}. Type part of the f
 
 ## Project Search
 
-Search across all files with {#kb pane::DeploySearch}. Start typing in the search field to begin searching—results appear as you type.
+Search across all files with {#kb pane::DeploySearch}. Type the query in the search field, then press Enter to run the search.
 
 Results appear in a [multibuffer](./multibuffers.md), letting you edit matches in place.
 

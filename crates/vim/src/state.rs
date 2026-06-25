@@ -80,6 +80,11 @@ impl Mode {
         matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
 
+    /// `HelixNormal` qualifies because its cursor is itself a one-character selection.
+    pub fn has_selection(&self) -> bool {
+        self.is_visual() || matches!(self, Self::HelixNormal)
+    }
+
     pub fn is_normal(&self) -> bool {
         matches!(self, Self::Normal | Self::HelixNormal)
     }
@@ -176,7 +181,9 @@ pub struct HelixJumpLabel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelixJumpBehaviour {
     Move,
+    MoveToWordStart,
     Extend,
+    ExtendToWordStart,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1257,6 +1264,10 @@ pub struct RegistersViewDelegate {
 impl PickerDelegate for RegistersViewDelegate {
     type ListItem = Div;
 
+    fn name() -> &'static str {
+        "registers view"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -1422,9 +1433,7 @@ impl RegistersView {
             matches,
         };
 
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 
@@ -1470,6 +1479,10 @@ pub struct MarksViewDelegate {
 
 impl PickerDelegate for MarksViewDelegate {
     type ListItem = Div;
+
+    fn name() -> &'static str {
+        "marks view"
+    }
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1785,9 +1798,7 @@ impl MarksView {
             matches,
             workspace,
         };
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 

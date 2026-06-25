@@ -17,17 +17,25 @@ use git::{
 };
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, TaskExt, Window,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::prelude::*;
-use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
+use workspace::{
+    ModalView, OpenMode, Workspace,
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
+};
 use zed_actions;
 
-use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
+use crate::{
+    commit_view::CommitView,
+    git_panel::{GitPanel, GitStatusEntry},
+    solo_diff_view::SoloDiffView,
+    text_diff_view::TextDiffView,
+};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -35,15 +43,19 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
+pub mod created_worktrees;
 pub mod file_diff_view;
+pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
+mod git_runtime_diagnostics;
 pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod solo_diff_view;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_names;
@@ -52,9 +64,24 @@ pub mod worktree_service;
 
 pub use conflict_view::MergeConflictIndicator;
 
+pub fn get_provider_icon(name: &str) -> IconName {
+    match name {
+        "Bitbucket" => IconName::Bitbucket,
+        "Chromium" => IconName::Gerrit,
+        "Codeberg" => IconName::Codeberg,
+        "Forgejo Self-Hosted" => IconName::Forgejo,
+        "GitHub" => IconName::Github,
+        "GitLab" => IconName::Gitlab,
+        "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
+        _ => IconName::Link,
+    }
+}
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
+    git_graph::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -265,6 +292,23 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });
+        workspace.register_action_renderer(|div, workspace, _window, cx| {
+            div.when_some(
+                file_diff_entry(workspace, cx),
+                |div, (entry, repository)| {
+                    let workspace = workspace.weak_handle();
+                    div.on_action(move |_: &git::OpenFileDiff, window, cx| {
+                        open_file_diff(
+                            entry.clone(),
+                            repository.clone(),
+                            workspace.clone(),
+                            window,
+                            cx,
+                        );
+                    })
+                },
+            )
+        });
         workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
             rename_current_branch(workspace, window, cx);
         });
@@ -281,6 +325,47 @@ pub fn init(cx: &mut App) {
         );
     })
     .detach();
+}
+
+fn open_file_diff(
+    entry: GitStatusEntry,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.defer(cx, move |window, cx| {
+        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), window, cx)
+            .detach_and_notify_err(workspace, window, cx);
+    });
+}
+
+fn file_diff_entry(
+    workspace: &Workspace,
+    cx: &App,
+) -> Option<(GitStatusEntry, Entity<Repository>)> {
+    let project_path = workspace.active_item(cx)?.project_path(cx)?;
+
+    workspace
+        .project()
+        .read(cx)
+        .repositories(cx)
+        .values()
+        .find_map(|repository| {
+            let repo_path = repository
+                .read(cx)
+                .project_path_to_repo_path(&project_path, cx)?;
+            let status_entry = repository.read(cx).status_for_path(&repo_path)?;
+            Some((
+                GitStatusEntry {
+                    repo_path,
+                    status: status_entry.status,
+                    staging: status_entry.status.staging(),
+                    diff_stat: status_entry.diff_stat,
+                },
+                repository.clone(),
+            ))
+        })
 }
 
 fn open_modified_files(
@@ -1025,7 +1110,12 @@ impl Component for GitStatusIcon {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "An icon that visually represents the git status of a file, \
+        using a distinct glyph and color for modified, added, deleted, and conflicted states."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         fn tracked_file_status(code: StatusCode) -> FileStatus {
             FileStatus::Tracked(git::status::TrackedStatus {
                 index_status: code,
@@ -1042,20 +1132,18 @@ impl Component for GitStatusIcon {
         }
         .into();
 
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![example_group(vec![
-                    single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
-                    single_example("Added", GitStatusIcon::new(added).into_any_element()),
-                    single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
-                    single_example(
-                        "Conflicted",
-                        GitStatusIcon::new(conflict).into_any_element(),
-                    ),
-                ])])
-                .into_any_element(),
-        )
+        v_flex()
+            .gap_6()
+            .children(vec![example_group(vec![
+                single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
+                single_example("Added", GitStatusIcon::new(added).into_any_element()),
+                single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
+                single_example(
+                    "Conflicted",
+                    GitStatusIcon::new(conflict).into_any_element(),
+                ),
+            ])])
+            .into_any_element()
     }
 }
 
