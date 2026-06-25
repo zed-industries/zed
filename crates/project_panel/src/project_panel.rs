@@ -60,11 +60,10 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration,
-    IconDecorationKind, IconName, IconSize, IndentGuideColors, IndentGuideLayout, Indicator,
-    KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ProjectEmptyState, ScrollAxes,
-    ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    ContextMenu, ContextMenuEntry, DecoratedIcon, IconDecoration, IconDecorationKind,
+    IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing,
+    ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
@@ -1197,36 +1196,19 @@ impl ProjectPanel {
                             })
                             .when(is_dir && !is_root, |menu| {
                                 let entity = entity.clone();
-                                let worktree_id = worktree_id;
-                                let entry_id = entry_id;
                                 menu.separator()
-                                    .item(
-                                        ContextMenuEntry::new("Expand All").handler({
-                                            let entity = entity.clone();
-                                            move |window, cx| {
-                                                entity.update(cx, |this, cx| {
-                                                    this.expand_all_for_entry(
-                                                        worktree_id,
-                                                        entry_id,
-                                                        cx,
-                                                    );
-                                                    this.synchronously_expand_all_directories_internal(
-                                                        worktree_id,
-                                                        entry_id,
-                                                        cx,
-                                                    );
-                                                    this.update_visible_entries(
-                                                        None,
-                                                        false,
-                                                        false,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                    )
+                                    .item(ContextMenuEntry::new("Expand All").handler(
+                                        move |window, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.expand_all_for_entry_and_refresh(
+                                                    worktree_id,
+                                                    entry_id,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    ))
                                     .action(
                                         "Collapse All",
                                         Box::new(CollapseSelectedEntryAndChildren),
@@ -1234,47 +1216,27 @@ impl ProjectPanel {
                             })
                             .when(is_dir && is_root, |menu| {
                                 let entity = entity.clone();
-                                let worktree_id = worktree_id;
-                                let entry_id = entry_id;
                                 menu.separator()
-                                    .item(
-                                        ContextMenuEntry::new("Expand All")
-                                            .action(Box::new(ExpandAllEntries))
-                                            .handler({
-                                                let entity = entity.clone();
-                                                move |window, cx| {
-                                                    entity.update(cx, |this, cx| {
-                                                        this.expand_all_for_entry(
-                                                            worktree_id,
-                                                            entry_id,
-                                                            cx,
-                                                        );
-                                                        this.synchronously_expand_all_directories_internal(
-                                                            worktree_id,
-                                                            entry_id,
-                                                            cx,
-                                                        );
-                                                        this.update_visible_entries(
-                                                            None,
-                                                            false,
-                                                            false,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            }),
-                                    )
-                                    .item(
-                                        ContextMenuEntry::new("Collapse All")
-                                            .action(Box::new(CollapseAllEntries))
-                                            .handler(move |window, cx| {
-                                                entity.update(cx, |this, cx| {
-                                                    this.collapse_all_for_root(window, cx);
-                                                });
-                                            }),
-                                    )
+                                    .item(ContextMenuEntry::new("Expand All").handler({
+                                        let entity = entity.clone();
+                                        move |window, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.expand_all_for_entry_and_refresh(
+                                                    worktree_id,
+                                                    entry_id,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }))
+                                    .item(ContextMenuEntry::new("Collapse All").handler(
+                                        move |window, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.collapse_all_for_root(window, cx);
+                                            });
+                                        },
+                                    ))
                             })
                     }
                 })
@@ -1554,6 +1516,17 @@ impl ProjectPanel {
 
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
+    }
+
+    fn expand_all_for_entry_and_refresh(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.expand_all_for_entry(worktree_id, entry_id, cx);
+        self.synchronously_expand_all_directories(worktree_id, entry_id, window, cx);
     }
 
     fn synchronously_expand_all_directories(
