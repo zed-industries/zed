@@ -430,8 +430,17 @@ fn is_grapheme_ideographic(text: &str) -> bool {
     text.chars().any(is_char_ideographic)
 }
 
+/// Whitespace characters at which the rewrap algorithm is allowed to break a
+/// line. Only the standard ASCII whitespace is considered breakable; other
+/// Unicode whitespace (e.g. the thin space U+2009 or the no-break space U+00A0)
+/// is treated as part of the surrounding word so that rewrapping preserves it
+/// instead of converting it to a newline.
+fn is_breakable_whitespace(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{000B}' | '\u{000C}')
+}
+
 fn is_grapheme_whitespace(text: &str) -> bool {
-    text.chars().any(|x| x.is_whitespace())
+    text.chars().any(is_breakable_whitespace)
 }
 
 fn should_stay_with_preceding_ideograph(text: &str) -> bool {
@@ -690,7 +699,11 @@ mod tests {
                     word("笔", 1),
                 ],
             ),
-            (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+            // A leading em space is now joined to the following word
+            // rather than treated as a break point (see issue #59664).
+            (" mutton", &[word(" mutton", 7)]),
+            ("a b c", &[word("a b c", 5)]),
+            ("a b c", &[word("a b c", 5)]),
         ];
 
         fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
@@ -777,6 +790,20 @@ mod tests {
                 false,
             ),
             format!("foo{}bar", '\u{2009}')
+        );
+        // Even when the line is far longer than the wrap column, a run of words
+        // separated by thin spaces must not be broken at those thin spaces
+        // (see issue #59664).
+        assert_eq!(
+            wrap_with_prefix(
+                String::new(),
+                String::new(),
+                format!("a{0}a{0}a{0}a{0}a", '\u{2009}'), // thin spaces
+                4,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            format!("a{0}a{0}a{0}a{0}a", '\u{2009}')
         );
     }
 }
