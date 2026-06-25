@@ -1,3 +1,5 @@
+use std::{collections::HashMap, sync::Arc};
+
 use file_icons::FileIcons;
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate, match_strings};
 use gpui::{
@@ -33,7 +35,7 @@ pub fn init(cx: &mut App) {
                 let bookmark_store = project.read(cx).bookmark_store();
                 workspace.toggle_modal(window, cx, move |window, cx| {
                     let delegate =
-                        ProjectBookmarksDelegate::new(handle, project.clone(), bookmark_store);
+                        ProjectBookmarksDelegate::new(handle, project.clone(), bookmark_store, cx);
                     Picker::list_with_preview(delegate, project, window, cx)
                 })
             });
@@ -71,6 +73,7 @@ struct ProjectBookmarksDelegate {
     selected_entry_index: usize,
     matches: Vec<Match>,
     entries: Vec<Entry>,
+    worktree_root_names: HashMap<WorktreeId, Arc<RelPath>>,
 }
 
 impl ProjectBookmarksDelegate {
@@ -78,7 +81,17 @@ impl ProjectBookmarksDelegate {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         bookmark_store: Entity<BookmarkStore>,
+        cx: &App,
     ) -> Self {
+        let worktree_root_names = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                (worktree.id(), worktree.root_name().into_arc())
+            })
+            .collect();
+
         Self {
             workspace,
             project,
@@ -87,6 +100,7 @@ impl ProjectBookmarksDelegate {
             selected_entry_index: 0,
             matches: Vec::new(),
             entries: Vec::new(),
+            worktree_root_names,
         }
     }
 
@@ -94,17 +108,10 @@ impl ProjectBookmarksDelegate {
         &self,
         worktree_id: WorktreeId,
         rel_path: &RelPath,
-        cx: &App,
-    ) -> Option<std::sync::Arc<RelPath>> {
-        Some(
-            self.project
-                .read(cx)
-                .worktrees(cx)
-                .find(|worktree| worktree.read(cx).id() == worktree_id)?
-                .read(cx)
-                .root_name()
-                .join(&rel_path),
-        )
+    ) -> Option<Arc<RelPath>> {
+        self.worktree_root_names
+            .get(&worktree_id)
+            .map(|root_name| root_name.join(rel_path))
     }
 
     fn labels_for_match(
@@ -122,7 +129,7 @@ impl ProjectBookmarksDelegate {
         } = bookmark_match;
 
         let full_path_name =
-            self.with_worktree_root_name(project_path.worktree_id, &project_path.path, cx);
+            self.with_worktree_root_name(project_path.worktree_id, &project_path.path);
 
         (
             HighlightedLabel::new(label.clone(), positions.clone()),
@@ -183,7 +190,7 @@ impl ProjectBookmarksDelegate {
         let directory = project_path
             .path
             .parent()
-            .and_then(|parent| self.with_worktree_root_name(project_path.worktree_id, parent, cx))
+            .and_then(|parent| self.with_worktree_root_name(project_path.worktree_id, parent))
             .map(|parent| parent.display(path_style).into_owned())
             .map(SharedString::new)
             .unwrap_or_default();
@@ -438,18 +445,18 @@ impl PickerDelegate for ProjectBookmarksDelegate {
 
         let snapshot = selected_bookmark.buffer.read(cx).snapshot();
         let offset = snapshot.offset_for_anchor(&selected_bookmark.anchor);
-        let end_anchor = {
-            let row = snapshot
-                .summary_for_anchor::<text::Point>(&selected_bookmark.anchor)
-                .row;
-            let end_column = snapshot.line_len(row);
-            snapshot.anchor_after(text::Point::new(row, end_column))
-        };
+        let row = snapshot
+            .summary_for_anchor::<text::Point>(&selected_bookmark.anchor)
+            .row;
+        let start = text::Point::new(row, 0);
+        let end = start + text::Point::new(1, 0);
+        let start_anchor = snapshot.anchor_before(start);
+        let end_anchor = snapshot.anchor_before(end);
 
         Some(PreviewUpdate::from_buffer(
             selected_bookmark.buffer.clone(),
             MatchLocation {
-                anchor_range: end_anchor..end_anchor,
+                anchor_range: start_anchor..end_anchor,
                 range: offset..offset,
             },
         ))
