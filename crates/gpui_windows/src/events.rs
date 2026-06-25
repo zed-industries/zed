@@ -888,7 +888,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        if !self.is_movable || self.state.is_fullscreen() {
+        if self.state.is_fullscreen() {
             return None;
         }
 
@@ -899,16 +899,13 @@ impl WindowsWindowInner {
                 .callbacks
                 .hit_test_window_control
                 .set(Some(callback));
-            if let Some(area) = area {
-                match area {
-                    WindowControlArea::Drag => Some(HTCAPTION as _),
-                    WindowControlArea::Close => return Some(HTCLOSE as _),
-                    WindowControlArea::Max => return Some(HTMAXBUTTON as _),
-                    WindowControlArea::Min => return Some(HTMINBUTTON as _),
-                }
-            } else {
-                None
-            }
+            area.and_then(|area| match area {
+                WindowControlArea::Drag if self.is_movable => Some(HTCAPTION as _),
+                WindowControlArea::Drag => None,
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max => Some(HTMAXBUTTON as _),
+                WindowControlArea::Min => Some(HTMINBUTTON as _),
+            })
         } else {
             None
         };
