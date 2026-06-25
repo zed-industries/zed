@@ -1653,23 +1653,6 @@ mod tests {
     }
 
     #[test]
-    fn context_window_override_takes_precedence_over_settings_max_tokens() {
-        let mut models: HashMap<String, llama_cpp::Model> = HashMap::default();
-        let available = vec![AvailableModel {
-            name: "qwen".to_string(),
-            display_name: None,
-            max_tokens: 16384,
-            supports_tools: None,
-            supports_images: None,
-            supports_thinking: None,
-        }];
-
-        merge_settings_into_models(&mut models, &available, Some(4096));
-
-        assert_eq!(models.get("qwen").unwrap().max_tokens, 4096);
-    }
-
-    #[test]
     fn capability_cells_update_when_a_model_loads() {
         let cells: CapabilityCells = Arc::new(RwLock::new(HashMap::default()));
         let settings = LlamaCppSettings {

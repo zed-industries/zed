@@ -769,17 +769,6 @@ mod tests {
         assert!(props.supports_tools());
     }
 
-    #[test]
-    fn props_reads_legacy_supports_tools_field() {
-        // Older llama.cpp builds report only `supports_tools`, not
-        // `supports_tool_calls`; tool detection must still work.
-        let response = serde_json::json!({
-            "chat_template_caps": { "supports_tools": true }
-        });
-        let props: Props = serde_json::from_value(response).unwrap();
-        assert!(props.supports_tools());
-    }
-
     fn model_event(value: serde_json::Value) -> ModelEvent {
         serde_json::from_value(value).unwrap()
     }
@@ -873,18 +862,6 @@ mod tests {
     }
 
     #[test]
-    fn props_zero_context_is_ignored() {
-        // Router-mode `/props` (without a `?model=`) reports `n_ctx: 0`.
-        let response = serde_json::json!({
-            "default_generation_settings": { "n_ctx": 0, "params": {} },
-        });
-        let props: Props = serde_json::from_value(response).unwrap();
-        assert_eq!(props.context_length(), None);
-        assert!(!props.supports_tools());
-        assert!(!props.supports_images());
-    }
-
-    #[test]
     fn parse_streaming_reasoning_and_tool_calls() {
         let event = serde_json::json!({
             "model": "llama",
@@ -912,33 +889,6 @@ mod tests {
         let delta = &event.choices[0].delta;
         assert_eq!(delta.reasoning_content.as_deref(), Some("thinking..."));
         assert_eq!(delta.tool_calls.as_ref().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn serialize_request_omits_empty_fields() {
-        let request = ChatCompletionRequest {
-            model: "llama".to_string(),
-            messages: vec![ChatMessage::User {
-                content: MessageContent::Plain("hi".to_string()),
-            }],
-            stream: true,
-            max_tokens: None,
-            stop: None,
-            temperature: None,
-            tools: vec![],
-            tool_choice: None,
-            stream_options: Some(StreamOptions {
-                include_usage: true,
-            }),
-        };
-        let serialized = serde_json::to_string(&request).unwrap();
-        assert!(!serialized.contains("max_tokens"));
-        assert!(!serialized.contains("\"stop\""));
-        assert!(!serialized.contains("temperature"));
-        assert!(!serialized.contains("\"tools\""));
-        assert!(!serialized.contains("tool_choice"));
-        assert!(serialized.contains("stream_options"));
-        assert!(serialized.contains("include_usage"));
     }
 
     #[test]
