@@ -60,7 +60,8 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
+    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconButtonShape, IconDecoration,
+    IconDecorationKind,
     IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label, LabelSize, ListItem,
     ListItemSpacing, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate,
     Tooltip, WithScrollbar, prelude::*, v_flex,
@@ -5411,6 +5412,7 @@ impl ProjectPanel {
         let path = details.path.clone();
 
         let depth = details.depth;
+        let is_root = depth == 0;
         let worktree_id = details.worktree_id;
 
         let bg_color = if is_marked {
@@ -5842,7 +5844,8 @@ impl ProjectPanel {
                     })
                     .selectable(false)
                     .when(
-                        canonical_path.is_some()
+                        is_root
+                            || canonical_path.is_some()
                             || diagnostic_count.is_some()
                             || git_indicator.is_some(),
                         |this| {
@@ -5867,7 +5870,8 @@ impl ProjectPanel {
                                 h_flex()
                                     .gap_1()
                                     .flex_none()
-                                    .pr_3()
+                                    .when(!is_root, |this| this.pr_3())
+                                    .when(is_root, |this| this.pr_0())
                                     .when_some(diagnostic_count, |this, count| {
                                         this.when(count.error_count > 0, |this| {
                                             this.child(
@@ -5902,6 +5906,34 @@ impl ProjectPanel {
                                         this.child(git_indicator)
                                     })
                                     .when_some(symlink_element, |this, el| this.child(el))
+                                    .when(is_root, |this| {
+                                        this.child(
+                                            IconButton::new(
+                                                "project-panel-collapse-all",
+                                                IconName::Dash,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .shape(IconButtonShape::Square)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .tooltip(|_window, cx| {
+                                                Tooltip::for_action(
+                                                    "Collapse All",
+                                                    &CollapseAllEntries,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(cx.listener(
+                                                |this, _, window, cx| {
+                                                    this.collapse_all_entries(
+                                                        &CollapseAllEntries,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    cx.stop_propagation();
+                                                },
+                                            )),
+                                        )
+                                    })
                                     .into_any_element(),
                             )
                         },
