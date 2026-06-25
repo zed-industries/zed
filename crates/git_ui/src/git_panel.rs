@@ -91,6 +91,11 @@ use workspace::{
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
+const GIT_PANEL_KEY: &str = "GitPanel";
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+// TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
+const TREE_INDENT: f32 = 16.0;
+
 actions!(
     git_panel,
     [
@@ -319,14 +324,24 @@ fn git_panel_view_options_menu(
     })
 }
 
-const GIT_PANEL_KEY: &str = "GitPanel";
+// We only allow a single remote operation at a time to avoid concurrent
+// credential prompts and competing ref/working-tree updates.
+#[derive(Clone, Copy)]
+enum RemoteOperationKind {
+    Fetch,
+    Pull,
+    Push,
+}
 
-const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
-const FETCH_IN_PROGRESS_TOOLTIP: &str = "Fetch in progress";
-const PULL_IN_PROGRESS_TOOLTIP: &str = "Pull in progress";
-const PUSH_IN_PROGRESS_TOOLTIP: &str = "Push in progress";
-// TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
-const TREE_INDENT: f32 = 16.0;
+impl RemoteOperationKind {
+    fn in_progress_tooltip(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetch in Progress…",
+            Self::Pull => "Pull in Progress…",
+            Self::Push => "Push in Progress…",
+        }
+    }
+}
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -752,7 +767,7 @@ pub struct GitPanel {
     diff_stat_total: DiffStat,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
-    pending_remote_operation_tooltip: Option<&'static str>,
+    pending_remote_operation: Option<RemoteOperationKind>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     signoff_enabled: bool,
@@ -981,7 +996,7 @@ impl GitPanel {
                 changes_count: 0,
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
-                pending_remote_operation_tooltip: None,
+                pending_remote_operation: None,
                 amend_pending: false,
                 original_commit_message: None,
                 signoff_enabled: false,
@@ -3111,7 +3126,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        if !self.start_remote_operation(FETCH_IN_PROGRESS_TOOLTIP, cx) {
+        if !self.start_remote_operation(RemoteOperationKind::Fetch, cx) {
             return;
         }
 
@@ -3264,7 +3279,7 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
-        if !self.start_remote_operation(PULL_IN_PROGRESS_TOOLTIP, cx) {
+        if !self.start_remote_operation(RemoteOperationKind::Pull, cx) {
             return;
         }
 
@@ -3334,7 +3349,7 @@ impl GitPanel {
         let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
-        if !self.start_remote_operation(PUSH_IN_PROGRESS_TOOLTIP, cx) {
+        if !self.start_remote_operation(RemoteOperationKind::Push, cx) {
             return;
         }
 
@@ -3535,18 +3550,22 @@ impl GitPanel {
         !self.project.read(cx).is_via_collab()
     }
 
-    fn start_remote_operation(&mut self, tooltip: &'static str, cx: &mut Context<Self>) -> bool {
-        if self.pending_remote_operation_tooltip.is_some() {
+    fn start_remote_operation(
+        &mut self,
+        kind: RemoteOperationKind,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.pending_remote_operation.is_some() {
             return false;
         }
 
-        self.pending_remote_operation_tooltip = Some(tooltip);
+        self.pending_remote_operation = Some(kind);
         cx.notify();
         true
     }
 
     fn clear_remote_operation(&mut self, cx: &mut Context<Self>) {
-        self.pending_remote_operation_tooltip.take();
+        self.pending_remote_operation.take();
         cx.notify();
     }
 
@@ -4963,7 +4982,8 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
-                        self.pending_remote_operation_tooltip,
+                        self.pending_remote_operation
+                            .map(RemoteOperationKind::in_progress_tooltip),
                     ))
                 })
                 .into_any_element(),
