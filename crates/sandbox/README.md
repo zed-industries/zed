@@ -42,7 +42,9 @@ however largely follow a similar approach (details omitted):
   domain filtering
 
 On Linux specifically, there is an intermediate socket that allows data to flow
-out of the sandbox. This is required because, unlike seatbelt, bubblewrap runs 
+out of the sandbox. This is required because, unlike seatbelt, bubblewrap runs
+sandboxed programs in an entirely separate network stack (i.e. it has a
+different `localhost`).
 
 ### Linux
 
@@ -55,7 +57,112 @@ However, this fails because of a nasty TOCTOU.
 
 #### The nasty TOCTOU
 
+Consider the following case:
+- an attacker has convinced the user to open `project`, which contains an evil
+  `AGENTS.md`
+- They have also convinced the user to allow git access
+- This means that the user will have given the following permissions to the sandbox:
+  - read/write access to `project`
+  - read/write access to `project/.git`
+  - read/write access to an isolated `/tmp`
+  - read-only access to `/`
+- The `AGENTS.md` instructs the LLM to do the following:
+  - spawn two subagents
+  - the first subagent tries to swap `project/.git` with a symlink to
+    `/home/alice` [`renameat2(2)`][renameat2] with the `RENAME_EXCHANGE`
+    flag set
+  - the second subagent tries to run `echo 'export PATH="proj/obfuscated.../evil_eavesdropping_sudo/bin:$PATH"' >> proj/.git/.bashrc`
+- The user sends a prompt, we pick up the evil `AGENTS.md` instructions, and the
+  agent does them
+- Zed checks whether paths are symlinks outside the allowable paths before
+  passing them to bubblewrap, but there is a **time delay** between this check
+  and when bubblewrap mounts them.
+- In this delay, the `renameat2` may succeed, which means that:
+  - At check time, `proj/.git` is a subdirectory of `proj`
+  - At bind time, `proj/.git` is a symlink to `/home/alice`
+- The attacker is now running code in a sandbox which has **read/write** access
+  to `/home/alice`, and so the second command to inject the malicious
+  credential-stealing sudo succeeds.
 
+Note that this attack requires *two nested directories*, each with read/write
+grants. A single grant is insufficient, because you must mutate *a path which is
+used as a `--bind` argument*. If you cannot mutate a parent (because we are
+assuming no nested directories), then the only part you can mutate is the the
+read/write grant path itself (i.e. `/home/alice/project`). But, in bubblewrap's
+model, doing this requires write access to the *parent* (i.e. `/home/alice`),
+which we have assumed is not present.
+
+#### The naive (and incorrect) fix
+
+It is tempting to read the previous paragraph and think "that's simple, just
+disallow nested directories". In theory, this would work. A read/write grant to `/foo` and `/foo/bar` is logically equivalent to a read/write grant to just `/foo`. And the following is *true*: 
+
+> If there is no pair of read/write grants such that one is an ancestor of the
+> other, this TOCTOU attack is impossible.
+
+However, this is not a viable countermeasure for two reasons:
+
+1. It requires that no two grants of this kind ever exist at the same time
+   *globally across the whole system*. For example, opening `/foo` in one zed
+   window and `/foo/bar` in another would re-open this exploit. Even if we did
+   mitigate this by widening `/foo/bar` to have access to `/foo` (which in
+   itself is an unacceptable privilege escalation), we still wouldn't be able to
+   control non-Zed processes.
+2. It prevents the potentially useful pattern of:
+  - read/write access to `/foo`
+  - read-only access to `/foo/bar`
+  - read/write access to `/foo/bar/baz`
+
+Because of this, we need something more robust.
+
+#### The correct fix
+
+The correct fix involves using file descriptors as the source of truth, rather
+than paths. This is important because file descriptors are stable once opened,
+regardless of what happens to the path. The symlink swap attack will not change
+which inode the FD points to.
+
+This leads to a different question: how do we tell `bwrap` to use FDs instead of paths?
+
+`bwrap` does support `--bind-fd`, but this has another issue: "how do you get
+FDs into the `bwrap` process?
+
+There are two options:
+1. open the FDs in zed, clear `CLOEXEC`, then fork/exec into bwrap with the FD arguments
+2. send them into a helper process inside the sandbox using an `SCM_RIGHTS`
+  socket, and validate from the inside of the sandbox.
+
+We chose option 2 because we already have a helper process inside the sandbox
+(to set up the HTTP proxy).
+
+The flow for this approach in detail is:
+- open each *writable* path we `--bind` and get an `O_PATH` FD (which pins the
+  inode without granting read/write on its contents)
+- create an `SCM_RIGHTS` socket over which we can send the FDs
+- run `bwrap --bind /path1 /path1 ... -- zed --sandbox-bridge <untrusted program args>`
+  - note: we use (potentially swapped) paths
+  - we also mount the socket in the sandbox
+- the sandbox bridge reads the FDs from the socket, does the following for each
+  read/write bind:
+  - `fstat` the FD to get the `(device, inode)`
+  - `lstat` the corresponding mount path to get its `(device, inode)`
+  - check that they match
+
+  Note that this is essentially the check that `bwrap --bind-fd` does internally.
+- if all binds match, run the untrusted command, otherwise refuse to execute
+
+If the attacker managed to change a path to point to a different inode to when
+the FD was captured, the check will fail, and we don't run the untrusted
+command.
+
+### Windows
+
+> [!NOTE] The Windows implementation depends heavily on the details of the Linux
+  implementation. 
+
+The Linux approach works perfectly on WSL in theory (WSL uses a "regular linux
+kernel"), but there is one practical thorn: the zed host code that creates the
+FD is now running on Windows, but we need Linux file descriptors.
 
 
 Restricting the filesystem means making specific host locations available inside
@@ -309,3 +416,4 @@ that is surfaced to the user as a sandbox-creation failure — like a missing
 
 [bubblewrap]: https://github.com/containers/bubblewrap
 [namespaces]: https://en.wikipedia.org/wiki/Linux_namespaces
+[renameat2]: https://man.archlinux.org/man/renameat2.2.en
