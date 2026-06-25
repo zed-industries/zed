@@ -11,6 +11,7 @@ use gpui::{
     App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
 use ordered_float::OrderedFloat;
+use unicode_segmentation::UnicodeSegmentation;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
@@ -364,11 +365,7 @@ impl ConfigOptionSelector {
         };
 
         let value_name = self.current_value_name();
-        let display_name = if value_name.len() > 33 {
-            format!("{}…", &value_name[..32])
-        } else {
-            value_name
-        };
+        let display_name = value_name.graphemes(true).take(32).collect::<String>();
 
         Button::new(
             ElementId::Name(format!("config-option-{}", option.id.0).into()),
