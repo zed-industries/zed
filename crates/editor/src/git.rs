@@ -1412,13 +1412,8 @@ impl Editor {
     ) -> bool {
         for hunk in self.diff_hunks_in_ranges(ranges, snapshot) {
             match hunk.status().secondary {
-                DiffHunkSecondaryStatus::HasSecondaryHunk => return true,
-                // We are unstaging this hunk, so it is (becoming) unstaged and there
-                // are lines that can be staged. This must agree with
-                // `DiffHunkStatus::has_secondary_hunk`, which the whole-hunk staging
-                // path uses to decide direction; otherwise a toggle here picks the
-                // wrong direction and the unstage reconstruction wipes the hunk.
-                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => return true,
+                DiffHunkSecondaryStatus::HasSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => return true,
                 DiffHunkSecondaryStatus::NoSecondaryHunk
                 | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => continue,
                 DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
@@ -1487,8 +1482,8 @@ impl Editor {
                 let hunk_start = hunk.row_range.start.0;
                 let hunk_end = hunk.row_range.end.0;
 
-                let visible_deletion_lines =
-                    (hunk.row_range.end.0 - hunk.row_range.start.0).saturating_sub(hunk.added_row_count());
+                let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
+                    .saturating_sub(hunk.added_row_count());
 
                 let intersect_start = sel_start.max(hunk_start);
                 let intersect_end = sel_end.min(hunk_start + visible_deletion_lines);

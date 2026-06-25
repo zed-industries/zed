@@ -26685,9 +26685,7 @@ async fn test_stage_selected_lines_empty_added_line(cx: &mut TestAppContext) {
     "}));
 }
 
-/// Helper: assert the single diff hunk's per-line staged state. `expected_deletions`
-/// is the staged flag for each ghost deletion row; `expected_additions` for each added
-/// row. `true` means the row is staged.
+/// Assert the single diff hunk's per-line staged state (`true` means staged).
 #[track_caller]
 fn assert_staged_lines(
     cx: &mut EditorTestContext,
@@ -26713,25 +26711,18 @@ fn assert_staged_lines(
     });
 }
 
-// Regression test for staging lines of a modification on the final line of a file
-// that has no trailing newline. Such a hunk ends mid-row, which used to break the
-// `visible_deletion_lines` / row-count math: a fully-unstaged hunk was misclassified
-// as partially staged, and staging a line removed the old text without inserting the
-// new one. The result rendered as "deleted line staged, added line unstaged" even
-// though the user expected the added line to be staged.
+// Staging lines of a modification on the final line of a file with no trailing
+// newline must stage the added line, not misclassify the hunk or wipe the region.
 #[gpui::test]
 async fn test_stage_selected_lines_last_line_no_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    // Last line modified ("two" -> "TWO"), NO trailing newline anywhere.
     cx.set_head_text("one\ntwo");
     cx.set_index_text("one\ntwo");
     cx.set_state("one\nˇTWO");
     cx.run_until_parked();
 
-    // A fully unstaged modification must report a plain secondary hunk, not a
-    // partially-staged ("overlaps") one.
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
@@ -26747,17 +26738,13 @@ async fn test_stage_selected_lines_last_line_no_newline(cx: &mut TestAppContext)
         );
     });
 
-    // Stage with the cursor on the added line. Per the rule, only the added line is
-    // staged (the ghost deletion line was not selected), so the index keeps the old
-    // line and gains the new one, with no spurious trailing newline.
+    // Stage with the cursor on the added line: only the added line is staged.
     cx.update_editor(|editor, window, cx| {
         editor.toggle_staged_selected_lines(&Default::default(), window, cx);
     });
     cx.run_until_parked();
     cx.assert_index_text(Some("one\ntwo\nTWO"));
 
-    // The gutter must show the added line staged and the deletion unstaged - not the
-    // other way around.
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&Default::default(), window, cx);
     });
@@ -26778,8 +26765,8 @@ async fn test_stage_selected_lines_last_line_no_newline(cx: &mut TestAppContext)
     cx.assert_index_text(Some("one\ntwo"));
 }
 
-// Companion to the above: staging only the ghost deletion line of a last-line
-// modification stages just the deletion.
+// Staging only the ghost deletion line of a last-line modification stages just the
+// deletion.
 #[gpui::test]
 async fn test_stage_deletion_line_last_line_no_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -26810,14 +26797,9 @@ async fn test_stage_deletion_line_last_line_no_newline(cx: &mut TestAppContext) 
     assert_staged_lines(&mut cx, &[true], &[false]);
 }
 
-// End-to-end check of the stage/unstage cycle through the editor for a multi-line
-// modification (three deleted lines replaced by one added line). Staging the whole
-// hunk, unstaging it, then staging just the added line must each leave the index in
-// the expected state - in particular the final per-line stage must add the new line
-// rather than wiping the region. See `buffer_diff`'s
-// `test_unstage_lines_on_pending_unstaged_hunk_is_noop` for the lower-level
-// regression covering the pending (`AdditionPending`) state that triggered the
-// original corruption.
+// Staging the whole hunk, unstaging it, then staging just the added line of a
+// multi-line modification must each leave the index correct (the final per-line
+// stage adds the new line rather than wiping the region).
 #[gpui::test]
 async fn test_stage_unstage_cycle_multiline_modification(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -26827,11 +26809,9 @@ async fn test_stage_unstage_cycle_multiline_modification(cx: &mut TestAppContext
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_head_text(base);
     cx.set_index_text(base);
-    // Three lines (D1, D2, D3) replaced by one line (A). Cursor on A. Hunk collapsed.
     cx.set_state("ctx0\nˇA\nctx1\n");
     cx.run_until_parked();
 
-    // Stage the whole hunk, then unstage the whole hunk, returning the index to HEAD.
     cx.update_editor(|editor, window, cx| {
         editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
     });
@@ -26843,8 +26823,6 @@ async fn test_stage_unstage_cycle_multiline_modification(cx: &mut TestAppContext
     cx.run_until_parked();
     cx.assert_index_text(Some(base));
 
-    // Now stage the addition via the per-line path. This must STAGE the added line
-    // (index keeps the old lines and gains the new one), not wipe the region.
     cx.update_editor(|editor, window, cx| {
         editor.toggle_staged_selected_lines(&Default::default(), window, cx);
     });

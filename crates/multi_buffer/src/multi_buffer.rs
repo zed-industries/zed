@@ -162,13 +162,8 @@ impl MultiBufferDiffHunk {
             && self.buffer_range.end.is_max()
     }
 
-    /// The number of buffer rows occupied by this hunk's added lines.
-    ///
-    /// When the hunk's last added line has no trailing newline (e.g. the final
-    /// line of the file), the range ends mid-row, so `end.row - start.row`
-    /// undercounts by one. Account for that trailing partial row so callers can
-    /// correctly split a hunk's display rows into ghost (deletion) rows followed
-    /// by added rows.
+    /// Number of buffer rows occupied by this hunk's added lines, including a
+    /// final added line that lacks a trailing newline.
     pub fn added_row_count(&self) -> u32 {
         let span = self
             .buffer_range_point
