@@ -21,7 +21,6 @@ pub struct ProjectBookmark {
     pub label: String,
     pub buffer: Entity<Buffer>,
     pub anchor: text::Anchor,
-    pub offset: usize,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -368,13 +367,13 @@ impl BookmarkStore {
         }
     }
 
-    pub async fn all_bookmarks<'a>(
+    pub async fn all_bookmarks(
         this: &Entity<BookmarkStore>,
-        cx: &'a mut (impl AppContext + Clone),
+        cx: &mut (impl AppContext + Clone),
     ) -> Result<Vec<ProjectBookmark>> {
         Self::resolve_all(this, cx).await?;
 
-        let bookmarks = cx.read_entity(this, |bookmark_store, cx| {
+        let bookmarks = cx.read_entity(this, |bookmark_store, _cx| {
             bookmark_store
                 .bookmarks
                 .iter()
@@ -391,10 +390,6 @@ impl BookmarkStore {
                             label: bookmark.label.clone(),
                             buffer: buffer_bookmarks.buffer.clone(),
                             anchor: bookmark.anchor,
-                            offset: buffer_bookmarks
-                                .buffer
-                                .read(cx)
-                                .offset_for_anchor(&bookmark.anchor),
                         })
                 })
                 .collect_vec()
