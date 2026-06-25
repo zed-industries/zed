@@ -119,7 +119,7 @@ fn render_api_key_body(
         };
         let button_id = format!("reset-api-key-{}", provider.id().0);
         let provider = provider.clone();
-        let env_var_name_for_tooltip = env_var_name.clone();
+        let env_var_name_for_tooltip = env_var_name;
 
         return ConfiguredApiCard::new(configured_label)
             .button_id(button_id)
