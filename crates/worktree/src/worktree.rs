@@ -1185,19 +1185,24 @@ impl LocalWorktree {
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_spawn({
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
+            let is_single_file = snapshot.snapshot.root_dir().is_none();
             let background = cx.background_executor().clone();
             async move {
-                let defer_watch =
-                    force_defer_watch || (scanning_enabled && fs::requires_poll_watcher(&abs_path));
+                let requires_poll_watcher =
+                    scanning_enabled && fs::requires_poll_watcher(&abs_path);
+                let defer_watch = force_defer_watch || (scanning_enabled && requires_poll_watcher);
 
                 let (events, watcher) = if scanning_enabled && !defer_watch {
-                    fs.watch(&abs_path, FS_WATCH_LATENCY).await
+                    let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
+                    if is_single_file && !requires_poll_watcher {
+                        watch_single_file_parent(watcher.as_ref(), &abs_path);
+                    }
+                    (events, watcher)
                 } else {
                     (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
                 };
                 let fs_case_sensitive = fs.is_case_sensitive().await;
 
-                let is_single_file = snapshot.snapshot.root_dir().is_none();
                 let mut scanner = BackgroundScanner {
                     fs,
                     fs_case_sensitive,
@@ -2339,6 +2344,18 @@ impl RemoteWorktree {
         })
     }
 }
+
+#[cfg(target_os = "linux")]
+fn watch_single_file_parent(watcher: &dyn Watcher, path: &Path) {
+    if let Some(parent) = path.parent() {
+        // Inotify file watches follow the inode and stop reporting after an
+        // atomic replace; the parent watch keeps tracking the path by name.
+        watcher.add(parent).log_err();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn watch_single_file_parent(_watcher: &dyn Watcher, _path: &Path) {}
 
 impl Snapshot {
     pub fn new(
@@ -4176,6 +4193,9 @@ impl BackgroundScanner {
                 .watch(root_abs_path.as_path(), FS_WATCH_LATENCY)
                 .await;
             self.watcher = watcher;
+            if self.is_single_file && !fs::requires_poll_watcher(root_abs_path.as_path()) {
+                watch_single_file_parent(self.watcher.as_ref(), root_abs_path.as_path());
+            }
             fs_events_rx = Box::pin(events.map(|events| events.into_iter().collect()));
 
             let state = self.state.lock().await;
