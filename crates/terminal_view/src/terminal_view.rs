@@ -1098,6 +1098,7 @@ fn subscribe_for_terminal_events(
             match event {
                 Event::Wakeup => {
                     cx.notify();
+                    window.invalidate_character_coordinates();
                     cx.emit(Event::Wakeup);
                     cx.emit(ItemEvent::UpdateTab);
                     cx.emit(SearchEvent::MatchesInvalidated);
