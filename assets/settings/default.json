@@ -1020,6 +1020,13 @@
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
   },
+  "git_graph": {
+    // Where to render ref labels in the Description column.
+    //
+    // Choices: left, right
+    // Default: left
+    "ref_label_alignment": "left",
+  },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
     // For example: typing `:wave:` gets replaced with `👋`.

@@ -7660,6 +7660,35 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn git_graph_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Git Graph"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Ref Label Alignment",
+                description: "Where ref labels are rendered in the Description column.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_graph.ref_label_alignment"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_graph
+                            .as_ref()?
+                            .ref_label_alignment
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_graph
+                            .get_or_insert_default()
+                            .ref_label_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn git_hunks_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
@@ -7725,6 +7754,7 @@ fn version_control_page() -> SettingsPage {
             inline_git_blame_section(),
             git_blame_view_section(),
             branch_picker_section(),
+            git_graph_section(),
             git_hunks_section(),
         ],
     }

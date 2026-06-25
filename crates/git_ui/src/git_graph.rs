@@ -38,6 +38,7 @@ use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
+use settings::{GitGraphRefLabelAlignment, RegisterSetting, Settings};
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -74,6 +75,20 @@ const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
+
+#[derive(Debug, Clone, PartialEq, RegisterSetting)]
+struct GitGraphSettings {
+    ref_label_alignment: GitGraphRefLabelAlignment,
+}
+
+impl Settings for GitGraphSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let git_graph = content.git_graph.clone().unwrap();
+        Self {
+            ref_label_alignment: git_graph.ref_label_alignment.unwrap(),
+        }
+    }
+}
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -1075,6 +1090,7 @@ impl GraphData {
 }
 
 pub fn init(cx: &mut App) {
+    GitGraphSettings::register(cx);
     workspace::register_serializable_item::<GitGraph>(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
@@ -1522,9 +1538,11 @@ impl GitGraph {
             })
         };
         let mut row_height = Self::row_height(window, cx);
+        let mut ref_label_alignment = GitGraphSettings::get_global(cx).ref_label_alignment;
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
             let new_row_height = Self::row_height(window, cx);
+            let new_ref_label_alignment = GitGraphSettings::get_global(cx).ref_label_alignment;
             if new_row_height != row_height {
                 // The `uniform_list` powering the table caches the item size
                 // from its last layout; invalidate it so it re-measures with
@@ -1533,6 +1551,11 @@ impl GitGraph {
                     state.scroll_handle.0.borrow_mut().last_item_size = None;
                 });
                 row_height = new_row_height;
+                cx.notify();
+            }
+
+            if new_ref_label_alignment != ref_label_alignment {
+                ref_label_alignment = new_ref_label_alignment;
                 cx.notify();
             }
         })
@@ -1780,6 +1803,7 @@ impl GitGraph {
 
         let row_height = Self::row_height(window, cx);
         let has_context_menu = self.has_context_menu();
+        let ref_label_alignment = GitGraphSettings::get_global(cx).ref_label_alignment;
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1883,6 +1907,33 @@ impl GitGraph {
                     column_label(subject)
                 };
 
+                let ref_chips = (!commit.data.ref_names.is_empty()).then(|| {
+                    h_flex()
+                        .gap_1()
+                        .flex_none()
+                        .children(commit.data.ref_names.iter().map(|name| {
+                            let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
+                            self.render_ref_chip(name, accent_color, is_head, idx, cx)
+                        }))
+                        .into_any_element()
+                });
+
+                let subject_content = match ref_label_alignment {
+                    GitGraphRefLabelAlignment::Left => h_flex()
+                        .gap_2()
+                        .overflow_hidden()
+                        .children(ref_chips)
+                        .child(subject_label)
+                        .into_any_element(),
+                    GitGraphRefLabelAlignment::Right => h_flex()
+                        .gap_2()
+                        .overflow_hidden()
+                        .justify_between()
+                        .child(div().min_w_0().child(subject_label))
+                        .children(ref_chips)
+                        .into_any_element(),
+                };
+
                 vec![
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
@@ -1929,27 +1980,7 @@ impl GitGraph {
                                 this
                             }
                         })
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .overflow_hidden()
-                                .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(commit.data.ref_names.iter().map(
-                                        |name| {
-                                            let is_head =
-                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                            self.render_ref_chip(
-                                                name,
-                                                accent_color,
-                                                is_head,
-                                                idx,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                }))
-                                .child(subject_label),
-                        )
+                        .child(subject_content)
                         .into_any_element(),
                     column_label(formatted_time.into()),
                     column_label(author_name),

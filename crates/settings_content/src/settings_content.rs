@@ -137,6 +137,9 @@ pub struct SettingsContent {
 
     pub git_panel: Option<GitPanelSettingsContent>,
 
+    /// Settings related to the git graph.
+    pub git_graph: Option<GitGraphSettingsContent>,
+
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
     pub status_bar: Option<StatusBarSettingsContent>,
@@ -619,6 +622,38 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitGraphRefLabelAlignment {
+    /// Render ref labels before the commit subject.
+    #[default]
+    Left,
+    /// Render ref labels after the commit subject.
+    Right,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct GitGraphSettingsContent {
+    /// Where ref labels should be rendered in the Description column.
+    ///
+    /// Default: left
+    pub ref_label_alignment: Option<GitGraphRefLabelAlignment>,
 }
 
 /// Configuration of voice calls in Zed.
