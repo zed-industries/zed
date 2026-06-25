@@ -8,7 +8,7 @@ use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
+    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
@@ -128,10 +128,7 @@ impl WorktreePicker {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .modal(false)
-                .minimum_results_width(rems(34.))
-                .height(rems(20.))
-                .no_vertical_padding()
+                .embedded()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
@@ -243,7 +240,6 @@ impl Render for WorktreePicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("WorktreePicker")
-            .w(rems(34.))
             .elevation_3(cx)
             .child(self.picker.clone())
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))

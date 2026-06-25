@@ -10435,8 +10435,6 @@ async fn open_remote_project_inner(
     }
 
     let workspace = window.update(cx, |multi_workspace, window, cx| {
-        telemetry::event!("SSH Project Opened");
-
         let new_workspace = cx.new(|cx| {
             let mut workspace =
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
