@@ -11,7 +11,6 @@ use gpui::{
     App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
 use ordered_float::OrderedFloat;
-use unicode_segmentation::UnicodeSegmentation;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
@@ -19,6 +18,7 @@ use ui::{
     ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
     prelude::*,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
 use zed_actions::agent::ToggleModelSelector;
 
@@ -365,7 +365,13 @@ impl ConfigOptionSelector {
         };
 
         let value_name = self.current_value_name();
-        let display_name = value_name.graphemes(true).take(32).collect::<String>();
+        let mut graphemes = value_name.graphemes(true);
+        let truncated = graphemes.by_ref().take(32).collect::<String>();
+        let display_name = if graphemes.next().is_some() {
+            format!("{truncated}…")
+        } else {
+            truncated
+        };
 
         Button::new(
             ElementId::Name(format!("config-option-{}", option.id.0).into()),
